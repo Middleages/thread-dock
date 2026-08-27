@@ -2,8 +2,11 @@ package state
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -93,6 +96,142 @@ func TestAppendWritesCompleteJSONLines(t *testing.T) {
 		t.Fatalf("lines=%d", count)
 	}
 }
+
+func TestAppendRepairsPreExistingPartialTail(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	if err := store.Create(context.Background(), RunSnapshot{RunID: "run-1", Phase: contract.PhaseRegistered}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "runs", "run-1", "events.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"partial"`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(context.Background(), "run-1", Event{Type: "repaired", At: time.Unix(2, 0).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSuffix(data, []byte{'\n'}), []byte{'\n'})
+	if len(lines) != 1 {
+		t.Fatalf("lines=%q", lines)
+	}
+	var event Event
+	if err := json.Unmarshal(lines[0], &event); err != nil {
+		t.Fatalf("line=%q: %v", lines[0], err)
+	}
+	if event.Type != "repaired" {
+		t.Fatalf("event=%#v", event)
+	}
+}
+
+func TestAppendRollsBackPrefixWhenWriteFails(t *testing.T) {
+	file := &prefixThenErrorFile{fail: errInjectedWrite}
+	err := appendEventFile(file, []byte(`{"type":"event"}`+"\n"))
+	if !errors.Is(err, errInjectedWrite) {
+		t.Fatalf("err=%v", err)
+	}
+	if got := file.data.Bytes(); len(got) != 0 {
+		t.Fatalf("partial data remains: %q", got)
+	}
+	if file.syncs < 1 {
+		t.Fatalf("rollback was not synced: %d", file.syncs)
+	}
+}
+
+func TestAppendReportsRollbackAndSyncErrorsWithWriteError(t *testing.T) {
+	errTruncate := errors.New("injected truncate failure")
+	errSync := errors.New("injected sync failure")
+	file := &prefixThenErrorFile{fail: errInjectedWrite, truncateFail: errTruncate, syncFail: errSync}
+	err := appendEventFile(file, []byte(`{"type":"event"}`+"\n"))
+	for _, want := range []error{errInjectedWrite, errTruncate, errSync} {
+		if !errors.Is(err, want) {
+			t.Fatalf("err=%v does not contain %v", err, want)
+		}
+	}
+}
+
+var errInjectedWrite = errors.New("injected write failure")
+
+type prefixThenErrorFile struct {
+	data         bytes.Buffer
+	position     int64
+	fail         error
+	writeCount   int
+	syncs        int
+	truncateFail error
+	syncFail     error
+}
+
+func (f *prefixThenErrorFile) Read(p []byte) (int, error) {
+	if f.position >= int64(f.data.Len()) {
+		return 0, io.EOF
+	}
+	n := copy(p, f.data.Bytes()[f.position:])
+	f.position += int64(n)
+	return n, nil
+}
+
+func (f *prefixThenErrorFile) Write(p []byte) (int, error) {
+	if f.writeCount > 0 {
+		return 0, f.fail
+	}
+	f.writeCount++
+	prefix := len(p) / 2
+	if prefix == 0 {
+		prefix = 1
+	}
+	_, _ = f.data.Write(p[:prefix])
+	f.position += int64(prefix)
+	return prefix, f.fail
+}
+
+func (f *prefixThenErrorFile) Seek(offset int64, whence int) (int64, error) {
+	var next int64
+	switch whence {
+	case io.SeekStart:
+		next = offset
+	case io.SeekCurrent:
+		next = f.position + offset
+	case io.SeekEnd:
+		next = int64(f.data.Len()) + offset
+	default:
+		return 0, errors.New("invalid whence")
+	}
+	if next < 0 {
+		return 0, errors.New("negative position")
+	}
+	f.position = next
+	return next, nil
+}
+
+func (f *prefixThenErrorFile) Truncate(size int64) error {
+	if f.truncateFail != nil {
+		return f.truncateFail
+	}
+	if size < 0 || size > int64(f.data.Len()) {
+		return errors.New("invalid truncate")
+	}
+	data := append([]byte(nil), f.data.Bytes()[:size]...)
+	f.data.Reset()
+	_, _ = f.data.Write(data)
+	if f.position > size {
+		f.position = size
+	}
+	return nil
+}
+
+func (f *prefixThenErrorFile) Sync() error {
+	f.syncs++
+	if f.syncFail != nil {
+		return f.syncFail
+	}
+	return nil
+}
+
+func (f *prefixThenErrorFile) Close() error { return nil }
 
 func TestListRecoverableSortsNewestFirstAndExcludesTerminalRuns(t *testing.T) {
 	store := NewStore(t.TempDir())

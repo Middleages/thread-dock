@@ -95,7 +95,15 @@ func Parse(r io.Reader) (Config, error) {
 		gitBinary = defaultGitBinary
 	}
 	apiBase := strings.TrimRight(strings.TrimSpace(raw.APIBase), "/")
-	host := strings.TrimRight(strings.TrimSpace(raw.GHESHost), "/")
+	host := strings.TrimSpace(raw.GHESHost)
+	if host != "" {
+		if err := validateGHESHost(host); err != nil {
+			return Config{}, err
+		}
+		// A single root slash is cosmetic; paths such as /api/v3 are not
+		// valid GHES hosts and are rejected before this normalization.
+		host = strings.TrimSuffix(host, "/")
+	}
 	if apiBase == "" && host != "" {
 		apiBase = host + "/api/v3"
 	}
@@ -162,13 +170,13 @@ func validate(c Config) error {
 	if strings.TrimSpace(c.GHESHost) == "" {
 		return errors.New("ghesHost is required")
 	}
-	if err := validateHTTPURL(c.GHESHost, "ghesHost"); err != nil {
+	if err := validateGHESHost(c.GHESHost); err != nil {
 		return err
 	}
 	if strings.TrimSpace(c.APIBase) == "" {
 		return errors.New("apiBase is required")
 	}
-	if err := validateHTTPURL(c.APIBase, "apiBase"); err != nil {
+	if err := validateAPIBase(c.APIBase); err != nil {
 		return err
 	}
 	if strings.TrimSpace(c.APIVersion) == "" {
@@ -194,12 +202,37 @@ func validate(c Config) error {
 	return nil
 }
 
-func validateHTTPURL(value, field string) error {
-	u, err := url.Parse(value)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("%s must be an absolute HTTP(S) URL", field)
+func validateGHESHost(value string) error {
+	u, err := parseEndpoint(value, "ghesHost")
+	if err != nil {
+		return err
+	}
+	if u.Path != "" && u.Path != "/" {
+		return errors.New("ghesHost must not contain an API path")
 	}
 	return nil
+}
+
+func validateAPIBase(value string) error {
+	_, err := parseEndpoint(value, "apiBase")
+	return err
+}
+
+func parseEndpoint(value, field string) (*url.URL, error) {
+	u, err := url.Parse(value)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be an absolute HTTP(S) URL", field)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("%s must use http or https", field)
+	}
+	if u.Hostname() == "" {
+		return nil, fmt.Errorf("%s must include a hostname", field)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("%s must not contain userinfo, query, or fragment", field)
+	}
+	return u, nil
 }
 
 func defaultStateDir() string {

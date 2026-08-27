@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -135,31 +136,94 @@ func (s *Store) Append(ctx context.Context, runID contract.RunID, event Event) e
 	if err := os.MkdirAll(s.runDir(runID), 0700); err != nil {
 		return fmt.Errorf("create run directory: %w", err)
 	}
-	f, err := os.OpenFile(filepath.Join(s.runDir(runID), "events.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+	f, err := os.OpenFile(filepath.Join(s.runDir(runID), "events.jsonl"), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
 	if err != nil {
 		return fmt.Errorf("open event log: %w", err)
 	}
-	start, seekErr := f.Seek(0, io.SeekEnd)
-	if seekErr != nil {
-		_ = f.Close()
-		return fmt.Errorf("seek event log: %w", seekErr)
-	}
-	writeErr := writeComplete(f, encoded)
-	if writeErr != nil {
-		// A failed append must not leave a partial JSONL record behind.
-		_ = f.Truncate(start)
-	}
-	if writeErr == nil {
-		writeErr = f.Sync()
-	}
+	appendErr := appendEventFile(f, encoded)
 	closeErr := f.Close()
-	if writeErr != nil {
-		return fmt.Errorf("append event: %w", writeErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close event log: %w", closeErr)
+	if appendErr != nil || closeErr != nil {
+		return fmt.Errorf("append event: %w", errors.Join(appendErr, closeErr))
 	}
 	return nil
+}
+
+type eventFile interface {
+	io.Reader
+	io.Writer
+	io.Seeker
+	Truncate(size int64) error
+	Sync() error
+}
+
+// appendEventFile repairs an incomplete tail before appending. A record is
+// considered committed only after its complete JSON line has been synced.
+// On any write/sync failure, the file is rolled back and that rollback is
+// itself synced; errors are joined so callers can inspect every failure.
+func appendEventFile(f eventFile, record []byte) error {
+	if err := repairEventTail(f); err != nil {
+		return err
+	}
+	start, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("seek event log: %w", err)
+	}
+	if err := writeComplete(f, record); err != nil {
+		return rollbackEventAppend(f, start, err)
+	}
+	if err := f.Sync(); err != nil {
+		return rollbackEventAppend(f, start, err)
+	}
+	return nil
+}
+
+func repairEventTail(f eventFile) error {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek event log for validation: %w", err)
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("read event log for validation: %w", err)
+	}
+	validEnd := validJSONLinesEnd(data)
+	if validEnd != len(data) {
+		if err := f.Truncate(int64(validEnd)); err != nil {
+			return fmt.Errorf("truncate incomplete event tail: %w", err)
+		}
+		if err := f.Sync(); err != nil {
+			return fmt.Errorf("sync repaired event tail: %w", err)
+		}
+	}
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		return fmt.Errorf("seek event log after validation: %w", err)
+	}
+	return nil
+}
+
+func validJSONLinesEnd(data []byte) int {
+	end := 0
+	for end < len(data) {
+		relative := bytes.IndexByte(data[end:], '\n')
+		if relative < 0 {
+			return end
+		}
+		lineEnd := end + relative
+		line := data[end:lineEnd]
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
+		if len(bytes.TrimSpace(line)) == 0 || !json.Valid(line) {
+			return end
+		}
+		end = lineEnd + 1
+	}
+	return end
+}
+
+func rollbackEventAppend(f eventFile, start int64, original error) error {
+	rollbackErr := f.Truncate(start)
+	syncErr := f.Sync()
+	return errors.Join(original, rollbackErr, syncErr)
 }
 
 func writeComplete(w io.Writer, data []byte) error {
