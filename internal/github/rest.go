@@ -92,48 +92,62 @@ func (e *apiError) Error() string {
 }
 
 func (c *RESTClient) FindIssueBundle(ctx context.Context, repo Repository, marker string) (IssueBundle, bool, error) {
+	bundle, found, _, err := c.findIssueBundle(ctx, repo, marker)
+	return bundle, found, err
+}
+
+func (c *RESTClient) findIssueBundle(ctx context.Context, repo Repository, marker string) (IssueBundle, bool, map[string]Issue, error) {
 	var issues []Issue
 	path := fmt.Sprintf("/api/v3/repos/%s/%s/issues?state=all&per_page=100", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, &issues); err != nil {
-		return IssueBundle{}, false, err
+		return IssueBundle{}, false, nil, err
 	}
-	want := markerText(marker)
 	var parent Issue
+	children := make(map[string]Issue)
 	for _, issue := range issues {
-		if strings.Contains(issue.Body, want) {
+		role, key, ok := parseRoleMarker(issue.Body, marker)
+		if !ok {
+			continue
+		}
+		if role == "parent" && parent.Number == 0 {
 			parent = issue
-			break
+		} else if role == "child" {
+			children[key] = issue
 		}
 	}
 	if parent.Number == 0 {
-		return IssueBundle{}, false, nil
+		return IssueBundle{}, false, children, nil
 	}
-	// The marker is carried by every issue in the bundle, allowing a later
-	// listing response to recover the full bundle without another endpoint.
-	var children []Issue
+	orderedChildren := make([]Issue, 0, len(children))
 	for _, issue := range issues {
-		if issue.Number != parent.Number && strings.Contains(issue.Body, want) {
-			children = append(children, issue)
+		role, key, ok := parseRoleMarker(issue.Body, marker)
+		if ok && role == "child" && children[key].Number == issue.Number {
+			orderedChildren = append(orderedChildren, issue)
 		}
 	}
-	return IssueBundle{Parent: parent, Children: children}, true, nil
+	return IssueBundle{Parent: parent, Children: orderedChildren}, true, children, nil
 }
 
 func (c *RESTClient) CreateIssueBundle(ctx context.Context, repo Repository, task contract.TaskContract, marker string) (IssueBundle, error) {
-	if bundle, found, err := c.FindIssueBundle(ctx, repo, marker); err != nil {
-		return IssueBundle{}, err
-	} else if found {
-		return bundle, nil
-	}
-
-	parentBody := withMarker(task.Parent.Body, marker)
-	parent, err := c.createIssue(ctx, repo, task.Parent.Title, parentBody, task.Parent.Labels)
+	bundle, found, existingChildren, err := c.findIssueBundle(ctx, repo, marker)
 	if err != nil {
 		return IssueBundle{}, err
 	}
-	bundle := IssueBundle{Parent: parent}
+	if !found {
+		parent, createErr := c.createIssue(ctx, repo, task.Parent.Title, withRoleMarker(task.Parent.Body, marker, "parent", task.Parent.Key), task.Parent.Labels)
+		if createErr != nil {
+			return IssueBundle{}, createErr
+		}
+		bundle.Parent = parent
+	}
+	// Rebuild children in contract order while reconciling the stable key map.
+	bundle.Children = nil
 	for _, draft := range task.Children {
-		child, createErr := c.createIssue(ctx, repo, draft.Title, withMarker(draft.Body, marker), draft.Labels)
+		if child, ok := existingChildren[draft.Key]; ok {
+			bundle.Children = append(bundle.Children, child)
+			continue
+		}
+		child, createErr := c.createIssue(ctx, repo, draft.Title, withRoleMarker(draft.Body, marker, "child", draft.Key), draft.Labels)
 		if createErr != nil {
 			return IssueBundle{}, createErr
 		}
@@ -165,11 +179,11 @@ func (c *RESTClient) CreateDraftPR(ctx context.Context, repo Repository, req Dra
 		Base  string `json:"base"`
 		Draft bool   `json:"draft"`
 	}{Title: req.Title, Body: req.Body, Head: req.Head, Base: req.Base, Draft: true}
-	var pr PullRequest
-	if err := c.doJSON(ctx, http.MethodPost, path, payload, &pr); err != nil {
+	var wire pullRequestWire
+	if err := c.doJSON(ctx, http.MethodPost, path, payload, &wire); err != nil {
 		return PullRequest{}, err
 	}
-	return pr, nil
+	return wire.toPullRequest(), nil
 }
 
 func (c *RESTClient) UpdateIssueState(ctx context.Context, repo Repository, number int, state string) error {
@@ -181,11 +195,31 @@ func (c *RESTClient) UpdateIssueState(ctx context.Context, repo Repository, numb
 
 func (c *RESTClient) GetPullRequest(ctx context.Context, repo Repository, number int) (PullRequest, error) {
 	path := fmt.Sprintf("/api/v3/repos/%s/%s/pulls/%d", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
-	var pr PullRequest
-	if err := c.doJSON(ctx, http.MethodGet, path, nil, &pr); err != nil {
+	var wire pullRequestWire
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &wire); err != nil {
 		return PullRequest{}, err
 	}
-	return pr, nil
+	return wire.toPullRequest(), nil
+}
+
+type pullRequestWire struct {
+	Number  int    `json:"number"`
+	NodeID  string `json:"node_id"`
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	HTMLURL string `json:"html_url"`
+	State   string `json:"state"`
+	Draft   bool   `json:"draft"`
+	Head    struct {
+		Ref string `json:"ref"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+func (w pullRequestWire) toPullRequest() PullRequest {
+	return PullRequest{Number: w.Number, NodeID: w.NodeID, Title: w.Title, Body: w.Body, HTMLURL: w.HTMLURL, State: w.State, Draft: w.Draft, Head: w.Head.Ref, Base: w.Base.Ref}
 }
 
 func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, issueNodeID, status string) error {
@@ -194,6 +228,30 @@ func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, i
 	if projectID == "" || project.StatusFieldID == "" || optionID == "" || issueNodeID == "" {
 		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status requires project, field, option, and item IDs"}
 	}
+	const addMutation = `mutation AddProjectItem($projectId: ID!, $contentId: ID!) {
+  addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) { item { id } }
+}`
+	addPayload := struct {
+		Query     string `json:"query"`
+		Variables struct {
+			ProjectID string `json:"projectId"`
+			ContentID string `json:"contentId"`
+		} `json:"variables"`
+	}{Query: addMutation}
+	addPayload.Variables.ProjectID = projectID
+	addPayload.Variables.ContentID = issueNodeID
+	var addResponse graphQLAddResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/graphql", addPayload, &addResponse); err != nil {
+		return err
+	}
+	if err := addResponse.graphQLError(c.token); err != nil {
+		return err
+	}
+	itemID := addResponse.Data.Add.Item.ID
+	if itemID == "" {
+		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project item was not returned"}
+	}
+
 	const mutation = `mutation UpdateProjectStatus($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) {
   updateProjectV2ItemFieldValue(input: {projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: $value}) {
     projectV2Item { id }
@@ -211,27 +269,55 @@ func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, i
 		} `json:"variables"`
 	}{Query: mutation}
 	payload.Variables.ProjectID = projectID
-	payload.Variables.ItemID = issueNodeID
+	payload.Variables.ItemID = itemID
 	payload.Variables.FieldID = project.StatusFieldID
 	payload.Variables.Value.SingleSelectOptionID = optionID
-	var response struct {
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
+	var response graphQLResponse
 	if err := c.doJSON(ctx, http.MethodPost, "/api/graphql", payload, &response); err != nil {
 		return err
 	}
-	if len(response.Errors) > 0 {
-		return &apiError{StatusCode: http.StatusUnprocessableEntity, Message: sanitize(response.Errors[0].Message, c.token)}
+	return response.graphQLError(c.token)
+}
+
+type graphQLErrorItem struct {
+	Message string `json:"message"`
+}
+
+type graphQLResponse struct {
+	Errors []graphQLErrorItem `json:"errors"`
+}
+
+type graphQLAddResponse struct {
+	Data struct {
+		Add struct {
+			Item struct {
+				ID string `json:"id"`
+			} `json:"item"`
+		} `json:"addProjectV2ItemById"`
+	} `json:"data"`
+	Errors []graphQLErrorItem `json:"errors"`
+}
+
+func (r graphQLResponse) graphQLError(token string) error {
+	if len(r.Errors) > 0 {
+		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: sanitize(r.Errors[0].Message, token)}
 	}
 	return nil
 }
 
-func markerText(marker string) string { return "<!-- threaddock:" + marker + " -->" }
+func (r graphQLAddResponse) graphQLError(token string) error {
+	if len(r.Errors) > 0 {
+		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: sanitize(r.Errors[0].Message, token)}
+	}
+	return nil
+}
 
-func withMarker(body, marker string) string {
-	mark := markerText(marker)
+func roleMarker(marker, role, key string) string {
+	return "<!-- threaddock:" + marker + ":role=" + role + ":key=" + key + " -->"
+}
+
+func withRoleMarker(body, marker, role, key string) string {
+	mark := roleMarker(marker, role, key)
 	if strings.Contains(body, mark) {
 		return body
 	}
@@ -239,6 +325,26 @@ func withMarker(body, marker string) string {
 		return mark
 	}
 	return body + "\n\n" + mark
+}
+
+func parseRoleMarker(body, marker string) (role, key string, ok bool) {
+	prefix := "<!-- threaddock:" + marker + ":role="
+	start := strings.Index(body, prefix)
+	if start < 0 {
+		return "", "", false
+	}
+	rest := body[start+len(prefix):]
+	roleEnd := strings.Index(rest, ":key=")
+	if roleEnd < 0 {
+		return "", "", false
+	}
+	role = rest[:roleEnd]
+	keyEnd := strings.Index(rest[roleEnd+len(":key="):], " -->")
+	if keyEnd < 0 {
+		return "", "", false
+	}
+	key = rest[roleEnd+len(":key=") : roleEnd+len(":key=")+keyEnd]
+	return role, key, role == "parent" || role == "child"
 }
 
 func (c *RESTClient) doJSON(ctx context.Context, method, path string, body any, out any) error {
@@ -292,6 +398,9 @@ func (c *RESTClient) statusError(resp *http.Response, data []byte) error {
 		message = payload.Message
 	}
 	message = sanitize(message, c.token)
+	if resp.StatusCode == http.StatusForbidden && (strings.TrimSpace(resp.Header.Get("Retry-After")) != "" || strings.TrimSpace(resp.Header.Get("X-RateLimit-Remaining")) == "0") {
+		return &TemporaryError{StatusCode: resp.StatusCode, Message: message, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
+	}
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return &AuthError{StatusCode: resp.StatusCode, Message: message}
