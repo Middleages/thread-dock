@@ -3,6 +3,7 @@ package contract_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -12,10 +13,37 @@ import (
 	"thread-dock/internal/testfixture"
 )
 
-func TestReadRejectsUnknownTopLevelField(t *testing.T) {
-	_, err := contract.Read(strings.NewReader(`{"version":1,"unexpected":true}`))
-	if err == nil || !strings.Contains(err.Error(), "unexpected") {
-		t.Fatalf("err = %v", err)
+func TestReadMapsStructuralJSONErrorsToInvalidJSONDiagnostic(t *testing.T) {
+	validJSON := mustValidJSON(t)
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{name: "malformed JSON", data: []byte(`{"version":`)},
+		{name: "unknown field", data: []byte(`{"version":1,"unexpected":true}`)},
+		{name: "trailing JSON document", data: append(append([]byte(nil), validJSON...), '\n', '{', '}')},
+		{name: "trailing garbage", data: append(append([]byte(nil), validJSON...), '\n', 'x')},
+	}
+	want := contract.Violation{
+		Code:    contract.CodeInvalidJSON,
+		Field:   "$",
+		Message: contract.InvalidJSONMessage,
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := contract.Read(bytes.NewReader(tt.data))
+			var diagnosticErr contract.DiagnosticError
+			if !errors.As(err, &diagnosticErr) {
+				t.Fatalf("err = %T %v", err, err)
+			}
+			if got := diagnosticErr.Violation; got != want {
+				t.Fatalf("violation = %#v, want %#v", got, want)
+			}
+			if got := err.Error(); got != "[invalid_json] 작업 계약 JSON 형식이 올바르지 않습니다" {
+				t.Fatalf("error = %q", got)
+			}
+		})
 	}
 }
 
@@ -56,21 +84,6 @@ func TestReadRejectsInvalidContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := contract.Read(&buf); err == nil || !strings.Contains(err.Error(), "path_overlap") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestReadRejectsTrailingJSONDocument(t *testing.T) {
-	data := mustValidJSON(t)
-	data = append(data, '\n', '{', '}')
-	if _, err := contract.Read(bytes.NewReader(data)); err == nil || !strings.Contains(err.Error(), "JSON") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestReadRejectsTrailingNonWhitespace(t *testing.T) {
-	data := append(mustValidJSON(t), '\n', 'x')
-	if _, err := contract.Read(bytes.NewReader(data)); err == nil || !strings.Contains(err.Error(), "JSON") {
 		t.Fatalf("err = %v", err)
 	}
 }

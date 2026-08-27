@@ -1,8 +1,8 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +13,6 @@ import (
 type validationResult struct {
 	Valid      bool                 `json:"valid"`
 	Violations []contract.Violation `json:"violations,omitempty"`
-	Error      string               `json:"error,omitempty"`
 }
 
 func runContract(args []string, stdout, stderr io.Writer) int {
@@ -22,13 +21,12 @@ func runContract(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	file, err := os.Open(args[1])
+	data, err := os.ReadFile(args[1])
 	if err != nil {
-		return reportContractReadError(args[0], stdout, stderr, err)
+		return reportContractReadError(args[0], stdout, stderr, contract.NewUnreadableError(err))
 	}
-	defer file.Close()
 
-	c, err := contract.Read(file)
+	c, err := contract.Read(bytes.NewReader(data))
 	if err != nil {
 		return reportContractReadError(args[0], stdout, stderr, err)
 	}
@@ -41,19 +39,18 @@ func runContract(args []string, stdout, stderr io.Writer) int {
 }
 
 func reportContractReadError(command string, stdout, stderr io.Writer, err error) int {
+	violations, ok := contract.ErrorViolations(err)
+	if !ok {
+		violations = []contract.Violation{contract.NewUnreadableError(err).Violation}
+	}
 	if command == "validate" {
-		var validationErr contract.ValidationError
-		result := validationResult{Valid: false, Error: err.Error()}
-		if errors.As(err, &validationErr) {
-			result.Violations = validationErr.Violations
-			result.Error = ""
-		}
-		if writeValidation(stdout, result) != 0 {
+		if writeValidation(stdout, validationResult{Valid: false, Violations: violations}) != 0 {
 			return 1
 		}
 		return 1
 	}
-	fmt.Fprintln(stderr, err)
+	diagnostic := violations[0]
+	fmt.Fprintf(stderr, "[%s] %s\n", diagnostic.Code, diagnostic.Message)
 	return 1
 }
 

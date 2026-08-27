@@ -19,6 +19,34 @@ func TestValidateRejectsOverlappingOwnedPaths(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsTaskPathsOverlappingProtectedPaths(t *testing.T) {
+	tests := []struct {
+		name        string
+		allowedPath string
+	}{
+		{name: "exact", allowedPath: "migrations/**"},
+		{name: "task parent prefix", allowedPath: ".github/**"},
+		{name: "protected parent prefix", allowedPath: "deployment/services/**"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := validContract()
+			c.Tasks[0].AllowedPaths = []string{tt.allowedPath}
+
+			got := Validate(c)
+			if !hasViolation(got, "path_overlap", "tasks[0].allowedPaths") {
+				t.Fatalf("violations = %#v", got)
+			}
+			for _, violation := range got {
+				if violation.Code == "path_overlap" && !containsHangul(violation.Message) {
+					t.Fatalf("non-Korean message = %#v", violation)
+				}
+			}
+		})
+	}
+}
+
 func TestValidateRejectsMainAsBuilderBranch(t *testing.T) {
 	c := validContract()
 	c.Tasks[0].Branch = "main"

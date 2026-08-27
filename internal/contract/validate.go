@@ -127,7 +127,7 @@ func validateTasks(violations *[]Violation, c TaskContract) {
 		})
 	}
 
-	validatePathOwnership(violations, c.Tasks)
+	validatePathOwnership(violations, c.Tasks, c.Protected)
 }
 
 func requireString(violations *[]Violation, field, value string) {
@@ -217,7 +217,7 @@ func hasDependencyCycle(tasks []Task) bool {
 	return false
 }
 
-func validatePathOwnership(violations *[]Violation, tasks []Task) {
+func validatePathOwnership(violations *[]Violation, tasks []Task, protectedPaths []string) {
 	for i, left := range tasks {
 		for j := i + 1; j < len(tasks); j++ {
 			for _, leftPath := range left.AllowedPaths {
@@ -229,6 +229,17 @@ func validatePathOwnership(violations *[]Violation, tasks []Task) {
 							Message: fmt.Sprintf("경로 %q가 Task %q의 경로 %q와 겹칩니다", rightPath, left.ID, leftPath),
 						})
 					}
+				}
+			}
+		}
+		for _, allowedPath := range left.AllowedPaths {
+			for _, protectedPath := range protectedPaths {
+				if pathsOverlap(allowedPath, protectedPath) {
+					*violations = append(*violations, Violation{
+						Code:    "path_overlap",
+						Field:   fmt.Sprintf("tasks[%d].allowedPaths", i),
+						Message: fmt.Sprintf("허용 경로 %q가 보호 경로 %q와 겹칩니다", allowedPath, protectedPath),
+					})
 				}
 			}
 		}
