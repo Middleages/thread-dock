@@ -60,6 +60,37 @@ func TestReadRejectsInvalidContract(t *testing.T) {
 	}
 }
 
+func TestReadRejectsTrailingJSONDocument(t *testing.T) {
+	data := mustValidJSON(t)
+	data = append(data, '\n', '{', '}')
+	if _, err := contract.Read(bytes.NewReader(data)); err == nil || !strings.Contains(err.Error(), "JSON") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReadRejectsTrailingNonWhitespace(t *testing.T) {
+	data := append(mustValidJSON(t), '\n', 'x')
+	if _, err := contract.Read(bytes.NewReader(data)); err == nil || !strings.Contains(err.Error(), "JSON") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReadAcceptsTrailingWhitespace(t *testing.T) {
+	data := append(mustValidJSON(t), ' ', '\n', '\t')
+	if _, err := contract.Read(bytes.NewReader(data)); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func mustValidJSON(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := contract.Write(&buf, testfixture.ValidContract()); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
 func TestValidFixtureMatchesCanonicalContract(t *testing.T) {
 	data, err := os.ReadFile("../../testdata/contracts/valid.json")
 	if err != nil {

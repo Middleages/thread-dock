@@ -29,6 +29,10 @@ func Read(r io.Reader) (TaskContract, error) {
 	if err := dec.Decode(&c); err != nil {
 		return c, fmt.Errorf("작업 계약 JSON: %w", err)
 	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return c, fmt.Errorf("작업 계약 JSON: 문서 뒤 추가 내용이 허용되지 않습니다")
+	}
 	if v := Validate(c); len(v) > 0 {
 		return c, ValidationError{Violations: v}
 	}
