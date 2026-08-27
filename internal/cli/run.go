@@ -13,6 +13,13 @@ func Run(_ context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "thread-dock %s contract=%d\n", version.Build, version.Contract)
 		return 0
 	}
-	fmt.Fprintln(stderr, "사용법: agentctl version | contract <validate|preview> <file>")
+	if len(args) > 0 && args[0] == "contract" {
+		return runContract(args[1:], stdout, stderr)
+	}
+	printUsage(stderr)
 	return 2
+}
+
+func printUsage(stderr io.Writer) {
+	fmt.Fprintln(stderr, "사용법: agentctl version | contract <validate|preview> <file>")
 }
