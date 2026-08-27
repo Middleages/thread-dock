@@ -7,8 +7,9 @@
 ## 사전 조건
 
 - 저장소 루트에서 실행합니다.
-- Go `1.27.0`을 사용합니다. 아래 명령은 이 저장소에서 고정된 도구체인을
-  우선 사용하도록 `PATH`를 설정합니다.
+- 실행 전에 `go version`이 Go `1.27.0`을 보고하는지 확인합니다(예:
+  `go version go1.27.0 linux/amd64`). 다른 버전이면 실행을 거부하고 Go
+  `1.27.0`을 먼저 설치하거나 선택합니다.
 - 기준 입력은 저장소의 `testdata/contracts/valid.json`입니다.
 
 ## 실행
@@ -16,7 +17,6 @@
 깨끗한 셸에서 다음 명령을 순서대로 실행합니다.
 
 ```bash
-export PATH="/home/appuser/.local/share/threaddock-toolchains/go1.27.0/bin:$PATH"
 make check
 go run ./cmd/agentctl contract validate testdata/contracts/valid.json
 go run ./cmd/agentctl contract preview testdata/contracts/valid.json
@@ -39,6 +39,7 @@ go run ./cmd/agentctl contract preview testdata/contracts/valid.json
 승인 후 Agent가 구현·독립 확인·자동 검사·일반 변경의 기본 브랜치 반영까지 진행합니다.
 ```
 
-이 Foundation increment에서는 GHES 쓰기를 수행하지 않습니다. 실행 전후
-`git status --short`를 비교해 저장소 밖 파일과 저장소 파일이 변경되지 않았는지
-확인하십시오.
+이 Foundation increment의 세 명령에는 GHES/API 쓰기 경로가 설계되어 있지
+않습니다. 실행 전후 `git status --short`를 비교하면 저장소의 작업 트리가
+깨끗한지 확인할 수 있지만, 이 확인만으로 저장소 밖 파일 시스템 상태를
+검증할 수는 없습니다.
