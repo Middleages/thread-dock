@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "parent": {
+    "key": "parent",
+    "title": "결제 실패 재시도 개선",
+    "body": "실패한 결제를 안전하게 재시도한다.",
+    "acceptanceCriteria": [
+      "중복 결제가 없다"
+    ],
+    "labels": null
+  },
+  "children": [
+    {
+      "key": "api",
+      "title": "재시도 정책 구현",
+      "body": "API 변경",
+      "acceptanceCriteria": [
+        "재시도 한도를 지킨다"
+      ],
+      "labels": null
+    },
+    {
+      "key": "tests",
+      "title": "회귀 검증",
+      "body": "집중 회귀 검사",
+      "acceptanceCriteria": [
+        "중복 결제를 검증한다"
+      ],
+      "labels": null
+    }
+  ],
+  "repository": {
+    "owner": "platform",
+    "name": "payments-api",
+    "defaultBranch": "main"
+  },
+  "baseCommit": "0123456789abcdef0123456789abcdef01234567",
+  "tasks": [
+    {
+      "id": "api",
+      "issueKey": "api",
+      "owner": "api-builder",
+      "role": "builder",
+      "branch": "agent/api",
+      "allowedPaths": [
+        "src/payments/**"
+      ],
+      "dependsOn": null,
+      "acceptanceCriteria": [
+        "재시도 한도를 지킨다"
+      ],
+      "verification": [
+        "go test ./internal/payments"
+      ]
+    },
+    {
+      "id": "tests",
+      "issueKey": "tests",
+      "owner": "test-builder",
+      "role": "builder",
+      "branch": "agent/tests",
+      "allowedPaths": [
+        "src/payments/**"
+      ],
+      "dependsOn": null,
+      "acceptanceCriteria": [
+        "중복 결제를 검증한다"
+      ],
+      "verification": [
+        "go test ./tests/payments"
+      ]
+    }
+  ],
+  "protectedPaths": [
+    "migrations/**",
+    "authentication/**",
+    ".github/workflows/**",
+    "deployment/**"
+  ],
+  "verification": [
+    "go test ./...",
+    "go vet ./..."
+  ]
+}
