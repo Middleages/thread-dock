@@ -13,7 +13,7 @@ func Validate(c TaskContract) []Violation {
 		violations = append(violations, Violation{
 			Code:    "required",
 			Field:   "version",
-			Message: fmt.Sprintf("must be %d", CurrentVersion),
+			Message: fmt.Sprintf("계약 버전은 %d이어야 합니다", CurrentVersion),
 		})
 	}
 
@@ -28,21 +28,18 @@ func Validate(c TaskContract) []Violation {
 		violations = append(violations, Violation{
 			Code:    "unsafe_base",
 			Field:   "baseCommit",
-			Message: "must be a 40-character lowercase hexadecimal commit SHA",
+			Message: "기준 커밋은 40자리 소문자 16진수 SHA여야 합니다",
 		})
 	}
 
 	validateTasks(&violations, c)
-	requireStrings(&violations, "protectedPaths", c.Protected)
+	validateProtectedPaths(&violations, c.Protected)
 	requireStrings(&violations, "verification", c.Verification)
 
 	return violations
 }
 
 func validateIssues(violations *[]Violation, field string, issues []IssueDraft) {
-	if len(issues) == 0 {
-		*violations = append(*violations, requiredViolation(field))
-	}
 	for i, issue := range issues {
 		validateIssue(violations, fmt.Sprintf("%s[%d]", field, i), issue)
 	}
@@ -67,7 +64,7 @@ func validateTasks(violations *[]Violation, c TaskContract) {
 			*violations = append(*violations, Violation{
 				Code:    "duplicate",
 				Field:   "issues",
-				Message: fmt.Sprintf("issue key %q is duplicated", issue.Key),
+				Message: fmt.Sprintf("Issue 키 %q가 중복됩니다", issue.Key),
 			})
 		}
 		issueKeys[issue.Key] = struct{}{}
@@ -78,6 +75,7 @@ func validateTasks(violations *[]Violation, c TaskContract) {
 		field := fmt.Sprintf("tasks[%d]", i)
 		requireString(violations, field+".id", task.ID)
 		requireString(violations, field+".issueKey", task.IssueKey)
+		requireString(violations, field+".owner", task.Owner)
 		requireString(violations, field+".role", task.Role)
 		requireString(violations, field+".branch", task.Branch)
 		requireStrings(violations, field+".allowedPaths", task.AllowedPaths)
@@ -88,7 +86,7 @@ func validateTasks(violations *[]Violation, c TaskContract) {
 			*violations = append(*violations, Violation{
 				Code:    "duplicate",
 				Field:   field + ".id",
-				Message: fmt.Sprintf("task ID %q is duplicated", task.ID),
+				Message: fmt.Sprintf("Task ID %q가 중복됩니다", task.ID),
 			})
 		}
 		taskIDs[task.ID] = struct{}{}
@@ -97,14 +95,14 @@ func validateTasks(violations *[]Violation, c TaskContract) {
 			*violations = append(*violations, Violation{
 				Code:    "missing_dependency",
 				Field:   field + ".issueKey",
-				Message: fmt.Sprintf("issue key %q does not exist", task.IssueKey),
+				Message: fmt.Sprintf("Issue 키 %q가 존재하지 않습니다", task.IssueKey),
 			})
 		}
 		if strings.EqualFold(task.Role, "builder") && (task.Branch == "main" || task.Branch == c.Repository.DefaultBranch) {
 			*violations = append(*violations, Violation{
 				Code:    "unsafe_base",
 				Field:   field + ".branch",
-				Message: "builder branches must not use the default branch",
+				Message: "Builder 브랜치는 기본 브랜치를 사용할 수 없습니다",
 			})
 		}
 	}
@@ -115,7 +113,7 @@ func validateTasks(violations *[]Violation, c TaskContract) {
 				*violations = append(*violations, Violation{
 					Code:    "missing_dependency",
 					Field:   fmt.Sprintf("tasks[%d].dependsOn", i),
-					Message: fmt.Sprintf("task dependency %q does not exist", dependency),
+					Message: fmt.Sprintf("Task 의존성 %q가 존재하지 않습니다", dependency),
 				})
 			}
 		}
@@ -125,7 +123,7 @@ func validateTasks(violations *[]Violation, c TaskContract) {
 		*violations = append(*violations, Violation{
 			Code:    "missing_dependency",
 			Field:   "tasks.dependsOn",
-			Message: "task dependencies must be acyclic",
+			Message: "Task 의존성은 순환할 수 없습니다",
 		})
 	}
 
@@ -149,7 +147,24 @@ func requireStrings(violations *[]Violation, field string, values []string) {
 }
 
 func requiredViolation(field string) Violation {
-	return Violation{Code: "required", Field: field, Message: "is required"}
+	return Violation{Code: "required", Field: field, Message: "필수 항목입니다"}
+}
+
+func validateProtectedPaths(violations *[]Violation, paths []string) {
+	requireStrings(violations, "protectedPaths", paths)
+	present := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		present[path] = struct{}{}
+	}
+	for _, requiredPath := range defaultProtectedPaths {
+		if _, ok := present[requiredPath]; !ok {
+			*violations = append(*violations, Violation{
+				Code:    "required",
+				Field:   "protectedPaths",
+				Message: fmt.Sprintf("보호 경로 %q가 필요합니다", requiredPath),
+			})
+		}
+	}
 }
 
 func isLowerHexCommit(value string) bool {
@@ -211,7 +226,7 @@ func validatePathOwnership(violations *[]Violation, tasks []Task) {
 						*violations = append(*violations, Violation{
 							Code:    "path_overlap",
 							Field:   fmt.Sprintf("tasks[%d].allowedPaths", j),
-							Message: fmt.Sprintf("path %q overlaps task %q path %q", rightPath, left.ID, leftPath),
+							Message: fmt.Sprintf("경로 %q가 Task %q의 경로 %q와 겹칩니다", rightPath, left.ID, leftPath),
 						})
 					}
 				}

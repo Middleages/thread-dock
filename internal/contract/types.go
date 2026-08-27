@@ -36,12 +36,25 @@ type RepositoryRef struct {
 type Task struct {
 	ID                 string   `json:"id"`
 	IssueKey           string   `json:"issueKey"`
+	Owner              string   `json:"owner"`
 	Role               string   `json:"role"`
 	Branch             string   `json:"branch"`
 	AllowedPaths       []string `json:"allowedPaths"`
 	DependsOn          []string `json:"dependsOn"`
 	AcceptanceCriteria []string `json:"acceptanceCriteria"`
 	Verification       []string `json:"verification"`
+}
+
+var defaultProtectedPaths = []string{
+	"migrations/**",
+	"authentication/**",
+	".github/workflows/**",
+	"deployment/**",
+}
+
+// DefaultProtectedPaths returns a copy of the paths that every task contract protects.
+func DefaultProtectedPaths() []string {
+	return append([]string(nil), defaultProtectedPaths...)
 }
 
 type Violation struct {

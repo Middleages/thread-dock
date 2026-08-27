@@ -35,9 +35,10 @@ func TestValidateRejectsMissingRequiredContractValues(t *testing.T) {
 		mutate func(*TaskContract)
 	}{
 		{"parent key", func(c *TaskContract) { c.Parent.Key = "" }},
-		{"children", func(c *TaskContract) { c.Children = nil }},
 		{"repository owner", func(c *TaskContract) { c.Repository.Owner = "" }},
 		{"base commit", func(c *TaskContract) { c.BaseCommit = "" }},
+		{"task owner", func(c *TaskContract) { c.Tasks[0].Owner = "" }},
+		{"task role", func(c *TaskContract) { c.Tasks[0].Role = "" }},
 		{"task allowed paths", func(c *TaskContract) { c.Tasks[0].AllowedPaths = nil }},
 		{"contract verification", func(c *TaskContract) { c.Verification = nil }},
 	}
@@ -51,6 +52,17 @@ func TestValidateRejectsMissingRequiredContractValues(t *testing.T) {
 				t.Fatalf("violations = %#v", got)
 			}
 		})
+	}
+}
+
+func TestValidateAllowsContractWithoutChildIssues(t *testing.T) {
+	c := validContract()
+	c.Children = nil
+	c.Tasks = c.Tasks[:1]
+	c.Tasks[0].IssueKey = "parent"
+
+	if got := Validate(c); len(got) != 0 {
+		t.Fatalf("violations = %#v", got)
 	}
 }
 
@@ -123,6 +135,68 @@ func TestValidateTreatsOnlyDirectoryPrefixesAsOverlapping(t *testing.T) {
 	}
 }
 
+func TestDefaultProtectedPathsIsCopySafe(t *testing.T) {
+	first := DefaultProtectedPaths()
+	first[0] = "replaced/**"
+
+	second := DefaultProtectedPaths()
+	if second[0] != "migrations/**" {
+		t.Fatalf("protected paths = %#v", second)
+	}
+}
+
+func TestValidateRequiresAllDefaultProtectedPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		protected []string
+	}{
+		{"omitted", nil},
+		{"partial", DefaultProtectedPaths()[:3]},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := validContract()
+			c.Protected = tt.protected
+
+			if got := Validate(c); !hasViolation(got, "required", "protectedPaths") {
+				t.Fatalf("violations = %#v", got)
+			}
+		})
+	}
+}
+
+func TestValidateUsesKoreanMessagesWithStableCodes(t *testing.T) {
+	tests := []struct {
+		name     string
+		mutate   func(*TaskContract)
+		wantCode string
+	}{
+		{"required", func(c *TaskContract) { c.Tasks[0].Owner = "" }, "required"},
+		{"duplicate", func(c *TaskContract) { c.Children[1].Key = "api" }, "duplicate"},
+		{"path overlap", func(c *TaskContract) { c.Tasks[1].AllowedPaths = []string{"src/payments/**"} }, "path_overlap"},
+		{"unsafe base", func(c *TaskContract) { c.Tasks[0].Branch = "main" }, "unsafe_base"},
+		{"missing dependency", func(c *TaskContract) { c.Tasks[1].DependsOn = []string{"missing"} }, "missing_dependency"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := validContract()
+			tt.mutate(&c)
+			got := Validate(c)
+
+			if !hasCode(got, tt.wantCode) {
+				t.Fatalf("violations = %#v", got)
+			}
+			for _, violation := range got {
+				if !containsHangul(violation.Message) {
+					t.Fatalf("non-Korean message = %#v", violation)
+				}
+			}
+		})
+	}
+}
+
 func validContract() TaskContract {
 	return TaskContract{
 		Version: 1,
@@ -134,10 +208,10 @@ func validContract() TaskContract {
 		Repository: RepositoryRef{Owner: "platform", Name: "payments-api", DefaultBranch: "main"},
 		BaseCommit: "0123456789abcdef0123456789abcdef01234567",
 		Tasks: []Task{
-			{ID: "api", IssueKey: "api", Role: "builder", Branch: "agent/api", AllowedPaths: []string{"src/payments/**"}, AcceptanceCriteria: []string{"재시도 한도를 지킨다"}, Verification: []string{"go test ./internal/payments"}},
-			{ID: "tests", IssueKey: "tests", Role: "builder", Branch: "agent/tests", AllowedPaths: []string{"tests/payments/**"}, AcceptanceCriteria: []string{"중복 결제를 검증한다"}, Verification: []string{"go test ./tests/payments"}},
+			{ID: "api", IssueKey: "api", Owner: "api-builder", Role: "builder", Branch: "agent/api", AllowedPaths: []string{"src/payments/**"}, AcceptanceCriteria: []string{"재시도 한도를 지킨다"}, Verification: []string{"go test ./internal/payments"}},
+			{ID: "tests", IssueKey: "tests", Owner: "test-builder", Role: "builder", Branch: "agent/tests", AllowedPaths: []string{"tests/payments/**"}, AcceptanceCriteria: []string{"중복 결제를 검증한다"}, Verification: []string{"go test ./tests/payments"}},
 		},
-		Protected:    []string{"migrations/**", "authentication/**", ".github/workflows/**", "deployment/**"},
+		Protected:    DefaultProtectedPaths(),
 		Verification: []string{"go test ./...", "go vet ./..."},
 	}
 }
@@ -145,6 +219,24 @@ func validContract() TaskContract {
 func hasCode(v []Violation, code string) bool {
 	for _, item := range v {
 		if item.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func hasViolation(v []Violation, code, field string) bool {
+	for _, item := range v {
+		if item.Code == code && item.Field == field {
+			return true
+		}
+	}
+	return false
+}
+
+func containsHangul(value string) bool {
+	for _, char := range value {
+		if char >= '\uac00' && char <= '\ud7a3' {
 			return true
 		}
 	}

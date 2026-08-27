@@ -18,10 +18,10 @@ func ValidContract() contract.TaskContract {
 		Repository: contract.RepositoryRef{Owner: "platform", Name: "payments-api", DefaultBranch: "main"},
 		BaseCommit: "0123456789abcdef0123456789abcdef01234567",
 		Tasks: []contract.Task{
-			{ID: "api", IssueKey: "api", Role: "builder", Branch: "agent/api", AllowedPaths: []string{"src/payments/**"}, AcceptanceCriteria: []string{"재시도 한도를 지킨다"}, Verification: []string{"go test ./internal/payments"}},
-			{ID: "tests", IssueKey: "tests", Role: "builder", Branch: "agent/tests", AllowedPaths: []string{"tests/payments/**"}, AcceptanceCriteria: []string{"중복 결제를 검증한다"}, Verification: []string{"go test ./tests/payments"}},
+			{ID: "api", IssueKey: "api", Owner: "api-builder", Role: "builder", Branch: "agent/api", AllowedPaths: []string{"src/payments/**"}, AcceptanceCriteria: []string{"재시도 한도를 지킨다"}, Verification: []string{"go test ./internal/payments"}},
+			{ID: "tests", IssueKey: "tests", Owner: "test-builder", Role: "builder", Branch: "agent/tests", AllowedPaths: []string{"tests/payments/**"}, AcceptanceCriteria: []string{"중복 결제를 검증한다"}, Verification: []string{"go test ./tests/payments"}},
 		},
-		Protected:    []string{"migrations/**", "authentication/**", ".github/workflows/**", "deployment/**"},
+		Protected:    contract.DefaultProtectedPaths(),
 		Verification: []string{"go test ./...", "go vet ./..."},
 	}
 }
