@@ -1,0 +1,127 @@
+# ThreadDock
+
+개발자의 초기 요청을 구체적인 작업으로 정제하고, GitHub에 기록하며, 로컬 에이전트가 구현과 검증을 수행하는 개발 운영 문맥이다. 배포·관측 체계는 후속 범위이며 개인 비서 체계는 이 문맥에 포함하지 않는다.
+
+## Language
+
+**Operator**:
+깊은 Git·인프라 지식을 전제로 하지 않고 작업 인터뷰 승인, 실행 관찰과 production 배포 결정을 수행하는 사용자.
+_Avoid_: 시스템 관리자, Agent
+
+**개발 요청 (Development Request)**:
+개발자가 구현하려는 기능이나 수정하려는 버그를 아직 정제하지 않은 형태로 설명한 것.
+_Avoid_: Task, Issue, 요구사항
+
+**작업 인터뷰 (Work Interview)**:
+에이전트가 개발 요청의 목적, 범위, 수용 조건과 위험을 사용자와 함께 명확하게 만드는 대화.
+_Avoid_: 프롬프트 보완, 요구사항 입력
+
+**업무 기록 (Work Record)**:
+작업의 목적, 결정, 진행 상태와 결과를 GitHub Issue와 Pull Request에 지속적으로 남긴 기록.
+_Avoid_: 실행 상태, 에이전트 상태
+
+**실행 세션 (Execution Session)**:
+개발자 PC에서 특정 작업을 수행하는 에이전트 프로세스와 격리된 작업 공간의 일시적인 실행 단위.
+_Avoid_: 업무 상태, Issue
+
+**감독형 자율 실행 (Supervised Autonomous Run)**:
+사용자가 작업 인터뷰 결과와 Issue 묶음을 승인하면 에이전트가 구현, 검증, 리뷰와 main 병합까지 수행하고 사용자가 사후에 결과를 확인하는 실행 방식.
+_Avoid_: 완전 무인 운영, 수동 실행
+
+## Work Structure
+
+**Parent Issue**:
+하나의 개발 요청이 의도한 전체 결과와 공통 수용 조건을 보존하는 최상위 업무 기록. 최종 Pull Request 하나와 대응한다.
+_Avoid_: Epic, 실행 Task
+
+**Child Issue**:
+Parent Issue의 결과를 위해 독립적으로 구현하고 검증할 수 있으며 별도 추적 가치가 있는 작업 단위.
+_Avoid_: 세부 실행 단계, 체크리스트 항목
+
+## Agent Roles
+
+**Orchestrator**:
+작업 인터뷰 결과를 Issue 구조와 실행 순서로 만들고 각 실행 세션에 작업을 배정하는 역할.
+_Avoid_: Control Agent, Builder
+
+**Builder**:
+할당된 Child Issue 또는 실행 작업의 수용 조건을 구현하고 검증 근거를 만드는 역할.
+_Avoid_: Orchestrator, Reviewer
+
+**Reviewer**:
+구현 세션과 분리된 문맥에서 변경 결과와 검증 근거를 독립적으로 판단하는 역할.
+_Avoid_: Builder, 사람 승인자
+
+## Integration
+
+**Integration Branch**:
+한 Parent Issue에 속한 여러 Builder 결과를 모아 전체 수용 조건과 회귀를 검증하는 임시 변경선.
+_Avoid_: main, Builder branch
+
+**Merge Gate**:
+최종 Pull Request가 main에 자동 병합되기 전에 반드시 만족해야 하는 수용 조건, 독립 리뷰, 최신 HEAD 검증과 저장소 보호 규칙의 집합.
+_Avoid_: 권고사항, 프롬프트 체크리스트
+
+**Protected Change**:
+데이터 손실, 인증·권한, 배포, 공급망 또는 공개 계약에 중대한 영향을 줄 수 있어 Merge Gate를 통과해도 사람의 병합 확인이 필요한 변경.
+_Avoid_: 일반 변경, 테스트 실패
+
+**Blocked Run**:
+두 번의 자동 수정으로도 Reviewer의 차단 의견을 해소하지 못했거나 작업 계약의 재승인이 필요해 자동 진행을 종료한 감독형 자율 실행.
+_Avoid_: 실패한 Issue, 일시 정지
+
+**Repair Round**:
+Reviewer 또는 CI가 발견한 변경 결함을 Builder가 고치는 한 번의 자동 수정 주기. 한 실행에서 합계 두 번까지만 허용한다.
+_Avoid_: Recovery Attempt, 최초 구현
+
+**Recovery Attempt**:
+미완료 작업의 Agent가 예기치 않게 idle·done 상태가 되거나 종료됐을 때 계속 지시 또는 session 재개로 실행을 되살리는 시도. 실제 진전이 생기면 횟수를 초기화하며 연속 세 번 실패하면 Blocked Run이 된다.
+_Avoid_: Repair Round, 재구현
+
+**ThreadDock Monitor**:
+감독형 자율 실행의 Issue 관계, 단계, Agent 활동, 변경선, 검증·병합 결과와 연결된 CI/CD 상태를 보여주며 중단·재개·재시도만 제공하는 관찰 화면.
+_Avoid_: Orchestrator, 작업 인터뷰 UI, terminal transcript
+
+**Local Orchestrator**:
+WSL에서 작업 계약, 실행 상태와 정책을 소유하고 Herdr·OpenCode·GitHub Enterprise Server를 연결하는 실행 모듈.
+_Avoid_: Run Monitor, Agent, GitHub Project
+
+**Conversation Interface**:
+Operator가 OpenCode와 자연어로 개발 요청을 구체화하고 Issue 묶음을 승인하는 사람용 interface.
+_Avoid_: Orchestrator CLI, Run Monitor
+
+**Orchestrator CLI**:
+Local Orchestrator의 시작, 상태 조회, 중단, 재개와 재시도를 결정적 명령과 구조화된 결과로 제공하는 interface. OpenCode와 Run Monitor가 함께 사용한다.
+_Avoid_: OpenCode 대화, terminal transcript, 별도 HTTP 서버
+
+**CI Run**:
+특정 commit 또는 Pull Request의 변경을 검증하고 그 결과를 업무 기록에 연결하는 GitHub Actions 실행.
+_Avoid_: Agent 로컬 검증, Deployment
+
+**Production Deployment**:
+사용자가 Run Monitor의 명시적 버튼이나 GHES 화면에서 제품 저장소의 GitHub Actions workflow를 dispatch하여 main의 검증된 변경을 production 환경에 적용하는 운영 행위.
+_Avoid_: main 병합, 로컬 실행, 자동 배포
+
+**CD Run**:
+제품 저장소에서 사용자가 시작한 Production Deployment의 진행과 결과를 보존하는 GitHub Actions 실행.
+_Avoid_: CI Run, Agent 실행
+
+**Trusted Workstation**:
+한 Operator가 소유하는 Windows PC와 그 WSL 환경을 하나의 신뢰 경계로 취급하는 실행 환경. 같은 환경 안의 프로세스 사이에 다중 사용자용 보안 격리를 제공하지 않는다.
+_Avoid_: 보안 sandbox, 공용 실행 호스트
+
+**Builder Sandbox**:
+Builder가 할당된 Worktree와 필요한 내부 서비스에만 접근하도록 실행 범위를 제한하는 격리 환경.
+_Avoid_: Worktree, 다중 사용자 계정, Herdr session
+
+**Worktree Isolation**:
+Builder마다 별도 Worktree와 branch를 배정해 변경 충돌을 막는 v0.1의 기본 실행 분리 방식. 프로세스의 파일·자격증명 접근을 차단하는 보안 sandbox는 아니다.
+_Avoid_: Builder Sandbox, 보안 격리
+
+**Workflow Catalog**:
+등록된 제품 저장소에서 Run Monitor가 발견해 상태와 수동 실행 진입점을 보여주는 GitHub Actions workflow 전체 목록.
+_Avoid_: production workflow 하나, 외부 pipeline
+
+**Organization Project**:
+여러 제품 저장소의 개발 요청, Pull Request, CI와 Production Deployment 결과를 함께 추적하는 조직 공용 GitHub Project.
+_Avoid_: devops-control 저장소, Local Orchestrator 상태

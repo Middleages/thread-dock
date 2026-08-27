@@ -1,0 +1,8 @@
+.superpowers/
+.worktrees/
+bin/
+dist/
+frontend/node_modules/
+frontend/dist/
+*.test
+.DS_Store

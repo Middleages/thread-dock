@@ -1,0 +1,44 @@
+{
+  "generated": "2026-08-28T00:02:03+09:00",
+  "sections": [
+    {
+      "id": "mockups",
+      "label": "Mockups",
+      "groups": [
+        {
+          "slug": "thread-dock",
+          "files": [
+            {
+              "label": "News Desk Palettes",
+              "path": "mockups/thread-dock/news-desk-palettes.html"
+            },
+            {
+              "label": "Run Monitor Directions",
+              "path": "mockups/thread-dock/run-monitor-directions.html"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "design-systems",
+      "label": "Design Systems",
+      "groups": [
+        {
+          "slug": "thread-dock-product",
+          "files": [
+            { "label": "README", "path": "design-systems/thread-dock-product/README.md" },
+            { "label": "Skill", "path": "design-systems/thread-dock-product/SKILL.md" },
+            { "label": "Style Notes", "path": "design-systems/thread-dock-product/brand/style-notes.md" },
+            { "label": "Voice and Tone", "path": "design-systems/thread-dock-product/brand/voice-and-tone.md" },
+            { "label": "Colors and Type", "path": "design-systems/thread-dock-product/tokens/colors_and_type.css" },
+            { "label": "Action Rail", "path": "design-systems/thread-dock-product/ui-kit-thread-dock/components/ActionRail.jsx" },
+            { "label": "Run Ledger", "path": "design-systems/thread-dock-product/ui-kit-thread-dock/components/RunLedger.jsx" },
+            { "label": "Workflow Catalog", "path": "design-systems/thread-dock-product/ui-kit-thread-dock/components/WorkflowCatalog.jsx" },
+            { "label": "UI Kit", "path": "design-systems/thread-dock-product/ui-kit-thread-dock/index.html" }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ThreadDock UI Kit</title>
+  <link rel="stylesheet" href="../tokens/colors_and_type.css" />
+  <style>
+    *{box-sizing:border-box}body{margin:0;padding:32px;background:var(--surface-canvas);color:var(--fg-primary);font-family:var(--font-ui)}main{max-width:1040px;margin:auto}h1{font-size:var(--h1-size);letter-spacing:-.035em}h2{font-size:var(--h2-size);margin-top:36px}.swatches{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}.swatch{min-height:100px;padding:12px;border:1px solid var(--border-subtle);border-radius:var(--radius-panel);background:var(--surface-primary)}.swatch i{display:block;height:42px;margin:-12px -12px 10px;border-radius:var(--radius-panel) var(--radius-panel) 0 0}.row{display:grid;grid-template-columns:70px 90px 1fr 120px;gap:12px;align-items:center;min-height:64px;border-bottom:1px solid var(--border-subtle)}.row.current{padding:0 12px;background:var(--surface-primary);box-shadow:var(--shadow-active)}.workflow{display:grid;grid-template-columns:1fr auto;gap:5px;padding:12px 0;border-bottom:1px solid var(--border-subtle)}button{min-height:44px;border:0;border-radius:var(--radius-control);padding:0 14px;background:var(--action-primary);color:var(--action-on-primary);font-weight:var(--weight-bold)}button:focus-visible{outline:3px solid var(--focus-ring);outline-offset:3px}small{color:var(--fg-secondary)}
+  </style>
+</head>
+<body><main><h1>ThreadDock UI Kit</h1><p>Civic Cobalt · News Desk</p><h2>색상 역할</h2><div class="swatches"><div class="swatch"><i style="background:var(--surface-canvas)"></i>Canvas</div><div class="swatch"><i style="background:var(--surface-secondary)"></i>Secondary</div><div class="swatch"><i style="background:var(--action-primary)"></i>Action</div><div class="swatch"><i style="background:var(--status-success)"></i>Success</div><div class="swatch"><i style="background:var(--status-attention)"></i>Attention</div></div><h2>작업 원장</h2><div class="row current"><span>22:48</span><strong>#184</strong><span>결제 실패 재시도 개선</span><strong>독립 확인</strong></div><div class="row"><span>20:11</span><strong>#179</strong><span>세션 만료 오류 문구 수정</span><strong>기본 브랜치 반영</strong></div><h2>자동화 작업</h2><div class="workflow"><span><strong>코드 검사</strong><br /><small>변경 시 자동 · 12분 전</small></span><strong>성공</strong></div><div class="workflow"><span><strong>운영 배포</strong><br /><small>사용자가 실행 · 배포 가능</small></span><button>배포 내용 확인</button></div></main></body>
+</html>

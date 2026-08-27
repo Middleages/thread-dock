@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Herdr 기반 AI 개발 실행 가이드</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-2: #eef3f6;
+      --text: #172026;
+      --muted: #5f6c74;
+      --line: #d9e1e5;
+      --navy: #123b4a;
+      --cyan: #087e8b;
+      --mint: #25a18e;
+      --amber: #b66b00;
+      --red: #b33a3a;
+      --code-bg: #102027;
+      --code-text: #e6f1f4;
+      --shadow: 0 12px 34px rgba(22, 47, 57, .08);
+      --radius: 18px;
+      --max: 1180px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1519;
+        --surface: #152127;
+        --surface-2: #1b2b32;
+        --text: #e8f0f2;
+        --muted: #a6b5bb;
+        --line: #2b424b;
+        --navy: #9bd9df;
+        --cyan: #4bc2ca;
+        --mint: #64d4bd;
+        --amber: #f4b657;
+        --red: #ff8b8b;
+        --code-bg: #081014;
+        --code-text: #e6f1f4;
+        --shadow: 0 12px 34px rgba(0, 0, 0, .26);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+      line-height: 1.68;
+    }
+    a { color: var(--cyan); text-underline-offset: 3px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { font-size: .92em; }
+
+    .shell {
+      width: min(calc(100% - 32px), var(--max));
+      margin: 0 auto;
+    }
+    .hero {
+      padding: 68px 0 40px;
+      background:
+        radial-gradient(circle at 82% 18%, color-mix(in srgb, var(--mint) 18%, transparent), transparent 35%),
+        linear-gradient(145deg, color-mix(in srgb, var(--surface) 94%, var(--cyan)), var(--surface));
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--cyan);
+      background: color-mix(in srgb, var(--surface) 86%, transparent);
+      font-size: .82rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 870px;
+      margin: 18px 0 14px;
+      font-size: clamp(2.15rem, 6vw, 4.8rem);
+      line-height: 1.03;
+      letter-spacing: -.055em;
+      color: var(--navy);
+    }
+    .lede {
+      max-width: 780px;
+      margin: 0;
+      color: var(--muted);
+      font-size: clamp(1rem, 2vw, 1.24rem);
+    }
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 22px;
+      margin-top: 26px;
+      color: var(--muted);
+      font-size: .88rem;
+    }
+    .hero-meta strong { color: var(--text); }
+
+    .toc-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(14px);
+    }
+    .toc {
+      display: flex;
+      gap: 8px;
+      padding: 10px 0;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+    .toc a {
+      flex: 0 0 auto;
+      padding: 7px 10px;
+      color: var(--muted);
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: .84rem;
+      font-weight: 650;
+    }
+    .toc a:hover, .toc a:focus-visible {
+      color: var(--text);
+      background: var(--surface-2);
+      outline: none;
+    }
+
+    main { padding: 38px 0 80px; }
+    section { scroll-margin-top: 72px; margin: 0 0 54px; }
+    h2 {
+      margin: 0 0 10px;
+      color: var(--navy);
+      font-size: clamp(1.55rem, 3vw, 2.25rem);
+      line-height: 1.2;
+      letter-spacing: -.035em;
+    }
+    h3 {
+      margin: 26px 0 8px;
+      color: var(--text);
+      font-size: 1.08rem;
+      line-height: 1.35;
+    }
+    .section-intro { max-width: 820px; color: var(--muted); margin: 0 0 22px; }
+    .grid { display: grid; gap: 16px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .card h3 { margin-top: 0; }
+    .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+    .kicker {
+      display: block;
+      color: var(--cyan);
+      font-size: .76rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      margin-bottom: 7px;
+    }
+    .muted { color: var(--muted); }
+    .small { font-size: .88rem; }
+    .callout {
+      padding: 18px 20px;
+      border-left: 4px solid var(--cyan);
+      border-radius: 0 12px 12px 0;
+      background: color-mix(in srgb, var(--surface) 88%, var(--cyan));
+      margin: 18px 0;
+    }
+    .callout.warn { border-color: var(--amber); background: color-mix(in srgb, var(--surface) 90%, var(--amber)); }
+    .callout.danger { border-color: var(--red); background: color-mix(in srgb, var(--surface) 91%, var(--red)); }
+    .callout strong { display: block; margin-bottom: 3px; }
+
+    .stack-map {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+      margin: 24px 0;
+    }
+    .stack-node {
+      min-height: 124px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      position: relative;
+    }
+    .stack-node:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -18px;
+      top: 45%;
+      z-index: 2;
+      color: var(--cyan);
+      font-weight: 800;
+    }
+    .stack-node b { display: block; color: var(--navy); margin-bottom: 6px; }
+    .stack-node span { color: var(--muted); font-size: .86rem; }
+
+    .workspace-map {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .workspace-root {
+      padding: 14px 16px;
+      border-radius: 12px;
+      background: var(--navy);
+      color: var(--surface);
+      font-weight: 750;
+    }
+    @media (prefers-color-scheme: dark) {
+      .workspace-root { color: #0d1519; }
+    }
+    .branches {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .branch {
+      position: relative;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface-2);
+    }
+    .branch::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: -19px;
+      height: 18px;
+      border-left: 1px solid var(--cyan);
+    }
+    .branch strong { display: block; margin-bottom: 4px; }
+    .branch code { color: var(--cyan); }
+
+    .timeline { display: grid; gap: 12px; counter-reset: step; }
+    .step {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+    }
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--navy);
+      color: var(--surface);
+      font-weight: 850;
+    }
+    @media (prefers-color-scheme: dark) {
+      .step::before { color: #0d1519; }
+    }
+    .step h3 { margin: 2px 0 4px; }
+    .step p { margin: 0; color: var(--muted); }
+
+    .codebox {
+      position: relative;
+      margin: 12px 0 18px;
+      border: 1px solid color-mix(in srgb, var(--line) 65%, #000);
+      border-radius: 13px;
+      overflow: hidden;
+      background: var(--code-bg);
+    }
+    .code-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 38px;
+      padding: 7px 10px 7px 14px;
+      border-bottom: 1px solid rgba(255,255,255,.12);
+      color: #a9c0c8;
+      font-size: .75rem;
+      font-weight: 700;
+    }
+    pre {
+      margin: 0;
+      padding: 16px;
+      color: var(--code-text);
+      overflow-x: auto;
+      font-size: .84rem;
+      line-height: 1.58;
+      white-space: pre;
+    }
+    .copy {
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 7px;
+      background: rgba(255,255,255,.08);
+      color: #dce9ec;
+      padding: 5px 8px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .copy:hover, .copy:focus-visible { background: rgba(255,255,255,.15); outline: none; }
+
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; }
+    table { width: 100%; border-collapse: collapse; min-width: 720px; background: var(--surface); }
+    th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--navy); background: var(--surface-2); font-size: .82rem; }
+    tr:last-child td { border-bottom: 0; }
+    td { font-size: .9rem; }
+
+    .checklist { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+    .checklist li {
+      padding: 10px 12px 10px 38px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      position: relative;
+    }
+    .checklist li::before {
+      content: "□";
+      position: absolute;
+      left: 13px;
+      top: 8px;
+      color: var(--mint);
+      font-size: 1.2rem;
+      font-weight: 800;
+    }
+    .tag {
+      display: inline-block;
+      margin: 2px 4px 2px 0;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+      border: 1px solid var(--line);
+      font-size: .76rem;
+      font-weight: 700;
+    }
+    .source-list { padding-left: 20px; }
+    .source-list li { margin-bottom: 8px; }
+    footer {
+      padding: 24px 0 42px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font-size: .84rem;
+    }
+
+    @media (max-width: 900px) {
+      .grid.four, .grid.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .stack-map { grid-template-columns: 1fr; }
+      .stack-node:not(:last-child)::after { content: "↓"; right: auto; left: 50%; top: auto; bottom: -23px; }
+      .branches { grid-template-columns: 1fr; }
+      .branch::before { left: 20px; }
+    }
+    @media (max-width: 640px) {
+      .shell { width: min(calc(100% - 22px), var(--max)); }
+      .hero { padding-top: 45px; }
+      .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
+      .card { padding: 17px; }
+      .step { grid-template-columns: 38px minmax(0, 1fr); gap: 10px; }
+      .step::before { width: 34px; height: 34px; }
+    }
+    @media print {
+      .toc-wrap, .copy { display: none !important; }
+      body { background: white; color: #111; }
+      .hero, .card, .workspace-map, .step, .table-wrap { box-shadow: none; }
+      section { break-inside: avoid; }
+      a { color: #111; text-decoration: none; }
+      a::after { content: " (" attr(href) ")"; font-size: .72em; }
+      .codebox { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="shell">
+      <span class="eyebrow">Herdr v0.8.2 기준 · 사내망 v0.1</span>
+      <h1>Herdr를 실행 계층으로 쓰는 AI 개발 운영 가이드</h1>
+      <p class="lede">GitHub가 일의 기록을, Skill이 절차를, Serena가 코드 탐색을 맡고, Herdr는 Worktree와 Codex·OpenCode 프로세스를 실제로 실행하고 관찰한다.</p>
+      <div class="hero-meta">
+        <span><strong>권장 동시 실행:</strong> Coordinator 1 + Builder 최대 2</span>
+        <span><strong>초기 자동화:</strong> Skill + 결정적 스크립트</span>
+        <span><strong>초기 제외:</strong> Marketplace plugin, 자동 승인, 자동 main merge</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="toc-wrap">
+    <nav class="shell toc" aria-label="문서 목차">
+      <a href="#decision">핵심 판단</a>
+      <a href="#architecture">역할 구조</a>
+      <a href="#topology">Workspace 구성</a>
+      <a href="#install">사내망 설치</a>
+      <a href="#setup">초기 설정</a>
+      <a href="#workflow">실행 흐름</a>
+      <a href="#automation">자동화 구조</a>
+      <a href="#limits">한계와 안전</a>
+      <a href="#rollout">도입 순서</a>
+      <a href="#sources">출처</a>
+    </nav>
+  </div>
+
+  <main class="shell">
+    <section id="decision">
+      <h2>1. 핵심 판단</h2>
+      <p class="section-intro">Herdr는 에이전트 자체도, GitHub 프로젝트 관리자도 아니다. 실제 터미널 프로세스를 보존하고 여러 에이전트의 상태를 한 화면에 모으며 CLI와 로컬 socket으로 제어하는 멀티플렉서다.</p>
+
+      <div class="grid four">
+        <article class="card">
+          <span class="kicker">Source of work</span>
+          <h3>GitHub</h3>
+          <p class="muted">Issue, Project, PR, review, merge와 배포 승인의 기준점.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Policy</span>
+          <h3>Agent Skill</h3>
+          <p class="muted">계획, 분할, 테스트 위험도, Worktree 배치, 리뷰 절차.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Runtime</span>
+          <h3>Herdr</h3>
+          <p class="muted">Workspace, pane, agent 실행, 상태, 대기, 출력 수집.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Code context</span>
+          <h3>CODEMAP + Serena</h3>
+          <p class="muted">사람용 구조 지도와 심볼·참조 기반 코드 탐색.</p>
+        </article>
+      </div>
+
+      <div class="callout">
+        <strong>권장 결론</strong>
+        Herdr를 기존 Planner·Coordinator·Builder·Reviewer 모델의 <em>실행 기반</em>으로 사용한다. GitHub 상태와 Herdr의 <code>working / blocked / done / idle</code> 상태는 동기화하지 않고 서로 다른 정보로 취급한다.
+      </div>
+
+      <div class="callout warn">
+        <strong>범위 주의</strong>
+        Herdr가 pane 안에서 실행·관찰하는 대상은 Codex CLI와 OpenCode CLI 프로세스다. Codex 데스크톱 앱의 Task를 Herdr Workspace로 가져오거나 제어하는 구조로 이해하면 안 된다.
+      </div>
+    </section>
+
+    <section id="architecture">
+      <h2>2. 전체 역할 구조</h2>
+      <p class="section-intro">v0.1에서는 별도 Planner 프로세스를 늘리지 않는다. 하나의 Control Agent가 계획과 조정을 맡고, 독립성이 확인된 Task만 두 Builder에게 보낸다. Reviewer는 Builder 완료 후 순차적으로 실행한다.</p>
+
+      <div class="stack-map" role="img" aria-label="GitHub에서 배포와 관측까지의 실행 흐름">
+        <div class="stack-node"><b>GitHub Issue</b><span>요구사항, 수용 조건, Parent Issue와 하위 Task</span></div>
+        <div class="stack-node"><b>Control Agent</b><span>Grill, CODEMAP·Serena 확인, Task DAG와 허용 경로 결정</span></div>
+        <div class="stack-node"><b>Herdr Runtime</b><span>Worktree workspace와 Codex·OpenCode pane 생성, 상태 추적</span></div>
+        <div class="stack-node"><b>Integration PR</b><span>Task branch 통합, 검증, Reviewer, 사람 승인</span></div>
+        <div class="stack-node"><b>Deploy + OTel</b><span>Self-hosted runner 배포, metric·trace·uptime 관측</span></div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>역할</th><th>Herdr 안에서의 모습</th><th>권한과 책임</th><th>실행 시점</th></tr></thead>
+          <tbody>
+            <tr><td>Control Agent</td><td>기본 checkout의 <code>control</code> pane</td><td>계획, Worktree 생성, prompt 배포, 결과 수집. main 수정 금지.</td><td>항상 1개</td></tr>
+            <tr><td>Builder A/B</td><td>각 Task Worktree의 agent pane</td><td>허용 경로 안에서 구현·검증·commit. merge 금지.</td><td>독립 Task일 때 최대 2개</td></tr>
+            <tr><td>Reviewer</td><td>integration Worktree의 review pane</td><td>통합 diff, 영향 범위, 테스트 결과, 과설계 검토.</td><td>Builder 종료 후</td></tr>
+            <tr><td>Test/Log process</td><td>일반 pane</td><td>테스트, dev server, log watcher. agent 명령이 아닌 pane 명령 사용.</td><td>필요할 때</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="topology">
+      <h2>3. Repository 하나의 Workspace 구성</h2>
+      <p class="section-intro">Herdr의 Workspace는 프로젝트·Task·조사를 담는 최상위 컨테이너다. Git Worktree는 원본 Workspace 아래 묶인 자식 Workspace로 표시된다.</p>
+
+      <div class="workspace-map">
+        <div class="workspace-root">project-a · canonical checkout · Control Agent · 읽기 중심</div>
+        <div class="branches">
+          <div class="branch"><strong>issue-123-integration</strong><code>codex/123-integration</code><br><span class="small muted">통합과 Reviewer 전용</span></div>
+          <div class="branch"><strong>issue-123-api</strong><code>codex/123-api</code><br><span class="small muted">Builder A · 허용 경로: API</span></div>
+          <div class="branch"><strong>issue-123-data</strong><code>codex/123-data</code><br><span class="small muted">Builder B · 허용 경로: data</span></div>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:16px">
+        <article class="card">
+          <span class="kicker">Named session</span>
+          <h3>완전히 다른 생활 영역만 분리</h3>
+          <p><code>work</code>와 <code>personal</code>처럼 socket·pane·runtime state를 분리해야 할 때만 named session을 사용한다. 프로젝트 분리는 먼저 Workspace로 해결한다.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Tabs</span>
+          <h3>한 Workspace 안의 관점</h3>
+          <p><span class="tag">agent</span><span class="tag">verify</span><span class="tag">server</span><span class="tag">logs</span> 정도만 둔다. Task마다 tab을 과도하게 늘리지 않는다.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="install">
+      <h2>4. 사내망 설치 원칙</h2>
+      <p class="section-intro">공식 설치 스크립트는 인터넷에서 바이너리를 내려받는다. 사내망에서는 검토한 release를 내부 저장소에 보관하고 고정 버전을 배포한다.</p>
+
+      <div class="grid three">
+        <article class="card">
+          <span class="kicker">Version</span>
+          <h3>v0.8.2 고정</h3>
+          <p class="muted">이 가이드는 공식 stable v0.8.2 문서와 release-matched Skill을 기준으로 한다.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">License</span>
+          <h3>Apache-2.0 확인</h3>
+          <p class="muted">v0.8.2 tag의 LICENSE를 내부 패키지에 함께 보존한다.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Distribution</span>
+          <h3>내부 mirror</h3>
+          <p class="muted">Linux/macOS/Windows asset 또는 내부에서 빌드한 바이너리와 해시를 배포한다.</p>
+        </article>
+      </div>
+
+      <div class="callout warn">
+        <strong><code>curl | sh</code>를 사내 표준 절차로 만들지 않는다</strong>
+        인터넷이 되는 검토 환경에서 release asset과 LICENSE를 가져와 보안 검토 후 내부 artifact registry에 올린다. 운영 host에는 내부 주소에서만 설치한다.
+      </div>
+
+      <h3>권장 실행 위치</h3>
+      <p>코드와 credential이 있는 Linux 개발 host에서 Herdr server를 실행하고, 사용자는 일반 SSH 후 <code>herdr session attach work</code>로 접속한다. Herdr 자체 웹 대시보드나 중앙 SaaS는 필요 없다.</p>
+      <div class="codebox">
+        <div class="code-label"><span>remote development host</span><button class="copy" type="button">복사</button></div>
+        <pre><code>ssh dev-host
+cd /srv/repos/project-a
+herdr session attach work</code></pre>
+      </div>
+      <p class="small muted">Windows는 로컬 사용이 가능하지만 공식 문서상 <code>herdr --remote</code>의 remote host로는 지원되지 않는다. 원격 실행 host는 Linux/macOS로 잡는 편이 안전하다.</p>
+    </section>
+
+    <section id="setup">
+      <h2>5. 최소 초기 설정</h2>
+      <p class="section-intro">Herdr는 설정 없이도 동작한다. 아래 항목만 명시해 사내망, Worktree, 복구와 보안 동작을 분명하게 만든다.</p>
+
+      <div class="codebox">
+        <div class="code-label"><span>~/.config/herdr/config.toml</span><button class="copy" type="button">복사</button></div>
+        <pre><code>onboarding = false
+
+[server]
+headless_cols = 160
+headless_rows = 50
+
+[worktrees]
+directory = "~/work/herdr-worktrees"
+
+[session]
+resume_agents_on_restore = true
+
+[experimental]
+# terminal output에는 token과 prompt가 포함될 수 있다.
+pane_history = false
+
+[update]
+# 폐쇄망에서는 버전·탐지 규칙을 내부에서 검토해 수동 갱신한다.
+version_check = false
+manifest_check = false
+
+[keys]
+# herdr --remote 사용 시 local image clipboard가 remote로 전달되는 단축키를 끈다.
+remote_image_paste = ""
+
+[ui]
+status_indicators = "symbols"
+
+[ui.toast]
+delivery = "herdr"
+delay_seconds = 1</code></pre>
+      </div>
+
+      <div class="grid two">
+        <article class="card">
+          <span class="kicker">Codex integration</span>
+          <h3>session restore용 hook</h3>
+          <p>Codex 통합은 session identity를 보고하지만 상태는 screen manifest로 판단한다. 설치 시 Codex의 <code>hooks.json</code>과 <code>config.toml</code>을 수정하므로 diff를 검토한다.</p>
+          <div class="codebox">
+            <div class="code-label"><span>review before rollout</span><button class="copy" type="button">복사</button></div>
+            <pre><code>herdr integration install codex
+herdr integration status</code></pre>
+          </div>
+        </article>
+        <article class="card">
+          <span class="kicker">OpenCode integration</span>
+          <h3>lifecycle + session plugin</h3>
+          <p>OpenCode 통합은 <code>~/.config/opencode/plugins/herdr-agent-state.js</code>를 설치하고 lifecycle과 session identity를 보고한다.</p>
+          <div class="codebox">
+            <div class="code-label"><span>review before rollout</span><button class="copy" type="button">복사</button></div>
+            <pre><code>herdr integration install opencode
+herdr integration status</code></pre>
+          </div>
+        </article>
+      </div>
+
+      <h3>공통 Herdr Skill</h3>
+      <p>공식 release-matched Skill을 <code>.agents/skills/herdr/SKILL.md</code>에 고정해 Codex와 OpenCode가 공유한다. 인터넷 기반 <code>npx skills</code> 대신 설치된 바이너리가 제공하는 사본을 검토한다.</p>
+      <div class="codebox">
+        <div class="code-label"><span>release-matched skill inspection</span><button class="copy" type="button">복사</button></div>
+        <pre><code>herdr --skill</code></pre>
+      </div>
+      <div class="callout">
+        <strong>중요한 공식 guardrail</strong>
+        Herdr Skill은 <code>HERDR_ENV=1</code>이 없으면 제어를 중단하도록 규정한다. Control Agent는 반드시 Herdr가 관리하는 pane 안에서 실행한다.
+      </div>
+    </section>
+
+    <section id="workflow">
+      <h2>6. Issue 하나를 구현하는 실제 흐름</h2>
+      <p class="section-intro">아래는 Parent Issue #123을 두 개의 독립 Task로 나누어 병렬 구현한 뒤 integration PR 하나로 만드는 예다.</p>
+
+      <div class="timeline">
+        <article class="step">
+          <div>
+            <h3>계획과 병렬성 판정</h3>
+            <p>Control Agent가 Issue, <code>CONTEXT.md</code>, <code>CODEMAP.md</code>, ADR을 읽고 Serena로 관련 심볼·참조를 확인한다. 수정 경로가 겹치지 않고 선후 관계가 없는 Task만 병렬로 표시한다.</p>
+          </div>
+        </article>
+        <article class="step">
+          <div>
+            <h3>integration과 Task Worktree 생성</h3>
+            <p>Herdr의 Worktree 명령은 checkout을 만들고 자식 Workspace로 연다. branch 이름은 기존 Git 규칙을 따른다.</p>
+          </div>
+        </article>
+        <article class="step">
+          <div>
+            <h3>각 Worktree에서 Builder 시작</h3>
+            <p>하나의 Worktree에는 하나의 구현 agent만 둔다. Codex와 OpenCode를 섞을 수 있지만 동일 Task를 동시에 수정하게 하지 않는다.</p>
+          </div>
+        </article>
+        <article class="step">
+          <div>
+            <h3>명시적인 Task packet 전달</h3>
+            <p>Issue, 기준 commit, 허용 경로, 금지 경로, 수용 조건, 검증 명령, commit·보고 형식을 prompt에 포함한다.</p>
+          </div>
+        </article>
+        <article class="step">
+          <div>
+            <h3>상태와 결과 수집</h3>
+            <p><code>agent wait</code>에 timeout을 넣고, <code>blocked</code>면 화면을 읽은 뒤 사람에게 판단을 요청한다. 완료 판정은 화면 상태만이 아니라 commit SHA와 검증 결과로 한다.</p>
+          </div>
+        </article>
+        <article class="step">
+          <div>
+            <h3>integration, Reviewer, 사람 승인</h3>
+            <p>Coordinator가 Task branch를 integration branch에 합치고 전체 검증을 실행한다. Reviewer가 통합 diff를 검토한 뒤 PR을 만들며 main merge와 production 배포는 사람이 승인한다.</p>
+          </div>
+        </article>
+      </div>
+
+      <h3>Worktree 생성 예시</h3>
+      <div class="codebox">
+        <div class="code-label"><span>Herdr worktree CLI</span><button class="copy" type="button">복사</button></div>
+        <pre><code>herdr worktree create \
+  --cwd /srv/repos/project-a \
+  --branch codex/123-integration \
+  --base main \
+  --label issue-123-integration \
+  --no-focus
+
+herdr worktree create \
+  --cwd /srv/repos/project-a \
+  --branch codex/123-api \
+  --base codex/123-integration \
+  --label issue-123-api \
+  --no-focus
+
+herdr worktree create \
+  --cwd /srv/repos/project-a \
+  --branch codex/123-data \
+  --base codex/123-integration \
+  --label issue-123-data \
+  --no-focus</code></pre>
+      </div>
+      <p class="small muted">자동화에서는 반환 JSON에서 Workspace와 pane ID를 읽는다. 예시의 ID나 sidebar 순서를 추측하지 않는다.</p>
+
+      <h3>Agent 시작과 대기 예시</h3>
+      <div class="codebox">
+        <div class="code-label"><span>explicit IDs, names and timeouts</span><button class="copy" type="button">복사</button></div>
+        <pre><code># 먼저 해당 Worktree workspace의 root pane ID를 조회한다.
+herdr pane list --workspace &lt;workspace-id&gt;
+
+herdr agent start builder_api \
+  --kind codex \
+  --pane &lt;pane-id&gt;
+
+herdr agent prompt builder_api \
+  "$(cat /path/to/task-packet.md)" \
+  --wait \
+  --timeout 1800000
+
+herdr agent get builder_api
+herdr agent read builder_api --source recent-unwrapped --lines 120</code></pre>
+      </div>
+
+      <h3>Builder Task packet 권장 형식</h3>
+      <div class="codebox">
+        <div class="code-label"><span>task-packet.md</span><button class="copy" type="button">복사</button></div>
+        <pre><code># Task: Issue #123 / API validation
+
+Base: codex/123-integration @ &lt;commit&gt;
+Worktree: &lt;absolute-path&gt;
+
+Allowed paths:
+- src/api/**
+- tests/api/**
+
+Do not change:
+- database migrations
+- shared public interfaces
+- CI and deployment configuration
+
+Acceptance criteria:
+1. ...
+2. ...
+
+Verification:
+- &lt;existing targeted check&gt;
+- &lt;type or lint command&gt;
+
+Rules:
+- Read AGENTS.md, CONTEXT.md and the relevant CODEMAP section.
+- Use Serena with the current Worktree as project root.
+- Follow the risk-based verification ladder.
+- Write the commit message in Korean, including the background, decisions and implementation.
+- Commit on the assigned branch. Do not merge or push main.
+- Final response: changed files, verification result, commit SHA, remaining risk.</code></pre>
+      </div>
+    </section>
+
+    <section id="automation">
+      <h2>7. Skill·Script·Plugin의 배치</h2>
+      <p class="section-intro">공식 <code>herdr</code> Skill은 CLI 사용법을 가르친다. 우리 정책은 별도의 얇은 Skill에 두고, Worktree·검증·결과 파일 생성은 결정적 스크립트로 만든다.</p>
+
+      <div class="codebox">
+        <div class="code-label"><span>recommended repository layout</span><button class="copy" type="button">복사</button></div>
+        <pre><code>.agents/skills/
+├── herdr/                       # upstream v0.8.2, 수정 최소화
+│   ├── SKILL.md
+│   └── UPSTREAM.md              # source URL, tag, license, checksum
+└── orchestrate-with-herdr/      # 우리 운영 정책
+    ├── SKILL.md
+    ├── references/
+    │   ├── task-packet.md
+    │   └── role-permissions.md
+    └── scripts/
+        ├── dispatch-task
+        ├── collect-result
+        └── check-worktree-state</code></pre>
+      </div>
+
+      <div class="grid three">
+        <article class="card">
+          <span class="kicker">Skill</span>
+          <h3>판단과 절차</h3>
+          <p class="muted">언제 병렬화하는지, 최대 Worker 수, 승인 경계, prompt 형식, 완료 조건.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Script</span>
+          <h3>결정적인 실행</h3>
+          <p class="muted">JSON ID 파싱, branch·path 검증, Worktree 생성, timeout, 결과 수집.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Plugin</span>
+          <h3>반복 후 승격</h3>
+          <p class="muted">같은 흐름이 충분히 안정된 뒤 Herdr action이나 <code>worktree.created</code> event로 포장.</p>
+        </article>
+      </div>
+
+      <div class="callout warn">
+        <strong>v0.1에서는 Herdr plugin을 만들지 않는다</strong>
+        Herdr plugin은 일반 사용자 권한으로 실행되고 전체 Herdr CLI와 환경에 접근하며 별도 sandbox가 없다. 먼저 저장소에 versioned script로 흐름을 검증한 뒤, 반복 가치가 확인될 때만 내부 plugin으로 승격한다.
+      </div>
+
+      <h3>Herdr가 하지 않는 일</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>업무</th><th>담당</th><th>Herdr의 역할</th></tr></thead>
+          <tbody>
+            <tr><td>Issue 분해와 수용 조건</td><td><code>plan-work</code> Skill</td><td>Planner terminal 유지</td></tr>
+            <tr><td>GitHub Project 상태 갱신</td><td>GitHub API/CLI 또는 사람</td><td>직접 기능 문서화 없음</td></tr>
+            <tr><td>branch 통합과 충돌 해결</td><td>Coordinator + Git</td><td>해당 shell/agent pane 제공</td></tr>
+            <tr><td>PR 생성과 main merge</td><td>GitHub workflow</td><td>명령 실행 terminal 제공</td></tr>
+            <tr><td>코드맵과 영향 탐색</td><td>CODEMAP + Serena</td><td>도구가 실행되는 pane 제공</td></tr>
+            <tr><td>OTel 저장과 dashboard</td><td>Collector·Prometheus·Grafana</td><td>로컬 로그 pane을 함께 볼 수 있음</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="limits">
+      <h2>8. 반드시 알아야 할 한계와 안전 규칙</h2>
+      <div class="grid two">
+        <article class="card">
+          <span class="kicker">State</span>
+          <h3>상태는 완료 증명이 아니다</h3>
+          <p><code>done</code>과 <code>idle</code>은 agent terminal의 lifecycle 상태다. 테스트 통과, commit 생성, 요구사항 충족을 뜻하지 않는다. <code>unknown</code>도 성공이 아니다.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Blocked</span>
+          <h3>자동 승인 금지</h3>
+          <p>Codex 상태는 screen manifest 기반이라 낯선 승인 UI가 <code>idle</code>로 보일 수 있다. <code>blocked</code>가 나오면 내용을 읽고 사람이 결정하며 자동으로 Enter를 보내지 않는다.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Persistence</span>
+          <h3>detach와 restart는 다르다</h3>
+          <p>detach하면 원래 프로세스가 계속 실행된다. Herdr server가 완전히 재시작되면 임의 process는 사라지고 layout만 복구된다. 공식 integration이 보고한 Codex/OpenCode session만 native resume 대상이 될 수 있다.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Waiting</span>
+          <h3>항상 timeout 지정</h3>
+          <p>Herdr wait 명령에는 기본 timeout이 없다. 자동화에서는 반드시 timeout을 넣고 timeout·blocked·unknown을 각기 다른 실패 상태로 처리한다.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Secrets</span>
+          <h3>pane history 비활성</h3>
+          <p>pane output에는 token, prompt, command 결과가 들어갈 수 있다. screen history 저장은 기본적으로 끈 상태를 유지하고 Herdr config/state 디렉터리를 terminal history와 같은 민감도로 취급한다.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Deletion</span>
+          <h3>강제 Worktree 제거 제한</h3>
+          <p>dirty Worktree의 <code>--force</code> 제거, session stop, pane close는 사람이 대상을 확인한 뒤에만 한다. branch는 Herdr가 자동으로 삭제하지 않는다.</p>
+        </article>
+      </div>
+
+      <div class="callout danger">
+        <strong>Control Agent 금지 행동</strong>
+        사람 승인 없이 <code>herdr server stop</code>, 다른 사용자가 만든 pane/workspace 종료, blocked dialog 응답, dirty Worktree 강제 제거, main merge, production 배포를 수행하지 않는다.
+      </div>
+    </section>
+
+    <section id="rollout">
+      <h2>9. 복잡도를 억제하는 도입 순서</h2>
+      <div class="grid three">
+        <article class="card">
+          <span class="kicker">Week 1</span>
+          <h3>수동 멀티플렉서</h3>
+          <ul>
+            <li>내부 mirror에서 v0.8.2 설치</li>
+            <li>한 repo, 한 Workspace</li>
+            <li>Worktree 1개와 Builder 1개</li>
+            <li>detach·reattach와 상태 표시 경험</li>
+          </ul>
+        </article>
+        <article class="card">
+          <span class="kicker">Week 2</span>
+          <h3>두 Builder 병렬화</h3>
+          <ul>
+            <li>Codex/OpenCode integration 검토 설치</li>
+            <li>공식 Herdr Skill 고정</li>
+            <li>Task packet 표준화</li>
+            <li>독립 Task만 최대 2개 실행</li>
+          </ul>
+        </article>
+        <article class="card">
+          <span class="kicker">Week 3+</span>
+          <h3>결정적 자동화</h3>
+          <ul>
+            <li><code>orchestrate-with-herdr</code> Skill</li>
+            <li>dispatch·collect script</li>
+            <li>timeout·blocked 처리</li>
+            <li>반복성이 증명된 뒤만 plugin 검토</li>
+          </ul>
+        </article>
+      </div>
+
+      <h3>v0.1 완료 체크리스트</h3>
+      <ul class="checklist">
+        <li>Herdr version, LICENSE, binary hash가 내부 artifact registry에 기록돼 있다.</li>
+        <li>Codex/OpenCode integration이 수정하는 사용자 설정 파일을 검토했다.</li>
+        <li><code>.agents/skills/herdr</code>가 설치된 binary tag와 일치한다.</li>
+        <li>한 Worktree에 구현 agent 하나만 실행한다.</li>
+        <li>병렬 Builder는 최대 2개이며 파일·모듈 경계가 겹치지 않는다.</li>
+        <li>모든 wait 명령에 timeout이 있다.</li>
+        <li>Builder 결과는 commit SHA와 검증 결과로 확인한다.</li>
+        <li>main merge, production deploy, 승인 dialog는 사람에게 남겨둔다.</li>
+      </ul>
+    </section>
+
+    <section id="sources">
+      <h2>10. 공식 출처</h2>
+      <p class="section-intro">2026-08-27에 Herdr 공식 문서와 v0.8.2 tag를 확인해 작성했다. 설치 전 내부에서 사용하는 고정 tag의 문서를 다시 확인한다.</p>
+      <ul class="source-list">
+        <li><a href="https://herdr.dev/docs/">Herdr documentation</a></li>
+        <li><a href="https://herdr.dev/docs/agents/">Supported agents와 상태 판정</a></li>
+        <li><a href="https://herdr.dev/docs/agent-automation/">Agent automation</a></li>
+        <li><a href="https://herdr.dev/docs/configuration/#worktrees">Worktree configuration</a></li>
+        <li><a href="https://herdr.dev/docs/integrations/">Codex·OpenCode integrations</a></li>
+        <li><a href="https://herdr.dev/docs/agent-skill/">Official Herdr Agent Skill</a></li>
+        <li><a href="https://herdr.dev/docs/session-state/">Session state와 restore</a></li>
+        <li><a href="https://herdr.dev/docs/plugins/">Plugin model과 보안 경계</a></li>
+        <li><a href="https://github.com/herdrdev/herdr/releases/tag/v0.8.2">Herdr v0.8.2 release</a></li>
+        <li><a href="https://github.com/herdrdev/herdr/blob/v0.8.2/LICENSE">v0.8.2 Apache-2.0 LICENSE</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell">Herdr는 실행과 관찰을 단순하게 만드는 도구다. 계획·권한·검증·승인은 기존 GitOps 규칙에 남겨둔다.</div>
+  </footer>
+
+  <script>
+    (function () {
+      function fallbackCopy(text) {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        area.remove();
+      }
+
+      document.querySelectorAll('.copy').forEach(function (button) {
+        button.addEventListener('click', async function () {
+          const code = button.closest('.codebox').querySelector('code').innerText;
+          const original = button.textContent;
+          try {
+            if (navigator.clipboard && window.isSecureContext) {
+              await navigator.clipboard.writeText(code);
+            } else {
+              fallbackCopy(code);
+            }
+            button.textContent = '복사됨';
+          } catch (_) {
+            fallbackCopy(code);
+            button.textContent = '복사됨';
+          }
+          window.setTimeout(function () { button.textContent = original; }, 1400);
+        });
+      });
+    }());
+  </script>
+</body>
+</html>
