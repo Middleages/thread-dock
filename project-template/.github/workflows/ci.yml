@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  repository-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run repository checks
+        shell: bash
+        run: |
+          if [[ ! -x scripts/ci ]]; then
+            echo "::error::Onboarding required: add executable scripts/ci with this repository's checks."
+            exit 1
+          fi
+          scripts/ci
