@@ -191,6 +191,22 @@ func TestValidateRejectsOverlappingOwnedPaths(t *testing.T) {
     if !hasCode(got, "path_overlap") { t.Fatalf("violations = %#v", got) }
 }
 
+func TestValidateRejectsTaskPathsOverlappingProtectedPaths(t *testing.T) {
+    tests := []struct { name, allowedPath string }{
+        {name:"exact", allowedPath:"migrations/**"},
+        {name:"task parent prefix", allowedPath:".github/**"},
+        {name:"protected parent prefix", allowedPath:"deployment/services/**"},
+    }
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            c := validContract()
+            c.Tasks[0].AllowedPaths = []string{tt.allowedPath}
+            got := Validate(c)
+            if !hasViolation(got, "path_overlap", "tasks[0].allowedPaths") { t.Fatalf("violations = %#v", got) }
+        })
+    }
+}
+
 func TestValidateRejectsMainAsBuilderBranch(t *testing.T) {
     c := validContract()
     c.Tasks[0].Branch = "main"
@@ -240,6 +256,7 @@ type RepositoryRef struct {
 type Task struct {
     ID                 string   `json:"id"`
     IssueKey           string   `json:"issueKey"`
+    Owner              string   `json:"owner"`
     Role               string   `json:"role"`
     Branch             string   `json:"branch"`
     AllowedPaths       []string `json:"allowedPaths"`
@@ -302,8 +319,8 @@ func validContract() TaskContract {
         Repository: RepositoryRef{Owner:"platform", Name:"payments-api", DefaultBranch:"main"},
         BaseCommit: "0123456789abcdef0123456789abcdef01234567",
         Tasks: []Task{
-            {ID:"api", IssueKey:"api", Role:"builder", Branch:"agent/api", AllowedPaths:[]string{"src/payments/**"}, AcceptanceCriteria:[]string{"재시도 한도를 지킨다"}, Verification:[]string{"go test ./internal/payments"}},
-            {ID:"tests", IssueKey:"tests", Role:"builder", Branch:"agent/tests", AllowedPaths:[]string{"tests/payments/**"}, AcceptanceCriteria:[]string{"중복 결제를 검증한다"}, Verification:[]string{"go test ./tests/payments"}},
+            {ID:"api", IssueKey:"api", Owner:"api-builder", Role:"builder", Branch:"agent/api", AllowedPaths:[]string{"src/payments/**"}, AcceptanceCriteria:[]string{"재시도 한도를 지킨다"}, Verification:[]string{"go test ./internal/payments"}},
+            {ID:"tests", IssueKey:"tests", Owner:"test-builder", Role:"builder", Branch:"agent/tests", AllowedPaths:[]string{"tests/payments/**"}, AcceptanceCriteria:[]string{"중복 결제를 검증한다"}, Verification:[]string{"go test ./tests/payments"}},
         },
         Protected: []string{"migrations/**","authentication/**",".github/workflows/**","deployment/**"},
         Verification: []string{"go test ./...","go vet ./..."},
@@ -331,7 +348,7 @@ func ValidContract() contract.TaskContract {
         Children:[]contract.IssueDraft{{Key:"api",Title:"재시도 정책 구현",Body:"API 변경",AcceptanceCriteria:[]string{"재시도 한도를 지킨다"}},{Key:"tests",Title:"회귀 검증",Body:"집중 회귀 검사",AcceptanceCriteria:[]string{"중복 결제를 검증한다"}}},
         Repository:contract.RepositoryRef{Owner:"platform",Name:"payments-api",DefaultBranch:"main"},
         BaseCommit:"0123456789abcdef0123456789abcdef01234567",
-        Tasks:[]contract.Task{{ID:"api",IssueKey:"api",Role:"builder",Branch:"agent/api",AllowedPaths:[]string{"src/payments/**"},AcceptanceCriteria:[]string{"재시도 한도를 지킨다"},Verification:[]string{"go test ./internal/payments"}},{ID:"tests",IssueKey:"tests",Role:"builder",Branch:"agent/tests",AllowedPaths:[]string{"tests/payments/**"},AcceptanceCriteria:[]string{"중복 결제를 검증한다"},Verification:[]string{"go test ./tests/payments"}}},
+        Tasks:[]contract.Task{{ID:"api",IssueKey:"api",Owner:"api-builder",Role:"builder",Branch:"agent/api",AllowedPaths:[]string{"src/payments/**"},AcceptanceCriteria:[]string{"재시도 한도를 지킨다"},Verification:[]string{"go test ./internal/payments"}},{ID:"tests",IssueKey:"tests",Owner:"test-builder",Role:"builder",Branch:"agent/tests",AllowedPaths:[]string{"tests/payments/**"},AcceptanceCriteria:[]string{"중복 결제를 검증한다"},Verification:[]string{"go test ./tests/payments"}}},
         Protected:[]string{"migrations/**","authentication/**",".github/workflows/**","deployment/**"},
         Verification:[]string{"go test ./...","go vet ./..."},
     }
@@ -340,7 +357,7 @@ func ValidContract() contract.TaskContract {
 
 - [ ] **Step 4: Implement all invariants and pass the tests**
 
-`Validate` must check required strings and slices, contract version `1`, 40-character lowercase hexadecimal `BaseCommit`, unique Issue keys and Task IDs, existing dependencies, acyclic dependencies, non-main Builder branches and overlapping path prefixes after removing a trailing `/**`.
+`Validate` must check required strings and slices, contract version `1`, 40-character lowercase hexadecimal `BaseCommit`, unique Issue keys and Task IDs, existing dependencies, acyclic dependencies, non-main Builder branches and overlapping path prefixes after removing a trailing `/**`. It must compare every Task `AllowedPaths` entry with every other Task path and every contract `Protected` path through the same `pathsOverlap` helper. Exact matches and either-direction directory-prefix matches emit `path_overlap` at `tasks[i].allowedPaths` with a Korean message.
 
 Run: `go test ./internal/contract -run TestValidate -v`
 
@@ -365,13 +382,18 @@ git commit -m "feat: 작업 계약 검증 모델 추가"
 - Consumes: `TaskContract`, `Validate`
 - Produces: `contract.Read(io.Reader) (TaskContract, error)`
 - Produces: `contract.Write(io.Writer, TaskContract) error`
+- Produces: `contract.DiagnosticError`, `contract.ErrorViolations(error)`
+- Produces: codes `invalid_json`, `unreadable` and the Korean messages `작업 계약 JSON 형식이 올바르지 않습니다`, `작업 계약 파일을 읽을 수 없습니다`
 
 - [ ] **Step 1: Write failing codec tests**
 
 ```go
-func TestReadRejectsUnknownTopLevelField(t *testing.T) {
+func TestReadMapsStructuralJSONErrorsToInvalidJSONDiagnostic(t *testing.T) {
     _, err := Read(strings.NewReader(`{"version":1,"unexpected":true}`))
-    if err == nil || !strings.Contains(err.Error(), "unexpected") { t.Fatalf("err = %v", err) }
+    var diagnosticErr DiagnosticError
+    if !errors.As(err, &diagnosticErr) { t.Fatalf("err = %T %v", err, err) }
+    want := Violation{Code:CodeInvalidJSON, Field:"$", Message:InvalidJSONMessage}
+    if diagnosticErr.Violation != want { t.Fatalf("violation = %#v", diagnosticErr.Violation) }
 }
 
 func TestWriteReadRoundTrip(t *testing.T) {
@@ -384,7 +406,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 }
 ```
 
-Add `reflect` to the test imports.
+Add `errors` and `reflect` to the test imports. The structural-error table must cover malformed JSON, unknown fields, a trailing JSON document and trailing non-JSON garbage. Every case must assert the exact typed root diagnostic and confirm that no raw decoder text appears in `Error()`.
 
 - [ ] **Step 2: Run and observe missing codec functions**
 
@@ -395,11 +417,29 @@ Expected: FAIL.
 - [ ] **Step 3: Implement strict decode and atomic-friendly encode**
 
 ```go
+const (
+    CodeInvalidJSON    = "invalid_json"
+    CodeUnreadable     = "unreadable"
+    InvalidJSONMessage = "작업 계약 JSON 형식이 올바르지 않습니다"
+    UnreadableMessage  = "작업 계약 파일을 읽을 수 없습니다"
+)
+
+type DiagnosticError struct {
+    Violation Violation
+    cause     error
+}
+
+func (e DiagnosticError) Error() string {
+    return fmt.Sprintf("[%s] %s", e.Violation.Code, e.Violation.Message)
+}
+
 func Read(r io.Reader) (TaskContract, error) {
     dec := json.NewDecoder(r)
     dec.DisallowUnknownFields()
     var c TaskContract
-    if err := dec.Decode(&c); err != nil { return c, fmt.Errorf("작업 계약 JSON: %w", err) }
+    if err := dec.Decode(&c); err != nil { return c, invalidJSONError(err) }
+    var extra any
+    if err := dec.Decode(&extra); err != io.EOF { return c, invalidJSONError(err) }
     if v := Validate(c); len(v) > 0 { return c, ValidationError{Violations: v} }
     return c, nil
 }
@@ -411,6 +451,8 @@ func Write(w io.Writer, c TaskContract) error {
     return enc.Encode(c)
 }
 ```
+
+`invalidJSONError` must set field `$`, use only `CodeInvalidJSON` and `InvalidJSONMessage` in its public text, and retain the decoder error only as an internal unwrap cause. `NewUnreadableError` must do the same with `CodeUnreadable` and `UnreadableMessage`. `ErrorViolations` must return violations from both `ValidationError` and `DiagnosticError`, so callers never parse error strings.
 
 - [ ] **Step 4: Add canonical fixtures and run the full package**
 
@@ -473,7 +515,7 @@ Expected: FAIL with usage exit code `2`.
 
 - [ ] **Step 4: Route commands, use exit codes and run tests**
 
-Use exit code `0` for valid, `1` for invalid contract or unreadable file and `2` for command misuse. Validation output is one JSON object; preview output is Markdown.
+Use exit code `0` for valid, `1` for invalid contract or unreadable file and `2` for command misuse. Read the complete file before decoding so open/read failures become the `unreadable` diagnostic. Successful validation output is `{"valid":true}`. Semantic, structural and unreadable failures all use `{"valid":false,"violations":[...]}` with no `error` field. Invalid preview writes only the first concise `[code] Korean message` line to stderr; successful preview output is Markdown.
 
 Run: `go test ./internal/cli ./internal/contract -v`
 

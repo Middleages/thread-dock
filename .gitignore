@@ -1,7 +1,7 @@
 .superpowers/
 .worktrees/
-bin/
-dist/
+/bin/
+/dist/
 frontend/node_modules/
 frontend/dist/
 *.test
