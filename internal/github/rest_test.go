@@ -32,6 +32,29 @@ func TestCreateIssueBundleIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestIssuePostsContainCanonicalAndRoleKeyMarkers(t *testing.T) {
+	server, calls := fakeGHES(t)
+	defer server.Close()
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	if _, err := client.CreateIssueBundle(context.Background(), repo(), testfixture.ValidContract(), "td:run-184"); err != nil {
+		t.Fatal(err)
+	}
+	wantCanonical := "<!-- threaddock:td:run-184 -->"
+	wantMarkers := []string{
+		"<!-- threaddock:td:run-184:role=parent:key=parent -->",
+		"<!-- threaddock:td:run-184:role=child:key=api -->",
+		"<!-- threaddock:td:run-184:role=child:key=tests -->",
+	}
+	if len(calls.bodies) != len(wantMarkers) {
+		t.Fatalf("bodies=%d want=%d", len(calls.bodies), len(wantMarkers))
+	}
+	for i, body := range calls.bodies {
+		if !strings.Contains(body, wantCanonical) || !strings.Contains(body, wantMarkers[i]) {
+			t.Fatalf("body[%d]=%q", i, body)
+		}
+	}
+}
+
 func TestCreateIssueBundleReconcilesTransientPartialCreation(t *testing.T) {
 	var issues []map[string]any
 	posts := 0
@@ -97,7 +120,10 @@ func TestErrorNeverContainsToken(t *testing.T) {
 
 func repo() Repository { return Repository{Owner: "platform", Name: "payments-api"} }
 
-type callCounts struct{ createIssue int }
+type callCounts struct {
+	createIssue int
+	bodies      []string
+}
 
 func fakeGHES(t *testing.T) (*httptest.Server, *callCounts) {
 	t.Helper()
@@ -114,6 +140,7 @@ func fakeGHES(t *testing.T) (*httptest.Server, *callCounts) {
 				t.Fatal(err)
 			}
 			calls.createIssue++
+			calls.bodies = append(calls.bodies, body.Body)
 			issue := map[string]any{"number": calls.createIssue, "node_id": fmt.Sprintf("I_%d", calls.createIssue), "title": body.Title, "body": body.Body}
 			issues = append(issues, issue)
 			w.WriteHeader(http.StatusCreated)

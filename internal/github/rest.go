@@ -316,15 +316,25 @@ func roleMarker(marker, role, key string) string {
 	return "<!-- threaddock:" + marker + ":role=" + role + ":key=" + key + " -->"
 }
 
+func canonicalMarker(marker string) string {
+	return "<!-- threaddock:" + marker + " -->"
+}
+
 func withRoleMarker(body, marker, role, key string) string {
-	mark := roleMarker(marker, role, key)
-	if strings.Contains(body, mark) {
-		return body
+	canonical, roleKey := canonicalMarker(marker), roleMarker(marker, role, key)
+	if !strings.Contains(body, canonical) && !strings.Contains(body, roleKey) {
+		if body == "" {
+			return canonical + "\n" + roleKey
+		}
+		return body + "\n\n" + canonical + "\n" + roleKey
 	}
-	if body == "" {
-		return mark
+	if !strings.Contains(body, canonical) {
+		return body + "\n" + canonical
 	}
-	return body + "\n\n" + mark
+	if !strings.Contains(body, roleKey) {
+		return body + "\n" + roleKey
+	}
+	return body
 }
 
 func parseRoleMarker(body, marker string) (role, key string, ok bool) {
