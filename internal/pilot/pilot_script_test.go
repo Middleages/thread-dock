@@ -1,6 +1,7 @@
 package pilot
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -10,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"thread-dock/internal/config"
 )
 
 func TestPilotCheckPrintsKoreanPassSummaryAndWritesEvidence(t *testing.T) {
@@ -389,7 +392,7 @@ func TestPilotSimulateOutageUsesTemporaryConfigOnlyForStart(t *testing.T) {
 	temp := t.TempDir()
 	stateDir := filepath.Join(temp, "state")
 	configPath := filepath.Join(temp, "config.json")
-	writeFile(t, configPath, `{"ghesHost":"https://github.com","apiBase":"https://api.github.com","stateDir":"`+stateDir+`","apiToken":"config-secret","THREADDOCK_GH_TOKEN":"pilot-test-secret"}`, 0o600)
+	writeFile(t, configPath, `{"ghesHost":"https://github.com","apiBase":"https://api.github.com","apiVersion":"2022-11-28","stateDir":"`+stateDir+`","herdrBinary":"herdr-custom","gitBinary":"git-custom","workingWait":"5m","recoveryLimit":7,"projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"},"apiToken":"config-secret","THREADDOCK_GH_TOKEN":"pilot-test-secret"}`, 0o600)
 
 	fakeBin := filepath.Join(temp, "bin")
 	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
@@ -508,6 +511,30 @@ esac
 	var observedConfig map[string]any
 	if err := json.Unmarshal(observed, &observedConfig); err != nil {
 		t.Fatal(err)
+	}
+	parsed, err := config.Parse(bytes.NewReader(observed))
+	if err != nil {
+		t.Fatalf("captured temporary config does not pass config.Parse: %v\n%s", err, observed)
+	}
+	if parsed.GHESHost != "http://127.0.0.1:1" || parsed.APIBase != "http://127.0.0.1:1" {
+		t.Fatalf("parsed endpoints=%q/%q", parsed.GHESHost, parsed.APIBase)
+	}
+	if parsed.StateDir != stateDir || parsed.HerdrBinary != "herdr-custom" || parsed.GitBinary != "git-custom" {
+		t.Fatalf("parsed runtime fields=%#v", parsed)
+	}
+	if parsed.ProjectID != "PVT_1" || parsed.ProjectStatusFieldID != "PVTSSF_1" {
+		t.Fatalf("parsed project fields=%#v", parsed)
+	}
+	for status, wantOption := range map[string]string{
+		"Backlog":     "opt-1",
+		"Ready":       "opt-2",
+		"In Progress": "opt-3",
+		"Review":      "opt-4",
+		"Done":        "opt-5",
+	} {
+		if parsed.ProjectStatusOptions[status] != wantOption {
+			t.Fatalf("parsed project option %q=%q, want %q", status, parsed.ProjectStatusOptions[status], wantOption)
+		}
 	}
 	if observedConfig["apiBase"] != "http://127.0.0.1:1" || observedConfig["ghesHost"] != "http://127.0.0.1:1" {
 		t.Fatalf("unexpected observed outage config: %s", observed)
