@@ -38,6 +38,20 @@ body:
       description: Identify data, security, deployment, compatibility, or delivery risks.
     validations:
       required: true
+  - type: textarea
+    id: verification-plan
+    attributes:
+      label: Verification plan
+      description: What focused checks, Task gate checks, and Full Suite timing should be used? Record command, outcome, and duration in the audit evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: audit-record
+    attributes:
+      label: Audit record
+      description: Use Decision, Dispatch, Review, Verification, Blocker, or Integration. Keep summaries and evidence; exclude transcripts, tokens, secrets, and long raw terminal output.
+    validations:
+      required: true
   - type: input
     id: repository
     attributes:

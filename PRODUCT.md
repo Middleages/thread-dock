@@ -45,6 +45,9 @@ GitHub Enterprise Server를 영구 업무 기록으로 유지하면서, 개발�
 - v0.1은 Windows 11과 WSL, 단일 Operator, 단일 저장소 실행만 지원한다.
 - Worktree Isolation을 기본으로 사용하며 container sandbox는 프로젝트가 이미 지원할 때만 선택한다.
 - 로컬 실행 상태는 사람이 읽을 수 있는 JSON snapshot과 event log로 보존한다.
+- 구현 loop에서는 focused test를 실행하고, Task gate에서는 Task verification과 관련 static check를 실행한다. 전체 suite가 60초 이하면 Task gate에서 실행하고, 초과하면 wave end·shared-interface 변경·final PR에서 실행한다. final PR은 항상 전체 suite를 실행한다.
+- Reviewer는 검증 근거가 부족하거나 이름이 명시된 의문이 있을 때만 검증을 다시 실행한다. 근거에는 command, outcome과 duration을 남긴다.
+- Issue·PR audit comment는 Decision, Dispatch, Review, Verification, Blocker, Integration 범주를 사용하고 summary와 evidence만 남긴다. transcript, token, secret과 긴 raw terminal output은 남기지 않는다.
 - 한국어 UI만 제공하고 전체 Actions 로그와 production health metric은 앱에 저장하거나 포함하지 않는다.
 - 앱과 CLI가 과거 버전이라는 이유만으로 실행을 차단하지 않으며 명령 계약 호환성으로 기능을 판단한다.
 - 새 Release는 자동 다운로드 후 사용자가 적용 시점을 확인하고, 실패 시 직전 정상 버전으로 복구한다.
@@ -70,6 +73,7 @@ GitHub Enterprise Server를 영구 업무 기록으로 유지하면서, 개발�
 - 사람의 결정과 Agent의 자동 실행을 명확히 구분한다.
 - 한 사용자의 실제 흐름을 먼저 완성하고 확장 기능은 측정된 필요가 있을 때 추가한다.
 - 복잡한 자체 보안·플랫폼 기능은 만들지 않되 credential, 명령 실행과 production 승인 최소선은 유지한다.
+- 검증 시점을 위험과 feedback 속도에 맞춰 계층화하고, 모든 판단을 짧은 재현 가능한 근거로 남긴다.
 
 ## Accessibility & Inclusion
 
