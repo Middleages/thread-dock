@@ -259,6 +259,20 @@ Result contract:
 - remaining risk or blocker
 ```
 
+### 검증 cycle과 audit 기록
+
+검증은 feedback 속도와 회귀 위험을 함께 관리하는 계층형 cycle을 따른다.
+
+1. 구현 loop에서는 변경 범위에 맞는 Focused Verification을 실행한다.
+2. Task gate에서는 Task verification과 관련 static check를 실행한다.
+3. Full Suite가 60초 이하면 Task gate에서도 Full Suite를 실행한다.
+4. Full Suite가 60초를 초과하면 Wave End Verification, shared-interface 변경 직후와 final PR에서 실행한다.
+5. final PR에서는 Full Suite를 항상 실행한다.
+
+Reviewer는 검증 근거가 부족하거나 이름이 명시된 의문이 있을 때만 해당 검증을 다시 실행한다. 모든 결과 근거에는 실행한 command, outcome과 duration을 기록한다.
+
+Issue·PR audit comment는 `Decision`, `Dispatch`, `Review`, `Verification`, `Blocker`, `Integration` 중 하나로 시작한다. comment에는 짧은 summary와 evidence만 남기며 transcript, token, secret과 긴 raw terminal output은 포함하지 않는다.
+
 ## 8. 저장소 계약
 
 제품 저장소의 권장 최소 구조다.
@@ -676,6 +690,7 @@ Builder 두 개를 실행했다는 사실 자체는 성공 기준이 아니다. 
 - [`docs/adr/0001-go-wails-for-local-tools.md`](./docs/adr/0001-go-wails-for-local-tools.md) — 기술 선택
 - [`docs/adr/0002-windows-monitor-uses-wsl-cli.md`](./docs/adr/0002-windows-monitor-uses-wsl-cli.md) — Windows와 WSL interface
 - [`docs/adr/0003-supervised-auto-merge.md`](./docs/adr/0003-supervised-auto-merge.md) — 자동 병합과 사람 확인 경계
+- [`docs/adr/0004-tiered-test-cycle.md`](./docs/adr/0004-tiered-test-cycle.md) — 계층형 검증 cycle과 audit 근거
 - [`herdr-security-review.md`](./herdr-security-review.md) — Herdr 보안 검토
 - [`herdr-implementation-guide.html`](./herdr-implementation-guide.html) — Herdr 구현·운영 가이드
 - [`opendesign/design-systems/thread-dock-product/`](./opendesign/design-systems/thread-dock-product/) — 선택된 UI system

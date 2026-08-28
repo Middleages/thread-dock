@@ -1,0 +1,417 @@
+package herdr
+
+import (
+	"context"
+	"embed"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+
+	"thread-dock/internal/runner"
+)
+
+// testFS contains captured Herdr v0.8.2 wire responses.
+//
+//go:embed testdata/v0.8.2/*.txt
+var testFS embed.FS
+
+type recordingRunner struct {
+	responses map[string]string
+	calls     [][]string
+	cwds      []string
+	fail      *runnerFailure
+}
+
+type orderedResponse struct {
+	call   []string
+	stdout string
+}
+
+type orderedRunner struct {
+	responses []orderedResponse
+	calls     [][]string
+	cwds      []string
+}
+
+func (r *orderedRunner) Run(_ context.Context, cwd, executable string, args ...string) (runner.Result, error) {
+	call := append([]string{executable}, args...)
+	r.calls = append(r.calls, call)
+	r.cwds = append(r.cwds, cwd)
+	if len(r.responses) == 0 {
+		return runner.Result{ExitCode: 1}, &testError{"unexpected command after fixture responses"}
+	}
+	response := r.responses[0]
+	r.responses = r.responses[1:]
+	if !reflect.DeepEqual(call, response.call) {
+		return runner.Result{ExitCode: 1}, &testError{"unexpected command order"}
+	}
+	return runner.Result{Stdout: response.stdout, ExitCode: 0}, nil
+}
+
+func (r *recordingRunner) Run(_ context.Context, cwd, executable string, args ...string) (runner.Result, error) {
+	call := append([]string{executable}, args...)
+	r.calls = append(r.calls, call)
+	r.cwds = append(r.cwds, cwd)
+	if r.fail != nil {
+		return runner.Result{Stderr: r.fail.stderr, ExitCode: r.fail.exitCode}, &testError{r.fail.err}
+	}
+	key := strings.Join(call, "\x00")
+	response, ok := r.responses[key]
+	if !ok {
+		return runner.Result{ExitCode: 1}, &testError{"unexpected command: " + strings.Join(call, " ")}
+	}
+	return runner.Result{Stdout: response, ExitCode: 0}, nil
+}
+
+type runnerFailure struct {
+	stderr   string
+	err      string
+	exitCode int
+}
+
+type testError struct{ message string }
+
+func (e *testError) Error() string { return e.message }
+
+type stdoutErrorRunner struct{}
+
+func (stdoutErrorRunner) Run(context.Context, string, string, ...string) (runner.Result, error) {
+	return runner.Result{Stdout: `{"error":{"code":"agent_not_found","message":"not found"}}`, ExitCode: 1}, &testError{"command failed"}
+}
+
+func TestCreateWorktreeReturnsActualIDsAndUsesExplicitArguments(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00worktree\x00create\x00--cwd\x00/repo\x00--branch\x00agent/184-integration\x00--base\x00main\x00--label\x00issue-184-integration\x00--no-focus": readFixture(t, "testdata/v0.8.2/worktree-create.txt"),
+		"herdr\x00pane\x00list\x00--workspace\x00workspace-redacted": readFixture(t, "testdata/v0.8.2/pane-list.txt"),
+	})
+	cli := NewCLI(r, "herdr")
+
+	got, err := cli.CreateWorktree(context.Background(), CreateWorktreeRequest{
+		Cwd: "/repo", Branch: "agent/184-integration", Base: "main", Label: "issue-184-integration",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkspaceID != "workspace-redacted" || got.PaneID != "pane-redacted" {
+		t.Fatalf("result=%#v", got)
+	}
+	if got.Path != "/redacted/worktree" {
+		t.Fatalf("path=%q", got.Path)
+	}
+	want := [][]string{
+		{"herdr", "worktree", "create", "--cwd", "/repo", "--branch", "agent/184-integration", "--base", "main", "--label", "issue-184-integration", "--no-focus"},
+		{"herdr", "pane", "list", "--workspace", "workspace-redacted"},
+	}
+	if !reflect.DeepEqual(r.calls, want) {
+		t.Fatalf("calls=%#v want=%#v", r.calls, want)
+	}
+}
+
+func TestAgentLifecycleCommandsUseStructuredArguments(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00start\x00builder_api\x00--kind\x00opencode\x00--pane\x00pane-redacted":                           `{}`,
+		"herdr\x00agent\x00prompt\x00builder_api\x00packet with spaces\n$(not-a-command)\x00--wait\x00--timeout\x003600000": `{}`,
+		"herdr\x00agent\x00get\x00builder_api":                                                    readFixture(t, "testdata/v0.8.2/agent-get.txt"),
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": "recent output",
+	})
+	cli := NewCLI(r, "herdr")
+
+	if err := cli.StartAgent(context.Background(), StartAgentRequest{Name: "builder_api", PaneID: "pane-redacted"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cli.Prompt(context.Background(), "builder_api", "packet with spaces\n$(not-a-command)"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := cli.Get(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != AgentStateWorking {
+		t.Fatalf("state=%q", state)
+	}
+	recent, err := cli.ReadRecent(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recent != "recent output" {
+		t.Fatalf("recent=%q", recent)
+	}
+}
+
+func TestRunnerFailureDoesNotExposeSecrets(t *testing.T) {
+	packetSecret := "packet-secret-184"
+	r := &recordingRunner{fail: &runnerFailure{
+		stderr: "stderr-secret-184", err: "runner-secret-184", exitCode: 17,
+	}}
+	err := NewCLI(r, "herdr").Prompt(context.Background(), "builder_api", packetSecret)
+	if err == nil {
+		t.Fatal("expected prompt error")
+	}
+	message := err.Error()
+	for _, secret := range []string{packetSecret, "stderr-secret-184", "runner-secret-184", "builder_api"} {
+		if strings.Contains(message, secret) {
+			t.Fatalf("error contains secret %q: %q", secret, message)
+		}
+	}
+	if message != "herdr agent prompt failed (exit code 17)" {
+		t.Fatalf("error=%q", message)
+	}
+}
+
+func TestReadRecentReturnsRawStdout(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": readFixture(t, "testdata/v0.8.2/recent-output.txt"),
+	})
+	got, err := NewCLI(r, "herdr").ReadRecent(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != readFixture(t, "testdata/v0.8.2/recent-output.txt") {
+		t.Fatalf("output=%q", got)
+	}
+}
+
+func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": EvidenceBeginMarker + "\n" + `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"2.3s"}]}` + "\n" + EvidenceEndMarker,
+	})
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil || got.CommitSHA == "" || got.Verification[0].Duration != "2.3s" {
+		t.Fatalf("evidence=%#v err=%v", got, err)
+	}
+}
+
+func TestReadEvidenceExtractsLastCompleteEnvelopeFromUITranscript(t *testing.T) {
+	output := "recent UI output\n" + EvidenceBeginMarker + "\n" +
+		`{"requestId":"prompt-old","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./old","outcome":"passed","duration":"1s"}]}` +
+		"\n" + EvidenceEndMarker + "\nmore UI\n" + EvidenceBeginMarker + "\n" +
+		`{"requestId":"prompt-last","commitSha":"abcdef0123456789abcdef0123456789abcdef01","verification":[{"command":"go test ./...","outcome":"passed","duration":"2s"}]}` +
+		"\n" + EvidenceEndMarker + "\ntrailing UI text"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil || got.RequestID != "prompt-last" || got.Verification[0].Command != "go test ./..." {
+		t.Fatalf("evidence=%#v err=%v", got, err)
+	}
+}
+
+func TestReadEvidenceAcceptsTheCapturedRecentOutputFixtureAroundEnvelope(t *testing.T) {
+	output := readFixture(t, "testdata/v0.8.2/recent-output.txt") + "\n" + EvidenceBeginMarker + "\n" +
+		`{"requestId":"prompt-fixture","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}` +
+		"\n" + EvidenceEndMarker + "\n" + readFixture(t, "testdata/v0.8.2/recent-output.txt")
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadEvidenceRejectsMalformedIncompleteOversizedAndSecretEnvelopes(t *testing.T) {
+	valid := `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	cases := map[string]string{
+		"malformed":            EvidenceBeginMarker + "\n{" + "\n" + EvidenceEndMarker,
+		"incomplete":           EvidenceBeginMarker + "\n" + valid + "\n" + EvidenceBeginMarker,
+		"oversized":            EvidenceBeginMarker + "\n" + strings.Repeat("x", MaxEvidencePayloadBytes+1) + "\n" + EvidenceEndMarker,
+		"secret":               EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", "THREADDOCK_GH_TOKEN=plain-internal-token", 1) + "\n" + EvidenceEndMarker,
+		"quoted token":         EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"token":"plain-internal-token"}`, 1) + "\n" + EvidenceEndMarker,
+		"quoted password":      EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"password":"hunter2"}`, 1) + "\n" + EvidenceEndMarker,
+		"quoted authorization": EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"authorization":"Bearer internal-token"}`, 1) + "\n" + EvidenceEndMarker,
+		"quoted assignment":    EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `'secret' = 'value'`, 1) + "\n" + EvidenceEndMarker,
+		"quoted client secret": EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"clientSecret": "value"}`, 1) + "\n" + EvidenceEndMarker,
+		"unknown":              EvidenceBeginMarker + "\n" + `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}],"extra":"not allowed"}` + "\n" + EvidenceEndMarker,
+		"trailing":             EvidenceBeginMarker + "\n" + valid + "\n{}\n" + EvidenceEndMarker,
+	}
+	for name, output := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted invalid evidence envelope")
+			}
+		})
+	}
+}
+
+func TestEvidenceCredentialPatternRecognizesQuotedAssignments(t *testing.T) {
+	for _, value := range []string{
+		`{"token":"plain-internal-token"}`,
+		`{"password":"hunter2"}`,
+		`{"authorization":"Bearer internal-token"}`,
+		`'secret' = 'value'`,
+		`"clientSecret": "value"`,
+	} {
+		if !evidenceCredentialPattern.MatchString(value) {
+			t.Errorf("evidenceCredentialPattern.MatchString(%q)=false, want true", value)
+		}
+	}
+}
+
+func TestFindWorktreeReconcilesPathWorkspaceAndPane(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00worktree\x00list\x00--cwd\x00/repo":           `{"result":{"worktrees":[{"branch":"agent/run-integration","label":"run","open_workspace_id":"workspace-run","path":"/work/run"}]}}`,
+		"herdr\x00pane\x00list\x00--workspace\x00workspace-run": `{"result":{"panes":[{"pane_id":"pane-run","workspace_id":"workspace-run"}]}}`,
+	})
+	got, found, err := NewCLI(r, "herdr").FindWorktree(context.Background(), "/repo", "/work/run", "run")
+	if err != nil || !found || got.Path != "/work/run" || got.WorkspaceID != "workspace-run" || got.PaneID != "pane-run" {
+		t.Fatalf("worktree=%#v found=%v err=%v", got, found, err)
+	}
+}
+
+func TestFindWorktreePropagatesPaneLookupFailure(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00worktree\x00list\x00--cwd\x00/repo": `{"result":{"worktrees":[{"label":"run","open_workspace_id":"workspace-run","path":"/work/run"}]}}`,
+	})
+	_, _, err := NewCLI(r, "herdr").FindWorktree(context.Background(), "/repo", "/work/run", "run")
+	if err == nil || !strings.Contains(err.Error(), "pane list") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestFindWorktreeReportsClosedWorkspace(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00worktree\x00list\x00--cwd\x00/repo": `{"result":{"worktrees":[{"label":"run","path":"/work/run"}]}}`,
+	})
+	_, _, err := NewCLI(r, "herdr").FindWorktree(context.Background(), "/repo", "/work/run", "run")
+	if !errors.Is(err, ErrClosedWorkspace) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGetInfoClassifiesAgentNotFoundFromStructuredStdout(t *testing.T) {
+	_, err := NewCLI(stdoutErrorRunner{}, "herdr").GetInfo(context.Background(), "threaddock-definitely-missing-agent")
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGetInfoParsesStateChangeSequence(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder_api": readFixture(t, "testdata/v0.8.2/agent-get.txt"),
+	})
+	got, err := NewCLI(r, "herdr").GetInfo(context.Background(), "builder_api")
+	if err != nil || got.StateChangeSeq != 110 {
+		t.Fatalf("info=%#v err=%v", got, err)
+	}
+}
+
+func TestReadPromptReceiptReturnsSequenceAndOnlyRequestObservation(t *testing.T) {
+	requestID := "run-184:builder-prompt"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder-184":                                                    readFixture(t, "testdata/v0.8.2/agent-get.txt"),
+		"herdr\x00agent\x00read\x00builder-184\x00--source\x00recent-unwrapped\x00--lines\x00120": "agent output with " + requestID,
+	})
+	info, observed, err := NewCLI(r, "herdr").ReadPromptReceipt(context.Background(), "builder-184", requestID)
+	if err != nil || info.StateChangeSeq != 110 || !observed {
+		t.Fatalf("info=%#v observed=%v err=%v", info, observed, err)
+	}
+	if len(r.calls) != 2 || !reflect.DeepEqual(r.calls[0], []string{"herdr", "agent", "read", "builder-184", "--source", "recent-unwrapped", "--lines", "120"}) || !reflect.DeepEqual(r.calls[1], []string{"herdr", "agent", "get", "builder-184"}) {
+		t.Fatalf("calls=%#v", r.calls)
+	}
+	if !reflect.DeepEqual(r.cwds, []string{"", ""}) {
+		t.Fatalf("cwds=%#v", r.cwds)
+	}
+}
+
+func TestReadPromptReceiptReadsRecentBeforeLatestSequence(t *testing.T) {
+	requestID := "run-184:builder-prompt"
+	r := &orderedRunner{responses: []orderedResponse{
+		{call: []string{"herdr", "agent", "read", "builder-184", "--source", "recent-unwrapped", "--lines", "120"}, stdout: readFixture(t, "testdata/v0.8.2/prompt-reconcile-recent-missing.txt")},
+		{call: []string{"herdr", "agent", "get", "builder-184"}, stdout: readFixture(t, "testdata/v0.8.2/agent-get-seq-43.txt")},
+	}}
+	info, observed, err := NewCLI(r, "herdr").ReadPromptReceipt(context.Background(), "builder-184", requestID)
+	if err != nil || info.StateChangeSeq != 43 || observed {
+		t.Fatalf("info=%#v observed=%v err=%v", info, observed, err)
+	}
+	if !reflect.DeepEqual(r.cwds, []string{"", ""}) {
+		t.Fatalf("cwds=%#v", r.cwds)
+	}
+}
+
+func TestReadEvidenceRejectsRawTranscriptAndMissingDuration(t *testing.T) {
+	for name, output := range map[string]string{
+		"raw":      "commit_sha: 0123456789abcdef0123456789abcdef01234567",
+		"duration": `{"commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed"}]}`,
+		"trailing": `{"commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}\nnot-json`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted untrusted evidence")
+			}
+		})
+	}
+}
+
+func TestStartAgentAlwaysStartsOpenCode(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00start\x00builder_api\x00--kind\x00opencode\x00--pane\x00pane-redacted": `{}`,
+	})
+	if err := NewCLI(r, "herdr").StartAgent(context.Background(), StartAgentRequest{Name: "builder_api", PaneID: "pane-redacted"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateWorktreeRejectsMismatchedWorkspaceRelationships(t *testing.T) {
+	create := `{"result":{"root_pane":{"pane_id":"pane-a","workspace_id":"workspace-b"},"workspace":{"workspace_id":"workspace-a"}}}`
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00worktree\x00create\x00--cwd\x00/repo\x00--branch\x00branch\x00--base\x00main\x00--label\x00label\x00--no-focus": create,
+	})
+	_, err := NewCLI(r, "herdr").CreateWorktree(context.Background(), CreateWorktreeRequest{Cwd: "/repo", Branch: "branch", Base: "main", Label: "label"})
+	if err == nil || err.Error() != "herdr worktree create failed (exit code 0)" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCreateWorktreeRequiresPaneWorkspaceMatch(t *testing.T) {
+	create := `{"result":{"root_pane":{"pane_id":"pane-a","workspace_id":"workspace-a"},"workspace":{"workspace_id":"workspace-a"}}}`
+	panes := `{"result":{"panes":[{"pane_id":"pane-a","workspace_id":"workspace-b"}]}}`
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00worktree\x00create\x00--cwd\x00/repo\x00--branch\x00branch\x00--base\x00main\x00--label\x00label\x00--no-focus": create,
+		"herdr\x00pane\x00list\x00--workspace\x00workspace-a":                                                                     panes,
+	})
+	_, err := NewCLI(r, "herdr").CreateWorktree(context.Background(), CreateWorktreeRequest{Cwd: "/repo", Branch: "branch", Base: "main", Label: "label"})
+	if err == nil || err.Error() != "herdr pane list failed (exit code 0)" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestAgentStatesAreLifecycleOnly(t *testing.T) {
+	for input, want := range map[string]AgentState{
+		"working": AgentStateWorking, "blocked": AgentStateBlocked, "idle": AgentStateIdle,
+		"done": AgentStateDone, "unknown": AgentStateUnknown, "other": AgentStateUnknown,
+	} {
+		if got := ParseAgentState(input); got != want {
+			t.Errorf("ParseAgentState(%q)=%q want %q", input, got, want)
+		}
+	}
+}
+
+func TestMalformedHerdrOutputReturnsError(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder_api": `{"id":"cli:agent:get","result":{}}`,
+	})
+	_, err := NewCLI(r, "herdr").Get(context.Background(), "builder_api")
+	if err == nil || err.Error() != "herdr agent get failed (exit code 0)" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func fixtureRunner(t *testing.T, responses map[string]string) *recordingRunner {
+	t.Helper()
+	return &recordingRunner{responses: responses}
+}
+
+func readFixture(t *testing.T, name string) string {
+	t.Helper()
+	data, err := testFS.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
