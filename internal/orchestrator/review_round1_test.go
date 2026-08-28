@@ -197,7 +197,7 @@ func TestRound2PromptPendingSequenceDefersOrConfirmsExactlyOnce(t *testing.T) {
 	snapshot := h.mustLoad(id)
 	snapshot.Phase = contract.PhaseBuilding
 	snapshot.ActionCursor = 2
-	snapshot.Builder = state.AgentEvidence{Name: "builder-" + string(id), SessionID: "builder-session"}
+	snapshot.Builder = state.AgentEvidence{Name: agentName("builder", id), SessionID: "builder-session"}
 	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: string(id) + ":builder-prompt", BaselineSeq: 42}
 	snapshot.PendingAction = "prompt_builder"
 	if err := h.store.Save(context.Background(), snapshot); err != nil {
@@ -254,7 +254,7 @@ func TestRound2ReviewerPromptPendingWithMissingReceiptStaysUncertain(t *testing.
 	snapshot := h.mustLoad(id)
 	snapshot.Phase = contract.PhaseReviewing
 	snapshot.ActionCursor = 3
-	snapshot.Reviewer = state.AgentEvidence{Name: "reviewer-" + string(id), SessionID: "reviewer-session"}
+	snapshot.Reviewer = state.AgentEvidence{Name: agentName("reviewer", id), SessionID: "reviewer-session"}
 	snapshot.ReviewerPrompt = state.PromptReceipt{RequestID: string(id) + ":reviewer-prompt", BaselineSeq: 42}
 	snapshot.PendingAction = "prompt_reviewer"
 	if err := h.store.Save(context.Background(), snapshot); err != nil {
@@ -307,7 +307,7 @@ func TestRound2AgentStartNotFoundReconcileDefersStartToNextAdvance(t *testing.T)
 	snapshot.Phase = contract.PhaseBuilding
 	snapshot.ActionCursor = 0
 	snapshot.BuilderWorktree = state.WorktreeState{Path: "/tmp/builder", WorkspaceID: "workspace-184", PaneID: "pane-184", Branch: "agent/api"}
-	snapshot.Builder = state.AgentEvidence{Name: "builder-" + string(id)}
+	snapshot.Builder = state.AgentEvidence{Name: agentName("builder", id)}
 	snapshot.PendingAction = "start_builder"
 	if err := h.store.Save(context.Background(), snapshot); err != nil {
 		t.Fatal(err)
@@ -446,7 +446,7 @@ func TestRound2BaselineCrashReconcileStoresSeqBeforePrompt(t *testing.T) {
 	snapshot.Phase = contract.PhaseBuilding
 	snapshot.ActionCursor = 1
 	snapshot.BuilderWorktree = state.WorktreeState{WorkspaceID: "workspace-184", PaneID: "pane-184"}
-	snapshot.Builder = state.AgentEvidence{Name: "builder-" + string(id)}
+	snapshot.Builder = state.AgentEvidence{Name: agentName("builder", id)}
 	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: string(id) + ":builder-prompt"}
 	snapshot.PendingAction = "baseline_builder_prompt"
 	if err := h.store.Save(context.Background(), snapshot); err != nil {
@@ -456,7 +456,7 @@ func TestRound2BaselineCrashReconcileStoresSeqBeforePrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := h.mustLoad(id)
-	if got.PendingAction != "" || got.ActionCursor != 2 || got.Builder.SessionID != "session-builder-"+string(id) || got.BuilderPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
+	if got.PendingAction != "" || got.ActionCursor != 2 || got.Builder.SessionID != "session-"+agentName("builder", id) || got.BuilderPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
 		t.Fatalf("baseline reconcile state=%#v prompts=%d", got, len(h.herdr.prompts))
 	}
 }
@@ -470,7 +470,7 @@ func TestRound2ReviewerBaselineCrashReconcileStoresActualSessionAndSeq(t *testin
 	snapshot := h.mustLoad(id)
 	snapshot.Phase = contract.PhaseReviewing
 	snapshot.ActionCursor = 3
-	snapshot.Reviewer = state.AgentEvidence{Name: "reviewer-" + string(id)}
+	snapshot.Reviewer = state.AgentEvidence{Name: agentName("reviewer", id)}
 	snapshot.ReviewerWorktree = state.WorktreeState{Path: "/tmp/review", WorkspaceID: "workspace-review-184", PaneID: "pane-review-184"}
 	snapshot.ReviewerPrompt = state.PromptReceipt{RequestID: string(id) + ":reviewer-prompt"}
 	snapshot.PendingAction = "baseline_reviewer_prompt"
@@ -481,7 +481,7 @@ func TestRound2ReviewerBaselineCrashReconcileStoresActualSessionAndSeq(t *testin
 		t.Fatal(err)
 	}
 	got := h.mustLoad(id)
-	if got.PendingAction != "" || got.ActionCursor != 4 || got.Reviewer.SessionID != "session-reviewer-"+string(id) || got.ReviewerPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
+	if got.PendingAction != "" || got.ActionCursor != 4 || got.Reviewer.SessionID != "session-"+agentName("reviewer", id) || got.ReviewerPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
 		t.Fatalf("baseline reconcile state=%#v prompts=%d", got, len(h.herdr.prompts))
 	}
 }
@@ -514,11 +514,11 @@ func TestRound2BaselineCrashReconcileRejectsWrongIdentityForBuilderAndReviewer(t
 			snapshot.ActionCursor = 1
 			snapshot.BuilderWorktree = state.WorktreeState{WorkspaceID: "workspace-184", PaneID: "pane-184"}
 			snapshot.ReviewerWorktree = state.WorktreeState{WorkspaceID: "workspace-review-184", PaneID: "pane-review-184"}
-			name := "builder-" + string(id)
+			name := agentName("builder", id)
 			if tc.reviewer {
 				snapshot.Phase = contract.PhaseReviewing
 				snapshot.ActionCursor = 3
-				name = "reviewer-" + string(id)
+				name = agentName("reviewer", id)
 				snapshot.Reviewer = state.AgentEvidence{Name: name}
 				snapshot.ReviewerPrompt = state.PromptReceipt{RequestID: string(id) + ":reviewer-prompt"}
 			} else {

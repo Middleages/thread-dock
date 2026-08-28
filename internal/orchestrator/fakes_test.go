@@ -159,21 +159,22 @@ func (f *fakeGitHub) GetPullRequest(context.Context, github.Repository, int) (gi
 }
 
 type fakeHerdr struct {
-	worktrees          int
-	starts             []herdr.StartAgentRequest
-	prompts            []string
-	recent             string
-	evidence           herdr.Evidence
-	startEntered       chan struct{}
-	releaseStart       chan struct{}
-	startCount         int
-	findWorktreeCalls  int
-	findWorktreeCWD    string
-	agentSeq           int64
-	agentInfoErr       error
-	agentInfoOverride  *herdr.AgentInfo
-	findWorktreeExists bool
-	promptReceiptReads int
+	worktrees           int
+	starts              []herdr.StartAgentRequest
+	prompts             []string
+	recent              string
+	evidence            herdr.Evidence
+	startEntered        chan struct{}
+	releaseStart        chan struct{}
+	startCount          int
+	findWorktreeCalls   int
+	findWorktreeCWD     string
+	agentSeq            int64
+	agentInfoErr        error
+	agentInfoOverride   *herdr.AgentInfo
+	findWorktreeExists  bool
+	promptReceiptReads  int
+	lastPromptRequestID string
 }
 
 func (f *fakeHerdr) CreateWorktree(context.Context, herdr.CreateWorktreeRequest) (herdr.Worktree, error) {
@@ -199,6 +200,9 @@ func (f *fakeHerdr) StartAgent(_ context.Context, request herdr.StartAgentReques
 
 func (f *fakeHerdr) Prompt(_ context.Context, _ string, packet string) error {
 	f.prompts = append(f.prompts, packet)
+	if marker := "Use requestId="; strings.Contains(packet, marker) {
+		f.lastPromptRequestID = strings.TrimSuffix(strings.Fields(strings.TrimPrefix(packet[strings.Index(packet, marker):], marker))[0], ".")
+	}
 	return nil
 }
 
@@ -212,7 +216,10 @@ func (f *fakeHerdr) ReadRecent(context.Context, string) (string, error) {
 
 func (f *fakeHerdr) ReadEvidence(_ context.Context, name string) (herdr.Evidence, error) {
 	if f.evidence.RequestID == "" {
-		f.evidence.RequestID = strings.TrimPrefix(name, "builder-") + ":builder-prompt"
+		f.evidence.RequestID = f.lastPromptRequestID
+		if f.evidence.RequestID == "" {
+			f.evidence.RequestID = strings.TrimPrefix(name, "builder-") + ":builder-prompt"
+		}
 	}
 	return f.evidence, nil
 }
