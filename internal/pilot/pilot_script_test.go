@@ -1,6 +1,7 @@
 package pilot
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -10,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"thread-dock/internal/config"
 )
 
 func TestPilotCheckPrintsKoreanPassSummaryAndWritesEvidence(t *testing.T) {
@@ -389,7 +392,11 @@ func TestPilotSimulateOutageUsesTemporaryConfigOnlyForStart(t *testing.T) {
 	temp := t.TempDir()
 	stateDir := filepath.Join(temp, "state")
 	configPath := filepath.Join(temp, "config.json")
-	writeFile(t, configPath, `{"ghesHost":"https://github.com","apiBase":"https://api.github.com","stateDir":"`+stateDir+`","apiToken":"config-secret","THREADDOCK_GH_TOKEN":"pilot-test-secret"}`, 0o600)
+	sourceConfig := []byte(`{"ghesHost":"https://github.com","apiBase":"https://api.github.com","apiVersion":"2022-11-28","stateDir":"` + stateDir + `","herdrBinary":"herdr-custom","gitBinary":"git-custom","workingWait":"5m","recoveryLimit":7,"projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`)
+	writeFile(t, configPath, string(sourceConfig), 0o600)
+	if _, err := config.Parse(bytes.NewReader(sourceConfig)); err != nil {
+		t.Fatalf("source config does not pass config.Parse: %v\n%s", err, sourceConfig)
+	}
 
 	fakeBin := filepath.Join(temp, "bin")
 	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
@@ -422,7 +429,7 @@ exit 0
 	callLog := filepath.Join(temp, "agentctl.calls")
 	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s|%s|%s|%s\n' "$1" "${2:-}" "${THREADDOCK_CONFIG}" "$("$PILOT_TEST_JQ_PATH" -r '.apiBase' "$THREADDOCK_CONFIG")" >>"${PILOT_TEST_CALL_LOG}"
+printf '%s|%s|%s|%s|%s\n' "$1" "${2:-}" "${THREADDOCK_CONFIG}" "$("$PILOT_TEST_JQ_PATH" -r '.ghesHost' "$THREADDOCK_CONFIG")" "$("$PILOT_TEST_JQ_PATH" -r '.apiBase' "$THREADDOCK_CONFIG")" >>"${PILOT_TEST_CALL_LOG}"
 case "${1:-}" in
   contract) exit 0 ;;
   start)
@@ -485,9 +492,9 @@ esac
 	if !strings.HasPrefix(lines[0], "contract|") || !strings.HasPrefix(lines[1], "start|") || !strings.HasPrefix(lines[2], "resume|td-simulated-outage|") {
 		t.Fatalf("unexpected agentctl calls: %q", lines)
 	}
-	startFields := strings.SplitN(lines[1], "|", 4)
-	resumeFields := strings.SplitN(lines[2], "|", 4)
-	if len(startFields) != 4 || len(resumeFields) != 4 {
+	startFields := strings.SplitN(lines[1], "|", 5)
+	resumeFields := strings.SplitN(lines[2], "|", 5)
+	if len(startFields) != 5 || len(resumeFields) != 5 {
 		t.Fatalf("malformed agentctl calls: %q", lines)
 	}
 	startConfig := startFields[2]
@@ -495,8 +502,8 @@ esac
 	if startConfig == configPath || resumeConfig != configPath {
 		t.Fatalf("config paths start=%q resume=%q original=%q", startConfig, resumeConfig, configPath)
 	}
-	if startFields[3] != "http://127.0.0.1:1" || resumeFields[3] != "https://api.github.com" {
-		t.Fatalf("config API bases start=%q resume=%q", startFields[3], resumeFields[3])
+	if startFields[3] != "http://127.0.0.1:1" || startFields[4] != "http://127.0.0.1:1" || resumeFields[3] != "https://github.com" || resumeFields[4] != "https://api.github.com" {
+		t.Fatalf("config endpoints start=%q/%q resume=%q/%q", startFields[3], startFields[4], resumeFields[3], resumeFields[4])
 	}
 	if _, err := os.Stat(startConfig); !os.IsNotExist(err) {
 		t.Fatalf("temporary outage config still exists: %q (err=%v)", startConfig, err)
@@ -509,7 +516,34 @@ esac
 	if err := json.Unmarshal(observed, &observedConfig); err != nil {
 		t.Fatal(err)
 	}
-	if observedConfig["apiBase"] != "http://127.0.0.1:1" || observedConfig["ghesHost"] != "https://github.com" {
+	parsed, err := config.Parse(bytes.NewReader(observed))
+	if err != nil {
+		t.Fatalf("captured temporary config does not pass config.Parse: %v\n%s", err, observed)
+	}
+	if parsed.GHESHost != "http://127.0.0.1:1" || parsed.APIBase != "http://127.0.0.1:1" {
+		t.Fatalf("parsed endpoints=%q/%q", parsed.GHESHost, parsed.APIBase)
+	}
+	if parsed.APIVersion != "2022-11-28" || parsed.WorkingWait != 5*time.Minute || parsed.RecoveryLimit != 7 {
+		t.Fatalf("parsed API/timing fields=%#v", parsed)
+	}
+	if parsed.StateDir != stateDir || parsed.HerdrBinary != "herdr-custom" || parsed.GitBinary != "git-custom" {
+		t.Fatalf("parsed runtime fields=%#v", parsed)
+	}
+	if parsed.ProjectID != "PVT_1" || parsed.ProjectStatusFieldID != "PVTSSF_1" {
+		t.Fatalf("parsed project fields=%#v", parsed)
+	}
+	for status, wantOption := range map[string]string{
+		"Backlog":     "opt-1",
+		"Ready":       "opt-2",
+		"In Progress": "opt-3",
+		"Review":      "opt-4",
+		"Done":        "opt-5",
+	} {
+		if parsed.ProjectStatusOptions[status] != wantOption {
+			t.Fatalf("parsed project option %q=%q, want %q", status, parsed.ProjectStatusOptions[status], wantOption)
+		}
+	}
+	if observedConfig["apiBase"] != "http://127.0.0.1:1" || observedConfig["ghesHost"] != "http://127.0.0.1:1" {
 		t.Fatalf("unexpected observed outage config: %s", observed)
 	}
 	for _, key := range []string{"apiToken", "THREADDOCK_GH_TOKEN"} {
@@ -531,10 +565,18 @@ esac
 	} else if !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	assertTreeFreeOfSecret(t, stateDir, "pilot-test-secret")
-	if strings.Contains(string(output), "pilot-test-secret") || strings.Contains(string(calls), "pilot-test-secret") || strings.Contains(string(observed), "pilot-test-secret") {
-		t.Fatalf("token leaked in output or call log:\n%s", output)
+	for label, data := range map[string][]byte{
+		"command output":            output,
+		"agentctl call log":         calls,
+		"captured temporary config": observed,
+	} {
+		for _, marker := range []string{"pilot-test-secret", `"apiToken"`, `"THREADDOCK_GH_TOKEN"`} {
+			if bytes.Contains(data, []byte(marker)) {
+				t.Fatalf("%s contains forbidden credential marker %q: %s", label, marker, data)
+			}
+		}
 	}
+	assertTreeFreeOfValues(t, stateDir, "pilot-test-secret", `"apiToken"`, `"THREADDOCK_GH_TOKEN"`)
 }
 
 func TestPilotSimulateOutageRejectsGHESBeforeAgentctlOrWrites(t *testing.T) {
@@ -705,6 +747,10 @@ esac
 }
 
 func assertTreeFreeOfSecret(t *testing.T, root, secret string) {
+	assertTreeFreeOfValues(t, root, secret)
+}
+
+func assertTreeFreeOfValues(t *testing.T, root string, forbidden ...string) {
 	t.Helper()
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -713,15 +759,19 @@ func assertTreeFreeOfSecret(t *testing.T, root, secret string) {
 		if entry.IsDir() {
 			return nil
 		}
-		if strings.Contains(entry.Name(), secret) {
-			t.Fatalf("secret appears in state path: %s", path)
+		for _, value := range forbidden {
+			if strings.Contains(entry.Name(), value) {
+				t.Fatalf("forbidden value %q appears in state path: %s", value, path)
+			}
 		}
 		contents, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(contents), secret) {
-			t.Fatalf("secret appears in state file: %s", path)
+		for _, value := range forbidden {
+			if strings.Contains(string(contents), value) {
+				t.Fatalf("forbidden value %q appears in state file: %s", value, path)
+			}
 		}
 		return nil
 	})
