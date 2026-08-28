@@ -19,9 +19,10 @@ import (
 
 func main() {
 	args := os.Args[1:]
-	// These commands are deliberately dependency-free. This preserves the
-	// foundation contract interface even on a machine not configured for GHES.
-	if (len(args) == 1 && args[0] == "version") || (len(args) > 0 && args[0] == "contract") {
+	// These commands and malformed/unknown invocations are deliberately
+	// dependency-free. This preserves usage and the foundation contract
+	// interface on a machine not configured for GHES.
+	if !cli.NeedsProductionDependencies(args) {
 		os.Exit(cli.Run(context.Background(), args, os.Stdout, os.Stderr))
 	}
 
@@ -52,23 +53,31 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 	}
 
 	process := runner.OSRunner{}
+	repositoryPath, err := cli.DiscoverRepositoryPath(context.Background(), process, cfg.GitBinary)
+	if err != nil {
+		return cli.Dependencies{}, err
+	}
+	worktreeRoot := filepath.Join(cfg.StateDir, "worktrees")
 	store := state.NewStore(cfg.StateDir)
 	git := worktree.New(process, cfg.GitBinary)
 	ghes := github.NewRESTClient(cfg.APIBase, token, cfg.APIVersion, nil)
 	herdrClient := herdr.NewCLI(process, cfg.HerdrBinary)
 	orch := orchestrator.New(orchestrator.Dependencies{
-		Store:    store,
-		GitHub:   ghes,
-		Herdr:    herdrClient,
-		Git:      git,
-		Worktree: git,
+		Store:          store,
+		GitHub:         ghes,
+		Herdr:          herdrClient,
+		Git:            git,
+		Worktree:       git,
+		RepositoryPath: repositoryPath,
+		WorktreeRoot:   worktreeRoot,
 	})
 	service := cli.NewOrchestratorRunService(
 		orch,
 		store,
-		cli.SafeWorktreeCleanup{Runner: process, Binary: cfg.GitBinary, HerdrBinary: cfg.HerdrBinary},
+		cli.SafeWorktreeCleanup{Runner: process, Binary: cfg.GitBinary, HerdrBinary: cfg.HerdrBinary, HerdrLocator: herdrClient},
 		cli.NewRunStateRemover(cfg.StateDir),
 		nil,
+		worktreeRoot,
 	)
 	return cli.Dependencies{Runs: service}, nil
 }

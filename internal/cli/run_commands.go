@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"thread-dock/internal/contract"
+	"thread-dock/internal/herdr"
 	"thread-dock/internal/orchestrator"
 	"thread-dock/internal/runner"
 	"thread-dock/internal/state"
@@ -35,6 +36,38 @@ type Dependencies struct {
 
 var errRunServiceMissing = errors.New("실행 서비스가 구성되지 않았습니다")
 
+// NeedsProductionDependencies keeps malformed and unknown invocations on the
+// dependency-free CLI path so usage remains exit code 2 before config loading.
+func NeedsProductionDependencies(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "start", "stop", "resume", "cleanup":
+		return len(args) == 2 && strings.TrimSpace(args[1]) != ""
+	case "status":
+		_, _, ok := parseStatusArgs(args[1:])
+		return ok
+	default:
+		return false
+	}
+}
+
+// DiscoverRepositoryPath invokes Git with explicit arguments and no shell.
+func DiscoverRepositoryPath(ctx context.Context, process runner.Runner, binary string) (string, error) {
+	if process == nil {
+		return "", errors.New("Git 실행기가 구성되지 않았습니다")
+	}
+	if strings.TrimSpace(binary) == "" {
+		binary = "git"
+	}
+	result, err := process.Run(ctx, "", binary, "rev-parse", "--show-toplevel")
+	if err != nil || result.ExitCode != 0 || strings.TrimSpace(result.Stdout) == "" {
+		return "", errors.New("Git 저장소 root를 확인할 수 없습니다")
+	}
+	return strings.TrimSpace(result.Stdout), nil
+}
+
 func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer, runs RunService) int {
 	if ctx == nil {
 		ctx = context.Background()
@@ -51,13 +84,15 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer, ru
 			return reportRunError(stderr, errRunServiceMissing)
 		}
 		id, err := runs.Start(ctx, args[1])
+		if strings.TrimSpace(string(id)) != "" {
+			fmt.Fprintln(stdout, id)
+		}
 		if err != nil {
 			return reportRunError(stderr, err)
 		}
 		if strings.TrimSpace(string(id)) == "" {
 			return reportRunError(stderr, errors.New("실행 ID가 반환되지 않았습니다"))
 		}
-		fmt.Fprintln(stdout, id)
 		return 0
 	case "status":
 		id, jsonOutput, ok := parseStatusArgs(args[1:])
@@ -73,7 +108,7 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer, ru
 			return reportRunError(stderr, err)
 		}
 		if jsonOutput {
-			if err := json.NewEncoder(stdout).Encode(view); err != nil {
+			if err := writeStatusJSON(stdout, view); err != nil {
 				return reportRunError(stderr, err)
 			}
 			return 0
@@ -119,7 +154,7 @@ func parseStatusArgs(args []string) (contract.RunID, bool, bool) {
 			}
 			jsonOutput = true
 		default:
-			if strings.TrimSpace(arg) == "" || id != "" {
+			if strings.TrimSpace(arg) == "" || strings.HasPrefix(arg, "-") || id != "" {
 				return "", false, false
 			}
 			id = contract.RunID(arg)
@@ -136,7 +171,60 @@ func writeHumanStatus(stdout io.Writer, view contract.StatusView) {
 			next = view.NextAction.Kind
 		}
 	}
-	fmt.Fprintf(stdout, "실행 ID: %s\n단계: %s\n요약: %s\n최근 진행: %s\n다음 작업: %s\n", view.RunID, view.Phase, view.Summary, view.Summary, next)
+	updated := "없음"
+	if !view.UpdatedAt.IsZero() {
+		updated = view.UpdatedAt.Format(time.RFC3339)
+	}
+	fmt.Fprintf(stdout, "실행 ID: %s\n단계: %s\n요약: %s\n최근 갱신: %s\n다음 작업: %s\n", view.RunID, view.Phase, view.Summary, updated, next)
+}
+
+type statusJSON struct {
+	ContractVersion int               `json:"contractVersion"`
+	RunID           contract.RunID    `json:"runId"`
+	Phase           contract.RunPhase `json:"phase"`
+	Summary         string            `json:"summary"`
+	NextAction      *nextActionJSON   `json:"nextAction,omitempty"`
+	Agents          []agentJSON       `json:"agents"`
+	GitHub          githubJSON        `json:"github"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
+}
+
+type nextActionJSON struct {
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+}
+
+type agentJSON struct {
+	Name    string `json:"name"`
+	Role    string `json:"role"`
+	State   string `json:"state"`
+	Summary string `json:"summary"`
+}
+
+type githubJSON struct {
+	ParentIssue int    `json:"parentIssue"`
+	PullRequest int    `json:"pullRequest"`
+	URL         string `json:"url"`
+	CI          string `json:"ci"`
+}
+
+func writeStatusJSON(stdout io.Writer, view contract.StatusView) error {
+	wire := statusJSON{
+		ContractVersion: view.ContractVersion,
+		RunID:           view.RunID,
+		Phase:           view.Phase,
+		Summary:         view.Summary,
+		Agents:          make([]agentJSON, 0, len(view.Agents)),
+		GitHub:          githubJSON{ParentIssue: view.GitHub.ParentIssue, PullRequest: view.GitHub.PullRequest, URL: view.GitHub.URL, CI: view.GitHub.CI},
+		UpdatedAt:       view.UpdatedAt,
+	}
+	if view.NextAction != nil {
+		wire.NextAction = &nextActionJSON{Kind: view.NextAction.Kind, Label: view.NextAction.Label}
+	}
+	for _, agent := range view.Agents {
+		wire.Agents = append(wire.Agents, agentJSON{Name: agent.Name, Role: agent.Role, State: agent.State, Summary: agent.Summary})
+	}
+	return json.NewEncoder(stdout).Encode(wire)
 }
 
 func reportRunError(stderr io.Writer, err error) int {
@@ -177,6 +265,10 @@ type HerdrWorktreeCleanup interface {
 	RemoveHerdr(context.Context, string) error
 }
 
+type HerdrWorktreeLocator interface {
+	FindWorktree(context.Context, string, string, string) (herdr.Worktree, bool, error)
+}
+
 // StateRemover is deliberately injected because state.Store's existing public
 // interface does not include deletion.
 type StateRemover interface {
@@ -191,18 +283,19 @@ func (f StateRemoverFunc) Remove(ctx context.Context, id contract.RunID) error {
 
 // OrchestratorRunService adapts the existing state machine to RunService.
 type OrchestratorRunService struct {
-	coordinator RunCoordinator
-	store       RunStateStore
-	cleanup     WorktreeCleanup
-	removeState StateRemover
-	now         func() time.Time
+	coordinator        RunCoordinator
+	store              RunStateStore
+	cleanup            WorktreeCleanup
+	removeState        StateRemover
+	now                func() time.Time
+	trustedManagedRoot string
 }
 
-func NewOrchestratorRunService(coordinator RunCoordinator, store RunStateStore, cleanup WorktreeCleanup, removeState StateRemover, now func() time.Time) *OrchestratorRunService {
+func NewOrchestratorRunService(coordinator RunCoordinator, store RunStateStore, cleanup WorktreeCleanup, removeState StateRemover, now func() time.Time, trustedManagedRoot string) *OrchestratorRunService {
 	if now == nil {
 		now = time.Now
 	}
-	return &OrchestratorRunService{coordinator: coordinator, store: store, cleanup: cleanup, removeState: removeState, now: now}
+	return &OrchestratorRunService{coordinator: coordinator, store: store, cleanup: cleanup, removeState: removeState, now: now, trustedManagedRoot: trustedManagedRoot}
 }
 
 func (s *OrchestratorRunService) Start(ctx context.Context, path string) (contract.RunID, error) {
@@ -238,26 +331,24 @@ func (s *OrchestratorRunService) Resume(ctx context.Context, id contract.RunID) 
 	if err != nil {
 		return err
 	}
-	if snapshot.Phase != contract.PhasePaused {
-		return errors.New("일시 중지된 실행만 재개할 수 있습니다")
+	if snapshot.Phase == contract.PhasePaused {
+		if !resumablePhase(snapshot.PreviousPhase) {
+			return errors.New("재개할 이전 실행 단계가 없습니다")
+		}
+		resumeAt := s.now()
+		if err := s.store.Append(ctx, id, state.Event{Type: "intent", Kind: "resume", Phase: snapshot.PreviousPhase, Message: "실행 재개", At: resumeAt}); err != nil {
+			return err
+		}
+		snapshot.Phase = snapshot.PreviousPhase
+		snapshot.UpdatedAt = resumeAt
+		if err := s.store.Save(ctx, snapshot); err != nil {
+			return err
+		}
+	} else if !resumablePhase(snapshot.Phase) {
+		return errors.New("진행 중인 실행만 계속할 수 있습니다")
 	}
-	if !resumablePhase(snapshot.PreviousPhase) {
-		return errors.New("재개할 이전 실행 단계가 없습니다")
-	}
-
-	// Restore only the paused phase. PendingAction, cursor, prompt receipts,
-	// worktree IDs and agent IDs remain byte-for-byte intact for reconciliation.
-	snapshot.Phase = snapshot.PreviousPhase
-	snapshot.PreviousPhase = ""
-	snapshot.UpdatedAt = s.now()
-	if err := s.store.Save(ctx, snapshot); err != nil {
-		return err
-	}
-	if err := s.store.Append(ctx, id, state.Event{Type: "resumed", Phase: snapshot.Phase, Message: "실행을 재개했습니다", At: snapshot.UpdatedAt}); err != nil {
-		return err
-	}
-	// Advance is intentionally called exactly once. Its pending-action path
-	// performs local/Git/GHES/Herdr reconciliation before any next action.
+	// Paused and already-active runs both advance exactly once. The paused
+	// snapshot keeps PreviousPhase, cursor, receipts and all external IDs.
 	return s.coordinator.Advance(ctx, id)
 }
 
@@ -281,6 +372,7 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 		return err
 	}
 	var herdrCleanup HerdrWorktreeCleanup
+	var herdrLocator HerdrWorktreeLocator
 	for _, target := range targets {
 		if target.kind != cleanupHerdr {
 			continue
@@ -290,9 +382,16 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 		if !ok {
 			return errors.New("Herdr Worktree 제거 기능이 구성되지 않아 정리를 중단했습니다")
 		}
+		herdrLocator, ok = s.cleanup.(HerdrWorktreeLocator)
+		if !ok {
+			return errors.New("Herdr Worktree 식별 확인 기능이 구성되지 않아 정리를 중단했습니다")
+		}
 		break
 	}
-	managedRoot := filepath.Dir(filepath.Clean(snapshot.IntegrationPath))
+	managedRoot := filepath.Clean(s.trustedManagedRoot)
+	if strings.TrimSpace(s.trustedManagedRoot) == "" {
+		return errors.New("신뢰된 Worktree 루트가 구성되지 않아 정리를 중단했습니다")
+	}
 	if managedRoot == "." || managedRoot == string(filepath.Separator) {
 		return errors.New("관리 대상 Worktree 루트가 안전하지 않습니다")
 	}
@@ -305,6 +404,12 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 	// Complete all read-only checks before the first removal. A dirty or
 	// inaccessible Worktree therefore leaves every resource untouched.
 	for _, target := range targets {
+		if target.kind == cleanupHerdr {
+			actual, found, locateErr := herdrLocator.FindWorktree(ctx, snapshot.RepositoryPath, target.path, "")
+			if locateErr != nil || !found || actual.Path != target.path || actual.WorkspaceID != target.workspaceID || actual.PaneID != target.paneID {
+				return errors.New("Herdr Worktree 식별자가 persisted 상태와 달라 정리를 중단했습니다")
+			}
+		}
 		status, statusErr := s.cleanup.Status(ctx, target.path)
 		if statusErr != nil {
 			return fmt.Errorf("Worktree 상태를 확인할 수 없어 정리를 중단했습니다: %w", statusErr)
@@ -393,6 +498,7 @@ type cleanupTarget struct {
 	kind        cleanupTargetKind
 	path        string
 	workspaceID string
+	paneID      string
 }
 
 func cleanupTargets(snapshot state.RunSnapshot) ([]cleanupTarget, error) {
@@ -407,7 +513,7 @@ func cleanupTargets(snapshot state.RunSnapshot) ([]cleanupTarget, error) {
 		if strings.TrimSpace(work.Path) == "" || strings.TrimSpace(work.WorkspaceID) == "" || strings.TrimSpace(work.PaneID) == "" {
 			return nil, errors.New("Builder/Reviewer Worktree 식별자가 불완전하여 정리를 거부했습니다")
 		}
-		targets = append(targets, cleanupTarget{kind: cleanupHerdr, path: strings.TrimSpace(work.Path), workspaceID: strings.TrimSpace(work.WorkspaceID)})
+		targets = append(targets, cleanupTarget{kind: cleanupHerdr, path: strings.TrimSpace(work.Path), workspaceID: strings.TrimSpace(work.WorkspaceID), paneID: strings.TrimSpace(work.PaneID)})
 	}
 	return targets, nil
 }
@@ -428,9 +534,10 @@ func pathWithinRoot(root, target string) bool {
 // SafeWorktreeCleanup adapts worktree.Git's existing safe removal operation
 // while allowing each run to supply its persisted repository and managed root.
 type SafeWorktreeCleanup struct {
-	Runner      runner.Runner
-	Binary      string
-	HerdrBinary string
+	Runner       runner.Runner
+	Binary       string
+	HerdrBinary  string
+	HerdrLocator HerdrWorktreeLocator
 }
 
 func (c SafeWorktreeCleanup) Status(ctx context.Context, path string) (string, error) {
@@ -456,6 +563,13 @@ func (c SafeWorktreeCleanup) RemoveHerdr(ctx context.Context, workspaceID string
 	return nil
 }
 
+func (c SafeWorktreeCleanup) FindWorktree(ctx context.Context, cwd, path, label string) (herdr.Worktree, bool, error) {
+	if c.HerdrLocator == nil {
+		return herdr.Worktree{}, false, errors.New("Herdr Worktree 식별 확인에 실패했습니다")
+	}
+	return c.HerdrLocator.FindWorktree(ctx, cwd, path, label)
+}
+
 // NewRunStateRemover creates the production state deletion port. It only
 // removes one validated child under root/runs and never follows a symlink.
 func NewRunStateRemover(root string) StateRemover {
@@ -463,22 +577,51 @@ func NewRunStateRemover(root string) StateRemover {
 		if err := contextDone(ctx); err != nil {
 			return err
 		}
-		if strings.TrimSpace(root) == "" || strings.TrimSpace(string(id)) == "" || filepath.Base(string(id)) != string(id) || strings.ContainsAny(string(id), `/\\`) {
+		if !safeRunID(id) {
 			return errors.New("실행 상태 경로가 안전하지 않습니다")
 		}
-		absoluteRoot, err := filepath.Abs(root)
+		absoluteRoot, err := filepath.Abs(filepath.Clean(root))
 		if err != nil {
 			return err
 		}
-		runsRoot := filepath.Join(absoluteRoot, "runs")
-		info, err := os.Stat(runsRoot)
+		if strings.TrimSpace(root) == "" || isFilesystemRoot(absoluteRoot) {
+			return errors.New("실행 상태 경로가 안전하지 않습니다")
+		}
+		home, homeErr := os.UserHomeDir()
+		if homeErr == nil {
+			homeAbs, absErr := filepath.Abs(filepath.Clean(home))
+			if absErr == nil && sameCleanPath(absoluteRoot, homeAbs) {
+				return errors.New("실행 상태 경로가 안전하지 않습니다")
+			}
+		}
+		rootInfo, err := os.Lstat(absoluteRoot)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		if err != nil || !info.IsDir() {
+		if err != nil || rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
 			return errors.New("실행 상태 디렉터리가 올바르지 않습니다")
 		}
+		canonicalRoot, err := filepath.EvalSymlinks(absoluteRoot)
+		if err != nil || !sameCleanPath(canonicalRoot, absoluteRoot) {
+			return errors.New("실행 상태 경로의 심볼릭 링크는 정리할 수 없습니다")
+		}
+		runsRoot := filepath.Join(absoluteRoot, "runs")
+		info, err := os.Lstat(runsRoot)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return errors.New("실행 상태 디렉터리가 올바르지 않습니다")
+		}
+		canonicalRunsRoot, err := filepath.EvalSymlinks(runsRoot)
+		if err != nil || !sameCleanPath(canonicalRunsRoot, runsRoot) {
+			return errors.New("실행 상태 경로의 심볼릭 링크는 정리할 수 없습니다")
+		}
 		target := filepath.Join(runsRoot, string(id))
+		relative, err := filepath.Rel(canonicalRunsRoot, target)
+		if err != nil || relative == "." || relative == ".." || filepath.Base(relative) != relative || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return errors.New("실행 상태 대상이 runs의 직접 자식이 아닙니다")
+		}
 		entry, err := os.Lstat(target)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -491,6 +634,20 @@ func NewRunStateRemover(root string) StateRemover {
 		}
 		return os.RemoveAll(target)
 	})
+}
+
+func safeRunID(id contract.RunID) bool {
+	value := string(id)
+	return strings.TrimSpace(value) != "" && value != "." && value != ".." && filepath.Base(value) == value && !filepath.IsAbs(value) && !strings.ContainsAny(value, `/\\`)
+}
+
+func sameCleanPath(left, right string) bool {
+	return filepath.Clean(left) == filepath.Clean(right)
+}
+
+func isFilesystemRoot(path string) bool {
+	clean := filepath.Clean(path)
+	return clean == filepath.VolumeName(clean)+string(filepath.Separator)
 }
 
 func contextDone(ctx context.Context) error {
@@ -510,3 +667,4 @@ var _ RunCoordinator = (*orchestrator.Orchestrator)(nil)
 var _ RunStateStore = (*state.Store)(nil)
 var _ WorktreeCleanup = SafeWorktreeCleanup{}
 var _ HerdrWorktreeCleanup = SafeWorktreeCleanup{}
+var _ HerdrWorktreeLocator = SafeWorktreeCleanup{}
