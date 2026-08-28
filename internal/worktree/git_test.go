@@ -99,6 +99,55 @@ func TestMergeUsesBranchArgument(t *testing.T) {
 	}
 }
 
+func TestInspectCommitReturnsActualBoundedPatch(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	r := &fakeRunner{results: []runner.Result{{Stdout: sha + "\n"}, {Stdout: ""}, {Stdout: "src/payments/retry.go\n"}, {Stdout: "diff --git a/src/payments/retry.go b/src/payments/retry.go\n"}}}
+	git := New(r, "git")
+	got, err := git.InspectCommit(context.Background(), "/work/integration", sha, "agent/api", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CommitSHA != sha || got.Branch != "agent/api" || len(got.ChangedFiles) != 1 || got.Patch == "" {
+		t.Fatalf("inspection=%#v", got)
+	}
+}
+
+func TestMergeCommitUsesImmutableSHA(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	r := &fakeRunner{}
+	git := New(r, "git")
+	if err := git.MergeCommit(context.Background(), "/work/integration", sha); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(r.calls[0].args, []string{"merge", "--ff-only", sha}) {
+		t.Fatalf("call=%#v", r.calls[0].args)
+	}
+}
+
+func TestReconcileIntegrationWorktreeRequiresContractBaseHead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "integration")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	base := "0123456789abcdef0123456789abcdef01234567"
+	current := "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	r := &fakeRunner{results: []runner.Result{{Stdout: ""}, {Stdout: "agent/integration\n"}, {Stdout: current + "\n"}}}
+	git := New(r, "git")
+	found, err := git.ReconcileIntegrationWorktree(context.Background(), path, "agent/integration", base)
+	if err == nil || found || !strings.Contains(err.Error(), "base commit") {
+		t.Fatalf("found=%v err=%v want base commit mismatch", found, err)
+	}
+}
+
+func TestReconcileIntegrationWorktreeReturnsNotFoundForMissingPath(t *testing.T) {
+	git := New(&fakeRunner{}, "git")
+	missing := filepath.Join(t.TempDir(), "not-created")
+	found, err := git.ReconcileIntegrationWorktree(context.Background(), missing, "agent/integration", "0123456789abcdef0123456789abcdef01234567")
+	if err != nil || found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+}
+
 func TestRemoveSafeRejectsDangerousTargets(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
