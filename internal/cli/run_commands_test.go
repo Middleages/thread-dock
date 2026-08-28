@@ -251,7 +251,7 @@ func TestResumeReviewerReadyActiveIsNoOp(t *testing.T) {
 		RunID:            "run-184",
 		Phase:            contract.PhaseReviewing,
 		ActionCursor:     4,
-		Reviewer:         state.AgentEvidence{Verification: []string{"review schema sent"}},
+		Reviewer:         state.AgentEvidence{Name: "reviewer-184", Verification: []string{"review schema sent"}},
 		ReviewerPrompt:   state.PromptReceipt{RequestID: "run-184:reviewer-prompt", BaselineSeq: 42},
 		ReviewerWorktree: state.WorktreeState{Path: "/managed/reviewer", WorkspaceID: "ws-reviewer", PaneID: "pane-reviewer"},
 	}
@@ -274,7 +274,7 @@ func TestResumeReviewerReadyAllowsAdditionalVerificationEntries(t *testing.T) {
 	original := state.RunSnapshot{
 		RunID:            "run-184",
 		Phase:            contract.PhaseReviewing,
-		Reviewer:         state.AgentEvidence{Verification: []string{"review schema sent", "review result pending"}},
+		Reviewer:         state.AgentEvidence{Name: "reviewer-184", Verification: []string{"review schema sent", "review result pending"}},
 		ReviewerPrompt:   state.PromptReceipt{RequestID: "run-184:reviewer-prompt"},
 		ReviewerWorktree: state.WorktreeState{Path: "/managed/reviewer", WorkspaceID: "ws-reviewer", PaneID: "pane-reviewer"},
 	}
@@ -296,7 +296,7 @@ func TestResumeReviewerReadyPausedSavesResumeIntentWithoutAdvance(t *testing.T) 
 		Phase:            contract.PhasePaused,
 		PreviousPhase:    contract.PhaseReviewing,
 		ActionCursor:     4,
-		Reviewer:         state.AgentEvidence{Verification: []string{"review schema sent"}},
+		Reviewer:         state.AgentEvidence{Name: "reviewer-184", Verification: []string{"review schema sent"}},
 		ReviewerPrompt:   state.PromptReceipt{RequestID: "run-184:reviewer-prompt", BaselineSeq: 42},
 		ReviewerWorktree: state.WorktreeState{Path: "/managed/reviewer", WorkspaceID: "ws-reviewer", PaneID: "pane-reviewer"},
 	}
@@ -327,6 +327,8 @@ func TestResumeIncompleteReviewerReadyStateStillAdvancesOnce(t *testing.T) {
 		{name: "identity", mutate: func(snapshot *state.RunSnapshot) { snapshot.ReviewerWorktree.PaneID = "" }},
 		{name: "receipt", mutate: func(snapshot *state.RunSnapshot) { snapshot.ReviewerPrompt.RequestID = "" }},
 		{name: "verification", mutate: func(snapshot *state.RunSnapshot) { snapshot.Reviewer.Verification = []string{"review schema pending"} }},
+		{name: "name", mutate: func(snapshot *state.RunSnapshot) { snapshot.Reviewer.Name = "" }},
+		{name: "whitespace-name", mutate: func(snapshot *state.RunSnapshot) { snapshot.Reviewer.Name = " \t\n " }},
 	}
 	for _, phase := range []struct {
 		name  string
@@ -341,7 +343,7 @@ func TestResumeIncompleteReviewerReadyStateStillAdvancesOnce(t *testing.T) {
 					RunID:            "run-184",
 					Phase:            phase.phase,
 					PreviousPhase:    contract.PhaseReviewing,
-					Reviewer:         state.AgentEvidence{Verification: []string{"review schema sent"}},
+					Reviewer:         state.AgentEvidence{Name: "reviewer-184", Verification: []string{"review schema sent"}},
 					ReviewerPrompt:   state.PromptReceipt{RequestID: "run-184:reviewer-prompt"},
 					ReviewerWorktree: state.WorktreeState{Path: "/managed/reviewer", WorkspaceID: "ws-reviewer", PaneID: "pane-reviewer"},
 				}
@@ -358,6 +360,27 @@ func TestResumeIncompleteReviewerReadyStateStillAdvancesOnce(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSingleRunPilotRunbookHasResumeRepositoryRootMarkers(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/operator/single-run-pilot.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := string(doc)
+	for _, marker := range []string{
+		"REPO_ROOT=\"$(git rev-parse --show-toplevel)\"",
+		"printf 'REPO_ROOT=%q\\n' \"$REPO_ROOT\"",
+		"test -d \"$REPO_ROOT\"; cd \"$REPO_ROOT\"",
+		"reviewerWorktree.path // \"\"",
+	} {
+		if !strings.Contains(contents, marker) {
+			t.Fatalf("runbook missing marker %q", marker)
+		}
+	}
+	if strings.Count(contents, "reviewerWorktree.path // \"\"") < 3 {
+		t.Fatalf("runbook reviewer-ready predicates=%d, want at least 3", strings.Count(contents, "reviewerWorktree.path // \"\""))
 	}
 }
 

@@ -367,6 +367,7 @@ func reviewerReady(snapshot state.RunSnapshot) bool {
 		}
 	}
 	return reviewing && snapshot.PendingAction == "" &&
+		strings.TrimSpace(snapshot.Reviewer.Name) != "" &&
 		snapshot.ReviewerPrompt.RequestID != "" &&
 		hasSchemaReceipt &&
 		snapshot.ReviewerWorktree.Path != "" &&

@@ -24,6 +24,7 @@ mv /tmp/threaddock-pilot.json.tmp /tmp/threaddock-pilot.json
 agentctl contract validate /tmp/threaddock-pilot.json
 MAIN_BEFORE="$(git rev-parse HEAD)"
 CHECKOUT_BEFORE="$(git status --short)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
 STATE_DIR="$(jq -r '.stateDir // empty' "$THREADDOCK_CONFIG")"
 : "${STATE_DIR:=$HOME/.local/state/threaddock}"
 ```
@@ -50,6 +51,7 @@ resume은 paused면 intent append→active Save→Advance 1회, active면 Advanc
 for attempt in $(seq 1 20); do
   SNAPSHOT="$STATE_DIR/runs/$RUN/run.json"
   if jq -e '(.phase == "reviewing") and ((.reviewer.name // "") != "") and
+    ((.reviewerWorktree.path // "") != "") and
     ((.reviewerWorktree.workspaceId // "") != "") and ((.reviewerWorktree.paneId // "") != "") and
     ((.reviewerPrompt.requestId // "") != "") and (.pendingAction == "") and
     ((.reviewer.verification // []) | index("review schema sent") != null)' "$SNAPSHOT" >/dev/null; then
@@ -60,6 +62,7 @@ for attempt in $(seq 1 20); do
   sleep 2
 done
 jq -e '(.phase == "reviewing") and ((.reviewer.name // "") != "") and
+  ((.reviewerWorktree.path // "") != "") and
   ((.reviewerWorktree.workspaceId // "") != "") and ((.reviewerWorktree.paneId // "") != "") and
   ((.reviewerPrompt.requestId // "") != "") and (.pendingAction == "") and
   ((.reviewer.verification // []) | index("review schema sent") != null)' "$STATE_DIR/runs/$RUN/run.json" >/dev/null
@@ -79,6 +82,7 @@ mkdir -p "$(dirname "$RESUME_ENV")"
   printf 'STATE_DIR=%q\n' "$STATE_DIR"
   printf 'MAIN_BEFORE=%q\n' "$MAIN_BEFORE"
   printf 'CHECKOUT_BEFORE=%q\n' "$CHECKOUT_BEFORE"
+  printf 'REPO_ROOT=%q\n' "$REPO_ROOT"
   printf 'THREADDOCK_CONFIG=%q\n' "$THREADDOCK_CONFIG"
 } >"$RESUME_ENV"
 chmod 600 "$RESUME_ENV"
@@ -94,14 +98,16 @@ WSL/Herdr/OpenCode를 다시 시작해 WSL에 재진입한 뒤 종료 전에 출
 ```bash
 RESUME_ENV="$HOME/.local/state/threaddock/pilot-resume.env"
 source "$RESUME_ENV"
+test -d "$REPO_ROOT"; cd "$REPO_ROOT"
+# Herdr duplicate checks and git main/status invariants below run from the restored repository root.
 test -f "$RESUME_ENV"
 jq -S '{runId,parentIssue,integration,builderWorktree,reviewerWorktree,builderPrompt,reviewerPrompt,builderCommitSha:.builder.commitSha}' \
   "$STATE_DIR/runs/$RUN/run.json" >/tmp/threaddock-$RUN-after-wsl.json
 diff -u /tmp/threaddock-$RUN-before-wsl.json /tmp/threaddock-$RUN-after-wsl.json
-herdr worktree list --cwd "$PWD" | jq .
+herdr worktree list --cwd "$REPO_ROOT" | jq .
 for attempt in $(seq 1 20); do
   SNAPSHOT="$STATE_DIR/runs/$RUN/run.json"
-  if jq -e '(.phase == "reviewing") and ((.reviewer.name // "") != "") and ((.reviewerWorktree.workspaceId // "") != "") and ((.reviewerWorktree.paneId // "") != "") and ((.reviewerPrompt.requestId // "") != "") and (.pendingAction == "") and ((.reviewer.verification // []) | index("review schema sent") != null)' "$SNAPSHOT" >/dev/null; then break; fi
+  if jq -e '(.phase == "reviewing") and ((.reviewer.name // "") != "") and ((.reviewerWorktree.path // "") != "") and ((.reviewerWorktree.workspaceId // "") != "") and ((.reviewerWorktree.paneId // "") != "") and ((.reviewerPrompt.requestId // "") != "") and (.pendingAction == "") and ((.reviewer.verification // []) | index("review schema sent") != null)' "$SNAPSHOT" >/dev/null; then break; fi
   jq -e '(.phase != "completed") and (.phase != "blocked")' "$SNAPSHOT" >/dev/null
   agentctl resume "$RUN"
   sleep 2
