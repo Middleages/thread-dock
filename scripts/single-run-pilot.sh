@@ -94,6 +94,25 @@ set_session_value() {
   mv "$temp_file" "$SESSION_FILE"
 }
 
+read_boot_id() {
+  local boot_id_path="${THREADDOCK_BOOT_ID_PATH:-/proc/sys/kernel/random/boot_id}"
+  local boot_id
+  [[ -f "$boot_id_path" ]] || return 1
+  if ! boot_id="$(cat -- "$boot_id_path" 2>/dev/null)"; then
+    return 1
+  fi
+  [[ "$boot_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || return 1
+  printf '%s\n' "$boot_id"
+}
+
+set_pre_wsl_session() {
+  local boot_id="$1"
+  local temp_file="${SESSION_FILE}.tmp"
+  jq --arg boot_id "$boot_id" '.bootIdBefore = $boot_id | .stage = "wait_wsl_restart"' "$SESSION_FILE" >"$temp_file"
+  chmod 600 "$temp_file"
+  mv "$temp_file" "$SESSION_FILE"
+}
+
 wait_for_enter() {
   local message="$1"
   printf '\n%s\n계속하려면 Enter를 누르세요. 취소하려면 Ctrl+C를 누르세요.\n' "$message"
@@ -151,6 +170,23 @@ resume_until() {
 
 snapshot_subset() {
   jq -S '{runId,parentIssue,integration,builderWorktree,reviewerWorktree,builderPrompt,reviewerPrompt,builderCommitSha:.builder.commitSha}' "$1"
+}
+
+finish_pre_wsl() {
+  local boot_id
+  resume_until integration_ready "Builder 작업과 integration 반영"
+  THREADDOCK_CONFIG="$CONFIG_PATH" agentctl stop "$RUN"
+  mkdir -p "$STATE_DIR/pilot"
+  snapshot_subset "$SNAPSHOT" >"$STATE_DIR/pilot/before-wsl.json"
+  boot_id="$(read_boot_id)" || fail "WSL 재시작을 확인할 수 없습니다. boot ID를 읽을 수 없습니다."
+  set_pre_wsl_session "$boot_id"
+
+  say ""
+  say "첫 번째 구간이 끝났습니다."
+  say "1. Windows PowerShell에서 다음 명령을 실행하세요: wsl --shutdown"
+  say "2. WSL, Herdr, OpenCode를 다시 시작하세요."
+  say "3. THREADDOCK_GH_TOKEN을 다시 주입하세요."
+  say "4. 이 저장소에서 실행하세요: ./scripts/single-run-pilot.sh --continue"
 }
 
 write_initial_session() {
@@ -254,7 +290,7 @@ start_pilot() {
     fail "연결 중단 시험에 실패했습니다. Issue가 생성되기 전에 등록 대기 상태가 되어야 합니다."
   fi
 
-  boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || printf 'unknown')"
+  boot_id="$(read_boot_id 2>/dev/null || printf 'unknown')"
   write_initial_session "$boot_id" "$simulate_outage"
   if [[ "$simulate_outage" == true ]]; then
     say "GitHub.com 등록 장애 시뮬레이션: PASS (실행 ID $RUN 보존)"
@@ -264,17 +300,7 @@ start_pilot() {
     wait_for_enter "이제 GHES API 연결을 복구해 주세요."
   fi
 
-  resume_until integration_ready "Builder 작업과 integration 반영"
-  THREADDOCK_CONFIG="$CONFIG_PATH" agentctl stop "$RUN"
-  snapshot_subset "$SNAPSHOT" >"$STATE_DIR/pilot/before-wsl.json"
-  set_session_value "stage" '"wait_wsl_restart"'
-
-  say ""
-  say "첫 번째 구간이 끝났습니다."
-  say "1. Windows PowerShell에서 다음 명령을 실행하세요: wsl --shutdown"
-  say "2. WSL, Herdr, OpenCode를 다시 시작하세요."
-  say "3. THREADDOCK_GH_TOKEN을 다시 주입하세요."
-  say "4. 이 저장소에서 실행하세요: ./scripts/single-run-pilot.sh --continue"
+  finish_pre_wsl
 }
 
 continue_pilot() {
@@ -282,14 +308,18 @@ continue_pilot() {
     require_command "$command"
   done
   load_session
-  [[ "$(jq -r '.stage // ""' "$SESSION_FILE")" == "wait_wsl_restart" ]] || fail "이 파일럿은 아직 WSL 재시작 단계가 아닙니다."
   [[ -n "${THREADDOCK_GH_TOKEN:-}" ]] || fail "THREADDOCK_GH_TOKEN이 없습니다. 비밀 저장소에서 다시 주입해 주세요."
   [[ -d "$REPO_ROOT" ]] || fail "원래 저장소를 찾을 수 없습니다: $REPO_ROOT"
   cd "$REPO_ROOT"
 
+  if [[ "$(jq -r '.stage // ""' "$SESSION_FILE")" != "wait_wsl_restart" ]]; then
+    finish_pre_wsl
+    return
+  fi
+
   local before_boot current_boot
   before_boot="$(jq -r '.bootIdBefore // "unknown"' "$SESSION_FILE")"
-  current_boot="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || printf 'unknown')"
+  current_boot="$(read_boot_id)" || fail "WSL 재시작을 확인할 수 없습니다. boot ID를 읽을 수 없습니다."
   if [[ "$before_boot" == "unknown" || "$before_boot" == "$current_boot" ]]; then
     fail "WSL 재시작을 확인할 수 없습니다. Windows PowerShell에서 wsl --shutdown을 실행한 뒤 다시 시도해 주세요."
   fi
