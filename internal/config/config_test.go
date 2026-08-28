@@ -111,6 +111,80 @@ func TestParseRejectsAPIBaseCredentialsAndDisallowedParts(t *testing.T) {
 	}
 }
 
+func TestParseRejectsKnownGitHubPublicEndpointsOverHTTP(t *testing.T) {
+	tests := []struct {
+		name     string
+		ghesHost string
+		apiBase  string
+		field    string
+	}{
+		{name: "public api base", ghesHost: "https://github.example.test", apiBase: "http://api.github.com", field: "apiBase"},
+		{name: "public github host", ghesHost: "http://github.com", apiBase: "https://github.example.test/api/v3", field: "ghesHost"},
+		{name: "uppercase public api base", ghesHost: "https://github.example.test", apiBase: "http://API.GITHUB.COM", field: "apiBase"},
+		{name: "trailing dot public api base", ghesHost: "https://github.example.test", apiBase: "http://api.github.com.", field: "apiBase"},
+		{name: "uppercase public github host", ghesHost: "http://GITHUB.COM", apiBase: "https://github.example.test/api/v3", field: "ghesHost"},
+		{name: "trailing dot public github host", ghesHost: "http://github.com.", apiBase: "https://github.example.test/api/v3", field: "ghesHost"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(strings.NewReader(testConfigJSON(tt.ghesHost, tt.apiBase)))
+			if err == nil || !strings.Contains(err.Error(), tt.field) {
+				t.Fatalf("err=%v, want %s rejection", err, tt.field)
+			}
+		})
+	}
+}
+
+func TestParseAcceptsGitHubPublicProfileOnlyWithHTTPSAPI(t *testing.T) {
+	got, err := Parse(strings.NewReader(testConfigJSON("https://github.com/", "https://api.github.com/")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GHESHost != "https://github.com" || got.APIBase != "https://api.github.com" {
+		t.Fatalf("config=%#v", got)
+	}
+}
+
+func TestParseRejectsNonCanonicalGitHubPublicProfileOverHTTPS(t *testing.T) {
+	tests := []struct {
+		name     string
+		ghesHost string
+		apiBase  string
+	}{
+		{name: "uppercase github host", ghesHost: "https://GITHUB.COM", apiBase: "https://api.github.com"},
+		{name: "trailing dot github host", ghesHost: "https://github.com.", apiBase: "https://api.github.com"},
+		{name: "uppercase public api", ghesHost: "https://github.com", apiBase: "https://API.GITHUB.COM"},
+		{name: "trailing dot public api", ghesHost: "https://github.com", apiBase: "https://api.github.com."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Parse(strings.NewReader(testConfigJSON(tt.ghesHost, tt.apiBase))); err == nil {
+				t.Fatal("expected non-canonical GitHub.com profile rejection")
+			}
+		})
+	}
+}
+
+func TestParseRejectsGitHubPublicProfileMismatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		ghesHost string
+		apiBase  string
+	}{
+		{name: "github host with enterprise api", ghesHost: "https://github.com", apiBase: "https://github.example.test/api/v3"},
+		{name: "enterprise host with github api", ghesHost: "https://github.example.test", apiBase: "https://api.github.com"},
+		{name: "public api path", ghesHost: "https://github.com", apiBase: "https://api.github.com/api/v3"},
+		{name: "public host port", ghesHost: "https://github.com:443", apiBase: "https://api.github.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Parse(strings.NewReader(testConfigJSON(tt.ghesHost, tt.apiBase))); err == nil {
+				t.Fatal("expected GitHub.com profile rejection")
+			}
+		})
+	}
+}
+
 func testConfigJSON(host, apiBase string) string {
 	return `{"ghesHost":"` + host + `","apiBase":"` + apiBase + `","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`
 }
