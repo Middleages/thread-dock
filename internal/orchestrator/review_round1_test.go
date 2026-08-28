@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -268,6 +269,82 @@ func TestRound2ReviewerPromptPendingWithMissingReceiptStaysUncertain(t *testing.
 	got := h.mustLoad(id)
 	if got.PendingAction != "prompt_reviewer" || got.ActionCursor != 3 || len(h.herdr.prompts) != 0 || h.herdr.promptReceiptReads != 1 {
 		t.Fatalf("reviewer uncertain state=%#v prompts=%d", got, len(h.herdr.prompts))
+	}
+}
+
+func TestRound2BuilderEvidenceReconcilePersistsNormalPathFields(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := agentName("builder", id)
+	requestID := string(id) + ":builder-prompt"
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseBuilding
+	snapshot.ActionCursor = 3
+	snapshot.Builder = state.AgentEvidence{Name: name, SessionID: "builder-session"}
+	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: requestID, BaselineSeq: 42}
+	snapshot.PendingAction = "collect_builder_evidence"
+	h.herdr.evidence.RequestID = requestID
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+
+	got := h.mustLoad(id)
+	want := state.AgentEvidence{
+		Name:         name,
+		SessionID:    "builder-session",
+		RequestID:    requestID,
+		CommitSHA:    validSHA,
+		Verification: []string{"go test ./internal/payments"},
+		VerificationEvidence: []state.VerificationEvidence{{
+			Command:  "go test ./internal/payments",
+			Outcome:  "passed",
+			Duration: "1.2s",
+		}},
+	}
+	if !reflect.DeepEqual(got.Builder, want) {
+		t.Fatalf("reconciled Builder = %#v, want normal-path fields %#v", got.Builder, want)
+	}
+	if got.Phase != contract.PhaseIntegrating || got.PendingAction != "" || got.ActionCursor != 0 {
+		t.Fatalf("reconciled state = %#v", got)
+	}
+}
+
+func TestRound2BuilderEvidenceReconcileRejectsMismatchedRequestID(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseBuilding
+	snapshot.ActionCursor = 3
+	snapshot.Builder = state.AgentEvidence{Name: agentName("builder", id), SessionID: "builder-session"}
+	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: string(id) + ":builder-prompt", BaselineSeq: 42}
+	snapshot.PendingAction = "collect_builder_evidence"
+	h.herdr.evidence.RequestID = "stale-builder-prompt"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := New(h.Deps).Advance(context.Background(), id); !errors.Is(err, ErrPendingReconcile) {
+		t.Fatalf("error=%v want pending reconcile", err)
+	}
+
+	got := h.mustLoad(id)
+	if got.Phase != contract.PhaseBuilding || got.PendingAction != "collect_builder_evidence" || got.ActionCursor != 3 {
+		t.Fatalf("mismatched request transitioned state = %#v", got)
+	}
+	if got.Builder.RequestID != "" || got.Builder.CommitSHA != "" || len(got.Builder.VerificationEvidence) != 0 {
+		t.Fatalf("mismatched request persisted evidence = %#v", got.Builder)
 	}
 }
 
