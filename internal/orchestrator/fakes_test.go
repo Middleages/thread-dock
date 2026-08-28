@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,11 +38,11 @@ func newHarness(t *testing.T) *harness {
 	writeFixtureContract(t, contractPath)
 	store := state.NewStore(filepath.Join(dir, "state"))
 	gh := &fakeGitHub{}
-	hd := &fakeHerdr{recent: builderTranscriptSecret + " arbitrary transcript", evidence: herdr.Evidence{
+	hd := &fakeHerdr{findWorktreeExists: true, recent: builderTranscriptSecret + " arbitrary transcript", evidence: herdr.Evidence{
 		CommitSHA:    validSHA,
-		Verification: []herdr.VerificationCheck{{Command: "go test ./internal/payments", Outcome: "passed", Duration: "1.2s"}, {Command: "go vet ./internal/payments", Outcome: "passed", Duration: "0.4s"}},
+		Verification: []herdr.VerificationCheck{{Command: "go test ./internal/payments", Outcome: "passed", Duration: "1.2s"}},
 	}}
-	git := &fakeGit{inspection: worktree.CommitInspection{CommitSHA: validSHA, Branch: "agent/api", ChangedFiles: []string{"src/payments/retry.go"}, Patch: "diff --git a/src/payments/retry.go b/src/payments/retry.go\n+bounded patch\n"}}
+	git := &fakeGit{reconcileExists: true, inspection: worktree.CommitInspection{CommitSHA: validSHA, Branch: "agent/api", ChangedFiles: []string{"src/payments/retry.go"}, Patch: "diff --git a/src/payments/retry.go b/src/payments/retry.go\n+bounded patch\n"}}
 	clock := &fakeClock{now: time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)}
 	deps := Dependencies{Store: store, GitHub: gh, Herdr: hd, Git: git, Clock: clock}
 	return &harness{
@@ -158,15 +159,19 @@ func (f *fakeGitHub) GetPullRequest(context.Context, github.Repository, int) (gi
 }
 
 type fakeHerdr struct {
-	worktrees         int
-	starts            []herdr.StartAgentRequest
-	prompts           []string
-	recent            string
-	evidence          herdr.Evidence
-	startEntered      chan struct{}
-	releaseStart      chan struct{}
-	startCount        int
-	findWorktreeCalls int
+	worktrees          int
+	starts             []herdr.StartAgentRequest
+	prompts            []string
+	recent             string
+	evidence           herdr.Evidence
+	startEntered       chan struct{}
+	releaseStart       chan struct{}
+	startCount         int
+	findWorktreeCalls  int
+	findWorktreeCWD    string
+	agentSeq           int64
+	agentInfoErr       error
+	findWorktreeExists bool
 }
 
 func (f *fakeHerdr) CreateWorktree(context.Context, herdr.CreateWorktreeRequest) (herdr.Worktree, error) {
@@ -203,7 +208,10 @@ func (f *fakeHerdr) ReadRecent(context.Context, string) (string, error) {
 	return f.recent, nil
 }
 
-func (f *fakeHerdr) ReadEvidence(context.Context, string) (herdr.Evidence, error) {
+func (f *fakeHerdr) ReadEvidence(_ context.Context, name string) (herdr.Evidence, error) {
+	if f.evidence.RequestID == "" {
+		f.evidence.RequestID = strings.TrimPrefix(name, "builder-") + ":builder-prompt"
+	}
 	return f.evidence, nil
 }
 
@@ -211,13 +219,24 @@ func (f *fakeHerdr) OpenWorktree(context.Context, herdr.OpenWorktreeRequest) (he
 	return herdr.Worktree{WorkspaceID: "workspace-review-184", PaneID: "pane-review-184", Path: "/tmp/integration-184"}, nil
 }
 
-func (f *fakeHerdr) FindWorktree(context.Context, string, string) (herdr.Worktree, bool, error) {
+func (f *fakeHerdr) FindWorktree(_ context.Context, cwd, _, _ string) (herdr.Worktree, bool, error) {
 	f.findWorktreeCalls++
+	f.findWorktreeCWD = cwd
+	if !f.findWorktreeExists {
+		return herdr.Worktree{}, false, nil
+	}
 	return herdr.Worktree{WorkspaceID: "workspace-184", PaneID: "pane-184", Path: "/tmp/integration"}, true, nil
 }
 
-func (f *fakeHerdr) GetInfo(context.Context, string) (herdr.AgentInfo, error) {
-	return herdr.AgentInfo{}, errors.New("agent not found")
+func (f *fakeHerdr) GetInfo(_ context.Context, name string) (herdr.AgentInfo, error) {
+	if f.agentInfoErr != nil {
+		return herdr.AgentInfo{}, f.agentInfoErr
+	}
+	seq := f.agentSeq
+	if seq == 0 {
+		seq = 42
+	}
+	return herdr.AgentInfo{Name: name, SessionID: "session-" + name, PaneID: "pane-184", WorkspaceID: "workspace-184", State: herdr.AgentStateWorking, StateChangeSeq: seq}, nil
 }
 
 type fakeGit struct {
@@ -227,6 +246,7 @@ type fakeGit struct {
 	creates         int
 	integrationPath string
 	inspection      worktree.CommitInspection
+	reconcileExists bool
 	reconcileCalls  int
 }
 
@@ -260,7 +280,7 @@ func (f *fakeGit) CurrentCommit(context.Context, string) (string, error) { retur
 
 func (f *fakeGit) ReconcileIntegrationWorktree(context.Context, string, string, string) (bool, error) {
 	f.reconcileCalls++
-	return true, nil
+	return f.reconcileExists, nil
 }
 
 type fakeClock struct {

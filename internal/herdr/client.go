@@ -1,7 +1,13 @@
 // Package herdr adapts the Herdr v0.8.2 CLI to ThreadDock's runtime boundary.
 package herdr
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var ErrClosedWorkspace = errors.New("Herdr workspace is closed and must be reopened")
+var ErrAgentNotFound = errors.New("Herdr agent was not found")
 
 type Client interface {
 	CreateWorktree(context.Context, CreateWorktreeRequest) (Worktree, error)
@@ -42,17 +48,21 @@ type VerificationCheck struct {
 // Evidence is the only structured Builder result accepted by the
 // orchestrator. Terminal transcript text is deliberately not part of it.
 type Evidence struct {
+	RequestID    string              `json:"requestId"`
 	CommitSHA    string              `json:"commitSha"`
 	Verification []VerificationCheck `json:"verification"`
 }
 
+const EvidenceSchemaExample = `{"requestId":"<prompt request ID>","commitSha":"<40 lowercase hex>","verification":[{"command":"<required command>","outcome":"passed","duration":"<Go duration>"}]}`
+
 type AgentInfo struct {
-	Name        string
-	SessionID   string
-	WorkspaceID string
-	PaneID      string
-	Path        string
-	State       AgentState
+	Name           string
+	SessionID      string
+	WorkspaceID    string
+	PaneID         string
+	Path           string
+	State          AgentState
+	StateChangeSeq int64
 }
 
 type StartAgentRequest struct {

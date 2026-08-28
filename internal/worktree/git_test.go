@@ -124,6 +124,15 @@ func TestMergeCommitUsesImmutableSHA(t *testing.T) {
 	}
 }
 
+func TestReconcileIntegrationWorktreeReturnsNotFoundForMissingPath(t *testing.T) {
+	git := New(&fakeRunner{}, "git")
+	missing := filepath.Join(t.TempDir(), "not-created")
+	found, err := git.ReconcileIntegrationWorktree(context.Background(), missing, "agent/integration", "0123456789abcdef0123456789abcdef01234567")
+	if err != nil || found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+}
+
 func TestRemoveSafeRejectsDangerousTargets(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

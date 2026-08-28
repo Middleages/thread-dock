@@ -11,6 +11,7 @@ import (
 type AgentEvidence struct {
 	Name                 string                 `json:"name"`
 	SessionID            string                 `json:"sessionId"`
+	RequestID            string                 `json:"requestId"`
 	CommitSHA            string                 `json:"commitSha"`
 	ChangedFiles         []string               `json:"changedFiles"`
 	Verification         []string               `json:"verification"`
@@ -42,6 +43,11 @@ type RegistrationState struct {
 	Issue  int    `json:"issue"`
 }
 
+type PromptReceipt struct {
+	RequestID   string `json:"requestId"`
+	BaselineSeq int64  `json:"baselineSeq"`
+}
+
 type RunSnapshot struct {
 	ContractVersion  int               `json:"contractVersion"`
 	RunID            contract.RunID    `json:"runId"`
@@ -62,6 +68,8 @@ type RunSnapshot struct {
 	PendingAction    string            `json:"pendingAction"`
 	Summary          string            `json:"summary"`
 	PreviousPhase    contract.RunPhase `json:"previousPhase,omitempty"`
+	BuilderPrompt    PromptReceipt     `json:"builderPrompt"`
+	ReviewerPrompt   PromptReceipt     `json:"reviewerPrompt"`
 	UpdatedAt        time.Time         `json:"updatedAt"`
 }
 

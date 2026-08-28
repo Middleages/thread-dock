@@ -64,7 +64,7 @@ type IntegrationWorktreeLocator interface {
 }
 
 type WorktreeLocator interface {
-	FindWorktree(context.Context, string, string) (herdr.Worktree, bool, error)
+	FindWorktree(context.Context, string, string, string) (herdr.Worktree, bool, error)
 }
 
 type AgentLocator interface {

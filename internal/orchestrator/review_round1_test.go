@@ -94,6 +94,174 @@ func TestRound1IntegrationPendingReconcileUsesGitNotHerdr(t *testing.T) {
 	}
 }
 
+func TestRound2NotFoundReconcileDefersCreateToNextAdvance(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.PendingAction = "create_integration_worktree"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	h.git.reconcileExists = false
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatalf("reconcile error=%v", err)
+	}
+	if got := h.mustLoad(id); got.PendingAction != "" || h.git.creates != 0 {
+		t.Fatalf("not-found reconcile state=%#v creates=%d", got, h.git.creates)
+	}
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if h.git.creates != 1 || h.mustLoad(id).PendingAction != "" {
+		t.Fatalf("deferred create state=%#v creates=%d", h.mustLoad(id), h.git.creates)
+	}
+}
+
+func TestRound2FoundBuilderReconcileEntersBuildingCursorZero(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.PendingAction = "create_builder_worktree"
+	snapshot.BuilderWorktree.Branch = "agent/api"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	got := h.mustLoad(id)
+	if got.Phase != contract.PhaseBuilding || got.ActionCursor != 0 || got.BuilderWorktree.PaneID == "" {
+		t.Fatalf("builder reconcile state=%#v", got)
+	}
+	if h.herdr.worktrees != 0 {
+		t.Fatalf("reconcile created duplicate worktree: %d", h.herdr.worktrees)
+	}
+	if h.herdr.findWorktreeCWD != snapshot.RepositoryPath {
+		t.Fatalf("reconcile cwd=%q want %q", h.herdr.findWorktreeCWD, snapshot.RepositoryPath)
+	}
+}
+
+func TestRound2NotFoundBuilderReconcileDefersCreateToNextAdvance(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.PendingAction = "create_builder_worktree"
+	snapshot.BuilderWorktree.Branch = "agent/api"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	h.herdr.findWorktreeExists = false
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.mustLoad(id); got.PendingAction != "" || h.herdr.worktrees != 0 {
+		t.Fatalf("not-found state=%#v worktrees=%d", got, h.herdr.worktrees)
+	}
+	h.herdr.findWorktreeExists = true
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if h.herdr.worktrees != 1 || h.mustLoad(id).Phase != contract.PhaseBuilding || h.mustLoad(id).ActionCursor != 0 {
+		t.Fatalf("deferred state=%#v worktrees=%d", h.mustLoad(id), h.herdr.worktrees)
+	}
+}
+
+func TestRound2PromptPendingSequenceDefersOrConfirmsExactlyOnce(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseBuilding
+	snapshot.ActionCursor = 2
+	snapshot.Builder = state.AgentEvidence{Name: "builder-" + string(id), SessionID: "builder-session"}
+	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: string(id) + ":builder-prompt", BaselineSeq: 42}
+	snapshot.PendingAction = "prompt_builder"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	h.herdr.agentSeq = 42
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatalf("same-seq error=%v", err)
+	}
+	if got := h.mustLoad(id); got.PendingAction != "" || len(h.herdr.prompts) != 0 {
+		t.Fatalf("same-seq state=%#v prompts=%d", got, len(h.herdr.prompts))
+	}
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.herdr.prompts) != 1 {
+		t.Fatalf("prompt count=%d", len(h.herdr.prompts))
+	}
+	snapshot = h.mustLoad(id)
+	snapshot.PendingAction = "prompt_builder"
+	snapshot.BuilderPrompt.BaselineSeq = 42
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	h.herdr.agentSeq = 43
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.mustLoad(id); got.PendingAction != "" || len(h.herdr.prompts) != 1 {
+		t.Fatalf("increased-seq state=%#v prompts=%d", got, len(h.herdr.prompts))
+	}
+}
+
+func TestRound2AgentStartNotFoundReconcileDefersStartToNextAdvance(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseBuilding
+	snapshot.ActionCursor = 0
+	snapshot.BuilderWorktree = state.WorktreeState{Path: "/tmp/builder", WorkspaceID: "workspace-184", PaneID: "pane-184", Branch: "agent/api"}
+	snapshot.Builder = state.AgentEvidence{Name: "builder-" + string(id)}
+	snapshot.PendingAction = "start_builder"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	h.herdr.agentInfoErr = herdr.ErrAgentNotFound
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatalf("not-found reconcile error=%v", err)
+	}
+	if got := h.mustLoad(id); got.PendingAction != "" || h.herdr.startCount != 0 {
+		t.Fatalf("not-found state=%#v starts=%d", got, h.herdr.startCount)
+	}
+	h.herdr.agentInfoErr = nil
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if h.herdr.startCount != 1 || h.mustLoad(id).PendingAction != "" {
+		t.Fatalf("deferred start state=%#v starts=%d", h.mustLoad(id), h.herdr.startCount)
+	}
+}
+
 func TestRound1ReviewerReceivesBoundedPatchAndStructuredVerificationOnly(t *testing.T) {
 	h := newHarness(t)
 	h.herdr.recent = builderTranscriptSecret + " arbitrary transcript"
@@ -101,7 +269,6 @@ func TestRound1ReviewerReceivesBoundedPatchAndStructuredVerificationOnly(t *test
 		CommitSHA: validSHA,
 		Verification: []herdr.VerificationCheck{
 			{Command: "go test ./internal/payments", Outcome: "passed", Duration: "1.2s"},
-			{Command: "go vet ./internal/payments", Outcome: "passed", Duration: "0.4s"},
 		},
 	}
 	h.git.inspection = worktree.CommitInspection{
@@ -114,7 +281,7 @@ func TestRound1ReviewerReceivesBoundedPatchAndStructuredVerificationOnly(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 12 && len(h.herdr.prompts) < 2; i++ {
+	for i := 0; i < 14 && len(h.herdr.prompts) < 2; i++ {
 		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
 			t.Fatal(err)
 		}
@@ -139,13 +306,14 @@ func TestRound1RejectsUnverifiedCommitAndDoesNotMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
-		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+	for i := 0; i < 7; i++ {
+		err = h.orchestrator.Advance(context.Background(), id)
+		if i < 5 && err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := h.orchestrator.Advance(context.Background(), id); !errors.Is(err, ErrBuilderEvidence) {
-		t.Fatalf("error=%v want missing duration evidence", err)
+	if !errors.Is(err, ErrBuilderEvidence) {
+		t.Fatalf("error=%v want failed verification evidence", err)
 	}
 	if h.git.merges != 0 {
 		t.Fatal("unverified Builder was merged")
@@ -162,13 +330,186 @@ func TestRound1VerificationEvidenceRequiresDuration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
-		if err := h.orchestrator.Advance(context.Background(), id); err != nil && !errors.Is(err, ErrBuilderEvidence) {
+	for i := 0; i < 7; i++ {
+		err = h.orchestrator.Advance(context.Background(), id)
+		if i < 5 && err != nil {
 			t.Fatal(err)
 		}
 	}
+	if !errors.Is(err, ErrBuilderEvidence) {
+		t.Fatalf("error=%v want missing duration evidence", err)
+	}
 	if got := h.mustLoad(id).Phase; got != contract.PhaseBuilding {
 		t.Fatalf("phase=%s want building", got)
+	}
+}
+
+func TestRound2PromptReceiptUsesBaselineSequenceAndRequestID(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20 && len(h.herdr.prompts) < 2; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := h.mustLoad(id)
+	if got.BuilderPrompt.RequestID == "" || got.BuilderPrompt.BaselineSeq == 0 || got.ReviewerPrompt.RequestID == "" || got.ReviewerPrompt.BaselineSeq == 0 {
+		t.Fatalf("prompt receipts = builder %#v reviewer %#v", got.BuilderPrompt, got.ReviewerPrompt)
+	}
+	if !strings.Contains(h.herdr.prompts[0], got.BuilderPrompt.RequestID) || !strings.Contains(h.herdr.prompts[1], got.ReviewerPrompt.RequestID) {
+		t.Fatalf("request IDs missing from packets: %#v", h.herdr.prompts)
+	}
+	if !strings.Contains(h.herdr.prompts[0], herdr.EvidenceSchemaExample) || strings.Contains(h.herdr.prompts[0], "Markdown") == false {
+		t.Fatalf("Builder packet lacks strict shared schema: %q", h.herdr.prompts[0])
+	}
+	if h.herdr.evidence.RequestID != got.BuilderPrompt.RequestID {
+		t.Fatalf("evidence requestID=%q want %q", h.herdr.evidence.RequestID, got.BuilderPrompt.RequestID)
+	}
+}
+
+func TestRound2BaselineCrashReconcileStoresSeqBeforePrompt(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseBuilding
+	snapshot.ActionCursor = 1
+	snapshot.Builder = state.AgentEvidence{Name: "builder-" + string(id)}
+	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: string(id) + ":builder-prompt"}
+	snapshot.PendingAction = "baseline_builder_prompt"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	got := h.mustLoad(id)
+	if got.PendingAction != "" || got.ActionCursor != 2 || got.BuilderPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
+		t.Fatalf("baseline reconcile state=%#v prompts=%d", got, len(h.herdr.prompts))
+	}
+}
+
+func TestRound2StopPreservesRecoveryCursorAndPendingState(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseBuilding
+	snapshot.PreviousPhase = contract.PhaseAnalyzing
+	snapshot.PendingAction = "prompt_builder"
+	snapshot.ActionCursor = 2
+	snapshot.BuilderPrompt.RequestID = "prompt-1"
+	snapshot.BuilderPrompt.BaselineSeq = 9
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.orchestrator.Stop(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	got := h.mustLoad(id)
+	if got.Phase != contract.PhasePaused || got.PreviousPhase != contract.PhaseBuilding || got.PendingAction != "prompt_builder" || got.ActionCursor != 2 || got.BuilderPrompt.RequestID != "prompt-1" || got.BuilderPrompt.BaselineSeq != 9 {
+		t.Fatalf("stop lost recovery state: %#v", got)
+	}
+}
+
+func TestRound2RejectsExactVerificationCommandMismatch(t *testing.T) {
+	h := newHarness(t)
+	h.herdr.evidence.Verification = []herdr.VerificationCheck{{Command: "true", Outcome: "passed", Duration: "1s"}}
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last error
+	for i := 0; i < 7; i++ {
+		last = h.orchestrator.Advance(context.Background(), id)
+		if i < 6 && last != nil {
+			t.Fatal(last)
+		}
+	}
+	if !errors.Is(last, ErrBuilderEvidence) {
+		t.Fatalf("error=%v want exact verification mismatch", last)
+	}
+	if got := h.mustLoad(id).Phase; got != contract.PhaseBuilding {
+		t.Fatalf("phase=%s want building", got)
+	}
+}
+
+func TestRound2BlocksCredentialInGitPatchBeforeReviewerPrompt(t *testing.T) {
+	h := newHarness(t)
+	h.git.inspection.Patch = "diff --git a/config b/config\n+apiKey = \\\"value\\\"\n"
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		err = h.orchestrator.Advance(context.Background(), id)
+		if errors.Is(err, ErrSensitivePatch) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !errors.Is(err, ErrSensitivePatch) {
+		t.Fatalf("error=%v want sensitive patch block", err)
+	}
+	if len(h.herdr.prompts) > 1 || h.mustLoad(id).Phase != contract.PhaseIntegrating || h.mustLoad(id).Builder.Patch != "" {
+		t.Fatalf("reviewer prompt/state = %d/%s", len(h.herdr.prompts), h.mustLoad(id).Phase)
+	}
+}
+
+func TestRound2BlocksCredentialPatchBeforePersistingNormalInspection(t *testing.T) {
+	h := newHarness(t)
+	h.git.inspection.Patch = "diff --git a/config b/config\n+ghp_1234567890123456789012345678901234567890\n"
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		err = h.orchestrator.Advance(context.Background(), id)
+		if i < 7 && err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !errors.Is(err, ErrSensitivePatch) {
+		t.Fatalf("error=%v want sensitive patch block", err)
+	}
+	got := h.mustLoad(id)
+	if got.Builder.Patch != "" || got.Phase != contract.PhaseIntegrating {
+		t.Fatalf("snapshot persisted sensitive patch/state=%#v", got)
+	}
+}
+
+func TestRound2BlocksCredentialPatchAfterPendingInspectionReconcile(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 7; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.PendingAction = "inspect_builder_commit"
+	snapshot.ActionCursor = 0
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	h.git.inspection.Patch = "diff --git a/config b/config\n+apiKey: leaked\n"
+	if err := New(h.Deps).Advance(context.Background(), id); !errors.Is(err, ErrSensitivePatch) {
+		t.Fatalf("error=%v want sensitive patch block", err)
+	}
+	if got := h.mustLoad(id); got.Builder.Patch != "" {
+		t.Fatalf("pending reconcile persisted sensitive patch: %#v", got.Builder)
 	}
 }
 
@@ -221,8 +562,17 @@ func TestRound1GHESFailureIsDurableAndBlocksFollowupAction(t *testing.T) {
 		t.Fatalf("durable failure = %#v", got)
 	}
 	h.github.issueErr = nil
-	if err := h.orchestrator.Advance(context.Background(), id); err == nil {
-		t.Fatal("Advance bypassed pending GHES reconciliation")
+	if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+		t.Fatalf("missing-marker reconcile error=%v", err)
+	}
+	if got := h.mustLoad(id); got.PendingAction != "" || got.Registration.Status != "pending" {
+		t.Fatalf("reconcile state=%#v", got)
+	}
+	if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+		t.Fatalf("deferred registration error=%v", err)
+	}
+	if h.github.issueCalls != 5 || h.mustLoad(id).Registration.Status != "registered" {
+		t.Fatalf("registration calls=%d state=%#v", h.github.issueCalls, h.mustLoad(id))
 	}
 	if h.herdr.worktrees != 0 || h.git.creates != 0 {
 		t.Fatal("follow-up action ran before registration reconciliation")

@@ -185,7 +185,13 @@ func (g *Git) ReconcileIntegrationWorktree(ctx context.Context, path, branch, ba
 		return false, ErrUnsafeTarget
 	}
 	info, err := os.Stat(path)
-	if err != nil || !info.IsDir() {
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, ErrUnsafeTarget
+	}
+	if !info.IsDir() {
 		return false, ErrUnsafeTarget
 	}
 	if _, err := g.Status(ctx, path); err != nil {

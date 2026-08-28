@@ -3,6 +3,7 @@ package herdr
 import (
 	"context"
 	"embed"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -44,6 +45,12 @@ type runnerFailure struct {
 type testError struct{ message string }
 
 func (e *testError) Error() string { return e.message }
+
+type stdoutErrorRunner struct{}
+
+func (stdoutErrorRunner) Run(context.Context, string, string, ...string) (runner.Result, error) {
+	return runner.Result{Stdout: `{"error":{"code":"agent_not_found","message":"not found"}}`, ExitCode: 1}, &testError{"command failed"}
+}
 
 func TestCreateWorktreeReturnsActualIDsAndUsesExplicitArguments(t *testing.T) {
 	r := fixtureRunner(t, map[string]string{
@@ -139,7 +146,7 @@ func TestReadRecentReturnsRawStdout(t *testing.T) {
 
 func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
 	r := fixtureRunner(t, map[string]string{
-		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": `{"commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"2.3s"}]}`,
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"2.3s"}]}`,
 	})
 	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
 	if err != nil || got.CommitSHA == "" || got.Verification[0].Duration != "2.3s" {
@@ -149,12 +156,49 @@ func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
 
 func TestFindWorktreeReconcilesPathWorkspaceAndPane(t *testing.T) {
 	r := fixtureRunner(t, map[string]string{
-		"herdr\x00worktree\x00list":                             `{"result":{"worktrees":[{"branch":"agent/run-integration","label":"run","open_workspace_id":"workspace-run","path":"/work/run"}]}}`,
+		"herdr\x00worktree\x00list\x00--cwd\x00/repo":           `{"result":{"worktrees":[{"branch":"agent/run-integration","label":"run","open_workspace_id":"workspace-run","path":"/work/run"}]}}`,
 		"herdr\x00pane\x00list\x00--workspace\x00workspace-run": `{"result":{"panes":[{"pane_id":"pane-run","workspace_id":"workspace-run"}]}}`,
 	})
-	got, found, err := NewCLI(r, "herdr").FindWorktree(context.Background(), "/work/run", "run")
+	got, found, err := NewCLI(r, "herdr").FindWorktree(context.Background(), "/repo", "/work/run", "run")
 	if err != nil || !found || got.Path != "/work/run" || got.WorkspaceID != "workspace-run" || got.PaneID != "pane-run" {
 		t.Fatalf("worktree=%#v found=%v err=%v", got, found, err)
+	}
+}
+
+func TestFindWorktreePropagatesPaneLookupFailure(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00worktree\x00list\x00--cwd\x00/repo": `{"result":{"worktrees":[{"label":"run","open_workspace_id":"workspace-run","path":"/work/run"}]}}`,
+	})
+	_, _, err := NewCLI(r, "herdr").FindWorktree(context.Background(), "/repo", "/work/run", "run")
+	if err == nil || !strings.Contains(err.Error(), "pane list") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestFindWorktreeReportsClosedWorkspace(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00worktree\x00list\x00--cwd\x00/repo": `{"result":{"worktrees":[{"label":"run","path":"/work/run"}]}}`,
+	})
+	_, _, err := NewCLI(r, "herdr").FindWorktree(context.Background(), "/repo", "/work/run", "run")
+	if !errors.Is(err, ErrClosedWorkspace) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGetInfoClassifiesAgentNotFoundFromStructuredStdout(t *testing.T) {
+	_, err := NewCLI(stdoutErrorRunner{}, "herdr").GetInfo(context.Background(), "threaddock-definitely-missing-agent")
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGetInfoParsesStateChangeSequence(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder_api": readFixture(t, "testdata/v0.8.2/agent-get.txt"),
+	})
+	got, err := NewCLI(r, "herdr").GetInfo(context.Background(), "builder_api")
+	if err != nil || got.StateChangeSeq != 110 {
+		t.Fatalf("info=%#v err=%v", got, err)
 	}
 }
 

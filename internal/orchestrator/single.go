@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -25,12 +26,15 @@ var (
 	ErrRunBusy             = state.ErrRunBusy
 	ErrPendingReconcile    = errors.New("pending action requires reconciliation")
 	ErrRegistrationPending = errors.New("GHES registration is pending reconciliation")
+	ErrSensitivePatch      = errors.New("reviewer patch contains credentials")
 )
 
 const (
 	maxGitHubAttempts = 4
 	connectionProblem = "GitHub 연결 문제"
 )
+
+var credentialPattern = regexp.MustCompile(`(?im)(gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:apiKey|privateKey|clientSecret)\s*[:=])`)
 
 type realClock struct{}
 
@@ -206,7 +210,7 @@ func (o *Orchestrator) Advance(ctx context.Context, id contract.RunID) error {
 		return o.reconcilePending(ctx, &snapshot, runtime)
 	}
 	if snapshot.Phase == contract.PhaseRegistered && snapshot.Registration.Status != "registered" {
-		return ErrRegistrationPending
+		return o.retryRegistration(ctx, &snapshot, runtime)
 	}
 
 	switch snapshot.Phase {
@@ -221,6 +225,9 @@ func (o *Orchestrator) Advance(ctx context.Context, id contract.RunID) error {
 		}
 		return o.createWorktree(ctx, snapshot, runtime)
 	case contract.PhaseBuilding:
+		if snapshot.ActionCursor == 1 {
+			return o.baselinePrompt(ctx, &snapshot, false)
+		}
 		return o.advanceBuilding(ctx, snapshot, runtime)
 	case contract.PhaseIntegrating:
 		return o.integrate(ctx, snapshot, runtime)
@@ -257,13 +264,28 @@ func (o *Orchestrator) Stop(ctx context.Context, id contract.RunID) error {
 	}
 	snapshot.PreviousPhase = snapshot.Phase
 	snapshot.Phase = contract.PhasePaused
-	snapshot.PendingAction = ""
 	snapshot.Summary = "실행을 일시 중지했습니다"
 	snapshot.UpdatedAt = o.now()
 	if err := o.deps.Store.Save(ctx, snapshot); err != nil {
 		return err
 	}
 	return o.append(ctx, id, state.Event{Type: "paused", Phase: contract.PhasePaused, Message: "실행을 일시 중지했습니다"})
+}
+
+func (o *Orchestrator) retryRegistration(ctx context.Context, snapshot *state.RunSnapshot, runtime *runRuntime) error {
+	if err := o.prepare(ctx, snapshot, "register_issue_bundle", "GHES Issue bundle 재등록", map[string]any{"marker": marker(snapshot.RunID)}); err != nil {
+		return err
+	}
+	bundle, err := o.createIssueBundle(ctx, snapshot.RunID, runtime.contract)
+	if err != nil {
+		snapshot.Summary = connectionProblem
+		snapshot.UpdatedAt = o.now()
+		_ = o.deps.Store.Save(ctx, *snapshot)
+		return err
+	}
+	snapshot.Registration = state.RegistrationState{Status: "registered", Marker: marker(snapshot.RunID), NodeID: bundle.Parent.NodeID, Issue: bundle.Parent.Number}
+	snapshot.ParentIssue = bundle.Parent.Number
+	return o.finish(ctx, snapshot, "Issue bundle 재등록 완료", false)
 }
 
 func (o *Orchestrator) createIntegrationWorktree(ctx context.Context, snapshot *state.RunSnapshot, runtime *runRuntime) error {
@@ -308,8 +330,39 @@ func (o *Orchestrator) createWorktree(ctx context.Context, snapshot state.RunSna
 	return o.append(ctx, snapshot.RunID, state.Event{Type: "action_succeeded", Phase: snapshot.Phase, Message: "Builder Worktree 준비 완료", Data: map[string]any{"workspaceId": created.WorkspaceID, "paneId": created.PaneID, "path": created.Path}})
 }
 
+func promptRequestID(id contract.RunID, role string) string {
+	return string(id) + ":" + role + "-prompt"
+}
+
+func (o *Orchestrator) baselinePrompt(ctx context.Context, snapshot *state.RunSnapshot, reviewer bool) error {
+	locator, ok := o.deps.Herdr.(AgentLocator)
+	if !ok {
+		return errors.New("Herdr agent state lookup is required before prompt")
+	}
+	name := snapshot.Builder.Name
+	role := "builder"
+	if reviewer {
+		name = snapshot.Reviewer.Name
+		role = "reviewer"
+	}
+	receipt := &snapshot.BuilderPrompt
+	if reviewer {
+		receipt = &snapshot.ReviewerPrompt
+	}
+	receipt.RequestID = promptRequestID(snapshot.RunID, role)
+	if err := o.prepare(ctx, snapshot, "baseline_"+role+"_prompt", "prompt baseline 조회", map[string]any{"agent": name, "requestId": receipt.RequestID}); err != nil {
+		return err
+	}
+	info, err := locator.GetInfo(ctx, name)
+	if err != nil || info.StateChangeSeq <= 0 {
+		return errors.New("Herdr agent state_change_seq is unavailable")
+	}
+	receipt.BaselineSeq = info.StateChangeSeq
+	return o.finish(ctx, snapshot, "prompt baseline 저장", false)
+}
+
 func (o *Orchestrator) advanceBuilding(ctx context.Context, snapshot state.RunSnapshot, runtime *runRuntime) error {
-	if snapshot.BuilderWorktree.PaneID == "" && runtime.worktree.PaneID == "" {
+	if snapshot.ActionCursor == 0 && snapshot.BuilderWorktree.PaneID == "" && runtime.worktree.PaneID == "" {
 		return errors.New("Builder Worktree ID is unavailable; resume requires reconciliation")
 	}
 	name := "builder-" + string(snapshot.RunID)
@@ -329,11 +382,14 @@ func (o *Orchestrator) advanceBuilding(ctx context.Context, snapshot state.RunSn
 		snapshot.Builder = state.AgentEvidence{Name: name, SessionID: name}
 		return o.finish(ctx, &snapshot, "Builder Agent 준비 완료", false)
 	}
-	if snapshot.ActionCursor == 1 {
+	if snapshot.ActionCursor == 2 {
+		if snapshot.BuilderPrompt.RequestID == "" {
+			return errors.New("Builder prompt receipt is missing")
+		}
 		if err := o.prepare(ctx, &snapshot, "prompt_builder", "Builder packet 전송", map[string]any{"agent": name}); err != nil {
 			return err
 		}
-		if err := o.deps.Herdr.Prompt(ctx, name, builderPacket(runtime.contract, runtime.builderTask)); err != nil {
+		if err := o.deps.Herdr.Prompt(ctx, name, builderPacket(runtime.contract, runtime.builderTask, snapshot.BuilderPrompt.RequestID)); err != nil {
 			_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Builder packet 전송 실패: %v", err)})
 			return err
 		}
@@ -347,7 +403,10 @@ func (o *Orchestrator) advanceBuilding(ctx context.Context, snapshot state.RunSn
 		return ErrBuilderEvidence
 	}
 	evidence, err := reader.ReadEvidence(ctx, name)
-	if err != nil || !validCommitSHA(evidence.CommitSHA) || len(evidence.Verification) == 0 {
+	if err != nil || evidence.RequestID != snapshot.BuilderPrompt.RequestID || !validCommitSHA(evidence.CommitSHA) || len(evidence.Verification) == 0 {
+		return ErrBuilderEvidence
+	}
+	if !verificationMatchesTask(evidence.Verification, runtime.builderTask.Verification) {
 		return ErrBuilderEvidence
 	}
 	for _, check := range evidence.Verification {
@@ -359,6 +418,7 @@ func (o *Orchestrator) advanceBuilding(ctx context.Context, snapshot state.RunSn
 		}
 	}
 	snapshot.Builder.Name = name
+	snapshot.Builder.RequestID = evidence.RequestID
 	snapshot.Builder.CommitSHA = strings.ToLower(evidence.CommitSHA)
 	snapshot.Builder.SessionID = name
 	snapshot.Builder.Verification = make([]string, 0, len(evidence.Verification))
@@ -376,7 +436,7 @@ func (o *Orchestrator) advanceBuilding(ctx context.Context, snapshot state.RunSn
 func (o *Orchestrator) integrate(ctx context.Context, snapshot state.RunSnapshot, runtime *runRuntime) error {
 	if snapshot.ActionCursor == 0 {
 		inspector, ok := o.deps.Worktree.(WorktreeInspector)
-		if !ok || !hasEvidence(snapshot.Builder) {
+		if !ok || !hasEvidence(snapshot.Builder) || snapshot.Builder.RequestID != snapshot.BuilderPrompt.RequestID {
 			return ErrBuilderEvidence
 		}
 		if err := o.prepare(ctx, &snapshot, "inspect_builder_commit", "Builder commit 검증", map[string]any{"commitSha": snapshot.Builder.CommitSHA}); err != nil {
@@ -389,12 +449,15 @@ func (o *Orchestrator) integrate(ctx context.Context, snapshot state.RunSnapshot
 		if err := validateInspection(inspection, snapshot.Builder.CommitSHA, runtime.builderBranch, runtime.builderTask.AllowedPaths); err != nil {
 			return err
 		}
+		if containsCredential(inspection.Patch) {
+			return o.blockSensitiveInspection(ctx, &snapshot)
+		}
 		snapshot.Builder.Branch = inspection.Branch
 		snapshot.Builder.ChangedFiles = append([]string(nil), inspection.ChangedFiles...)
 		snapshot.Builder.Patch = inspection.Patch
 		return o.finish(ctx, &snapshot, "Git가 생성한 Builder patch 검증 완료", false)
 	}
-	if !hasEvidence(snapshot.Builder) || snapshot.Builder.Branch != runtime.builderBranch || snapshot.Builder.Patch == "" {
+	if !hasEvidence(snapshot.Builder) || snapshot.Builder.RequestID != snapshot.BuilderPrompt.RequestID || snapshot.Builder.Branch != runtime.builderBranch || snapshot.Builder.Patch == "" {
 		return ErrBuilderEvidence
 	}
 	if strings.EqualFold(runtime.builderBranch, runtime.contract.Repository.DefaultBranch) || strings.EqualFold(runtime.builderBranch, "main") {
@@ -445,10 +508,19 @@ func (o *Orchestrator) advanceReview(ctx context.Context, snapshot state.RunSnap
 		snapshot.Reviewer = state.AgentEvidence{Name: name, SessionID: name}
 		return o.finish(ctx, &snapshot, "독립 Reviewer session 준비 완료", false)
 	}
+	if snapshot.ActionCursor == 2 {
+		return o.baselinePrompt(ctx, &snapshot, true)
+	}
+	if containsCredential(snapshot.Builder.Patch) {
+		return ErrSensitivePatch
+	}
 	if err := o.prepare(ctx, &snapshot, "prompt_reviewer", "Reviewer acceptance packet 전송", map[string]any{"agent": name, "builderTranscript": false}); err != nil {
 		return err
 	}
-	if err := o.deps.Herdr.Prompt(ctx, name, reviewerPacket(runtime.contract, runtime.builderTask, snapshot.Builder)); err != nil {
+	if snapshot.ReviewerPrompt.RequestID == "" {
+		return errors.New("Reviewer prompt receipt is missing")
+	}
+	if err := o.deps.Herdr.Prompt(ctx, name, reviewerPacket(runtime.contract, runtime.builderTask, snapshot.Builder, snapshot.ReviewerPrompt.RequestID)); err != nil {
 		_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Reviewer packet 전송 실패: %v", err)})
 		return err
 	}
@@ -464,20 +536,41 @@ func hasEvidence(evidence state.AgentEvidence) bool {
 		if check.Command == "" || check.Outcome != "passed" || check.Duration == "" {
 			return false
 		}
+		if _, err := time.ParseDuration(check.Duration); err != nil {
+			return false
+		}
 	}
 	return true
 }
 
-func builderPacket(c contract.TaskContract, task contract.Task) string {
-	return fmt.Sprintf("Builder acceptance criteria:\n- %s\n\nTask acceptance criteria:\n- %s\n\nVerification commands:\n- %s\n\nReport commit_sha, changed_file and verification lines.", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), strings.Join(task.Verification, "\n- "))
+func verificationMatchesTask(checks []herdr.VerificationCheck, required []string) bool {
+	if len(checks) != len(required) || len(required) == 0 {
+		return false
+	}
+	want := make(map[string]struct{}, len(required))
+	for _, command := range required {
+		want[strings.TrimSpace(command)] = struct{}{}
+	}
+	for _, check := range checks {
+		command := strings.TrimSpace(check.Command)
+		if _, ok := want[command]; !ok {
+			return false
+		}
+		delete(want, command)
+	}
+	return len(want) == 0
 }
 
-func reviewerPacket(c contract.TaskContract, task contract.Task, evidence state.AgentEvidence) string {
+func builderPacket(c contract.TaskContract, task contract.Task, requestID string) string {
+	return fmt.Sprintf("Builder acceptance criteria:\n- %s\n\nTask acceptance criteria:\n- %s\n\nRequired verification commands (each must be passed with a real duration):\n- %s\n\nReturn exactly one JSON object and no Markdown or other text. Use this schema exactly:\n%s\nUse requestId=%s. Do not substitute arbitrary commands or boolean values.", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), strings.Join(task.Verification, "\n- "), herdr.EvidenceSchemaExample, requestID)
+}
+
+func reviewerPacket(c contract.TaskContract, task contract.Task, evidence state.AgentEvidence, requestID string) string {
 	checks := make([]string, 0, len(evidence.VerificationEvidence))
 	for _, check := range evidence.VerificationEvidence {
 		checks = append(checks, fmt.Sprintf("Command: %s\nOutcome: %s\nDuration: %s", check.Command, check.Outcome, check.Duration))
 	}
-	return fmt.Sprintf("Reviewer acceptance criteria:\n- %s\n- %s\n\nFinal bounded patch:\n%s\n\nStructured verification:\n%s\nCommit SHA: %s\n\nReview schema:\ndecision: approve | request_changes\nfindings: list of concrete acceptance-criterion findings", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), redactPatch(evidence.Patch), strings.Join(checks, "\n"), evidence.CommitSHA)
+	return fmt.Sprintf("Reviewer acceptance criteria:\n- %s\n- %s\n\nFinal bounded patch:\n%s\n\nStructured verification:\n%s\nCommit SHA: %s\nPrompt request ID: %s\n\nReview schema:\ndecision: approve | request_changes\nfindings: list of concrete acceptance-criterion findings", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), redactPatch(evidence.Patch), strings.Join(checks, "\n"), evidence.CommitSHA, requestID)
 }
 
 func validCommitSHA(value string) bool {
@@ -542,6 +635,10 @@ func redactPatch(patch string) string {
 		lines[i] = line
 	}
 	return strings.Join(lines, "\n")
+}
+
+func containsCredential(patch string) bool {
+	return credentialPattern.MatchString(patch)
 }
 
 func (o *Orchestrator) createIssueBundle(ctx context.Context, id contract.RunID, c contract.TaskContract) (github.IssueBundle, error) {
@@ -616,6 +713,28 @@ func (o *Orchestrator) prepare(ctx context.Context, snapshot *state.RunSnapshot,
 	return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: message, Data: data})
 }
 
+func (o *Orchestrator) markNotExecuted(ctx context.Context, snapshot *state.RunSnapshot, message string) error {
+	snapshot.PendingAction = ""
+	snapshot.Summary = message
+	snapshot.UpdatedAt = o.now()
+	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
+		return err
+	}
+	return o.append(ctx, snapshot.RunID, state.Event{Type: "reconcile_not_executed", Phase: snapshot.Phase, Message: message})
+}
+
+func (o *Orchestrator) blockSensitiveInspection(ctx context.Context, snapshot *state.RunSnapshot) error {
+	snapshot.Builder.Patch = ""
+	snapshot.Builder.ChangedFiles = nil
+	snapshot.Summary = "민감 credential이 포함된 patch로 Reviewer 전송을 차단했습니다"
+	snapshot.UpdatedAt = o.now()
+	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
+		return err
+	}
+	_ = o.append(ctx, snapshot.RunID, state.Event{Type: "blocked", Phase: snapshot.Phase, Message: "민감 credential patch 차단"})
+	return ErrSensitivePatch
+}
+
 func (o *Orchestrator) finish(ctx context.Context, snapshot *state.RunSnapshot, message string, phaseChanged bool) error {
 	snapshot.PendingAction = ""
 	snapshot.ActionCursor++
@@ -674,6 +793,9 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 			return findErr
 		})
 		if err != nil {
+			if errors.Is(err, ErrRegistrationPending) {
+				return o.markNotExecuted(ctx, snapshot, "GHES marker 미등록 확인; 다음 Advance에서 Issue bundle 실행")
+			}
 			return err
 		}
 		snapshot.Registration = state.RegistrationState{Status: "registered", Marker: marker(snapshot.RunID), NodeID: bundle.Parent.NodeID, Issue: bundle.Parent.Number}
@@ -696,12 +818,20 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 		if snapshot.PendingAction == "open_reviewer_worktree" {
 			label = "threaddock-review-" + string(snapshot.RunID)
 		}
-		found, exists, err := locator.FindWorktree(ctx, path, label)
-		if err != nil || !exists {
+		found, exists, err := locator.FindWorktree(ctx, snapshot.RepositoryPath, path, label)
+		if err != nil {
 			return ErrPendingReconcile
+		}
+		if !exists {
+			if snapshot.PendingAction == "open_reviewer_worktree" {
+				return o.markNotExecuted(ctx, snapshot, "Reviewer Worktree 미발견 확인; 다음 Advance에서 연결")
+			}
+			return o.markNotExecuted(ctx, snapshot, "Builder Worktree 미발견 확인; 다음 Advance에서 생성")
 		}
 		if snapshot.PendingAction == "create_builder_worktree" {
 			snapshot.BuilderWorktree = state.WorktreeState{Path: found.Path, WorkspaceID: found.WorkspaceID, PaneID: found.PaneID, Branch: branch}
+			snapshot.Phase = contract.PhaseBuilding
+			snapshot.ActionCursor = 0
 			return o.finish(ctx, snapshot, "기존 Builder Worktree reconcile 완료", true)
 		}
 		if snapshot.PendingAction == "open_reviewer_worktree" {
@@ -716,11 +846,14 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 			return ErrPendingReconcile
 		}
 		found, err := locator.ReconcileIntegrationWorktree(ctx, snapshot.Integration.Path, snapshot.Integration.Branch, runtime.contract.BaseCommit)
-		if err != nil || !found {
+		if err != nil {
 			return ErrPendingReconcile
 		}
+		if !found {
+			return o.markNotExecuted(ctx, snapshot, "integration Worktree 미발견 확인; 다음 Advance에서 생성")
+		}
 		return o.finish(ctx, snapshot, "기존 integration Worktree Git reconcile 완료", false)
-	case "start_builder", "start_reviewer", "prompt_builder", "prompt_reviewer":
+	case "start_builder", "start_reviewer":
 		locator, ok := o.deps.Herdr.(AgentLocator)
 		if !ok {
 			return ErrPendingReconcile
@@ -730,6 +863,9 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 			name = snapshot.Reviewer.Name
 		}
 		info, err := locator.GetInfo(ctx, name)
+		if errors.Is(err, herdr.ErrAgentNotFound) {
+			return o.markNotExecuted(ctx, snapshot, "Agent 미발견 확인; 다음 Advance에서 start 실행")
+		}
 		if err != nil || info.Name == "" {
 			return ErrPendingReconcile
 		}
@@ -739,21 +875,65 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 			} else {
 				snapshot.Reviewer.SessionID = info.SessionID
 			}
-		} else if info.State != herdr.AgentStateDone && info.State != herdr.AgentStateIdle {
-			return ErrPendingReconcile
 		}
 		return o.finish(ctx, snapshot, "기존 Agent action reconcile 완료", false)
+	case "baseline_builder_prompt", "baseline_reviewer_prompt":
+		locator, ok := o.deps.Herdr.(AgentLocator)
+		if !ok {
+			return ErrPendingReconcile
+		}
+		name := snapshot.Builder.Name
+		receipt := &snapshot.BuilderPrompt
+		if snapshot.PendingAction == "baseline_reviewer_prompt" {
+			name = snapshot.Reviewer.Name
+			receipt = &snapshot.ReviewerPrompt
+		}
+		info, err := locator.GetInfo(ctx, name)
+		if err != nil || info.StateChangeSeq <= 0 {
+			return ErrPendingReconcile
+		}
+		receipt.BaselineSeq = info.StateChangeSeq
+		return o.finish(ctx, snapshot, "prompt baseline reconcile 완료", false)
+	case "prompt_builder", "prompt_reviewer":
+		locator, ok := o.deps.Herdr.(AgentLocator)
+		if !ok {
+			return ErrPendingReconcile
+		}
+		name := snapshot.Builder.Name
+		receipt := snapshot.BuilderPrompt
+		if snapshot.PendingAction == "prompt_reviewer" {
+			name = snapshot.Reviewer.Name
+			receipt = snapshot.ReviewerPrompt
+		}
+		info, err := locator.GetInfo(ctx, name)
+		if err != nil {
+			return ErrPendingReconcile
+		}
+		if info.StateChangeSeq > receipt.BaselineSeq {
+			return o.finish(ctx, snapshot, "prompt receipt reconcile 완료", false)
+		}
+		snapshot.PendingAction = ""
+		snapshot.Summary = "prompt 미실행 확인; 다음 Advance에서 재전송"
+		snapshot.UpdatedAt = o.now()
+		if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
+			return err
+		}
+		_ = o.append(ctx, snapshot.RunID, state.Event{Type: "reconcile_not_executed", Phase: snapshot.Phase, Message: snapshot.Summary})
+		return nil
 	case "collect_builder_evidence":
 		reader, ok := o.deps.Herdr.(EvidenceReader)
 		if !ok {
 			return ErrPendingReconcile
 		}
 		evidence, err := reader.ReadEvidence(ctx, snapshot.Builder.Name)
-		if err != nil || !validCommitSHA(evidence.CommitSHA) || len(evidence.Verification) == 0 {
+		if err != nil || evidence.RequestID != snapshot.BuilderPrompt.RequestID || !validCommitSHA(evidence.CommitSHA) || len(evidence.Verification) == 0 || !verificationMatchesTask(evidence.Verification, runtime.builderTask.Verification) {
 			return ErrPendingReconcile
 		}
 		for _, check := range evidence.Verification {
 			if strings.ToLower(strings.TrimSpace(check.Outcome)) != "passed" || strings.TrimSpace(check.Command) == "" || strings.TrimSpace(check.Duration) == "" {
+				return ErrPendingReconcile
+			}
+			if _, err := time.ParseDuration(strings.TrimSpace(check.Duration)); err != nil {
 				return ErrPendingReconcile
 			}
 		}
@@ -776,6 +956,9 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 		inspection, err := inspector.InspectCommit(ctx, snapshot.BuilderWorktree.Path, runtime.contract.BaseCommit, runtime.builderBranch, snapshot.Builder.CommitSHA)
 		if err != nil || validateInspection(inspection, snapshot.Builder.CommitSHA, runtime.builderBranch, runtime.builderTask.AllowedPaths) != nil {
 			return ErrPendingReconcile
+		}
+		if containsCredential(inspection.Patch) {
+			return o.blockSensitiveInspection(ctx, snapshot)
 		}
 		snapshot.Builder.Branch = inspection.Branch
 		snapshot.Builder.ChangedFiles = append([]string(nil), inspection.ChangedFiles...)

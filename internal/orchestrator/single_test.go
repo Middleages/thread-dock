@@ -36,7 +36,7 @@ func TestSingleRunReachesReviewWithIndependentReviewerAndEvidence(t *testing.T) 
 	if got.Phase != contract.PhaseReviewing {
 		t.Fatalf("phase = %s, want reviewing", got.Phase)
 	}
-	if got.Builder.CommitSHA != validSHA || len(got.Builder.Verification) != 2 {
+	if got.Builder.CommitSHA != validSHA || len(got.Builder.Verification) != 1 {
 		t.Fatalf("builder evidence = %#v", got.Builder)
 	}
 	if got.Builder.Name == "" || got.Reviewer.Name == "" || got.Builder.Name == got.Reviewer.Name {
@@ -155,7 +155,7 @@ func TestBuilderEvidenceIsRequiredBeforeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 6; i++ {
 		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
 			t.Fatalf("advance %d: %v", i+1, err)
 		}

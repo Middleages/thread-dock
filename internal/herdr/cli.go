@@ -109,8 +109,11 @@ func (c *CLI) decodeWorktree(ctx context.Context, operation, output string, exit
 // FindWorktree reconciles a durable path/label with the worktree list without
 // creating a second workspace. Herdr's list payload has changed shape across
 // minor releases, so only the stable IDs and path fields are inspected.
-func (c *CLI) FindWorktree(ctx context.Context, path, label string) (Worktree, bool, error) {
-	result, err := c.run(ctx, "worktree list", "worktree", "list")
+func (c *CLI) FindWorktree(ctx context.Context, cwd, path, label string) (Worktree, bool, error) {
+	if strings.TrimSpace(cwd) == "" {
+		return Worktree{}, false, errors.New("Herdr worktree lookup requires repository cwd")
+	}
+	result, err := c.run(ctx, "worktree list", "worktree", "list", "--cwd", cwd)
 	if err != nil {
 		return Worktree{}, false, err
 	}
@@ -130,9 +133,19 @@ func (c *CLI) FindWorktree(ctx context.Context, path, label string) (Worktree, b
 	for _, candidate := range response.Result.Worktrees {
 		if (path == "" || candidate.Path == path) && (label == "" || candidate.Label == label || path != "") && candidate.Path != "" {
 			workspaceID := candidate.OpenWorkspaceID
+			if workspaceID == "" {
+				return Worktree{}, false, ErrClosedWorkspace
+			}
 			paneID := ""
 			if workspaceID != "" {
-				paneID, _ = c.firstPane(ctx, workspaceID)
+				var err error
+				paneID, err = c.firstPane(ctx, workspaceID)
+				if err != nil {
+					return Worktree{}, false, err
+				}
+			}
+			if paneID == "" {
+				return Worktree{}, false, errors.New("Herdr workspace has no open pane")
 			}
 			return Worktree{WorkspaceID: workspaceID, PaneID: paneID, Path: candidate.Path}, true, nil
 		}
@@ -225,6 +238,9 @@ func (c *CLI) ReadEvidence(ctx context.Context, name string) (Evidence, error) {
 	} else if !errors.Is(err, io.EOF) {
 		return Evidence{}, errors.New("herdr evidence has trailing data")
 	}
+	if strings.TrimSpace(evidence.RequestID) == "" || strings.TrimSpace(evidence.CommitSHA) == "" {
+		return Evidence{}, errors.New("herdr evidence is missing requestId or commitSha")
+	}
 	for i := range evidence.Verification {
 		check := &evidence.Verification[i]
 		check.Command = strings.TrimSpace(check.Command)
@@ -242,6 +258,14 @@ func (c *CLI) ReadEvidence(ctx context.Context, name string) (Evidence, error) {
 func (c *CLI) GetInfo(ctx context.Context, name string) (AgentInfo, error) {
 	result, err := c.run(ctx, "agent get", "agent", "get", name)
 	if err != nil {
+		var failure struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(result.Stdout), &failure) == nil && failure.Error.Code == "agent_not_found" {
+			return AgentInfo{}, ErrAgentNotFound
+		}
 		return AgentInfo{}, err
 	}
 	var response struct {
@@ -252,6 +276,7 @@ func (c *CLI) GetInfo(ctx context.Context, name string) (AgentInfo, error) {
 				Workspace string `json:"workspace_id"`
 				CWD       string `json:"cwd"`
 				Status    string `json:"agent_status"`
+				Seq       int64  `json:"state_change_seq"`
 				Session   struct {
 					Value string `json:"value"`
 				} `json:"agent_session"`
@@ -261,7 +286,7 @@ func (c *CLI) GetInfo(ctx context.Context, name string) (AgentInfo, error) {
 	if err := decode(result.Stdout, &response); err != nil || response.Result.Agent.Name == "" || response.Result.Agent.PaneID == "" {
 		return AgentInfo{}, safeError("agent get", result.ExitCode)
 	}
-	return AgentInfo{Name: response.Result.Agent.Name, SessionID: response.Result.Agent.Session.Value, WorkspaceID: response.Result.Agent.Workspace, PaneID: response.Result.Agent.PaneID, Path: response.Result.Agent.CWD, State: ParseAgentState(response.Result.Agent.Status)}, nil
+	return AgentInfo{Name: response.Result.Agent.Name, SessionID: response.Result.Agent.Session.Value, WorkspaceID: response.Result.Agent.Workspace, PaneID: response.Result.Agent.PaneID, Path: response.Result.Agent.CWD, State: ParseAgentState(response.Result.Agent.Status), StateChangeSeq: response.Result.Agent.Seq}, nil
 }
 
 func (c *CLI) run(ctx context.Context, operation string, args ...string) (runner.Result, error) {
