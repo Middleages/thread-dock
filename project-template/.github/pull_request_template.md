@@ -12,7 +12,15 @@
 
 ## Checks
 
-<!-- List commands and results. -->
+<!-- Use focused checks in implementation loops and record command, outcome, and duration. -->
+
+## Verification evidence
+
+<!-- State Task gate / Wave End / shared-interface / final PR timing and Full Suite result. -->
+
+## Audit category
+
+<!-- Start each audit comment with one of: Decision, Dispatch, Review, Verification, Blocker, Integration. -->
 
 ## Deployment impact
 
@@ -21,3 +29,5 @@
 ## Recovery
 
 <!-- State the safe recovery action. -->
+
+<!-- Keep summaries and evidence only; do not include transcripts, tokens, secrets, or long raw terminal output. -->

@@ -19,3 +19,19 @@ Foundation increment의 파일럿은 계약을 읽고 검증·미리보기만 �
 
 검증과 미리보기의 현재 계약 구현은 `internal/contract`에 있으며, 반복 가능한
 검사 게이트는 `make check`입니다.
+
+## 검증 정책
+
+구현 loop에서는 변경 범위에 맞는 focused 검증을 실행합니다. Task gate에서는 Task verification과 관련 static check를 실행하며, 전체 suite가 60초 이하면 이때 전체 suite도 실행합니다. 전체 suite가 60초를 초과하면 wave end, shared-interface 변경 후와 final PR에서 실행하고, final PR에서는 항상 실행합니다.
+
+Makefile focused target은 package를 명시적으로 받아야 합니다.
+
+```sh
+make test-focused PKGS="./internal/contract"
+make vet-focused PKGS="./internal/contract"
+make check
+```
+
+`PKGS`가 비어 있으면 target은 설명과 함께 실패합니다. 검증 기록에는 command, outcome과 duration을 남깁니다. Reviewer는 근거가 부족하거나 이름이 명시된 의문이 있을 때만 재실행합니다.
+
+Issue·PR audit comment는 `Decision`, `Dispatch`, `Review`, `Verification`, `Blocker`, `Integration` 중 하나로 분류하고 summary와 evidence만 남깁니다. transcript, token, secret과 긴 raw terminal output은 기록하지 않습니다.

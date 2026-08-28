@@ -98,6 +98,26 @@ _Avoid_: OpenCode 대화, terminal transcript, 별도 HTTP 서버
 특정 commit 또는 Pull Request의 변경을 검증하고 그 결과를 업무 기록에 연결하는 GitHub Actions 실행.
 _Avoid_: Agent 로컬 검증, Deployment
 
+**Focused Verification**:
+구현 loop에서 변경된 범위와 직접 관련된 package를 대상으로 수행하는 빠른 검증.
+_Avoid_: Full Suite
+
+**Task Gate**:
+작업을 다음 단계로 넘기기 전에 Task verification과 관련 static check를 확인하는 검증 관문.
+_Avoid_: Merge Gate, Reviewer 판단
+
+**Full Suite**:
+저장소 전체에 적용되는 test와 static check의 검증 묶음.
+_Avoid_: Focused Verification
+
+**Wave End Verification**:
+여러 Task를 한 실행 wave에서 통합한 뒤 Full Suite를 수행하는 검증 시점.
+_Avoid_: Task Gate
+
+**Audit Comment**:
+Issue·Pull Request에 결정과 실행 결과를 요약하고 근거를 연결하는 범주화된 업무 기록.
+_Avoid_: terminal transcript
+
 **Production Deployment**:
 사용자가 Run Monitor의 명시적 버튼이나 GHES 화면에서 제품 저장소의 GitHub Actions workflow를 dispatch하여 main의 검증된 변경을 production 환경에 적용하는 운영 행위.
 _Avoid_: main 병합, 로컬 실행, 자동 배포
