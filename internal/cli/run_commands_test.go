@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -242,6 +243,121 @@ func TestResumeContinuesActiveRunWithOneAdvance(t *testing.T) {
 	}
 	if coordinator.advanceCalls != 1 || len(store.saves) != 0 || len(store.events) != 0 || store.snapshot.PreviousPhase != contract.PhaseAnalyzing {
 		t.Fatalf("advance=%d saves=%v events=%v snapshot=%+v", coordinator.advanceCalls, store.saves, store.events, store.snapshot)
+	}
+}
+
+func TestResumeReviewerReadyActiveIsNoOp(t *testing.T) {
+	original := state.RunSnapshot{
+		RunID:            "run-184",
+		Phase:            contract.PhaseReviewing,
+		ActionCursor:     4,
+		Reviewer:         state.AgentEvidence{Verification: []string{"review schema sent"}},
+		ReviewerPrompt:   state.PromptReceipt{RequestID: "run-184:reviewer-prompt", BaselineSeq: 42},
+		ReviewerWorktree: state.WorktreeState{Path: "/managed/reviewer", WorkspaceID: "ws-reviewer", PaneID: "pane-reviewer"},
+	}
+	store := &fakeStateStore{snapshot: original}
+	coordinator := &fakeCoordinator{}
+	service := NewOrchestratorRunService(coordinator, store, nil, nil, nil, "/managed")
+
+	if err := service.Resume(context.Background(), original.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if coordinator.advanceCalls != 0 || len(store.saves) != 0 || len(store.events) != 0 {
+		t.Fatalf("advance=%d saves=%v events=%v", coordinator.advanceCalls, store.saves, store.events)
+	}
+	if !reflect.DeepEqual(store.snapshot, original) {
+		t.Fatalf("snapshot mutated: got=%+v want=%+v", store.snapshot, original)
+	}
+}
+
+func TestResumeReviewerReadyAllowsAdditionalVerificationEntries(t *testing.T) {
+	original := state.RunSnapshot{
+		RunID:            "run-184",
+		Phase:            contract.PhaseReviewing,
+		Reviewer:         state.AgentEvidence{Verification: []string{"review schema sent", "review result pending"}},
+		ReviewerPrompt:   state.PromptReceipt{RequestID: "run-184:reviewer-prompt"},
+		ReviewerWorktree: state.WorktreeState{Path: "/managed/reviewer", WorkspaceID: "ws-reviewer", PaneID: "pane-reviewer"},
+	}
+	store := &fakeStateStore{snapshot: original}
+	coordinator := &fakeCoordinator{}
+	service := NewOrchestratorRunService(coordinator, store, nil, nil, nil, "/managed")
+
+	if err := service.Resume(context.Background(), original.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if coordinator.advanceCalls != 0 || len(store.saves) != 0 || len(store.events) != 0 || !reflect.DeepEqual(store.snapshot, original) {
+		t.Fatalf("advance=%d saves=%v events=%v snapshot=%+v", coordinator.advanceCalls, store.saves, store.events, store.snapshot)
+	}
+}
+
+func TestResumeReviewerReadyPausedSavesResumeIntentWithoutAdvance(t *testing.T) {
+	original := state.RunSnapshot{
+		RunID:            "run-184",
+		Phase:            contract.PhasePaused,
+		PreviousPhase:    contract.PhaseReviewing,
+		ActionCursor:     4,
+		Reviewer:         state.AgentEvidence{Verification: []string{"review schema sent"}},
+		ReviewerPrompt:   state.PromptReceipt{RequestID: "run-184:reviewer-prompt", BaselineSeq: 42},
+		ReviewerWorktree: state.WorktreeState{Path: "/managed/reviewer", WorkspaceID: "ws-reviewer", PaneID: "pane-reviewer"},
+	}
+	store := &fakeStateStore{snapshot: original}
+	coordinator := &fakeCoordinator{}
+	service := NewOrchestratorRunService(coordinator, store, nil, nil, func() time.Time { return time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC) }, "/managed")
+
+	if err := service.Resume(context.Background(), original.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if coordinator.advanceCalls != 0 || len(store.saves) != 1 || len(store.events) != 1 {
+		t.Fatalf("advance=%d saves=%d events=%d", coordinator.advanceCalls, len(store.saves), len(store.events))
+	}
+	got := store.snapshot
+	if got.Phase != contract.PhaseReviewing || got.PreviousPhase != original.PreviousPhase || got.ActionCursor != original.ActionCursor || got.ReviewerPrompt != original.ReviewerPrompt || got.ReviewerWorktree != original.ReviewerWorktree || got.Reviewer.Verification[0] != "review schema sent" {
+		t.Fatalf("resumed snapshot=%+v", got)
+	}
+	if event := store.events[0]; event.Type != "intent" || event.Kind != "resume" || event.Phase != contract.PhaseReviewing {
+		t.Fatalf("resume event=%+v", event)
+	}
+}
+
+func TestResumeIncompleteReviewerReadyStateStillAdvancesOnce(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*state.RunSnapshot)
+	}{
+		{name: "identity", mutate: func(snapshot *state.RunSnapshot) { snapshot.ReviewerWorktree.PaneID = "" }},
+		{name: "receipt", mutate: func(snapshot *state.RunSnapshot) { snapshot.ReviewerPrompt.RequestID = "" }},
+		{name: "verification", mutate: func(snapshot *state.RunSnapshot) { snapshot.Reviewer.Verification = []string{"review schema pending"} }},
+	}
+	for _, phase := range []struct {
+		name  string
+		phase contract.RunPhase
+	}{
+		{name: "active", phase: contract.PhaseReviewing},
+		{name: "paused", phase: contract.PhasePaused},
+	} {
+		for _, tc := range cases {
+			t.Run(phase.name+"/"+tc.name, func(t *testing.T) {
+				snapshot := state.RunSnapshot{
+					RunID:            "run-184",
+					Phase:            phase.phase,
+					PreviousPhase:    contract.PhaseReviewing,
+					Reviewer:         state.AgentEvidence{Verification: []string{"review schema sent"}},
+					ReviewerPrompt:   state.PromptReceipt{RequestID: "run-184:reviewer-prompt"},
+					ReviewerWorktree: state.WorktreeState{Path: "/managed/reviewer", WorkspaceID: "ws-reviewer", PaneID: "pane-reviewer"},
+				}
+				tc.mutate(&snapshot)
+				store := &fakeStateStore{snapshot: snapshot}
+				coordinator := &fakeCoordinator{}
+				service := NewOrchestratorRunService(coordinator, store, nil, nil, nil, "/managed")
+
+				if err := service.Resume(context.Background(), snapshot.RunID); err != nil {
+					t.Fatal(err)
+				}
+				if coordinator.advanceCalls != 1 {
+					t.Fatalf("advance calls=%d, want 1", coordinator.advanceCalls)
+				}
+			})
+		}
 	}
 }
 

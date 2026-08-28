@@ -331,6 +331,7 @@ func (s *OrchestratorRunService) Resume(ctx context.Context, id contract.RunID) 
 	if err != nil {
 		return err
 	}
+	ready := reviewerReady(snapshot)
 	if snapshot.Phase == contract.PhasePaused {
 		if !resumablePhase(snapshot.PreviousPhase) {
 			return errors.New("재개할 이전 실행 단계가 없습니다")
@@ -347,9 +348,30 @@ func (s *OrchestratorRunService) Resume(ctx context.Context, id contract.RunID) 
 	} else if !resumablePhase(snapshot.Phase) {
 		return errors.New("진행 중인 실행만 계속할 수 있습니다")
 	}
+	if ready {
+		return nil
+	}
 	// Paused and already-active runs both advance exactly once. The paused
 	// snapshot keeps PreviousPhase, cursor, receipts and all external IDs.
 	return s.coordinator.Advance(ctx, id)
+}
+
+func reviewerReady(snapshot state.RunSnapshot) bool {
+	reviewing := snapshot.Phase == contract.PhaseReviewing ||
+		(snapshot.Phase == contract.PhasePaused && snapshot.PreviousPhase == contract.PhaseReviewing)
+	hasSchemaReceipt := false
+	for _, verification := range snapshot.Reviewer.Verification {
+		if verification == "review schema sent" {
+			hasSchemaReceipt = true
+			break
+		}
+	}
+	return reviewing && snapshot.PendingAction == "" &&
+		snapshot.ReviewerPrompt.RequestID != "" &&
+		hasSchemaReceipt &&
+		snapshot.ReviewerWorktree.Path != "" &&
+		snapshot.ReviewerWorktree.WorkspaceID != "" &&
+		snapshot.ReviewerWorktree.PaneID != ""
 }
 
 func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID) error {

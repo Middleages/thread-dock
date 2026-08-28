@@ -53,7 +53,7 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 	}
 
 	process := runner.OSRunner{}
-	repositoryPath, err := cli.DiscoverRepositoryPath(context.Background(), process, cfg.GitBinary)
+	repositoryPath, err := repositoryPathForCommand(context.Background(), args, process, cfg.GitBinary, cli.DiscoverRepositoryPath)
 	if err != nil {
 		return cli.Dependencies{}, err
 	}
@@ -80,6 +80,18 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 		worktreeRoot,
 	)
 	return cli.Dependencies{Runs: service}, nil
+}
+
+type repositoryDiscoverer func(context.Context, runner.Runner, string) (string, error)
+
+func repositoryPathForCommand(ctx context.Context, args []string, process runner.Runner, binary string, discover repositoryDiscoverer) (string, error) {
+	if len(args) == 0 || args[0] != "start" {
+		return "", nil
+	}
+	if discover == nil {
+		return "", errors.New("Git 저장소 root discovery가 구성되지 않았습니다")
+	}
+	return discover(ctx, process, binary)
 }
 
 func requiresGHESCredential(args []string) bool {
