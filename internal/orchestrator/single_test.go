@@ -68,10 +68,10 @@ func TestSingleRunPersistsActualAgentSessionIDsSeparatelyFromNames(t *testing.T)
 		}
 	}
 	got := h.mustLoad(id)
-	if got.Builder.Name != "builder-"+string(id) || got.Reviewer.Name != "reviewer-"+string(id) {
+	if got.Builder.Name != agentName("builder", id) || got.Reviewer.Name != agentName("reviewer", id) {
 		t.Fatalf("agent names=%q/%q", got.Builder.Name, got.Reviewer.Name)
 	}
-	if got.Builder.SessionID != "session-builder-"+string(id) || got.Reviewer.SessionID != "session-reviewer-"+string(id) {
+	if got.Builder.SessionID != "session-"+agentName("builder", id) || got.Reviewer.SessionID != "session-"+agentName("reviewer", id) {
 		t.Fatalf("agent sessions=%q/%q", got.Builder.SessionID, got.Reviewer.SessionID)
 	}
 	if got.Builder.SessionID == got.Builder.Name || got.Reviewer.SessionID == got.Reviewer.Name || got.Builder.SessionID == got.Reviewer.SessionID {
