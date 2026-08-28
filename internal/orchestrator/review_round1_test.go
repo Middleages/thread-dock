@@ -445,6 +445,7 @@ func TestRound2BaselineCrashReconcileStoresSeqBeforePrompt(t *testing.T) {
 	snapshot := h.mustLoad(id)
 	snapshot.Phase = contract.PhaseBuilding
 	snapshot.ActionCursor = 1
+	snapshot.BuilderWorktree = state.WorktreeState{WorkspaceID: "workspace-184", PaneID: "pane-184"}
 	snapshot.Builder = state.AgentEvidence{Name: "builder-" + string(id)}
 	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: string(id) + ":builder-prompt"}
 	snapshot.PendingAction = "baseline_builder_prompt"
@@ -455,8 +456,88 @@ func TestRound2BaselineCrashReconcileStoresSeqBeforePrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := h.mustLoad(id)
-	if got.PendingAction != "" || got.ActionCursor != 2 || got.BuilderPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
+	if got.PendingAction != "" || got.ActionCursor != 2 || got.Builder.SessionID != "session-builder-"+string(id) || got.BuilderPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
 		t.Fatalf("baseline reconcile state=%#v prompts=%d", got, len(h.herdr.prompts))
+	}
+}
+
+func TestRound2ReviewerBaselineCrashReconcileStoresActualSessionAndSeq(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseReviewing
+	snapshot.ActionCursor = 3
+	snapshot.Reviewer = state.AgentEvidence{Name: "reviewer-" + string(id)}
+	snapshot.ReviewerWorktree = state.WorktreeState{Path: "/tmp/review", WorkspaceID: "workspace-review-184", PaneID: "pane-review-184"}
+	snapshot.ReviewerPrompt = state.PromptReceipt{RequestID: string(id) + ":reviewer-prompt"}
+	snapshot.PendingAction = "baseline_reviewer_prompt"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	got := h.mustLoad(id)
+	if got.PendingAction != "" || got.ActionCursor != 4 || got.Reviewer.SessionID != "session-reviewer-"+string(id) || got.ReviewerPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
+		t.Fatalf("baseline reconcile state=%#v prompts=%d", got, len(h.herdr.prompts))
+	}
+}
+
+func TestRound2BaselineCrashReconcileRejectsWrongIdentityForBuilderAndReviewer(t *testing.T) {
+	cases := []struct {
+		name      string
+		pending   string
+		reviewer  bool
+		workspace string
+		pane      string
+		session   string
+	}{
+		{name: "builder workspace", pending: "baseline_builder_prompt", workspace: "wrong-workspace", pane: "pane-184", session: "session-builder"},
+		{name: "builder pane", pending: "baseline_builder_prompt", workspace: "workspace-184", pane: "wrong-pane", session: "session-builder"},
+		{name: "builder empty session", pending: "baseline_builder_prompt", workspace: "workspace-184", pane: "pane-184"},
+		{name: "reviewer workspace", pending: "baseline_reviewer_prompt", reviewer: true, workspace: "wrong-workspace", pane: "pane-review-184", session: "session-reviewer"},
+		{name: "reviewer pane", pending: "baseline_reviewer_prompt", reviewer: true, workspace: "workspace-review-184", pane: "wrong-pane", session: "session-reviewer"},
+		{name: "reviewer empty session", pending: "baseline_reviewer_prompt", reviewer: true, workspace: "workspace-review-184", pane: "pane-review-184"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot := h.mustLoad(id)
+			snapshot.Phase = contract.PhaseBuilding
+			snapshot.ActionCursor = 1
+			snapshot.BuilderWorktree = state.WorktreeState{WorkspaceID: "workspace-184", PaneID: "pane-184"}
+			snapshot.ReviewerWorktree = state.WorktreeState{WorkspaceID: "workspace-review-184", PaneID: "pane-review-184"}
+			name := "builder-" + string(id)
+			if tc.reviewer {
+				snapshot.Phase = contract.PhaseReviewing
+				snapshot.ActionCursor = 3
+				name = "reviewer-" + string(id)
+				snapshot.Reviewer = state.AgentEvidence{Name: name}
+				snapshot.ReviewerPrompt = state.PromptReceipt{RequestID: string(id) + ":reviewer-prompt"}
+			} else {
+				snapshot.Builder = state.AgentEvidence{Name: name}
+				snapshot.BuilderPrompt = state.PromptReceipt{RequestID: string(id) + ":builder-prompt"}
+			}
+			snapshot.PendingAction = tc.pending
+			if err := h.store.Save(context.Background(), snapshot); err != nil {
+				t.Fatal(err)
+			}
+			h.herdr.agentInfoOverride = &herdr.AgentInfo{Name: name, SessionID: tc.session, WorkspaceID: tc.workspace, PaneID: tc.pane, StateChangeSeq: 42}
+			if err := New(h.Deps).Advance(context.Background(), id); !errors.Is(err, ErrPendingReconcile) {
+				t.Fatalf("error=%v want pending reconcile", err)
+			}
+			got := h.mustLoad(id)
+			if got.PendingAction != tc.pending || got.ActionCursor != snapshot.ActionCursor {
+				t.Fatalf("state changed after identity mismatch: %#v", got)
+			}
+		})
 	}
 }
 
@@ -550,6 +631,38 @@ func TestRound2BlocksCredentialPatchBeforePersistingNormalInspection(t *testing.
 	got := h.mustLoad(id)
 	if got.Builder.Patch != "" || got.Phase != contract.PhaseIntegrating {
 		t.Fatalf("snapshot persisted sensitive patch/state=%#v", got)
+	}
+}
+
+func TestRound2BlocksQuotedCredentialPatchBeforePersistingNormalInspection(t *testing.T) {
+	for _, patch := range []string{
+		`{"token":"plain-internal-token"}`,
+		`{"password":"hunter2"}`,
+		`{"authorization":"Bearer internal-token"}`,
+		`'secret' = 'value'`,
+		`"clientSecret": "value"`,
+	} {
+		t.Run(patch, func(t *testing.T) {
+			h := newHarness(t)
+			h.git.inspection.Patch = patch
+			id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 8; i++ {
+				err = h.orchestrator.Advance(context.Background(), id)
+				if i < 7 && err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !errors.Is(err, ErrSensitivePatch) {
+				t.Fatalf("error=%v want sensitive patch block", err)
+			}
+			got := h.mustLoad(id)
+			if got.Builder.Patch != "" || got.Phase != contract.PhaseIntegrating {
+				t.Fatalf("snapshot persisted sensitive patch/state=%#v", got)
+			}
+		})
 	}
 }
 

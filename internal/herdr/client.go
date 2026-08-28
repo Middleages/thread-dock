@@ -55,6 +55,14 @@ type Evidence struct {
 
 const EvidenceSchemaExample = `{"requestId":"<prompt request ID>","commitSha":"<40 lowercase hex>","verification":[{"command":"<required command>","outcome":"passed","duration":"<Go duration>"}]}`
 
+const (
+	THREADDOCK_EVIDENCE_BEGIN = "THREADDOCK_EVIDENCE_BEGIN"
+	THREADDOCK_EVIDENCE_END   = "THREADDOCK_EVIDENCE_END"
+	EvidenceBeginMarker       = THREADDOCK_EVIDENCE_BEGIN
+	EvidenceEndMarker         = THREADDOCK_EVIDENCE_END
+	MaxEvidencePayloadBytes   = 16 * 1024
+)
+
 type AgentInfo struct {
 	Name           string
 	SessionID      string

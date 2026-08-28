@@ -458,6 +458,36 @@ func TestCleanupRemovesOnlyAfterAllWorktreesAreClean(t *testing.T) {
 	}
 }
 
+func TestCleanupRemovesSharedReviewerIntegrationPathExactlyOnceViaHerdr(t *testing.T) {
+	now := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	shared := "/managed/integration/run-184"
+	store := &fakeStateStore{snapshot: state.RunSnapshot{
+		RunID: "run-184", Phase: contract.PhaseCompleted, UpdatedAt: now.Add(-8 * 24 * time.Hour),
+		RepositoryPath: "/repo", IntegrationPath: shared,
+		Integration:      state.WorktreeState{Path: shared},
+		BuilderWorktree:  state.WorktreeState{Path: "/home/operator/.herdr/worktrees/builder-184", WorkspaceID: "workspace-builder-184", PaneID: "pane-builder-184"},
+		ReviewerWorktree: state.WorktreeState{Path: shared, WorkspaceID: "workspace-reviewer-184", PaneID: "pane-reviewer-184"},
+	}}
+	found := validHerdrCleanupIdentities()
+	found[shared] = herdr.Worktree{Path: shared, WorkspaceID: "workspace-reviewer-184", PaneID: "pane-reviewer-184"}
+	cleanup := &fakeCleanup{statuses: map[string]string{}, foundWorktrees: found}
+	remover := &fakeStateRemover{}
+	service := NewOrchestratorRunService(nil, store, cleanup, remover, func() time.Time { return now }, "/managed")
+
+	if err := service.Cleanup(context.Background(), "run-184"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cleanup.removed) != 0 || len(cleanup.herdrRemoved) != 2 {
+		t.Fatalf("git removals=%v Herdr removals=%v", cleanup.removed, cleanup.herdrRemoved)
+	}
+	if cleanup.herdrRemoved[0] != "workspace-reviewer-184" || cleanup.herdrRemoved[1] != "workspace-builder-184" {
+		t.Fatalf("Herdr removals=%v", cleanup.herdrRemoved)
+	}
+	if len(cleanup.statusCalls) != 2 || len(remover.calls) != 1 {
+		t.Fatalf("status=%v state=%v", cleanup.statusCalls, remover.calls)
+	}
+}
+
 func TestCleanupUsesTrustedManagedRootNotSnapshotParent(t *testing.T) {
 	now := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
 	store := &fakeStateStore{snapshot: state.RunSnapshot{

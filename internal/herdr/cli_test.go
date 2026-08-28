@@ -174,11 +174,79 @@ func TestReadRecentReturnsRawStdout(t *testing.T) {
 
 func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
 	r := fixtureRunner(t, map[string]string{
-		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"2.3s"}]}`,
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": EvidenceBeginMarker + "\n" + `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"2.3s"}]}` + "\n" + EvidenceEndMarker,
 	})
 	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
 	if err != nil || got.CommitSHA == "" || got.Verification[0].Duration != "2.3s" {
 		t.Fatalf("evidence=%#v err=%v", got, err)
+	}
+}
+
+func TestReadEvidenceExtractsLastCompleteEnvelopeFromUITranscript(t *testing.T) {
+	output := "recent UI output\n" + EvidenceBeginMarker + "\n" +
+		`{"requestId":"prompt-old","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./old","outcome":"passed","duration":"1s"}]}` +
+		"\n" + EvidenceEndMarker + "\nmore UI\n" + EvidenceBeginMarker + "\n" +
+		`{"requestId":"prompt-last","commitSha":"abcdef0123456789abcdef0123456789abcdef01","verification":[{"command":"go test ./...","outcome":"passed","duration":"2s"}]}` +
+		"\n" + EvidenceEndMarker + "\ntrailing UI text"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil || got.RequestID != "prompt-last" || got.Verification[0].Command != "go test ./..." {
+		t.Fatalf("evidence=%#v err=%v", got, err)
+	}
+}
+
+func TestReadEvidenceAcceptsTheCapturedRecentOutputFixtureAroundEnvelope(t *testing.T) {
+	output := readFixture(t, "testdata/v0.8.2/recent-output.txt") + "\n" + EvidenceBeginMarker + "\n" +
+		`{"requestId":"prompt-fixture","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}` +
+		"\n" + EvidenceEndMarker + "\n" + readFixture(t, "testdata/v0.8.2/recent-output.txt")
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadEvidenceRejectsMalformedIncompleteOversizedAndSecretEnvelopes(t *testing.T) {
+	valid := `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	cases := map[string]string{
+		"malformed":            EvidenceBeginMarker + "\n{" + "\n" + EvidenceEndMarker,
+		"incomplete":           EvidenceBeginMarker + "\n" + valid + "\n" + EvidenceBeginMarker,
+		"oversized":            EvidenceBeginMarker + "\n" + strings.Repeat("x", MaxEvidencePayloadBytes+1) + "\n" + EvidenceEndMarker,
+		"secret":               EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", "THREADDOCK_GH_TOKEN=plain-internal-token", 1) + "\n" + EvidenceEndMarker,
+		"quoted token":         EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"token":"plain-internal-token"}`, 1) + "\n" + EvidenceEndMarker,
+		"quoted password":      EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"password":"hunter2"}`, 1) + "\n" + EvidenceEndMarker,
+		"quoted authorization": EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"authorization":"Bearer internal-token"}`, 1) + "\n" + EvidenceEndMarker,
+		"quoted assignment":    EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `'secret' = 'value'`, 1) + "\n" + EvidenceEndMarker,
+		"quoted client secret": EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"clientSecret": "value"}`, 1) + "\n" + EvidenceEndMarker,
+		"unknown":              EvidenceBeginMarker + "\n" + `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}],"extra":"not allowed"}` + "\n" + EvidenceEndMarker,
+		"trailing":             EvidenceBeginMarker + "\n" + valid + "\n{}\n" + EvidenceEndMarker,
+	}
+	for name, output := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted invalid evidence envelope")
+			}
+		})
+	}
+}
+
+func TestEvidenceCredentialPatternRecognizesQuotedAssignments(t *testing.T) {
+	for _, value := range []string{
+		`{"token":"plain-internal-token"}`,
+		`{"password":"hunter2"}`,
+		`{"authorization":"Bearer internal-token"}`,
+		`'secret' = 'value'`,
+		`"clientSecret": "value"`,
+	} {
+		if !evidenceCredentialPattern.MatchString(value) {
+			t.Errorf("evidenceCredentialPattern.MatchString(%q)=false, want true", value)
+		}
 	}
 }
 

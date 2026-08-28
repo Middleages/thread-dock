@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -97,10 +98,46 @@ func (c *RESTClient) FindIssueBundle(ctx context.Context, repo Repository, marke
 }
 
 func (c *RESTClient) findIssueBundle(ctx context.Context, repo Repository, marker string) (IssueBundle, bool, map[string]Issue, error) {
+	issuePath := fmt.Sprintf("/api/v3/repos/%s/%s/issues", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	path := issuePath + "?state=all&per_page=100"
 	var issues []Issue
-	path := fmt.Sprintf("/api/v3/repos/%s/%s/issues?state=all&per_page=100", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
-	if err := c.doJSON(ctx, http.MethodGet, path, nil, &issues); err != nil {
-		return IssueBundle{}, false, nil, err
+	seenPages := make(map[string]struct{})
+	for page := 0; page < 1000; page++ {
+		if _, seen := seenPages[path]; seen {
+			return IssueBundle{}, false, nil, errors.New("github issue pagination repeated a page")
+		}
+		seenPages[path] = struct{}{}
+		var pageIssues []Issue
+		link, err := c.doJSONWithLink(ctx, http.MethodGet, path, nil, &pageIssues)
+		if err != nil {
+			return IssueBundle{}, false, nil, err
+		}
+		issues = append(issues, pageIssues...)
+		if page == 999 {
+			return IssueBundle{}, false, nil, errors.New("github issue pagination exceeded the safety limit")
+		}
+		next := nextIssueLink(link)
+		if next == "" && len(pageIssues) == 100 {
+			u, parseErr := url.Parse(path)
+			if parseErr != nil {
+				return IssueBundle{}, false, nil, errors.New("github issue pagination is malformed")
+			}
+			query := u.Query()
+			pageNumber, parseErr := strconv.Atoi(query.Get("page"))
+			if parseErr != nil || pageNumber < 1 {
+				pageNumber = 1
+			}
+			query.Set("page", strconv.Itoa(pageNumber+1))
+			u.RawQuery = query.Encode()
+			next = u.RequestURI()
+		}
+		if next == "" {
+			break
+		}
+		path, err = c.validateIssuePageURL(next, issuePath)
+		if err != nil {
+			return IssueBundle{}, false, nil, err
+		}
 	}
 	var parent Issue
 	children := make(map[string]Issue)
@@ -126,6 +163,49 @@ func (c *RESTClient) findIssueBundle(ctx context.Context, repo Repository, marke
 		}
 	}
 	return IssueBundle{Parent: parent, Children: orderedChildren}, true, children, nil
+}
+
+func nextIssueLink(header string) string {
+	for _, part := range strings.Split(header, ",") {
+		segments := strings.Split(part, ";")
+		if len(segments) < 2 || !strings.Contains(strings.ToLower(strings.Join(segments[1:], ";")), "rel=\"next\"") {
+			continue
+		}
+		value := strings.TrimSpace(segments[0])
+		if len(value) >= 2 && value[0] == '<' && value[len(value)-1] == '>' {
+			return value[1 : len(value)-1]
+		}
+	}
+	return ""
+}
+
+func (c *RESTClient) validateIssuePageURL(raw, issuePath string) (string, error) {
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", errors.New("github issue pagination base is malformed")
+	}
+	next, err := url.Parse(raw)
+	if err != nil || next.IsAbs() && (next.Scheme != base.Scheme || next.Host != base.Host) || next.User != nil {
+		return "", errors.New("github issue pagination link is outside the configured GHES base")
+	}
+	if !next.IsAbs() {
+		next = base.ResolveReference(next)
+	}
+	if next.Scheme != base.Scheme || next.Host != base.Host || next.Path != issuePath || next.Fragment != "" {
+		return "", errors.New("github issue pagination link is outside the configured GHES base")
+	}
+	for key, values := range next.Query() {
+		lower := strings.ToLower(key)
+		if strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "password") || strings.Contains(lower, "authorization") {
+			return "", errors.New("github issue pagination link contains sensitive query data")
+		}
+		for _, value := range values {
+			if c.token != "" && strings.Contains(value, c.token) {
+				return "", errors.New("github issue pagination link contains sensitive query data")
+			}
+		}
+	}
+	return next.RequestURI(), nil
 }
 
 func (c *RESTClient) CreateIssueBundle(ctx context.Context, repo Repository, task contract.TaskContract, marker string) (IssueBundle, error) {
@@ -358,17 +438,22 @@ func parseRoleMarker(body, marker string) (role, key string, ok bool) {
 }
 
 func (c *RESTClient) doJSON(ctx context.Context, method, path string, body any, out any) error {
+	_, err := c.doJSONWithLink(ctx, method, path, body, out)
+	return err
+}
+
+func (c *RESTClient) doJSONWithLink(ctx context.Context, method, path string, body any, out any) (string, error) {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return err
+			return "", err
 		}
 		reader = bytes.NewReader(data)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
-		return &apiError{Message: sanitize(err.Error(), c.token)}
+		return "", &apiError{Message: sanitize(err.Error(), c.token)}
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", c.apiVersion)
@@ -380,23 +465,23 @@ func (c *RESTClient) doJSON(ctx context.Context, method, path string, body any, 
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return &TemporaryError{Message: sanitize(err.Error(), c.token)}
+		return "", &TemporaryError{Message: sanitize(err.Error(), c.token)}
 	}
 	defer resp.Body.Close()
 	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if readErr != nil {
-		return &TemporaryError{StatusCode: resp.StatusCode, Message: sanitize(readErr.Error(), c.token)}
+		return "", &TemporaryError{StatusCode: resp.StatusCode, Message: sanitize(readErr.Error(), c.token)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return c.statusError(resp, data)
+		return "", c.statusError(resp, data)
 	}
 	if out == nil || len(bytes.TrimSpace(data)) == 0 {
-		return nil
+		return resp.Header.Get("Link"), nil
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return &apiError{StatusCode: resp.StatusCode, Message: sanitize("invalid JSON response: "+err.Error(), c.token)}
+		return "", &apiError{StatusCode: resp.StatusCode, Message: sanitize("invalid JSON response: "+err.Error(), c.token)}
 	}
-	return nil
+	return resp.Header.Get("Link"), nil
 }
 
 func (c *RESTClient) statusError(resp *http.Response, data []byte) error {

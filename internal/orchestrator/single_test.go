@@ -56,6 +56,65 @@ func TestSingleRunReachesReviewWithIndependentReviewerAndEvidence(t *testing.T) 
 	}
 }
 
+func TestSingleRunPersistsActualAgentSessionIDsSeparatelyFromNames(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 14 && len(h.herdr.prompts) < 2; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := h.mustLoad(id)
+	if got.Builder.Name != "builder-"+string(id) || got.Reviewer.Name != "reviewer-"+string(id) {
+		t.Fatalf("agent names=%q/%q", got.Builder.Name, got.Reviewer.Name)
+	}
+	if got.Builder.SessionID != "session-builder-"+string(id) || got.Reviewer.SessionID != "session-reviewer-"+string(id) {
+		t.Fatalf("agent sessions=%q/%q", got.Builder.SessionID, got.Reviewer.SessionID)
+	}
+	if got.Builder.SessionID == got.Builder.Name || got.Reviewer.SessionID == got.Reviewer.Name || got.Builder.SessionID == got.Reviewer.SessionID {
+		t.Fatalf("session IDs were replaced by names or are not distinct: %#v", got)
+	}
+}
+
+func TestContainsCredentialRequiresAssignmentForGenericSecretNames(t *testing.T) {
+	for _, value := range []string{
+		"THREADDOCK_GH_TOKEN=plain-internal-token",
+		"token=plain-internal-token",
+		"password=hunter2",
+		"authorization: Bearer internal-token",
+		"secret=internal-secret",
+		"apiKey: internal-api-key",
+		"private_key = private-material",
+		"clientSecret=client-material",
+		`{"token":"plain-internal-token"}`,
+		`{"password":"hunter2"}`,
+		`{"authorization":"Bearer internal-token"}`,
+		`'secret' = 'value'`,
+		`"clientSecret": "value"`,
+		"-----BEGIN PRIVATE KEY-----",
+		"ghp_1234567890123456789012345678901234567890",
+		"ASIA1234567890ABCDEF",
+	} {
+		if !containsCredential(value) {
+			t.Errorf("containsCredential(%q)=false, want true", value)
+		}
+	}
+	for _, value := range []string{
+		"the token field identifies the auth token",
+		"privateKey is the configured field name",
+		"client secret is never persisted",
+		`quoted "token" key is documented`,
+		"clientSecret is the configured field name",
+	} {
+		if containsCredential(value) {
+			t.Errorf("containsCredential(%q)=true, want false", value)
+		}
+	}
+}
+
 func TestStartUnreadableContractCreatesNoRunOrIssue(t *testing.T) {
 	h := newHarness(t)
 

@@ -110,6 +110,106 @@ func TestFindIssueBundleIdentifiesParentByRoleMarker(t *testing.T) {
 	}
 }
 
+func TestCreateIssueBundleFindsMarkerOnLaterPageWithoutPosting(t *testing.T) {
+	var posts int
+	var pages []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/repos/platform/payments-api/issues", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts++
+			http.Error(w, "unexpected post", http.StatusInternalServerError)
+			return
+		}
+		pages = append(pages, r.URL.RawQuery)
+		w.Header().Set("Link", "</api/v3/repos/platform/payments-api/issues?state=all&per_page=100&page=2>; rel=\"next\"")
+		if r.URL.Query().Get("page") == "2" {
+			w.Header().Set("Link", "")
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"number": 184, "node_id": "parent-node", "title": "parent", "body": "<!-- threaddock:run-184:role=parent:key=parent -->"},
+				{"number": 185, "node_id": "child-node", "title": "child", "body": "<!-- threaddock:run-184:role=child:key=api -->"},
+				{"number": 186, "node_id": "tests-node", "title": "tests", "body": "<!-- threaddock:run-184:role=child:key=tests -->"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{"number": 1, "title": "unrelated", "body": "no marker"}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	bundle, err := client.CreateIssueBundle(context.Background(), repo(), testfixture.ValidContract(), "run-184")
+	if err != nil {
+		t.Fatalf("err=%v pages=%v posts=%d", err, pages, posts)
+	}
+	if bundle.Parent.Number != 184 || len(bundle.Children) != 2 || bundle.Children[0].Number != 185 || bundle.Children[1].Number != 186 {
+		t.Fatalf("bundle=%+v", bundle)
+	}
+	if posts != 0 {
+		t.Fatalf("CreateIssueBundle posted %d times after finding later-page marker", posts)
+	}
+	if len(pages) != 2 || pages[1] == pages[0] {
+		t.Fatalf("pages=%v", pages)
+	}
+}
+
+func TestCreateIssueBundleReadsPastChildMarkerToFindCompleteOrderedBundle(t *testing.T) {
+	var posts int
+	var pages []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/repos/platform/payments-api/issues", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts++
+			http.Error(w, "unexpected post", http.StatusInternalServerError)
+			return
+		}
+		pages = append(pages, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") != "2" {
+			w.Header().Set("Link", "</api/v3/repos/platform/payments-api/issues?state=all&per_page=100&page=2>; rel=\"next\"")
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"number": 185, "node_id": "child-api", "title": "api", "body": "<!-- threaddock:run-184:role=child:key=api -->"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"number": 184, "node_id": "parent-node", "title": "parent", "body": "<!-- threaddock:run-184:role=parent:key=parent -->"},
+			{"number": 186, "node_id": "tests-node", "title": "tests", "body": "<!-- threaddock:run-184:role=child:key=tests -->"},
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	bundle, err := NewRESTClient(server.URL, "token", "2022-11-28", server.Client()).CreateIssueBundle(context.Background(), repo(), testfixture.ValidContract(), "run-184")
+	if err != nil {
+		t.Fatalf("err=%v pages=%v posts=%d", err, pages, posts)
+	}
+	if posts != 0 {
+		t.Fatalf("CreateIssueBundle posted %d times", posts)
+	}
+	if bundle.Parent.Number != 184 || len(bundle.Children) != 2 || bundle.Children[0].Number != 185 || bundle.Children[1].Number != 186 {
+		t.Fatalf("bundle=%+v", bundle)
+	}
+	if len(pages) != 2 || pages[0] == pages[1] {
+		t.Fatalf("pages=%v", pages)
+	}
+}
+
+func TestFindIssueBundleRejectsNextLinkOutsideGHESBaseWithoutLeakingToken(t *testing.T) {
+	const token = "secret-token"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/repos/platform/payments-api/issues", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", "<https://other-ghes.example/api/v3/repos/platform/payments-api/issues?page=2&access_token="+token+">; rel=\"next\"")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{"number": 1, "title": "unrelated", "body": "no marker"}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	_, _, err := NewRESTClient(server.URL, token, "2022-11-28", server.Client()).FindIssueBundle(context.Background(), repo(), "run-184")
+	if err == nil || strings.Contains(err.Error(), token) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestErrorNeverContainsToken(t *testing.T) {
 	client := NewRESTClient("http://127.0.0.1:1", "secret-token", "2022-11-28", http.DefaultClient)
 	_, _, err := client.FindIssueBundle(context.Background(), repo(), "td:run-184")
