@@ -208,8 +208,12 @@ case "${1:-}" in
   contract) exit 0 ;;
   start)
     run_id='td-simulated-outage'
-    printf 'diagnostic token=%s\n' "$THREADDOCK_GH_TOKEN" >&2
+    printf 'diagnostic sentinel=pilot-test-secret\n' >&2
     cp "$THREADDOCK_CONFIG" "$PILOT_TEST_OBSERVED_CONFIG"
+    state_dir="$(/usr/bin/jq -r '.stateDir' "$THREADDOCK_CONFIG")"
+    if compgen -G "$state_dir/pilot/start.out*" >/dev/null || compgen -G "$state_dir/pilot/start.err*" >/dev/null; then
+      printf '%s\n' raw-start-artifact-found >"$PILOT_TEST_ARTIFACT_MARKER"
+    fi
     if [[ "${PILOT_TEST_BLOCK_START:-false}" == true ]]; then
       printf '%s\n' ready >"$PILOT_TEST_START_READY"
       while [[ ! -f "$PILOT_TEST_START_RELEASE" ]]; do sleep 0.05; done
@@ -242,6 +246,7 @@ esac
 		"THREADDOCK_GH_TOKEN=pilot-test-secret",
 		"PILOT_TEST_CALL_LOG="+callLog,
 		"PILOT_TEST_OBSERVED_CONFIG="+filepath.Join(temp, "observed-config.json"),
+		"PILOT_TEST_ARTIFACT_MARKER="+filepath.Join(temp, "raw-artifact.marker"),
 		"PILOT_TEST_REPO_ROOT="+repoRoot,
 	)
 	output, err := command.CombinedOutput()
@@ -301,6 +306,12 @@ esac
 			t.Fatalf("raw start artifacts remain: %v", matches)
 		}
 	}
+	if _, err := os.Stat(filepath.Join(temp, "raw-artifact.marker")); err == nil {
+		t.Fatal("agentctl observed a raw start artifact while running")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	assertTreeFreeOfSecret(t, stateDir, "pilot-test-secret")
 	if strings.Contains(string(output), "pilot-test-secret") || strings.Contains(string(calls), "pilot-test-secret") || strings.Contains(string(observed), "pilot-test-secret") {
 		t.Fatalf("token leaked in output or call log:\n%s", output)
 	}
@@ -344,6 +355,11 @@ set -euo pipefail
 case "${1:-}" in
   contract) exit 0 ;;
   start)
+    state_dir="$(/usr/bin/jq -r '.stateDir' "$THREADDOCK_CONFIG")"
+    printf 'diagnostic sentinel=pilot-test-secret\n' >&2
+    if compgen -G "$state_dir/pilot/start.out*" >/dev/null || compgen -G "$state_dir/pilot/start.err*" >/dev/null; then
+      printf '%s\n' raw-start-artifact-found >"$PILOT_TEST_ARTIFACT_MARKER"
+    fi
     printf '%s\n' ready >"${PILOT_TEST_START_READY}"
     while [[ ! -f "${PILOT_TEST_START_RELEASE}" ]]; do sleep 0.05; done
     printf '%s\n' td-interrupted
@@ -363,6 +379,7 @@ esac
 		"PILOT_TEST_REPO_ROOT="+repoRoot,
 		"PILOT_TEST_START_READY="+readyPath,
 		"PILOT_TEST_START_RELEASE="+releasePath,
+		"PILOT_TEST_ARTIFACT_MARKER="+filepath.Join(temp, "raw-artifact.marker"),
 	)
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
@@ -403,6 +420,38 @@ esac
 		if len(matches) != 0 {
 			t.Fatalf("pilot artifacts remain after interrupt: %v", matches)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(temp, "raw-artifact.marker")); err == nil {
+		t.Fatal("agentctl observed a raw start artifact while running")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	assertTreeFreeOfSecret(t, stateDir, "pilot-test-secret")
+}
+
+func assertTreeFreeOfSecret(t *testing.T, root, secret string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if strings.Contains(entry.Name(), secret) {
+			t.Fatalf("secret appears in state path: %s", path)
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(contents), secret) {
+			t.Fatalf("secret appears in state file: %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

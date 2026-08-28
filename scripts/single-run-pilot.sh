@@ -6,8 +6,6 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly THREADDOCK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly CONFIG_PATH="${THREADDOCK_CONFIG:-$HOME/.config/threaddock/config.json}"
 SIMULATION_CONFIG_PATH=""
-START_STDOUT_PATH=""
-START_STDERR_PATH=""
 
 say() {
   printf '%s\n' "$*"
@@ -47,28 +45,11 @@ read_json() {
   jq -er "$2" "$1"
 }
 
-cleanup_start_artifacts() {
+cleanup_simulation_config() {
   if [[ -n "${SIMULATION_CONFIG_PATH:-}" ]]; then
     rm -f -- "$SIMULATION_CONFIG_PATH"
     SIMULATION_CONFIG_PATH=""
   fi
-  if [[ -n "${START_STDOUT_PATH:-}" ]]; then
-    rm -f -- "$START_STDOUT_PATH"
-    START_STDOUT_PATH=""
-  fi
-  if [[ -n "${START_STDERR_PATH:-}" ]]; then
-    rm -f -- "$START_STDERR_PATH"
-    START_STDERR_PATH=""
-  fi
-}
-
-redact_text() {
-  local value="$1"
-  local secret="${THREADDOCK_GH_TOKEN:-}"
-  if [[ -n "$secret" ]]; then
-    value="${value//"$secret"/[REDACTED]}"
-  fi
-  printf '%s' "$value"
 }
 
 default_state_dir() {
@@ -242,11 +223,11 @@ start_pilot() {
   say "- 로컬 위치: $REPO_ROOT"
   say "- 작업 내용: pilot-result.txt 파일 하나 만들기"
 
-  trap 'cleanup_start_artifacts' EXIT
-  trap 'cleanup_start_artifacts; exit 130' INT
-  trap 'cleanup_start_artifacts; exit 143' TERM
   if [[ "$simulate_outage" == true ]]; then
     SIMULATION_CONFIG_PATH="$(mktemp "$STATE_DIR/pilot/simulate-config.XXXXXX")"
+    trap 'cleanup_simulation_config' EXIT
+    trap 'cleanup_simulation_config; exit 130' INT
+    trap 'cleanup_simulation_config; exit 143' TERM
     jq --arg apiBase "http://127.0.0.1:1" '{ghesHost,apiBase:$apiBase,apiVersion,stateDir,herdrBinary,gitBinary,workingWait,recoveryLimit,projectId,projectStatusFieldId,projectStatusOptions}' "$CONFIG_PATH" >"$SIMULATION_CONFIG_PATH"
     chmod 600 "$SIMULATION_CONFIG_PATH"
     say "GitHub.com 등록 장애를 로컬에서 시뮬레이션합니다. 네트워크 차단이나 복구는 필요하지 않습니다."
@@ -254,24 +235,18 @@ start_pilot() {
     wait_for_enter "중요: 지금 GHES API 연결을 승인된 방법으로 잠시 차단해 주세요."
   fi
 
-  START_STDOUT_PATH="$(mktemp "$STATE_DIR/pilot/start.out.XXXXXX")"
-  START_STDERR_PATH="$(mktemp "$STATE_DIR/pilot/start.err.XXXXXX")"
-  chmod 600 "$START_STDOUT_PATH" "$START_STDERR_PATH"
-
   set +e
   if [[ "$simulate_outage" == true ]]; then
-    THREADDOCK_CONFIG="$SIMULATION_CONFIG_PATH" agentctl start "$CONTRACT_PATH" >"$START_STDOUT_PATH" 2>"$START_STDERR_PATH"
+    start_output="$(THREADDOCK_CONFIG="$SIMULATION_CONFIG_PATH" agentctl start "$CONTRACT_PATH" 2>/dev/null)"
   else
-    agentctl start "$CONTRACT_PATH" >"$START_STDOUT_PATH" 2>"$START_STDERR_PATH"
+    start_output="$(agentctl start "$CONTRACT_PATH" 2>/dev/null)"
   fi
   start_code=$?
   set -e
-  start_output="$(sed -n '1p' "$START_STDOUT_PATH")"
-  start_error="$(redact_text "$(tail -n 1 "$START_STDERR_PATH" 2>/dev/null || true)")"
-  cleanup_start_artifacts
+  RUN="$(printf '%s\n' "$start_output" | sed -n '1p')"
+  cleanup_simulation_config
   trap - EXIT INT TERM
-  [[ -n "$start_output" ]] || fail "실행 ID를 받지 못했습니다. 연결 중단 방식과 start 오류를 확인해 주세요: $start_error"
-  RUN="$start_output"
+  [[ -n "$RUN" && "$RUN" != *[[:space:]]* ]] || fail "실행 ID를 받지 못했습니다. 연결 중단 시험 설정과 agentctl 상태를 확인해 주세요."
   [[ -z "${THREADDOCK_GH_TOKEN:-}" || "$RUN" != *"$THREADDOCK_GH_TOKEN"* ]] || fail "실행 ID에 허용되지 않은 값이 포함되었습니다."
   SNAPSHOT="$STATE_DIR/runs/$RUN/run.json"
   [[ -f "$SNAPSHOT" ]] || fail "실행 기록이 생성되지 않았습니다: $SNAPSHOT"
