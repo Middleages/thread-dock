@@ -216,6 +216,21 @@ func (c *CLI) ReadRecent(ctx context.Context, name string) (string, error) {
 	return result.Stdout, nil
 }
 
+// ReadPromptReceipt combines the agent sequence and recent output into the
+// narrow observation needed by recovery. Terminal output is not returned or
+// persisted; only exact request-ID presence is exposed to the orchestrator.
+func (c *CLI) ReadPromptReceipt(ctx context.Context, name, requestID string) (AgentInfo, bool, error) {
+	info, err := c.GetInfo(ctx, name)
+	if err != nil {
+		return AgentInfo{}, false, err
+	}
+	recent, err := c.ReadRecent(ctx, name)
+	if err != nil {
+		return AgentInfo{}, false, err
+	}
+	return info, strings.TrimSpace(requestID) != "" && strings.Contains(recent, requestID), nil
+}
+
 // ReadEvidence accepts only the strict structured result emitted by the
 // Builder protocol. It never forwards raw terminal text to callers.
 func (c *CLI) ReadEvidence(ctx context.Context, name string) (Evidence, error) {

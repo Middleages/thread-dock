@@ -19,12 +19,14 @@ var testFS embed.FS
 type recordingRunner struct {
 	responses map[string]string
 	calls     [][]string
+	cwds      []string
 	fail      *runnerFailure
 }
 
-func (r *recordingRunner) Run(_ context.Context, _ string, executable string, args ...string) (runner.Result, error) {
+func (r *recordingRunner) Run(_ context.Context, cwd, executable string, args ...string) (runner.Result, error) {
 	call := append([]string{executable}, args...)
 	r.calls = append(r.calls, call)
+	r.cwds = append(r.cwds, cwd)
 	if r.fail != nil {
 		return runner.Result{Stderr: r.fail.stderr, ExitCode: r.fail.exitCode}, &testError{r.fail.err}
 	}
@@ -199,6 +201,24 @@ func TestGetInfoParsesStateChangeSequence(t *testing.T) {
 	got, err := NewCLI(r, "herdr").GetInfo(context.Background(), "builder_api")
 	if err != nil || got.StateChangeSeq != 110 {
 		t.Fatalf("info=%#v err=%v", got, err)
+	}
+}
+
+func TestReadPromptReceiptReturnsSequenceAndOnlyRequestObservation(t *testing.T) {
+	requestID := "run-184:builder-prompt"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder-184":                                                    readFixture(t, "testdata/v0.8.2/agent-get.txt"),
+		"herdr\x00agent\x00read\x00builder-184\x00--source\x00recent-unwrapped\x00--lines\x00120": "agent output with " + requestID,
+	})
+	info, observed, err := NewCLI(r, "herdr").ReadPromptReceipt(context.Background(), "builder-184", requestID)
+	if err != nil || info.StateChangeSeq != 110 || !observed {
+		t.Fatalf("info=%#v observed=%v err=%v", info, observed, err)
+	}
+	if len(r.calls) != 2 || !reflect.DeepEqual(r.calls[0], []string{"herdr", "agent", "get", "builder-184"}) || !reflect.DeepEqual(r.calls[1], []string{"herdr", "agent", "read", "builder-184", "--source", "recent-unwrapped", "--lines", "120"}) {
+		t.Fatalf("calls=%#v", r.calls)
+	}
+	if !reflect.DeepEqual(r.cwds, []string{"", ""}) {
+		t.Fatalf("cwds=%#v", r.cwds)
 	}
 }
 

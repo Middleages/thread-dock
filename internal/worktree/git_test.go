@@ -119,8 +119,23 @@ func TestMergeCommitUsesImmutableSHA(t *testing.T) {
 	if err := git.MergeCommit(context.Background(), "/work/integration", sha); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(r.calls[0].args, []string{"merge", "--no-edit", sha}) {
+	if !reflect.DeepEqual(r.calls[0].args, []string{"merge", "--ff-only", sha}) {
 		t.Fatalf("call=%#v", r.calls[0].args)
+	}
+}
+
+func TestReconcileIntegrationWorktreeRequiresContractBaseHead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "integration")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	base := "0123456789abcdef0123456789abcdef01234567"
+	current := "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	r := &fakeRunner{results: []runner.Result{{Stdout: ""}, {Stdout: "agent/integration\n"}, {Stdout: current + "\n"}}}
+	git := New(r, "git")
+	found, err := git.ReconcileIntegrationWorktree(context.Background(), path, "agent/integration", base)
+	if err == nil || found || !strings.Contains(err.Error(), "base commit") {
+		t.Fatalf("found=%v err=%v want base commit mismatch", found, err)
 	}
 }
 

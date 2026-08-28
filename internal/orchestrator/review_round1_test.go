@@ -207,7 +207,7 @@ func TestRound2PromptPendingSequenceDefersOrConfirmsExactlyOnce(t *testing.T) {
 	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
 		t.Fatalf("same-seq error=%v", err)
 	}
-	if got := h.mustLoad(id); got.PendingAction != "" || len(h.herdr.prompts) != 0 {
+	if got := h.mustLoad(id); got.PendingAction != "" || got.ActionCursor != 2 || len(h.herdr.prompts) != 0 || h.herdr.promptReceiptReads != 1 {
 		t.Fatalf("same-seq state=%#v prompts=%d", got, len(h.herdr.prompts))
 	}
 	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
@@ -223,11 +223,77 @@ func TestRound2PromptPendingSequenceDefersOrConfirmsExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.herdr.agentSeq = 43
+	if err := New(h.Deps).Advance(context.Background(), id); !errors.Is(err, ErrPendingReconcile) {
+		t.Fatalf("error=%v want pending reconcile", err)
+	}
+	if got := h.mustLoad(id); got.PendingAction != "prompt_builder" || got.ActionCursor != 3 || len(h.herdr.prompts) != 1 || h.herdr.promptReceiptReads != 2 {
+		t.Fatalf("increased-seq state=%#v prompts=%d", got, len(h.herdr.prompts))
+	}
+
+	snapshot = h.mustLoad(id)
+	snapshot.PendingAction = "prompt_builder"
+	snapshot.BuilderPrompt.BaselineSeq = 42
+	h.herdr.recent = "receipt=" + snapshot.BuilderPrompt.RequestID
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
 	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.mustLoad(id); got.PendingAction != "" || len(h.herdr.prompts) != 1 {
-		t.Fatalf("increased-seq state=%#v prompts=%d", got, len(h.herdr.prompts))
+	if got := h.mustLoad(id); got.PendingAction != "" || got.ActionCursor != 4 || len(h.herdr.prompts) != 1 || h.herdr.promptReceiptReads != 3 {
+		t.Fatalf("observed state=%#v prompts=%d", got, len(h.herdr.prompts))
+	}
+}
+
+func TestRound2ReviewerPromptPendingWithMissingReceiptStaysUncertain(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseReviewing
+	snapshot.ActionCursor = 3
+	snapshot.Reviewer = state.AgentEvidence{Name: "reviewer-" + string(id), SessionID: "reviewer-session"}
+	snapshot.ReviewerPrompt = state.PromptReceipt{RequestID: string(id) + ":reviewer-prompt", BaselineSeq: 42}
+	snapshot.PendingAction = "prompt_reviewer"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	h.herdr.agentSeq = 43
+	h.herdr.recent = "reviewer is still working without a receipt"
+	if err := New(h.Deps).Advance(context.Background(), id); !errors.Is(err, ErrPendingReconcile) {
+		t.Fatalf("error=%v want pending reconcile", err)
+	}
+	got := h.mustLoad(id)
+	if got.PendingAction != "prompt_reviewer" || got.ActionCursor != 3 || len(h.herdr.prompts) != 0 || h.herdr.promptReceiptReads != 1 {
+		t.Fatalf("reviewer uncertain state=%#v prompts=%d", got, len(h.herdr.prompts))
+	}
+}
+
+func TestRound2PendingMergeRequiresVerifiedCommitAtHead(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseIntegrating
+	snapshot.ActionCursor = 1
+	snapshot.PendingAction = "merge_verified_commit"
+	snapshot.Builder = state.AgentEvidence{RequestID: string(id) + ":builder-prompt", CommitSHA: validSHA, Branch: "agent/api", Patch: "bounded patch", VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./internal/payments", Outcome: "passed", Duration: "1s"}}}
+	snapshot.BuilderPrompt.RequestID = snapshot.Builder.RequestID
+	snapshot.Integration.Path = "/tmp/integration"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	h.git.currentCommit = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	if err := New(h.Deps).Advance(context.Background(), id); !errors.Is(err, ErrPendingReconcile) {
+		t.Fatalf("error=%v want pending reconcile", err)
+	}
+	got := h.mustLoad(id)
+	if got.PendingAction != "merge_verified_commit" || got.Phase != contract.PhaseIntegrating || h.git.merges != 0 {
+		t.Fatalf("merge mismatch state=%#v merges=%d", got, h.git.merges)
 	}
 }
 

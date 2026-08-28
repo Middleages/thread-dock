@@ -71,6 +71,13 @@ type AgentLocator interface {
 	GetInfo(context.Context, string) (herdr.AgentInfo, error)
 }
 
+// PromptReceiptReader performs the single logical external read used to
+// reconcile a pending prompt. Implementations return agent sequence metadata
+// and only whether the exact request ID was observed, never terminal output.
+type PromptReceiptReader interface {
+	ReadPromptReceipt(context.Context, string, string) (herdr.AgentInfo, bool, error)
+}
+
 type EvidenceReader interface {
 	ReadEvidence(context.Context, string) (herdr.Evidence, error)
 }

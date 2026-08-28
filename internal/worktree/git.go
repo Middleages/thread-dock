@@ -152,7 +152,7 @@ func (g *Git) MergeCommit(ctx context.Context, worktreePath, sha string) error {
 	if !isCommitSHA(sha) {
 		return errors.New("merge requires a 40-character commit SHA")
 	}
-	return g.run(ctx, worktreePath, "merge", "--no-edit", sha)
+	return g.run(ctx, worktreePath, "merge", "--ff-only", sha)
 }
 
 func (g *Git) CurrentCommit(ctx context.Context, worktreePath string) (string, error) {
@@ -204,6 +204,9 @@ func (g *Git) ReconcileIntegrationWorktree(ctx context.Context, path, branch, ba
 	currentCommit, err := g.CurrentCommit(ctx, path)
 	if err != nil || !isCommitSHA(currentCommit) {
 		return false, errors.New("integration Worktree commit is unavailable")
+	}
+	if currentCommit != base {
+		return false, errors.New("integration Worktree HEAD does not match contract base commit")
 	}
 	return true, nil
 }

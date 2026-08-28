@@ -172,6 +172,7 @@ type fakeHerdr struct {
 	agentSeq           int64
 	agentInfoErr       error
 	findWorktreeExists bool
+	promptReceiptReads int
 }
 
 func (f *fakeHerdr) CreateWorktree(context.Context, herdr.CreateWorktreeRequest) (herdr.Worktree, error) {
@@ -239,6 +240,15 @@ func (f *fakeHerdr) GetInfo(_ context.Context, name string) (herdr.AgentInfo, er
 	return herdr.AgentInfo{Name: name, SessionID: "session-" + name, PaneID: "pane-184", WorkspaceID: "workspace-184", State: herdr.AgentStateWorking, StateChangeSeq: seq}, nil
 }
 
+func (f *fakeHerdr) ReadPromptReceipt(_ context.Context, name, requestID string) (herdr.AgentInfo, bool, error) {
+	f.promptReceiptReads++
+	seq := f.agentSeq
+	if seq == 0 {
+		seq = 42
+	}
+	return herdr.AgentInfo{Name: name, StateChangeSeq: seq}, strings.Contains(f.recent, requestID), nil
+}
+
 type fakeGit struct {
 	merges          int
 	mergedBranch    string
@@ -248,6 +258,7 @@ type fakeGit struct {
 	inspection      worktree.CommitInspection
 	reconcileExists bool
 	reconcileCalls  int
+	currentCommit   string
 }
 
 func (f *fakeGit) Create(_ context.Context, _, worktreePath, _, _ string) error {
@@ -276,7 +287,12 @@ func (f *fakeGit) MergeCommit(_ context.Context, _ string, sha string) error {
 	return nil
 }
 
-func (f *fakeGit) CurrentCommit(context.Context, string) (string, error) { return validSHA, nil }
+func (f *fakeGit) CurrentCommit(context.Context, string) (string, error) {
+	if f.currentCommit != "" {
+		return f.currentCommit, nil
+	}
+	return validSHA, nil
+}
 
 func (f *fakeGit) ReconcileIntegrationWorktree(context.Context, string, string, string) (bool, error) {
 	f.reconcileCalls++

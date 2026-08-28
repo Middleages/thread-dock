@@ -570,7 +570,7 @@ func reviewerPacket(c contract.TaskContract, task contract.Task, evidence state.
 	for _, check := range evidence.VerificationEvidence {
 		checks = append(checks, fmt.Sprintf("Command: %s\nOutcome: %s\nDuration: %s", check.Command, check.Outcome, check.Duration))
 	}
-	return fmt.Sprintf("Reviewer acceptance criteria:\n- %s\n- %s\n\nFinal bounded patch:\n%s\n\nStructured verification:\n%s\nCommit SHA: %s\nPrompt request ID: %s\n\nReview schema:\ndecision: approve | request_changes\nfindings: list of concrete acceptance-criterion findings", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), redactPatch(evidence.Patch), strings.Join(checks, "\n"), evidence.CommitSHA, requestID)
+	return fmt.Sprintf("Reviewer acceptance criteria:\n- %s\n- %s\n\nFinal bounded patch:\n%s\n\nStructured verification:\n%s\nCommit SHA: %s\nPrompt request ID: %s\n\nReview schema:\nrequestId: %s (include this exact value in the review result)\ndecision: approve | request_changes\nfindings: list of concrete acceptance-criterion findings", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), redactPatch(evidence.Patch), strings.Join(checks, "\n"), evidence.CommitSHA, requestID, requestID)
 }
 
 func validCommitSHA(value string) bool {
@@ -895,7 +895,7 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 		receipt.BaselineSeq = info.StateChangeSeq
 		return o.finish(ctx, snapshot, "prompt baseline reconcile 완료", false)
 	case "prompt_builder", "prompt_reviewer":
-		locator, ok := o.deps.Herdr.(AgentLocator)
+		reader, ok := o.deps.Herdr.(PromptReceiptReader)
 		if !ok {
 			return ErrPendingReconcile
 		}
@@ -905,21 +905,17 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 			name = snapshot.Reviewer.Name
 			receipt = snapshot.ReviewerPrompt
 		}
-		info, err := locator.GetInfo(ctx, name)
-		if err != nil {
+		info, observed, err := reader.ReadPromptReceipt(ctx, name, receipt.RequestID)
+		if err != nil || info.Name == "" || info.StateChangeSeq <= 0 {
 			return ErrPendingReconcile
 		}
-		if info.StateChangeSeq > receipt.BaselineSeq {
+		if observed {
 			return o.finish(ctx, snapshot, "prompt receipt reconcile 완료", false)
 		}
-		snapshot.PendingAction = ""
-		snapshot.Summary = "prompt 미실행 확인; 다음 Advance에서 재전송"
-		snapshot.UpdatedAt = o.now()
-		if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
-			return err
+		if info.StateChangeSeq == receipt.BaselineSeq {
+			return o.markNotExecuted(ctx, snapshot, "prompt 미실행 확인; 다음 Advance에서 재전송")
 		}
-		_ = o.append(ctx, snapshot.RunID, state.Event{Type: "reconcile_not_executed", Phase: snapshot.Phase, Message: snapshot.Summary})
-		return nil
+		return ErrPendingReconcile
 	case "collect_builder_evidence":
 		reader, ok := o.deps.Herdr.(EvidenceReader)
 		if !ok {
