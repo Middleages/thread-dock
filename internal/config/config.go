@@ -217,10 +217,10 @@ func validatePublicEndpointPair(ghesHost, apiBase string) error {
 		if host.Scheme != "https" {
 			return errors.New("ghesHost must use HTTPS for github.com")
 		}
-		if !isPublicHostname(host.Host, "github.com") {
+		if host.Host != "github.com" {
 			return errors.New("ghesHost must be exactly https://github.com")
 		}
-		if !publicAPI || api.Scheme != "https" || !isPublicHostname(api.Host, "api.github.com") || api.Path != "" {
+		if !publicAPI || api.Scheme != "https" || api.Host != "api.github.com" || api.Path != "" {
 			return errors.New("apiBase must be https://api.github.com for GitHub.com")
 		}
 	}
@@ -228,7 +228,7 @@ func validatePublicEndpointPair(ghesHost, apiBase string) error {
 		if api.Scheme != "https" {
 			return errors.New("apiBase must use HTTPS for api.github.com")
 		}
-		if !isPublicHostname(api.Host, "api.github.com") || api.Path != "" {
+		if api.Host != "api.github.com" || api.Path != "" {
 			return errors.New("apiBase must be exactly https://api.github.com")
 		}
 		if !publicHost {

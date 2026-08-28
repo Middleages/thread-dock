@@ -42,6 +42,9 @@ func NewRESTClient(baseURL, token, apiVersion string, httpClient *http.Client) *
 	if parsed, err := url.Parse(baseURL); err == nil && isPublicHostname(parsed.Hostname(), "api.github.com") {
 		if parsed.Scheme != "https" {
 			initErr = errors.New("github public API requires HTTPS")
+		} else {
+			parsed.Host = canonicalPublicOriginHost(parsed)
+			baseURL = parsed.String()
 		}
 		restBasePath, graphqlPath = "", "/graphql"
 		publicAPI = true
@@ -57,6 +60,20 @@ func NewRESTClient(baseURL, token, apiVersion string, httpClient *http.Client) *
 
 func isPublicHostname(hostname, expected string) bool {
 	return strings.EqualFold(strings.TrimSuffix(hostname, "."), expected)
+}
+
+func canonicalPublicOriginHost(u *url.URL) string {
+	if !isPublicHostname(u.Hostname(), "api.github.com") {
+		return u.Host
+	}
+	if port := u.Port(); port != "" && port != "443" {
+		return "api.github.com:" + port
+	}
+	return "api.github.com"
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return a.Scheme == b.Scheme && canonicalPublicOriginHost(a) == canonicalPublicOriginHost(b)
 }
 
 // AuthError indicates missing or invalid GHES credentials.
@@ -204,13 +221,13 @@ func (c *RESTClient) validateIssuePageURL(raw, issuePath string) (string, error)
 		return "", errors.New("github issue pagination base is malformed")
 	}
 	next, err := url.Parse(raw)
-	if err != nil || next.IsAbs() && (next.Scheme != base.Scheme || next.Host != base.Host) || next.User != nil {
+	if err != nil || next.IsAbs() && !sameOrigin(next, base) || next.User != nil {
 		return "", errors.New("github issue pagination link is outside the configured GitHub API base")
 	}
 	if !next.IsAbs() {
 		next = base.ResolveReference(next)
 	}
-	if next.Scheme != base.Scheme || next.Host != base.Host || !c.validIssuePagePath(next.Path, issuePath) || next.Fragment != "" {
+	if !sameOrigin(next, base) || !c.validIssuePagePath(next.Path, issuePath) || next.Fragment != "" {
 		return "", errors.New("github issue pagination link is outside the configured GitHub API base")
 	}
 	if !c.publicAPI {

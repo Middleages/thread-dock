@@ -145,13 +145,23 @@ func TestParseAcceptsGitHubPublicProfileOnlyWithHTTPSAPI(t *testing.T) {
 	}
 }
 
-func TestParseAcceptsDNSCanonicalGitHubPublicProfileOverHTTPS(t *testing.T) {
-	got, err := Parse(strings.NewReader(testConfigJSON("https://github.com.", "https://api.github.com.")))
-	if err != nil {
-		t.Fatal(err)
+func TestParseRejectsNonCanonicalGitHubPublicProfileOverHTTPS(t *testing.T) {
+	tests := []struct {
+		name     string
+		ghesHost string
+		apiBase  string
+	}{
+		{name: "uppercase github host", ghesHost: "https://GITHUB.COM", apiBase: "https://api.github.com"},
+		{name: "trailing dot github host", ghesHost: "https://github.com.", apiBase: "https://api.github.com"},
+		{name: "uppercase public api", ghesHost: "https://github.com", apiBase: "https://API.GITHUB.COM"},
+		{name: "trailing dot public api", ghesHost: "https://github.com", apiBase: "https://api.github.com."},
 	}
-	if got.GHESHost != "https://github.com." || got.APIBase != "https://api.github.com." {
-		t.Fatalf("config=%#v", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Parse(strings.NewReader(testConfigJSON(tt.ghesHost, tt.apiBase))); err == nil {
+				t.Fatal("expected non-canonical GitHub.com profile rejection")
+			}
+		})
 	}
 }
 

@@ -58,18 +58,35 @@ func TestRESTClientRejectsPlaintextGitHubPublicAPIBeforeRequest(t *testing.T) {
 }
 
 func TestRESTClientTreatsHTTPSDNSCanonicalPublicAPIAsPublic(t *testing.T) {
+	var requests []string
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req.URL.Scheme+"://"+req.URL.Host+req.URL.RequestURI())
+		if req.URL.Scheme != "https" || req.URL.Host != "api.github.com" {
+			t.Fatalf("request origin=%s://%s, want https://api.github.com", req.URL.Scheme, req.URL.Host)
+		}
 		if req.URL.Path != "/repos/platform/payments-api/issues" {
-			t.Fatalf("path=%q, want public API path", req.URL.Path)
+			if req.URL.Path != "/repositories/123/issues" {
+				t.Fatalf("path=%q, want public API path", req.URL.Path)
+			}
 		}
 		if got := req.Header.Get("Authorization"); got != "Bearer token" {
 			t.Fatalf("authorization=%q", got)
+		}
+		if len(requests) == 1 {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Link": []string{`<https://API.GITHUB.COM./repositories/123/issues?state=all&per_page=100&page=2>; rel="next"`}},
+				Body:       io.NopCloser(strings.NewReader(`[]`)),
+			}, nil
 		}
 		return jsonResponse(http.StatusOK, `[]`), nil
 	})
 	client := NewRESTClient("https://API.GITHUB.COM.", "token", "2022-11-28", &http.Client{Transport: transport})
 	if _, _, err := client.FindIssueBundle(context.Background(), repo(), "run-public-canonical"); err != nil {
 		t.Fatal(err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("requests=%d (%v), want page 1 and canonical page 2", len(requests), requests)
 	}
 }
 
