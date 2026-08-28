@@ -335,12 +335,13 @@ const (
 	minimumAuxiliaryGap    = 8
 )
 
-// inferAuxiliaryColumn discovers the right-hand OpenCode pane from the
-// repeated wide whitespace gap in actual marker/JSON lines. Prompt echoes are
-// excluded by their leading box-drawing character. The column is a hint only;
-// strict JSON parsing still governs the resulting left pane.
+// inferAuxiliaryColumn discovers the right-hand OpenCode pane from an
+// unmistakable sidebar-only UI line. In particular, it never derives a
+// boundary from JSON payload content: doing so would let payload whitespace
+// cause left-pane trailing data to be discarded.
 func inferAuxiliaryColumn(lines []string) int {
 	column := 0
+	inEnvelope := false
 	for _, line := range lines {
 		if isPromptEchoLine(line) {
 			continue
@@ -349,12 +350,22 @@ func inferAuxiliaryColumn(lines []string) int {
 		if first < 0 {
 			continue
 		}
-		value := line[first:]
-		if !strings.HasPrefix(value, THREADDOCK_EVIDENCE_BEGIN) && !strings.HasPrefix(value, THREADDOCK_EVIDENCE_END) {
+		if actualEvidenceMarker(line, THREADDOCK_EVIDENCE_BEGIN, 0) {
+			inEnvelope = true
 			continue
 		}
-		if _, suffix, ok := wideSuffix(line); ok && suffix >= minimumAuxiliaryColumn && (column == 0 || suffix < column) {
-			column = suffix
+		if actualEvidenceMarker(line, THREADDOCK_EVIDENCE_END, 0) {
+			inEnvelope = false
+			continue
+		}
+		if inEnvelope {
+			continue
+		}
+		if first < minimumAuxiliaryColumn || !isOpenCodeAuxiliaryText(line[first:]) {
+			continue
+		}
+		if column == 0 || first < column {
+			column = first
 		}
 	}
 	return column
@@ -374,7 +385,7 @@ func actualEvidenceMarker(line, marker string, auxiliaryColumn int) bool {
 	}
 	remainder := value[len(marker):]
 	trimmed := strings.TrimLeft(remainder, " \t")
-	return len(remainder)-len(trimmed) >= minimumAuxiliaryGap && trimmed != ""
+	return len(remainder)-len(trimmed) >= minimumAuxiliaryGap && isOpenCodeAuxiliaryText(trimmed)
 }
 
 func cleanEvidenceLine(line string, auxiliaryColumn int) (string, bool) {
@@ -382,11 +393,11 @@ func cleanEvidenceLine(line string, auxiliaryColumn int) (string, bool) {
 	if first < 0 {
 		return "", false
 	}
-	if auxiliaryColumn > 0 && first >= auxiliaryColumn {
+	if auxiliaryColumn > 0 && first >= auxiliaryColumn && isOpenCodeAuxiliaryText(line[first:]) {
 		return "", false
 	}
 	if prefix, suffix, ok := wideSuffix(line); ok {
-		if auxiliaryColumn > 0 && suffix >= auxiliaryColumn {
+		if auxiliaryColumn > 0 && suffix >= auxiliaryColumn && isOpenCodeAuxiliaryText(line[suffix:]) {
 			line = prefix
 		}
 	}
@@ -394,6 +405,28 @@ func cleanEvidenceLine(line string, auxiliaryColumn int) (string, bool) {
 		return "", false
 	}
 	return line, true
+}
+
+// isOpenCodeAuxiliaryText deliberately recognizes stable UI labels rather
+// than arbitrary right-column content. Dynamic or unknown text is retained so
+// strict JSON decoding can reject it when it is actually left-pane data.
+func isOpenCodeAuxiliaryText(value string) bool {
+	value = strings.TrimSpace(value)
+	for _, prefix := range []string{
+		"Context",
+		"LSP",
+		"LSPs are disabled",
+		"Getting started",
+		"Connect provider",
+		"OpenCode includes",
+		"Connect from",
+		"Build ·",
+	} {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func isPromptEchoLine(line string) bool {

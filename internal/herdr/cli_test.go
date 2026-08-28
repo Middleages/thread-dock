@@ -252,6 +252,19 @@ func TestReadEvidenceRejectsLeftPaneTrailingTextAfterObjectOnSameLine(t *testing
 	}
 }
 
+func TestReadEvidenceRejectsAlignedLeftPaneTrailingJSONDespiteAuxiliaryMarkers(t *testing.T) {
+	valid := `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	output := "    " + EvidenceBeginMarker + "        Context\n" +
+		"    " + valid + "        {}\n" +
+		"    " + EvidenceEndMarker + "        Context\n"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+		t.Fatal("accepted aligned left-pane trailing JSON as auxiliary text")
+	}
+}
+
 func TestReadEvidenceBalancesBracesInsideEscapedJSONStrings(t *testing.T) {
 	payload := `{"requestId":"run-28:quoted","commitSha":"abcdef0123456789abcdef0123456789abcdef01","verification":[{"command":"printf \"{\\\"nested\\\":true}\"","outcome":"passed","duration":"1ms"}]}`
 	r := fixtureRunner(t, map[string]string{
