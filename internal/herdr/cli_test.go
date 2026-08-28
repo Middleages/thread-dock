@@ -260,6 +260,53 @@ func TestReadEvidenceRejectsDynamicMarkerSuffixWithoutExactSidebarBoundary(t *te
 	}
 }
 
+func TestReadEvidenceDoesNotRetroactivelyUseSidebarBoundary(t *testing.T) {
+	valid := `{"requestId":"run-32:retroactive","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	const boundary = 40
+	markerLine := func(marker, suffix string, target int) string {
+		left := "    " + marker
+		return left + strings.Repeat(" ", target-len(left)) + suffix
+	}
+	cases := map[string]string{
+		"sidebar inside envelope": markerLine(EvidenceBeginMarker, "dynamic begin", boundary) + "\n" +
+			"    " + valid + "\n" + strings.Repeat(" ", boundary) + "Context\n" +
+			"    " + EvidenceEndMarker + "\n",
+		"sidebar after envelope": markerLine(EvidenceBeginMarker, "dynamic begin", boundary) + "\n" +
+			"    " + valid + "\n    " + EvidenceEndMarker + "\n" +
+			strings.Repeat(" ", boundary) + "Context\n",
+	}
+	for name, output := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted dynamic marker using a retroactively inferred sidebar boundary")
+			}
+		})
+	}
+}
+
+func TestReadEvidenceAllowsOnlyProspectiveSidebarBoundaryForLaterEnvelope(t *testing.T) {
+	valid := `{"requestId":"run-32:prospective","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	const boundary = 40
+	markerLine := func(marker, suffix string) string {
+		left := "    " + marker
+		return left + strings.Repeat(" ", boundary-len(left)) + suffix
+	}
+	output := "    " + EvidenceBeginMarker + "\n    " + valid + "\n    " + EvidenceEndMarker + "\n" +
+		strings.Repeat(" ", boundary) + "Context\n" +
+		markerLine(EvidenceBeginMarker, "dynamic begin") + "\n    " + valid + "\n" +
+		markerLine(EvidenceEndMarker, "dynamic end") + "\n"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil || got.RequestID != "run-32:prospective" {
+		t.Fatalf("evidence=%#v err=%v, want later envelope after boundary", got, err)
+	}
+}
+
 func TestReadEvidenceRejectsPromptEchoOnlyEnvelope(t *testing.T) {
 	output := "  ┃  " + EvidenceBeginMarker + "\n" +
 		"  ┃  {\"requestId\":\"prompt-only\",\"commitSha\":\"0123456789abcdef0123456789abcdef01234567\",\"verification\":[]}" + "\n" +

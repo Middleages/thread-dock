@@ -285,43 +285,49 @@ func (c *CLI) ReadEvidence(ctx context.Context, name string) (Evidence, error) {
 
 func lastEvidencePayload(recent string) (string, error) {
 	lines := strings.Split(recent, "\n")
-	auxiliaryColumn := inferAuxiliaryColumn(lines)
+	auxiliaryColumn := 0
 	var payloads []string
 	inEnvelope := false
+	envelopeAuxiliaryColumn := 0
 	var payloadLines []string
 	rawPayloadBytes := 0
 	for _, line := range lines {
 		text := strings.TrimSuffix(line, "\r")
-		if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_BEGIN, auxiliaryColumn) {
-			if inEnvelope {
+		if inEnvelope {
+			if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_BEGIN, envelopeAuxiliaryColumn) {
 				return "", errors.New("herdr evidence has an incomplete envelope")
 			}
+			if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_END, envelopeAuxiliaryColumn) {
+				payload := strings.Join(payloadLines, "\n")
+				if rawPayloadBytes > MaxEvidencePayloadBytes || len(payload) > MaxEvidencePayloadBytes {
+					return "", errors.New("herdr evidence payload is oversized")
+				}
+				payloads = append(payloads, payload)
+				inEnvelope = false
+				payloadLines = nil
+				continue
+			}
+			rawPayloadBytes += len(text) + 1
+			if rawPayloadBytes > MaxEvidencePayloadBytes {
+				return "", errors.New("herdr evidence payload is oversized")
+			}
+			if clean, keep := cleanEvidenceLine(text, envelopeAuxiliaryColumn); keep {
+				payloadLines = append(payloadLines, clean)
+			}
+			continue
+		}
+		if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_BEGIN, auxiliaryColumn) {
 			inEnvelope = true
+			envelopeAuxiliaryColumn = auxiliaryColumn
 			payloadLines = nil
 			rawPayloadBytes = 0
 			continue
 		}
 		if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_END, auxiliaryColumn) {
-			if !inEnvelope {
-				return "", errors.New("herdr evidence has an unmatched envelope marker")
-			}
-			payload := strings.Join(payloadLines, "\n")
-			if rawPayloadBytes > MaxEvidencePayloadBytes || len(payload) > MaxEvidencePayloadBytes {
-				return "", errors.New("herdr evidence payload is oversized")
-			}
-			payloads = append(payloads, payload)
-			inEnvelope = false
-			payloadLines = nil
-			continue
+			return "", errors.New("herdr evidence has an unmatched envelope marker")
 		}
-		if inEnvelope {
-			rawPayloadBytes += len(text) + 1
-			if rawPayloadBytes > MaxEvidencePayloadBytes {
-				return "", errors.New("herdr evidence payload is oversized")
-			}
-			if clean, keep := cleanEvidenceLine(text, auxiliaryColumn); keep {
-				payloadLines = append(payloadLines, clean)
-			}
+		if boundary, ok := sidebarBoundary(text); ok {
+			auxiliaryColumn = boundary
 		}
 	}
 	if inEnvelope || len(payloads) == 0 {
@@ -334,42 +340,6 @@ const (
 	minimumAuxiliaryColumn = 32
 	minimumAuxiliaryGap    = 8
 )
-
-// inferAuxiliaryColumn discovers the right-hand OpenCode pane from an
-// unmistakable sidebar-only UI line. In particular, it never derives a
-// boundary from JSON payload content: doing so would let payload whitespace
-// cause left-pane trailing data to be discarded.
-func inferAuxiliaryColumn(lines []string) int {
-	column := 0
-	inEnvelope := false
-	for _, line := range lines {
-		if isPromptEchoLine(line) {
-			continue
-		}
-		first := firstNonSpace(line)
-		if first < 0 {
-			continue
-		}
-		if actualEvidenceMarker(line, THREADDOCK_EVIDENCE_BEGIN, 0) {
-			inEnvelope = true
-			continue
-		}
-		if actualEvidenceMarker(line, THREADDOCK_EVIDENCE_END, 0) {
-			inEnvelope = false
-			continue
-		}
-		if inEnvelope {
-			continue
-		}
-		if first < minimumAuxiliaryColumn || !isOpenCodeAuxiliaryText(line[first:]) {
-			continue
-		}
-		if column == 0 || first < column {
-			column = first
-		}
-	}
-	return column
-}
 
 func actualEvidenceMarker(line, marker string, auxiliaryColumn int) bool {
 	first := firstNonSpace(line)
@@ -390,6 +360,14 @@ func actualEvidenceMarker(line, marker string, auxiliaryColumn int) bool {
 		return false
 	}
 	return first+len(marker)+leading == auxiliaryColumn
+}
+
+func sidebarBoundary(line string) (int, bool) {
+	first := firstNonSpace(line)
+	if first < minimumAuxiliaryColumn || isPromptEchoLine(line) || !isOpenCodeAuxiliaryText(line[first:]) {
+		return 0, false
+	}
+	return first, true
 }
 
 func cleanEvidenceLine(line string, auxiliaryColumn int) (string, bool) {
