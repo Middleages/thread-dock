@@ -298,6 +298,45 @@ func TestGetInfoParsesStateChangeSequence(t *testing.T) {
 	}
 }
 
+func TestGetInfoUsesNamespacedTerminalIdentityWhenOpenCodeSessionIsAbsent(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder-opencode": readFixture(t, "testdata/v0.8.2/agent-get-opencode-terminal-only.txt"),
+	})
+
+	got, err := NewCLI(r, "herdr").GetInfo(context.Background(), "builder-opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SessionID != "herdr-terminal:term-opencode-builder" {
+		t.Fatalf("session id=%q, want namespaced terminal identity", got.SessionID)
+	}
+}
+
+func TestGetInfoPrefersProviderSessionIdentityOverTerminalIdentity(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder_api": readFixture(t, "testdata/v0.8.2/agent-get.txt"),
+	})
+
+	got, err := NewCLI(r, "herdr").GetInfo(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SessionID != "session-redacted" {
+		t.Fatalf("session id=%q, want provider session identity", got.SessionID)
+	}
+}
+
+func TestGetInfoRejectsAgentWithoutProviderSessionOrTerminalIdentity(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder-opencode": readFixture(t, "testdata/v0.8.2/agent-get-opencode-no-identity.txt"),
+	})
+
+	_, err := NewCLI(r, "herdr").GetInfo(context.Background(), "builder-opencode")
+	if err == nil || err.Error() != "herdr agent get failed (exit code 0)" {
+		t.Fatalf("err=%v, want safe identity error", err)
+	}
+}
+
 func TestReadPromptReceiptReturnsSequenceAndOnlyRequestObservation(t *testing.T) {
 	requestID := "run-184:builder-prompt"
 	r := fixtureRunner(t, map[string]string{

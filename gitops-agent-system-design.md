@@ -328,6 +328,7 @@ project-control/                  # canonical checkout
 - Worktree 하나에 Builder 하나를 둔다.
 - Herdr는 OpenCode pane과 상태를 실행·관찰하는 runtime이다.
 - Herdr의 Workspace·pane·agent ID는 실제 반환값을 저장하고 화면 순서로 추측하지 않는다.
+- Provider session ID가 없는 OpenCode Agent는 `herdr-terminal:<terminal_id>`를 실행 identity로 사용한다. 같은 terminal에서 수동으로 Agent process를 교체한 경우에는 provider session보다 구분력이 낮으므로, 이 fallback을 쓸 때도 Builder와 Reviewer의 Workspace·pane·terminal을 분리한다.
 - `agentctl` 상태 조회는 local manifest, Git, Herdr와 GHES를 합쳐 구조화된 JSON으로 반환한다.
 - ThreadDock Monitor는 앱이 열려 있을 때 3~5초마다 상태를 조회한다.
 - PC·WSL이 종료되면 실행 중단을 허용한다. 다음 시작 때 자동 재개하지 않고 `[재개]`를 표시한다.
