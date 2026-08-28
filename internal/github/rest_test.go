@@ -274,10 +274,15 @@ func TestGitHubComPaginationRejectsSensitiveSameOriginLink(t *testing.T) {
 
 func TestGitHubComPaginationAcceptsRepositoryIDLink(t *testing.T) {
 	var paths []string
+	var calls int
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		paths = append(paths, r.URL.Path)
+		paths = append(paths, r.URL.RequestURI())
+		calls++
 		switch r.URL.Path {
 		case "/repos/platform/payments-api/issues":
+			if calls > 1 {
+				return jsonResponse(http.StatusOK, `[{"number":184,"title":"parent","body":"<!-- threaddock:run-184:role=parent:key=parent -->"}]`), nil
+			}
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": []string{"application/json"}, "Link": []string{"<https://api.github.com/repositories/123456/issues?state=all&per_page=100&page=2>; rel=\"next\""}},
@@ -294,8 +299,74 @@ func TestGitHubComPaginationAcceptsRepositoryIDLink(t *testing.T) {
 	if err != nil || !found || bundle.Parent.Number != 184 {
 		t.Fatalf("bundle=%+v found=%v err=%v", bundle, found, err)
 	}
-	if got, want := strings.Join(paths, ","), "/repos/platform/payments-api/issues,/repositories/123456/issues"; got != want {
+	if got, want := strings.Join(paths, ","), "/repos/platform/payments-api/issues?state=all&per_page=100,/repos/platform/payments-api/issues?page=2&per_page=100&state=all"; got != want {
 		t.Fatalf("paths=%q want=%q", got, want)
+	}
+}
+
+func TestGitHubComPaginationDoesNotSwitchToAnotherRepositoryID(t *testing.T) {
+	var paths []string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.RequestURI())
+		if len(paths) == 1 {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "Link": []string{"<https://api.github.com/repositories/987654/issues?state=all&per_page=100&page=2>; rel=\"next\""}},
+				Body:       io.NopCloser(strings.NewReader(`[{"number":1,"title":"unrelated","body":"no marker"}]`)),
+			}, nil
+		}
+		return jsonResponse(http.StatusOK, `[{"number":184,"title":"parent","body":"<!-- threaddock:run-184:role=parent:key=parent -->"}]`), nil
+	})
+	client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: transport})
+	_, found, err := client.FindIssueBundle(context.Background(), repo(), "run-184")
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if got, want := strings.Join(paths, ","), "/repos/platform/payments-api/issues?state=all&per_page=100,/repos/platform/payments-api/issues?page=2&per_page=100&state=all"; got != want {
+		t.Fatalf("paths=%q want=%q", got, want)
+	}
+}
+
+func TestGitHubComPaginationKeepsCanonicalLinkOnTrustedPath(t *testing.T) {
+	var paths []string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.RequestURI())
+		if len(paths) == 1 {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "Link": []string{"<https://api.github.com/repos/platform/payments-api/issues?state=all&per_page=100&page=2>; rel=\"next\""}},
+				Body:       io.NopCloser(strings.NewReader(`[{"number":1,"title":"unrelated","body":"no marker"}]`)),
+			}, nil
+		}
+		return jsonResponse(http.StatusOK, `[{"number":184,"title":"parent","body":"<!-- threaddock:run-184:role=parent:key=parent -->"}]`), nil
+	})
+	client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: transport})
+	_, found, err := client.FindIssueBundle(context.Background(), repo(), "run-184")
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if got, want := strings.Join(paths, ","), "/repos/platform/payments-api/issues?state=all&per_page=100,/repos/platform/payments-api/issues?page=2&per_page=100&state=all"; got != want {
+		t.Fatalf("paths=%q want=%q", got, want)
+	}
+}
+
+func TestGitHubComPaginationRejectsUnknownQueryKeys(t *testing.T) {
+	var calls int
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if calls > 1 {
+			return jsonResponse(http.StatusOK, `[{"number":184,"title":"parent","body":"<!-- threaddock:run-184:role=parent:key=parent -->"}]`), nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "Link": []string{"<https://api.github.com/repos/platform/payments-api/issues?state=all&per_page=100&page=2&unexpected=value>; rel=\"next\""}},
+			Body:       io.NopCloser(strings.NewReader(`[{"number":1,"title":"unrelated","body":"no marker"}]`)),
+		}, nil
+	})
+	client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: transport})
+	_, _, err := client.FindIssueBundle(context.Background(), repo(), "run-184")
+	if err == nil {
+		t.Fatal("expected unknown pagination query key to be rejected")
 	}
 }
 

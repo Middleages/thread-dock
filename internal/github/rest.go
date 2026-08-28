@@ -204,18 +204,49 @@ func (c *RESTClient) validateIssuePageURL(raw, issuePath string) (string, error)
 	if next.Scheme != base.Scheme || next.Host != base.Host || !c.validIssuePagePath(next.Path, issuePath) || next.Fragment != "" {
 		return "", errors.New("github issue pagination link is outside the configured GitHub API base")
 	}
-	for key, values := range next.Query() {
+	if !c.publicAPI {
+		if err := validateSensitivePaginationQuery(next.Query(), c.token); err != nil {
+			return "", err
+		}
+		return next.RequestURI(), nil
+	}
+	query, err := copyPublicPaginationQuery(next.Query(), c.token)
+	if err != nil {
+		return "", err
+	}
+	return (&url.URL{Path: issuePath, RawQuery: query.Encode()}).RequestURI(), nil
+}
+
+func validateSensitivePaginationQuery(query url.Values, token string) error {
+	for key, values := range query {
 		lower := strings.ToLower(key)
 		if strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "password") || strings.Contains(lower, "authorization") {
-			return "", errors.New("github issue pagination link contains sensitive query data")
+			return errors.New("github issue pagination link contains sensitive query data")
 		}
 		for _, value := range values {
-			if c.token != "" && strings.Contains(value, c.token) {
-				return "", errors.New("github issue pagination link contains sensitive query data")
+			if token != "" && strings.Contains(value, token) {
+				return errors.New("github issue pagination link contains sensitive query data")
 			}
 		}
 	}
-	return next.RequestURI(), nil
+	return nil
+}
+
+func copyPublicPaginationQuery(query url.Values, token string) (url.Values, error) {
+	if err := validateSensitivePaginationQuery(query, token); err != nil {
+		return nil, err
+	}
+	filtered := make(url.Values)
+	for key, values := range query {
+		lower := strings.ToLower(key)
+		switch lower {
+		case "state", "per_page", "page":
+			filtered[lower] = append([]string(nil), values...)
+		default:
+			return nil, errors.New("github issue pagination link contains unsupported query data")
+		}
+	}
+	return filtered, nil
 }
 
 func (c *RESTClient) validIssuePagePath(path, issuePath string) bool {
