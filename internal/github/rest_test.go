@@ -152,6 +152,48 @@ func TestCreateIssueBundleFindsMarkerOnLaterPageWithoutPosting(t *testing.T) {
 	}
 }
 
+func TestCreateIssueBundleReadsPastChildMarkerToFindCompleteOrderedBundle(t *testing.T) {
+	var posts int
+	var pages []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/repos/platform/payments-api/issues", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts++
+			http.Error(w, "unexpected post", http.StatusInternalServerError)
+			return
+		}
+		pages = append(pages, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") != "2" {
+			w.Header().Set("Link", "</api/v3/repos/platform/payments-api/issues?state=all&per_page=100&page=2>; rel=\"next\"")
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"number": 185, "node_id": "child-api", "title": "api", "body": "<!-- threaddock:run-184:role=child:key=api -->"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"number": 184, "node_id": "parent-node", "title": "parent", "body": "<!-- threaddock:run-184:role=parent:key=parent -->"},
+			{"number": 186, "node_id": "tests-node", "title": "tests", "body": "<!-- threaddock:run-184:role=child:key=tests -->"},
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	bundle, err := NewRESTClient(server.URL, "token", "2022-11-28", server.Client()).CreateIssueBundle(context.Background(), repo(), testfixture.ValidContract(), "run-184")
+	if err != nil {
+		t.Fatalf("err=%v pages=%v posts=%d", err, pages, posts)
+	}
+	if posts != 0 {
+		t.Fatalf("CreateIssueBundle posted %d times", posts)
+	}
+	if bundle.Parent.Number != 184 || len(bundle.Children) != 2 || bundle.Children[0].Number != 185 || bundle.Children[1].Number != 186 {
+		t.Fatalf("bundle=%+v", bundle)
+	}
+	if len(pages) != 2 || pages[0] == pages[1] {
+		t.Fatalf("pages=%v", pages)
+	}
+}
+
 func TestFindIssueBundleRejectsNextLinkOutsideGHESBaseWithoutLeakingToken(t *testing.T) {
 	const token = "secret-token"
 	mux := http.NewServeMux()

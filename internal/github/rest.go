@@ -113,16 +113,6 @@ func (c *RESTClient) findIssueBundle(ctx context.Context, repo Repository, marke
 			return IssueBundle{}, false, nil, err
 		}
 		issues = append(issues, pageIssues...)
-		markerFound := false
-		for _, issue := range pageIssues {
-			if _, _, ok := parseRoleMarker(issue.Body, marker); ok {
-				markerFound = true
-				break
-			}
-		}
-		if markerFound {
-			break
-		}
 		if page == 999 {
 			return IssueBundle{}, false, nil, errors.New("github issue pagination exceeded the safety limit")
 		}

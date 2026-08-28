@@ -212,12 +212,17 @@ func TestReadEvidenceAcceptsTheCapturedRecentOutputFixtureAroundEnvelope(t *test
 func TestReadEvidenceRejectsMalformedIncompleteOversizedAndSecretEnvelopes(t *testing.T) {
 	valid := `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
 	cases := map[string]string{
-		"malformed":  EvidenceBeginMarker + "\n{" + "\n" + EvidenceEndMarker,
-		"incomplete": EvidenceBeginMarker + "\n" + valid + "\n" + EvidenceBeginMarker,
-		"oversized":  EvidenceBeginMarker + "\n" + strings.Repeat("x", MaxEvidencePayloadBytes+1) + "\n" + EvidenceEndMarker,
-		"secret":     EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", "THREADDOCK_GH_TOKEN=plain-internal-token", 1) + "\n" + EvidenceEndMarker,
-		"unknown":    EvidenceBeginMarker + "\n" + `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}],"extra":"not allowed"}` + "\n" + EvidenceEndMarker,
-		"trailing":   EvidenceBeginMarker + "\n" + valid + "\n{}\n" + EvidenceEndMarker,
+		"malformed":            EvidenceBeginMarker + "\n{" + "\n" + EvidenceEndMarker,
+		"incomplete":           EvidenceBeginMarker + "\n" + valid + "\n" + EvidenceBeginMarker,
+		"oversized":            EvidenceBeginMarker + "\n" + strings.Repeat("x", MaxEvidencePayloadBytes+1) + "\n" + EvidenceEndMarker,
+		"secret":               EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", "THREADDOCK_GH_TOKEN=plain-internal-token", 1) + "\n" + EvidenceEndMarker,
+		"quoted token":         EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"token":"plain-internal-token"}`, 1) + "\n" + EvidenceEndMarker,
+		"quoted password":      EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"password":"hunter2"}`, 1) + "\n" + EvidenceEndMarker,
+		"quoted authorization": EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"authorization":"Bearer internal-token"}`, 1) + "\n" + EvidenceEndMarker,
+		"quoted assignment":    EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `'secret' = 'value'`, 1) + "\n" + EvidenceEndMarker,
+		"quoted client secret": EvidenceBeginMarker + "\n" + strings.Replace(valid, "go test ./...", `{"clientSecret": "value"}`, 1) + "\n" + EvidenceEndMarker,
+		"unknown":              EvidenceBeginMarker + "\n" + `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}],"extra":"not allowed"}` + "\n" + EvidenceEndMarker,
+		"trailing":             EvidenceBeginMarker + "\n" + valid + "\n{}\n" + EvidenceEndMarker,
 	}
 	for name, output := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -228,6 +233,20 @@ func TestReadEvidenceRejectsMalformedIncompleteOversizedAndSecretEnvelopes(t *te
 				t.Fatal("accepted invalid evidence envelope")
 			}
 		})
+	}
+}
+
+func TestEvidenceCredentialPatternRecognizesQuotedAssignments(t *testing.T) {
+	for _, value := range []string{
+		`{"token":"plain-internal-token"}`,
+		`{"password":"hunter2"}`,
+		`{"authorization":"Bearer internal-token"}`,
+		`'secret' = 'value'`,
+		`"clientSecret": "value"`,
+	} {
+		if !evidenceCredentialPattern.MatchString(value) {
+			t.Errorf("evidenceCredentialPattern.MatchString(%q)=false, want true", value)
+		}
 	}
 }
 

@@ -171,6 +171,7 @@ type fakeHerdr struct {
 	findWorktreeCWD    string
 	agentSeq           int64
 	agentInfoErr       error
+	agentInfoOverride  *herdr.AgentInfo
 	findWorktreeExists bool
 	promptReceiptReads int
 }
@@ -232,6 +233,9 @@ func (f *fakeHerdr) FindWorktree(_ context.Context, cwd, _, _ string) (herdr.Wor
 func (f *fakeHerdr) GetInfo(_ context.Context, name string) (herdr.AgentInfo, error) {
 	if f.agentInfoErr != nil {
 		return herdr.AgentInfo{}, f.agentInfoErr
+	}
+	if f.agentInfoOverride != nil {
+		return *f.agentInfoOverride, nil
 	}
 	seq := f.agentSeq
 	if seq == 0 {

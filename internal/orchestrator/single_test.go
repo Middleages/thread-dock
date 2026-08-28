@@ -89,6 +89,11 @@ func TestContainsCredentialRequiresAssignmentForGenericSecretNames(t *testing.T)
 		"apiKey: internal-api-key",
 		"private_key = private-material",
 		"clientSecret=client-material",
+		`{"token":"plain-internal-token"}`,
+		`{"password":"hunter2"}`,
+		`{"authorization":"Bearer internal-token"}`,
+		`'secret' = 'value'`,
+		`"clientSecret": "value"`,
 		"-----BEGIN PRIVATE KEY-----",
 		"ghp_1234567890123456789012345678901234567890",
 		"ASIA1234567890ABCDEF",
@@ -101,6 +106,8 @@ func TestContainsCredentialRequiresAssignmentForGenericSecretNames(t *testing.T)
 		"the token field identifies the auth token",
 		"privateKey is the configured field name",
 		"client secret is never persisted",
+		`quoted "token" key is documented`,
+		"clientSecret is the configured field name",
 	} {
 		if containsCredential(value) {
 			t.Errorf("containsCredential(%q)=true, want false", value)

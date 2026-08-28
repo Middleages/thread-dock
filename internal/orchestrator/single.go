@@ -34,7 +34,7 @@ const (
 	connectionProblem = "GitHub 연결 문제"
 )
 
-var credentialPattern = regexp.MustCompile(`(?im)(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|(?:AKIA|ASIA)[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:^|[^A-Za-z0-9])(?:token|secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)|[A-Za-z_][A-Za-z0-9_.-]*(?:token|secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)))[ \t]*[:=][ \t]*(?:Bearer[ \t]+)?[^\s,;}\]]+)`)
+var credentialPattern = regexp.MustCompile(`(?im)(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|(?:AKIA|ASIA)[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:^|[^A-Za-z0-9])["']?(?:token|secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)|[A-Za-z_][A-Za-z0-9_.-]*(?:token|secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)))["']?[ \t]*[:=][ \t]*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:Bearer[ \t]+)?[^\s,;}\]]+))`)
 
 type realClock struct{}
 
@@ -911,8 +911,17 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 			receipt = &snapshot.ReviewerPrompt
 		}
 		info, err := locator.GetInfo(ctx, name)
-		if err != nil || info.StateChangeSeq <= 0 {
+		work := snapshot.BuilderWorktree
+		if snapshot.PendingAction == "baseline_reviewer_prompt" {
+			work = snapshot.ReviewerWorktree
+		}
+		if err != nil || info.StateChangeSeq <= 0 || !matchesAgentIdentity(info, name, work) {
 			return ErrPendingReconcile
+		}
+		if snapshot.PendingAction == "baseline_reviewer_prompt" {
+			snapshot.Reviewer.SessionID = info.SessionID
+		} else {
+			snapshot.Builder.SessionID = info.SessionID
 		}
 		receipt.BaselineSeq = info.StateChangeSeq
 		return o.finish(ctx, snapshot, "prompt baseline reconcile 완료", false)
