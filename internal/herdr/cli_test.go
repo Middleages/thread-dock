@@ -23,6 +23,32 @@ type recordingRunner struct {
 	fail      *runnerFailure
 }
 
+type orderedResponse struct {
+	call   []string
+	stdout string
+}
+
+type orderedRunner struct {
+	responses []orderedResponse
+	calls     [][]string
+	cwds      []string
+}
+
+func (r *orderedRunner) Run(_ context.Context, cwd, executable string, args ...string) (runner.Result, error) {
+	call := append([]string{executable}, args...)
+	r.calls = append(r.calls, call)
+	r.cwds = append(r.cwds, cwd)
+	if len(r.responses) == 0 {
+		return runner.Result{ExitCode: 1}, &testError{"unexpected command after fixture responses"}
+	}
+	response := r.responses[0]
+	r.responses = r.responses[1:]
+	if !reflect.DeepEqual(call, response.call) {
+		return runner.Result{ExitCode: 1}, &testError{"unexpected command order"}
+	}
+	return runner.Result{Stdout: response.stdout, ExitCode: 0}, nil
+}
+
 func (r *recordingRunner) Run(_ context.Context, cwd, executable string, args ...string) (runner.Result, error) {
 	call := append([]string{executable}, args...)
 	r.calls = append(r.calls, call)
@@ -214,8 +240,23 @@ func TestReadPromptReceiptReturnsSequenceAndOnlyRequestObservation(t *testing.T)
 	if err != nil || info.StateChangeSeq != 110 || !observed {
 		t.Fatalf("info=%#v observed=%v err=%v", info, observed, err)
 	}
-	if len(r.calls) != 2 || !reflect.DeepEqual(r.calls[0], []string{"herdr", "agent", "get", "builder-184"}) || !reflect.DeepEqual(r.calls[1], []string{"herdr", "agent", "read", "builder-184", "--source", "recent-unwrapped", "--lines", "120"}) {
+	if len(r.calls) != 2 || !reflect.DeepEqual(r.calls[0], []string{"herdr", "agent", "read", "builder-184", "--source", "recent-unwrapped", "--lines", "120"}) || !reflect.DeepEqual(r.calls[1], []string{"herdr", "agent", "get", "builder-184"}) {
 		t.Fatalf("calls=%#v", r.calls)
+	}
+	if !reflect.DeepEqual(r.cwds, []string{"", ""}) {
+		t.Fatalf("cwds=%#v", r.cwds)
+	}
+}
+
+func TestReadPromptReceiptReadsRecentBeforeLatestSequence(t *testing.T) {
+	requestID := "run-184:builder-prompt"
+	r := &orderedRunner{responses: []orderedResponse{
+		{call: []string{"herdr", "agent", "read", "builder-184", "--source", "recent-unwrapped", "--lines", "120"}, stdout: readFixture(t, "testdata/v0.8.2/prompt-reconcile-recent-missing.txt")},
+		{call: []string{"herdr", "agent", "get", "builder-184"}, stdout: readFixture(t, "testdata/v0.8.2/agent-get-seq-43.txt")},
+	}}
+	info, observed, err := NewCLI(r, "herdr").ReadPromptReceipt(context.Background(), "builder-184", requestID)
+	if err != nil || info.StateChangeSeq != 43 || observed {
+		t.Fatalf("info=%#v observed=%v err=%v", info, observed, err)
 	}
 	if !reflect.DeepEqual(r.cwds, []string{"", ""}) {
 		t.Fatalf("cwds=%#v", r.cwds)

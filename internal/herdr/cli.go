@@ -220,15 +220,16 @@ func (c *CLI) ReadRecent(ctx context.Context, name string) (string, error) {
 // narrow observation needed by recovery. Terminal output is not returned or
 // persisted; only exact request-ID presence is exposed to the orchestrator.
 func (c *CLI) ReadPromptReceipt(ctx context.Context, name, requestID string) (AgentInfo, bool, error) {
-	info, err := c.GetInfo(ctx, name)
-	if err != nil {
-		return AgentInfo{}, false, err
-	}
 	recent, err := c.ReadRecent(ctx, name)
 	if err != nil {
 		return AgentInfo{}, false, err
 	}
-	return info, strings.TrimSpace(requestID) != "" && strings.Contains(recent, requestID), nil
+	observed := strings.TrimSpace(requestID) != "" && strings.Contains(recent, requestID)
+	info, err := c.GetInfo(ctx, name)
+	if err != nil {
+		return AgentInfo{}, false, err
+	}
+	return info, observed, nil
 }
 
 // ReadEvidence accepts only the strict structured result emitted by the
