@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"thread-dock/internal/contract"
+	"thread-dock/internal/herdr"
 	"thread-dock/internal/testfixture"
 )
 
@@ -25,7 +26,7 @@ func TestSingleRunReachesReviewWithIndependentReviewerAndEvidence(t *testing.T) 
 		t.Fatalf("initial phase = %s", initial.Phase)
 	}
 
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 14 && len(h.herdr.prompts) < 2; i++ {
 		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
 			t.Fatalf("advance %d: %v", i+1, err)
 		}
@@ -104,6 +105,9 @@ func TestStopPausesWithoutDeletingWorktree(t *testing.T) {
 	if err := h.orchestrator.Advance(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
+	if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
 	if h.herdr.worktrees != 1 {
 		t.Fatalf("worktrees = %d", h.herdr.worktrees)
 	}
@@ -146,11 +150,12 @@ func TestTemporaryGitHubFailureUsesBoundedBackoffWithoutDuplicateRuntimeObjects(
 func TestBuilderEvidenceIsRequiredBeforeIntegration(t *testing.T) {
 	h := newHarness(t)
 	h.herdr.recent = "changed_file: internal/payments/retry.go\nverification: go test ./internal/payments\n"
+	h.herdr.evidence = herdr.Evidence{Verification: []herdr.VerificationCheck{{Command: "go test ./internal/payments", Outcome: "failed"}}}
 	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
 			t.Fatalf("advance %d: %v", i+1, err)
 		}

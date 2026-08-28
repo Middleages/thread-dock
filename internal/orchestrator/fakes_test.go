@@ -14,6 +14,7 @@ import (
 	"thread-dock/internal/github"
 	"thread-dock/internal/herdr"
 	"thread-dock/internal/state"
+	"thread-dock/internal/worktree"
 )
 
 type harness struct {
@@ -26,6 +27,7 @@ type harness struct {
 	git          *fakeGit
 	clock        *fakeClock
 	contractPath string
+	Deps         Dependencies
 }
 
 func newHarness(t *testing.T) *harness {
@@ -35,8 +37,11 @@ func newHarness(t *testing.T) *harness {
 	writeFixtureContract(t, contractPath)
 	store := state.NewStore(filepath.Join(dir, "state"))
 	gh := &fakeGitHub{}
-	hd := &fakeHerdr{recent: "commit_sha: " + validSHA + "\nverification: go test ./internal/payments\nverification: go vet ./internal/payments\nchanged_file: internal/payments/retry.go\n" + builderTranscriptSecret}
-	git := &fakeGit{}
+	hd := &fakeHerdr{recent: builderTranscriptSecret + " arbitrary transcript", evidence: herdr.Evidence{
+		CommitSHA:    validSHA,
+		Verification: []herdr.VerificationCheck{{Command: "go test ./internal/payments", Outcome: "passed", Duration: "1.2s"}, {Command: "go vet ./internal/payments", Outcome: "passed", Duration: "0.4s"}},
+	}}
+	git := &fakeGit{inspection: worktree.CommitInspection{CommitSHA: validSHA, Branch: "agent/api", ChangedFiles: []string{"src/payments/retry.go"}, Patch: "diff --git a/src/payments/retry.go b/src/payments/retry.go\n+bounded patch\n"}}
 	clock := &fakeClock{now: time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)}
 	deps := Dependencies{Store: store, GitHub: gh, Herdr: hd, Git: git, Clock: clock}
 	return &harness{
@@ -49,6 +54,7 @@ func newHarness(t *testing.T) *harness {
 		git:          git,
 		clock:        clock,
 		contractPath: contractPath,
+		Deps:         deps,
 	}
 }
 
@@ -152,19 +158,35 @@ func (f *fakeGitHub) GetPullRequest(context.Context, github.Repository, int) (gi
 }
 
 type fakeHerdr struct {
-	worktrees int
-	starts    []herdr.StartAgentRequest
-	prompts   []string
-	recent    string
+	worktrees         int
+	starts            []herdr.StartAgentRequest
+	prompts           []string
+	recent            string
+	evidence          herdr.Evidence
+	startEntered      chan struct{}
+	releaseStart      chan struct{}
+	startCount        int
+	findWorktreeCalls int
 }
 
 func (f *fakeHerdr) CreateWorktree(context.Context, herdr.CreateWorktreeRequest) (herdr.Worktree, error) {
 	f.worktrees++
-	return herdr.Worktree{WorkspaceID: "workspace-184", PaneID: "pane-184"}, nil
+	return herdr.Worktree{WorkspaceID: "workspace-184", PaneID: "pane-184", Path: "/tmp/builder-184"}, nil
 }
 
 func (f *fakeHerdr) StartAgent(_ context.Context, request herdr.StartAgentRequest) error {
 	f.starts = append(f.starts, request)
+	f.startCount++
+	if f.startEntered != nil {
+		select {
+		case <-f.startEntered:
+		default:
+			close(f.startEntered)
+		}
+	}
+	if f.releaseStart != nil {
+		<-f.releaseStart
+	}
 	return nil
 }
 
@@ -181,12 +203,38 @@ func (f *fakeHerdr) ReadRecent(context.Context, string) (string, error) {
 	return f.recent, nil
 }
 
-type fakeGit struct {
-	merges       int
-	mergedBranch string
+func (f *fakeHerdr) ReadEvidence(context.Context, string) (herdr.Evidence, error) {
+	return f.evidence, nil
 }
 
-func (f *fakeGit) Create(context.Context, string, string, string, string) error { return nil }
+func (f *fakeHerdr) OpenWorktree(context.Context, herdr.OpenWorktreeRequest) (herdr.Worktree, error) {
+	return herdr.Worktree{WorkspaceID: "workspace-review-184", PaneID: "pane-review-184", Path: "/tmp/integration-184"}, nil
+}
+
+func (f *fakeHerdr) FindWorktree(context.Context, string, string) (herdr.Worktree, bool, error) {
+	f.findWorktreeCalls++
+	return herdr.Worktree{WorkspaceID: "workspace-184", PaneID: "pane-184", Path: "/tmp/integration"}, true, nil
+}
+
+func (f *fakeHerdr) GetInfo(context.Context, string) (herdr.AgentInfo, error) {
+	return herdr.AgentInfo{}, errors.New("agent not found")
+}
+
+type fakeGit struct {
+	merges          int
+	mergedBranch    string
+	mergeSHAs       []string
+	creates         int
+	integrationPath string
+	inspection      worktree.CommitInspection
+	reconcileCalls  int
+}
+
+func (f *fakeGit) Create(_ context.Context, _, worktreePath, _, _ string) error {
+	f.creates++
+	f.integrationPath = worktreePath
+	return nil
+}
 
 func (f *fakeGit) Status(context.Context, string) (string, error) { return "", nil }
 
@@ -196,6 +244,23 @@ func (f *fakeGit) Merge(_ context.Context, _ string, branch string) error {
 	f.merges++
 	f.mergedBranch = branch
 	return nil
+}
+
+func (f *fakeGit) InspectCommit(context.Context, string, string, string, string) (worktree.CommitInspection, error) {
+	return f.inspection, nil
+}
+
+func (f *fakeGit) MergeCommit(_ context.Context, _ string, sha string) error {
+	f.merges++
+	f.mergeSHAs = append(f.mergeSHAs, sha)
+	return nil
+}
+
+func (f *fakeGit) CurrentCommit(context.Context, string) (string, error) { return validSHA, nil }
+
+func (f *fakeGit) ReconcileIntegrationWorktree(context.Context, string, string, string) (bool, error) {
+	f.reconcileCalls++
+	return true, nil
 }
 
 type fakeClock struct {

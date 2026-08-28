@@ -22,6 +22,37 @@ type CreateWorktreeRequest struct {
 type Worktree struct {
 	WorkspaceID string
 	PaneID      string
+	Path        string
+}
+
+// OpenWorktreeRequest describes a previously-created Git worktree that Herdr
+// should expose in a fresh workspace.
+type OpenWorktreeRequest struct {
+	Cwd   string
+	Path  string
+	Label string
+}
+
+type VerificationCheck struct {
+	Command  string `json:"command"`
+	Outcome  string `json:"outcome"`
+	Duration string `json:"duration"`
+}
+
+// Evidence is the only structured Builder result accepted by the
+// orchestrator. Terminal transcript text is deliberately not part of it.
+type Evidence struct {
+	CommitSHA    string              `json:"commitSha"`
+	Verification []VerificationCheck `json:"verification"`
+}
+
+type AgentInfo struct {
+	Name        string
+	SessionID   string
+	WorkspaceID string
+	PaneID      string
+	Path        string
+	State       AgentState
 }
 
 type StartAgentRequest struct {

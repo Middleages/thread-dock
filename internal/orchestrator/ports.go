@@ -9,6 +9,7 @@ import (
 	"thread-dock/internal/github"
 	"thread-dock/internal/herdr"
 	"thread-dock/internal/state"
+	"thread-dock/internal/worktree"
 )
 
 // Store is the local persistence port used by the state machine.
@@ -40,6 +41,42 @@ type Clock interface {
 
 type Sleeper interface {
 	Sleep(context.Context, time.Duration) error
+}
+
+type LockingStore interface {
+	Acquire(context.Context, contract.RunID) (*state.Lease, error)
+}
+
+type WorktreeInspector interface {
+	InspectCommit(context.Context, string, string, string, string) (worktree.CommitInspection, error)
+}
+
+type ImmutableMerger interface {
+	MergeCommit(context.Context, string, string) error
+}
+
+type CurrentCommitLocator interface {
+	CurrentCommit(context.Context, string) (string, error)
+}
+
+type IntegrationWorktreeLocator interface {
+	ReconcileIntegrationWorktree(context.Context, string, string, string) (bool, error)
+}
+
+type WorktreeLocator interface {
+	FindWorktree(context.Context, string, string) (herdr.Worktree, bool, error)
+}
+
+type AgentLocator interface {
+	GetInfo(context.Context, string) (herdr.AgentInfo, error)
+}
+
+type EvidenceReader interface {
+	ReadEvidence(context.Context, string) (herdr.Evidence, error)
+}
+
+type WorktreeOpener interface {
+	OpenWorktree(context.Context, herdr.OpenWorktreeRequest) (herdr.Worktree, error)
 }
 
 // Dependencies are all side-effecting ports of the single-run state machine.

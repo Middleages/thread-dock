@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"thread-dock/internal/github"
 	"thread-dock/internal/herdr"
 	"thread-dock/internal/state"
+	"thread-dock/internal/worktree"
 )
 
 var (
@@ -22,11 +22,10 @@ var (
 	ErrRunPaused           = errors.New("run is paused")
 	ErrRunFinished         = errors.New("run is no longer active")
 	ErrBuilderEvidence     = errors.New("builder commit and verification evidence are required")
+	ErrRunBusy             = state.ErrRunBusy
+	ErrPendingReconcile    = errors.New("pending action requires reconciliation")
+	ErrRegistrationPending = errors.New("GHES registration is pending reconciliation")
 )
-
-var commitEvidencePattern = regexp.MustCompile(`(?im)(?:commit(?:_sha)?|sha)\s*[:=]\s*([a-f0-9]{40})`)
-var verificationPattern = regexp.MustCompile(`(?im)^\s*(?:verification|verified)\s*:\s*(.+?)\s*$`)
-var changedFilePattern = regexp.MustCompile(`(?im)^\s*(?:changed_file|changed)\s*:\s*(.+?)\s*$`)
 
 const (
 	maxGitHubAttempts = 4
@@ -49,23 +48,25 @@ func (realClock) Sleep(ctx context.Context, delay time.Duration) error {
 }
 
 type runRuntime struct {
-	contract        contract.TaskContract
-	bundle          github.IssueBundle
-	worktree        herdr.Worktree
-	builderTask     contract.Task
-	builderBranch   string
-	integrationPath string
-	stage           int
+	contract          contract.TaskContract
+	bundle            github.IssueBundle
+	worktree          herdr.Worktree
+	builderTask       contract.Task
+	builderBranch     string
+	integrationPath   string
+	stage             int
+	integrationBranch string
 }
 
 // Orchestrator advances exactly one run. Runtime metadata is deliberately
 // small and complements the durable snapshot; the snapshot and event log are
 // the source of truth for phase and evidence.
 type Orchestrator struct {
-	deps Dependencies
-	mu   sync.Mutex
-	seq  uint64
-	runs map[contract.RunID]*runRuntime
+	deps  Dependencies
+	mu    sync.Mutex
+	seq   uint64
+	runs  map[contract.RunID]*runRuntime
+	locks map[contract.RunID]*sync.Mutex
 }
 
 func New(deps Dependencies) *Orchestrator {
@@ -75,7 +76,7 @@ func New(deps Dependencies) *Orchestrator {
 	if deps.Clock == nil {
 		deps.Clock = realClock{}
 	}
-	return &Orchestrator{deps: deps, runs: make(map[contract.RunID]*runRuntime)}
+	return &Orchestrator{deps: deps, runs: make(map[contract.RunID]*runRuntime), locks: make(map[contract.RunID]*sync.Mutex)}
 }
 
 // Start validates the contract, commits a local registered run, then
@@ -98,11 +99,28 @@ func (o *Orchestrator) Start(ctx context.Context, contractPath string) (contract
 	if repositoryPath == "" {
 		repositoryPath = filepath.Dir(contractPath)
 	}
+	repositoryPath, err = filepath.Abs(repositoryPath)
+	if err != nil {
+		return "", err
+	}
+	repositoryPath, err = filepath.Abs(repositoryPath)
+	if err != nil {
+		return "", err
+	}
 	worktreeRoot := o.deps.WorktreeRoot
 	if worktreeRoot == "" {
 		worktreeRoot = filepath.Join(filepath.Dir(contractPath), ".threaddock-worktrees")
 	}
+	worktreeRoot, err = filepath.Abs(worktreeRoot)
+	if err != nil {
+		return "", err
+	}
+	worktreeRoot, err = filepath.Abs(worktreeRoot)
+	if err != nil {
+		return "", err
+	}
 	integrationPath := filepath.Join(worktreeRoot, string(id))
+	integrationBranch := "agent/" + safeBranchPart(c.Parent.Key) + "-integration"
 	snapshot := state.RunSnapshot{
 		ContractVersion: c.Version,
 		RunID:           id,
@@ -110,16 +128,21 @@ func (o *Orchestrator) Start(ctx context.Context, contractPath string) (contract
 		ContractPath:    contractPath,
 		RepositoryPath:  repositoryPath,
 		IntegrationPath: integrationPath,
+		Integration:     state.WorktreeState{Path: integrationPath, Branch: integrationBranch},
+		Registration:    state.RegistrationState{Status: "pending", Marker: marker(id)},
+		PendingAction:   "register_issue_bundle",
+		Summary:         "GHES Issue 등록 대기 중",
 		UpdatedAt:       o.now(),
 	}
 	if err := o.deps.Store.Create(ctx, snapshot); err != nil {
 		return "", err
 	}
 	runtime := &runRuntime{
-		contract:        c,
-		builderTask:     firstBuilder(c),
-		builderBranch:   firstBuilder(c).Branch,
-		integrationPath: integrationPath,
+		contract:          c,
+		builderTask:       firstBuilder(c),
+		builderBranch:     firstBuilder(c).Branch,
+		integrationPath:   integrationPath,
+		integrationBranch: integrationBranch,
 	}
 	o.mu.Lock()
 	o.runs[id] = runtime
@@ -130,11 +153,17 @@ func (o *Orchestrator) Start(ctx context.Context, contractPath string) (contract
 	}
 	bundle, err := o.createIssueBundle(ctx, id, c)
 	if err != nil {
+		snapshot.Summary = connectionProblem
+		snapshot.UpdatedAt = o.now()
+		_ = o.deps.Store.Save(ctx, snapshot)
 		_ = o.append(ctx, id, state.Event{Type: "action_failed", Phase: contract.PhaseRegistered, Message: fmt.Sprintf("Issue bundle 생성 실패: %v", err)})
 		return id, err
 	}
 	runtime.bundle = bundle
 	snapshot.ParentIssue = bundle.Parent.Number
+	snapshot.Registration = state.RegistrationState{Status: "registered", Marker: marker(id), NodeID: bundle.Parent.NodeID, Issue: bundle.Parent.Number}
+	snapshot.PendingAction = ""
+	snapshot.Summary = "Issue bundle 준비 완료"
 	snapshot.UpdatedAt = o.now()
 	if err := o.deps.Store.Save(ctx, snapshot); err != nil {
 		return id, err
@@ -154,6 +183,11 @@ func (o *Orchestrator) Advance(ctx context.Context, id contract.RunID) error {
 	if err := o.validate(); err != nil {
 		return err
 	}
+	release, err := o.claim(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	snapshot, err := o.deps.Store.Load(ctx, id)
 	if err != nil {
 		return err
@@ -168,6 +202,12 @@ func (o *Orchestrator) Advance(ctx context.Context, id contract.RunID) error {
 	if err != nil {
 		return err
 	}
+	if snapshot.PendingAction != "" {
+		return o.reconcilePending(ctx, &snapshot, runtime)
+	}
+	if snapshot.Phase == contract.PhaseRegistered && snapshot.Registration.Status != "registered" {
+		return ErrRegistrationPending
+	}
 
 	switch snapshot.Phase {
 	case contract.PhaseRegistered:
@@ -176,6 +216,9 @@ func (o *Orchestrator) Advance(ctx context.Context, id contract.RunID) error {
 		}
 		return o.transition(ctx, snapshot, contract.PhaseAnalyzing, "분석 단계 시작")
 	case contract.PhaseAnalyzing:
+		if snapshot.ActionCursor == 0 {
+			return o.createIntegrationWorktree(ctx, &snapshot, runtime)
+		}
 		return o.createWorktree(ctx, snapshot, runtime)
 	case contract.PhaseBuilding:
 		return o.advanceBuilding(ctx, snapshot, runtime)
@@ -197,6 +240,11 @@ func (o *Orchestrator) Stop(ctx context.Context, id contract.RunID) error {
 	if err := o.validateStore(); err != nil {
 		return err
 	}
+	release, err := o.claim(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	snapshot, err := o.deps.Store.Load(ctx, id)
 	if err != nil {
 		return err
@@ -207,7 +255,10 @@ func (o *Orchestrator) Stop(ctx context.Context, id contract.RunID) error {
 	if snapshot.Phase == contract.PhaseCompleted || snapshot.Phase == contract.PhaseBlocked {
 		return ErrRunFinished
 	}
+	snapshot.PreviousPhase = snapshot.Phase
 	snapshot.Phase = contract.PhasePaused
+	snapshot.PendingAction = ""
+	snapshot.Summary = "실행을 일시 중지했습니다"
 	snapshot.UpdatedAt = o.now()
 	if err := o.deps.Store.Save(ctx, snapshot); err != nil {
 		return err
@@ -215,8 +266,20 @@ func (o *Orchestrator) Stop(ctx context.Context, id contract.RunID) error {
 	return o.append(ctx, id, state.Event{Type: "paused", Phase: contract.PhasePaused, Message: "실행을 일시 중지했습니다"})
 }
 
+func (o *Orchestrator) createIntegrationWorktree(ctx context.Context, snapshot *state.RunSnapshot, runtime *runRuntime) error {
+	if err := o.prepare(ctx, snapshot, "create_integration_worktree", "integration Worktree 생성", map[string]any{"path": snapshot.IntegrationPath, "branch": runtime.integrationBranch}); err != nil {
+		return err
+	}
+	if err := o.deps.Worktree.Create(ctx, snapshot.RepositoryPath, snapshot.IntegrationPath, runtime.integrationBranch, runtime.contract.BaseCommit); err != nil {
+		return err
+	}
+	snapshot.Integration = state.WorktreeState{Path: snapshot.IntegrationPath, Branch: runtime.integrationBranch}
+	return o.finish(ctx, snapshot, "integration Worktree 생성 완료", false)
+}
+
 func (o *Orchestrator) createWorktree(ctx context.Context, snapshot state.RunSnapshot, runtime *runRuntime) error {
-	if err := o.intent(ctx, snapshot.RunID, snapshot.Phase, "Builder Worktree 생성", map[string]any{"branch": runtime.builderBranch, "path": snapshot.IntegrationPath}); err != nil {
+	snapshot.BuilderWorktree.Branch = runtime.builderBranch
+	if err := o.prepare(ctx, &snapshot, "create_builder_worktree", "Builder Worktree 생성", map[string]any{"branch": runtime.builderBranch}); err != nil {
 		return err
 	}
 	created, err := o.deps.Herdr.CreateWorktree(ctx, herdr.CreateWorktreeRequest{
@@ -229,99 +292,160 @@ func (o *Orchestrator) createWorktree(ctx context.Context, snapshot state.RunSna
 		_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Builder Worktree 생성 실패: %v", err)})
 		return err
 	}
+	if created.Path == "" || created.WorkspaceID == "" || created.PaneID == "" {
+		return errors.New("Herdr returned incomplete Builder Worktree identity")
+	}
 	runtime.worktree = created
 	runtime.stage = 1
+	snapshot.BuilderWorktree = state.WorktreeState{Path: created.Path, WorkspaceID: created.WorkspaceID, PaneID: created.PaneID, Branch: runtime.builderBranch}
+	snapshot.PendingAction = ""
+	snapshot.ActionCursor = 0
 	snapshot.Phase = contract.PhaseBuilding
 	snapshot.UpdatedAt = o.now()
 	if err := o.deps.Store.Save(ctx, snapshot); err != nil {
 		return err
 	}
-	return o.append(ctx, snapshot.RunID, state.Event{Type: "action_succeeded", Phase: snapshot.Phase, Message: "Builder Worktree 준비 완료", Data: map[string]any{"workspaceId": created.WorkspaceID, "paneId": created.PaneID}})
+	return o.append(ctx, snapshot.RunID, state.Event{Type: "action_succeeded", Phase: snapshot.Phase, Message: "Builder Worktree 준비 완료", Data: map[string]any{"workspaceId": created.WorkspaceID, "paneId": created.PaneID, "path": created.Path}})
 }
 
 func (o *Orchestrator) advanceBuilding(ctx context.Context, snapshot state.RunSnapshot, runtime *runRuntime) error {
-	if runtime.worktree.PaneID == "" {
+	if snapshot.BuilderWorktree.PaneID == "" && runtime.worktree.PaneID == "" {
 		return errors.New("Builder Worktree ID is unavailable; resume requires reconciliation")
 	}
 	name := "builder-" + string(snapshot.RunID)
-	switch runtime.stage {
-	case 1:
-		if err := o.intent(ctx, snapshot.RunID, snapshot.Phase, "Builder Agent 시작", map[string]any{"agent": name}); err != nil {
+	if snapshot.ActionCursor == 0 {
+		snapshot.Builder.Name = name
+		if err := o.prepare(ctx, &snapshot, "start_builder", "Builder Agent 시작", map[string]any{"agent": name}); err != nil {
 			return err
 		}
-		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: name, PaneID: runtime.worktree.PaneID}); err != nil {
+		paneID := snapshot.BuilderWorktree.PaneID
+		if paneID == "" {
+			paneID = runtime.worktree.PaneID
+		}
+		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: name, PaneID: paneID}); err != nil {
 			_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Builder Agent 시작 실패: %v", err)})
 			return err
 		}
-		runtime.stage = 2
 		snapshot.Builder = state.AgentEvidence{Name: name, SessionID: name}
-		return o.saveAction(ctx, snapshot, "Builder Agent 준비 완료")
-	case 2:
-		if err := o.intent(ctx, snapshot.RunID, snapshot.Phase, "Builder packet 전송", map[string]any{"agent": name}); err != nil {
+		return o.finish(ctx, &snapshot, "Builder Agent 준비 완료", false)
+	}
+	if snapshot.ActionCursor == 1 {
+		if err := o.prepare(ctx, &snapshot, "prompt_builder", "Builder packet 전송", map[string]any{"agent": name}); err != nil {
 			return err
 		}
 		if err := o.deps.Herdr.Prompt(ctx, name, builderPacket(runtime.contract, runtime.builderTask)); err != nil {
 			_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Builder packet 전송 실패: %v", err)})
 			return err
 		}
-		runtime.stage = 3
-		return o.saveAction(ctx, snapshot, "Builder 작업 packet 전송 완료")
-	case 3:
-		if err := o.intent(ctx, snapshot.RunID, snapshot.Phase, "Builder verification evidence 수집", map[string]any{"agent": name}); err != nil {
-			return err
-		}
-		evidence, err := o.builderEvidence(ctx, name, runtime.builderTask)
-		if err != nil {
-			_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Builder evidence 부족: %v", err)})
-			return err
-		}
-		evidence.Name = name
-		if evidence.SessionID == "" {
-			evidence.SessionID = name
-		}
-		snapshot.Builder = evidence
-		runtime.stage = 4
-		snapshot.Phase = contract.PhaseIntegrating
-		return o.saveAction(ctx, snapshot, "Builder commit과 verification evidence 확인")
-	default:
-		return fmt.Errorf("invalid Builder stage %d", runtime.stage)
+		return o.finish(ctx, &snapshot, "Builder 작업 packet 전송 완료", false)
 	}
+	if err := o.prepare(ctx, &snapshot, "collect_builder_evidence", "Builder verification evidence 수집", map[string]any{"agent": name}); err != nil {
+		return err
+	}
+	reader, ok := o.deps.Herdr.(EvidenceReader)
+	if !ok {
+		return ErrBuilderEvidence
+	}
+	evidence, err := reader.ReadEvidence(ctx, name)
+	if err != nil || !validCommitSHA(evidence.CommitSHA) || len(evidence.Verification) == 0 {
+		return ErrBuilderEvidence
+	}
+	for _, check := range evidence.Verification {
+		if strings.ToLower(strings.TrimSpace(check.Outcome)) != "passed" || strings.TrimSpace(check.Command) == "" || strings.TrimSpace(check.Duration) == "" {
+			return ErrBuilderEvidence
+		}
+		if _, err := time.ParseDuration(strings.TrimSpace(check.Duration)); err != nil {
+			return ErrBuilderEvidence
+		}
+	}
+	snapshot.Builder.Name = name
+	snapshot.Builder.CommitSHA = strings.ToLower(evidence.CommitSHA)
+	snapshot.Builder.SessionID = name
+	snapshot.Builder.Verification = make([]string, 0, len(evidence.Verification))
+	snapshot.Builder.VerificationEvidence = make([]state.VerificationEvidence, 0, len(evidence.Verification))
+	for _, check := range evidence.Verification {
+		command := strings.TrimSpace(check.Command)
+		snapshot.Builder.Verification = append(snapshot.Builder.Verification, command)
+		snapshot.Builder.VerificationEvidence = append(snapshot.Builder.VerificationEvidence, state.VerificationEvidence{Command: command, Outcome: "passed", Duration: strings.TrimSpace(check.Duration)})
+	}
+	snapshot.Phase = contract.PhaseIntegrating
+	snapshot.ActionCursor = 0
+	return o.finish(ctx, &snapshot, "Builder structured evidence 확인", true)
 }
 
 func (o *Orchestrator) integrate(ctx context.Context, snapshot state.RunSnapshot, runtime *runRuntime) error {
-	if !hasEvidence(snapshot.Builder) {
+	if snapshot.ActionCursor == 0 {
+		inspector, ok := o.deps.Worktree.(WorktreeInspector)
+		if !ok || !hasEvidence(snapshot.Builder) {
+			return ErrBuilderEvidence
+		}
+		if err := o.prepare(ctx, &snapshot, "inspect_builder_commit", "Builder commit 검증", map[string]any{"commitSha": snapshot.Builder.CommitSHA}); err != nil {
+			return err
+		}
+		inspection, err := inspector.InspectCommit(ctx, snapshot.BuilderWorktree.Path, runtime.contract.BaseCommit, runtime.builderBranch, snapshot.Builder.CommitSHA)
+		if err != nil {
+			return err
+		}
+		if err := validateInspection(inspection, snapshot.Builder.CommitSHA, runtime.builderBranch, runtime.builderTask.AllowedPaths); err != nil {
+			return err
+		}
+		snapshot.Builder.Branch = inspection.Branch
+		snapshot.Builder.ChangedFiles = append([]string(nil), inspection.ChangedFiles...)
+		snapshot.Builder.Patch = inspection.Patch
+		return o.finish(ctx, &snapshot, "Git가 생성한 Builder patch 검증 완료", false)
+	}
+	if !hasEvidence(snapshot.Builder) || snapshot.Builder.Branch != runtime.builderBranch || snapshot.Builder.Patch == "" {
 		return ErrBuilderEvidence
 	}
 	if strings.EqualFold(runtime.builderBranch, runtime.contract.Repository.DefaultBranch) || strings.EqualFold(runtime.builderBranch, "main") {
 		return errors.New("main 병합은 single-run orchestrator의 책임이 아닙니다")
 	}
-	if err := o.intent(ctx, snapshot.RunID, snapshot.Phase, "integration Worktree에 Builder commit 반영", map[string]any{"commitSha": snapshot.Builder.CommitSHA, "branch": runtime.builderBranch}); err != nil {
+	merger, ok := o.deps.Worktree.(ImmutableMerger)
+	if !ok {
+		return ErrBuilderEvidence
+	}
+	if err := o.prepare(ctx, &snapshot, "merge_verified_commit", "integration Worktree에 Builder commit 반영", map[string]any{"commitSha": snapshot.Builder.CommitSHA, "branch": runtime.builderBranch}); err != nil {
 		return err
 	}
-	if err := o.deps.Worktree.Merge(ctx, snapshot.IntegrationPath, runtime.builderBranch); err != nil {
+	if err := merger.MergeCommit(ctx, snapshot.Integration.Path, snapshot.Builder.CommitSHA); err != nil {
 		_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("integration 실패: %v", err)})
 		return err
 	}
 	runtime.stage = 5
 	snapshot.Phase = contract.PhaseReviewing
-	return o.saveAction(ctx, snapshot, "integration 완료; main은 변경하지 않음")
+	return o.finish(ctx, &snapshot, "integration 완료; main은 변경하지 않음", true)
 }
 
 func (o *Orchestrator) advanceReview(ctx context.Context, snapshot state.RunSnapshot, runtime *runRuntime) error {
 	name := "reviewer-" + string(snapshot.RunID)
-	if runtime.stage < 6 {
-		if err := o.intent(ctx, snapshot.RunID, snapshot.Phase, "새 Reviewer Agent session 시작", map[string]any{"agent": name, "builderTranscript": false}); err != nil {
+	if snapshot.ActionCursor == 0 {
+		opener, ok := o.deps.Herdr.(WorktreeOpener)
+		if !ok {
+			return errors.New("Herdr integration Worktree opener is required")
+		}
+		if err := o.prepare(ctx, &snapshot, "open_reviewer_worktree", "integration Worktree를 Reviewer에 연결", map[string]any{"path": snapshot.IntegrationPath}); err != nil {
 			return err
 		}
-		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: name, PaneID: runtime.worktree.PaneID}); err != nil {
+		opened, err := opener.OpenWorktree(ctx, herdr.OpenWorktreeRequest{Cwd: snapshot.RepositoryPath, Path: snapshot.IntegrationPath, Label: "threaddock-review-" + string(snapshot.RunID)})
+		if err != nil || opened.Path == "" || opened.PaneID == "" || opened.WorkspaceID == "" {
+			return errors.New("Herdr returned incomplete Reviewer Worktree identity")
+		}
+		snapshot.ReviewerWorktree = state.WorktreeState{Path: opened.Path, WorkspaceID: opened.WorkspaceID, PaneID: opened.PaneID, Branch: snapshot.Integration.Branch}
+		return o.finish(ctx, &snapshot, "Reviewer Worktree 준비 완료", false)
+	}
+	if snapshot.ActionCursor == 1 {
+		snapshot.Reviewer.Name = name
+		if err := o.prepare(ctx, &snapshot, "start_reviewer", "새 Reviewer Agent session 시작", map[string]any{"agent": name, "builderTranscript": false}); err != nil {
+			return err
+		}
+		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: name, PaneID: snapshot.ReviewerWorktree.PaneID}); err != nil {
 			_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Reviewer Agent 시작 실패: %v", err)})
 			return err
 		}
-		runtime.stage = 6
 		snapshot.Reviewer = state.AgentEvidence{Name: name, SessionID: name}
-		return o.saveAction(ctx, snapshot, "독립 Reviewer session 준비 완료")
+		return o.finish(ctx, &snapshot, "독립 Reviewer session 준비 완료", false)
 	}
-	if err := o.intent(ctx, snapshot.RunID, snapshot.Phase, "Reviewer acceptance packet 전송", map[string]any{"agent": name, "builderTranscript": false}); err != nil {
+	if err := o.prepare(ctx, &snapshot, "prompt_reviewer", "Reviewer acceptance packet 전송", map[string]any{"agent": name, "builderTranscript": false}); err != nil {
 		return err
 	}
 	if err := o.deps.Herdr.Prompt(ctx, name, reviewerPacket(runtime.contract, runtime.builderTask, snapshot.Builder)); err != nil {
@@ -329,56 +453,19 @@ func (o *Orchestrator) advanceReview(ctx context.Context, snapshot state.RunSnap
 		return err
 	}
 	snapshot.Reviewer.Verification = []string{"review schema sent"}
-	return o.saveAction(ctx, snapshot, "독립 Reviewer가 acceptance criteria를 확인 중")
-}
-
-func (o *Orchestrator) builderEvidence(ctx context.Context, name string, task contract.Task) (state.AgentEvidence, error) {
-	if provider, ok := o.deps.Herdr.(interface {
-		BuilderEvidence(context.Context, string) (state.AgentEvidence, error)
-	}); ok {
-		evidence, err := provider.BuilderEvidence(ctx, name)
-		if err != nil {
-			return state.AgentEvidence{}, err
-		}
-		if !hasEvidence(evidence) {
-			return state.AgentEvidence{}, ErrBuilderEvidence
-		}
-		return evidence, nil
-	}
-	recent, err := o.deps.Herdr.ReadRecent(ctx, name)
-	if err != nil {
-		return state.AgentEvidence{}, err
-	}
-	evidence := parseEvidence(recent)
-	if len(evidence.Verification) == 0 && len(task.Verification) == 1 && strings.Contains(recent, task.Verification[0]) {
-		evidence.Verification = []string{task.Verification[0]}
-	}
-	if !hasEvidence(evidence) {
-		return state.AgentEvidence{}, ErrBuilderEvidence
-	}
-	return evidence, nil
-}
-
-func parseEvidence(recent string) state.AgentEvidence {
-	evidence := state.AgentEvidence{}
-	if match := commitEvidencePattern.FindStringSubmatch(recent); len(match) == 2 {
-		evidence.CommitSHA = match[1]
-	}
-	for _, match := range verificationPattern.FindAllStringSubmatch(recent, -1) {
-		if value := strings.TrimSpace(match[1]); value != "" {
-			evidence.Verification = append(evidence.Verification, value)
-		}
-	}
-	for _, match := range changedFilePattern.FindAllStringSubmatch(recent, -1) {
-		if value := strings.TrimSpace(match[1]); value != "" {
-			evidence.ChangedFiles = append(evidence.ChangedFiles, value)
-		}
-	}
-	return evidence
+	return o.finish(ctx, &snapshot, "독립 Reviewer가 acceptance criteria를 확인 중", false)
 }
 
 func hasEvidence(evidence state.AgentEvidence) bool {
-	return strings.TrimSpace(evidence.CommitSHA) != "" && len(evidence.Verification) > 0
+	if !validCommitSHA(evidence.CommitSHA) || len(evidence.VerificationEvidence) == 0 {
+		return false
+	}
+	for _, check := range evidence.VerificationEvidence {
+		if check.Command == "" || check.Outcome != "passed" || check.Duration == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func builderPacket(c contract.TaskContract, task contract.Task) string {
@@ -386,7 +473,75 @@ func builderPacket(c contract.TaskContract, task contract.Task) string {
 }
 
 func reviewerPacket(c contract.TaskContract, task contract.Task, evidence state.AgentEvidence) string {
-	return fmt.Sprintf("Reviewer acceptance criteria:\n- %s\n- %s\n\nFinal diff:\n- %s\n\nVerification evidence:\n- %s\n\nReview schema:\ndecision: approve | request_changes\nfindings: list of concrete acceptance-criterion findings", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), strings.Join(evidence.ChangedFiles, "\n- "), strings.Join(evidence.Verification, "\n- ")+"\n- commit "+evidence.CommitSHA)
+	checks := make([]string, 0, len(evidence.VerificationEvidence))
+	for _, check := range evidence.VerificationEvidence {
+		checks = append(checks, fmt.Sprintf("Command: %s\nOutcome: %s\nDuration: %s", check.Command, check.Outcome, check.Duration))
+	}
+	return fmt.Sprintf("Reviewer acceptance criteria:\n- %s\n- %s\n\nFinal bounded patch:\n%s\n\nStructured verification:\n%s\nCommit SHA: %s\n\nReview schema:\ndecision: approve | request_changes\nfindings: list of concrete acceptance-criterion findings", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), redactPatch(evidence.Patch), strings.Join(checks, "\n"), evidence.CommitSHA)
+}
+
+func validCommitSHA(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validateInspection(inspection worktree.CommitInspection, expectedSHA, expectedBranch string, allowed []string) error {
+	if !validCommitSHA(inspection.CommitSHA) || inspection.CommitSHA != expectedSHA || inspection.Branch != expectedBranch {
+		return errors.New("commit SHA or Builder branch validation failed")
+	}
+	if len(inspection.ChangedFiles) == 0 || strings.TrimSpace(inspection.Patch) == "" {
+		return errors.New("Git returned no bounded patch")
+	}
+	for _, file := range inspection.ChangedFiles {
+		if !allowedPath(file, allowed) {
+			return fmt.Errorf("changed path %q is outside allowed paths", file)
+		}
+	}
+	return nil
+}
+
+func allowedPath(file string, allowed []string) bool {
+	file = strings.TrimPrefix(strings.ReplaceAll(filepath.Clean(file), "\\", "/"), "./")
+	for _, pattern := range allowed {
+		pattern = strings.TrimPrefix(strings.ReplaceAll(pattern, "\\", "/"), "./")
+		if strings.HasSuffix(pattern, "/**") {
+			prefix := strings.TrimSuffix(pattern, "/**")
+			if file == prefix || strings.HasPrefix(file, prefix+"/") {
+				return true
+			}
+		} else if file == pattern {
+			return true
+		}
+	}
+	return false
+}
+
+func redactPatch(patch string) string {
+	if len(patch) > 512*1024 {
+		patch = patch[:512*1024]
+	}
+	lines := strings.Split(patch, "\n")
+	for i, line := range lines {
+		lower := strings.ToLower(line)
+		for _, key := range []string{"token", "secret", "password", "authorization"} {
+			if index := strings.Index(lower, key); index >= 0 {
+				rest := line[index+len(key):]
+				if separator := strings.IndexAny(rest, ":="); separator >= 0 {
+					position := index + len(key) + separator + 1
+					line = line[:position] + " [REDACTED]"
+				}
+			}
+		}
+		lines[i] = line
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (o *Orchestrator) createIssueBundle(ctx context.Context, id contract.RunID, c contract.TaskContract) (github.IssueBundle, error) {
@@ -426,6 +581,7 @@ func (o *Orchestrator) withGitHubRetry(ctx context.Context, id contract.RunID, o
 
 func (o *Orchestrator) transition(ctx context.Context, snapshot state.RunSnapshot, phase contract.RunPhase, message string) error {
 	snapshot.Phase = phase
+	snapshot.ActionCursor = 0
 	snapshot.UpdatedAt = o.now()
 	if err := o.deps.Store.Save(ctx, snapshot); err != nil {
 		return err
@@ -434,8 +590,41 @@ func (o *Orchestrator) transition(ctx context.Context, snapshot state.RunSnapsho
 }
 
 func (o *Orchestrator) saveAction(ctx context.Context, snapshot state.RunSnapshot, message string) error {
+	snapshot.PendingAction = ""
+	snapshot.ActionCursor++
 	snapshot.UpdatedAt = o.now()
 	if err := o.deps.Store.Save(ctx, snapshot); err != nil {
+		return err
+	}
+	return o.append(ctx, snapshot.RunID, state.Event{Type: "action_succeeded", Phase: snapshot.Phase, Message: message})
+}
+
+func (o *Orchestrator) prepare(ctx context.Context, snapshot *state.RunSnapshot, action, message string, data map[string]any) error {
+	if snapshot.PendingAction != "" && snapshot.PendingAction != action {
+		return fmt.Errorf("another action is pending: %s", snapshot.PendingAction)
+	}
+	snapshot.PendingAction = action
+	snapshot.Summary = message
+	snapshot.UpdatedAt = o.now()
+	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
+		return err
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["action"] = action
+	return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: message, Data: data})
+}
+
+func (o *Orchestrator) finish(ctx context.Context, snapshot *state.RunSnapshot, message string, phaseChanged bool) error {
+	snapshot.PendingAction = ""
+	snapshot.ActionCursor++
+	if phaseChanged {
+		snapshot.ActionCursor = 0
+	}
+	snapshot.Summary = message
+	snapshot.UpdatedAt = o.now()
+	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
 		return err
 	}
 	return o.append(ctx, snapshot.RunID, state.Event{Type: "action_succeeded", Phase: snapshot.Phase, Message: message})
@@ -448,6 +637,165 @@ func (o *Orchestrator) intent(ctx context.Context, id contract.RunID, phase cont
 func (o *Orchestrator) append(ctx context.Context, id contract.RunID, event state.Event) error {
 	event.At = o.now()
 	return o.deps.Store.Append(ctx, id, event)
+}
+
+func (o *Orchestrator) claim(ctx context.Context, id contract.RunID) (func(), error) {
+	if locker, ok := o.deps.Store.(LockingStore); ok {
+		lease, err := locker.Acquire(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return func() { _ = lease.Release() }, nil
+	}
+	o.mu.Lock()
+	lock := o.locks[id]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		o.locks[id] = lock
+	}
+	o.mu.Unlock()
+	if !lock.TryLock() {
+		return nil, ErrRunBusy
+	}
+	return lock.Unlock, nil
+}
+
+func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.RunSnapshot, runtime *runRuntime) error {
+	switch snapshot.PendingAction {
+	case "register_issue_bundle":
+		var bundle github.IssueBundle
+		err := o.withGitHubRetry(ctx, snapshot.RunID, "Issue bundle reconcile", func() error {
+			var found bool
+			var findErr error
+			bundle, found, findErr = o.deps.GitHub.FindIssueBundle(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, marker(snapshot.RunID))
+			if findErr == nil && !found {
+				return ErrRegistrationPending
+			}
+			return findErr
+		})
+		if err != nil {
+			return err
+		}
+		snapshot.Registration = state.RegistrationState{Status: "registered", Marker: marker(snapshot.RunID), NodeID: bundle.Parent.NodeID, Issue: bundle.Parent.Number}
+		snapshot.ParentIssue = bundle.Parent.Number
+		snapshot.Summary = "Issue bundle reconcile 완료"
+		return o.finish(ctx, snapshot, "기존 GHES Issue bundle 확인", false)
+	case "create_builder_worktree", "open_reviewer_worktree":
+		locator, ok := o.deps.Herdr.(WorktreeLocator)
+		if !ok {
+			return ErrPendingReconcile
+		}
+		path, branch := snapshot.Integration.Path, snapshot.Integration.Branch
+		if snapshot.PendingAction == "create_builder_worktree" {
+			path, branch = snapshot.BuilderWorktree.Path, snapshot.BuilderWorktree.Branch
+		}
+		label := branch
+		if snapshot.PendingAction == "create_builder_worktree" {
+			label = "threaddock-" + string(snapshot.RunID)
+		}
+		if snapshot.PendingAction == "open_reviewer_worktree" {
+			label = "threaddock-review-" + string(snapshot.RunID)
+		}
+		found, exists, err := locator.FindWorktree(ctx, path, label)
+		if err != nil || !exists {
+			return ErrPendingReconcile
+		}
+		if snapshot.PendingAction == "create_builder_worktree" {
+			snapshot.BuilderWorktree = state.WorktreeState{Path: found.Path, WorkspaceID: found.WorkspaceID, PaneID: found.PaneID, Branch: branch}
+			return o.finish(ctx, snapshot, "기존 Builder Worktree reconcile 완료", true)
+		}
+		if snapshot.PendingAction == "open_reviewer_worktree" {
+			snapshot.ReviewerWorktree = state.WorktreeState{Path: found.Path, WorkspaceID: found.WorkspaceID, PaneID: found.PaneID, Branch: branch}
+			return o.finish(ctx, snapshot, "기존 Reviewer Worktree reconcile 완료", false)
+		}
+		snapshot.Integration = state.WorktreeState{Path: found.Path, WorkspaceID: found.WorkspaceID, PaneID: found.PaneID, Branch: branch}
+		return o.finish(ctx, snapshot, "기존 integration Worktree reconcile 완료", false)
+	case "create_integration_worktree":
+		locator, ok := o.deps.Worktree.(IntegrationWorktreeLocator)
+		if !ok {
+			return ErrPendingReconcile
+		}
+		found, err := locator.ReconcileIntegrationWorktree(ctx, snapshot.Integration.Path, snapshot.Integration.Branch, runtime.contract.BaseCommit)
+		if err != nil || !found {
+			return ErrPendingReconcile
+		}
+		return o.finish(ctx, snapshot, "기존 integration Worktree Git reconcile 완료", false)
+	case "start_builder", "start_reviewer", "prompt_builder", "prompt_reviewer":
+		locator, ok := o.deps.Herdr.(AgentLocator)
+		if !ok {
+			return ErrPendingReconcile
+		}
+		name := snapshot.Builder.Name
+		if snapshot.PendingAction == "start_reviewer" || snapshot.PendingAction == "prompt_reviewer" {
+			name = snapshot.Reviewer.Name
+		}
+		info, err := locator.GetInfo(ctx, name)
+		if err != nil || info.Name == "" {
+			return ErrPendingReconcile
+		}
+		if strings.HasPrefix(snapshot.PendingAction, "start_") {
+			if snapshot.PendingAction == "start_builder" {
+				snapshot.Builder.SessionID = info.SessionID
+			} else {
+				snapshot.Reviewer.SessionID = info.SessionID
+			}
+		} else if info.State != herdr.AgentStateDone && info.State != herdr.AgentStateIdle {
+			return ErrPendingReconcile
+		}
+		return o.finish(ctx, snapshot, "기존 Agent action reconcile 완료", false)
+	case "collect_builder_evidence":
+		reader, ok := o.deps.Herdr.(EvidenceReader)
+		if !ok {
+			return ErrPendingReconcile
+		}
+		evidence, err := reader.ReadEvidence(ctx, snapshot.Builder.Name)
+		if err != nil || !validCommitSHA(evidence.CommitSHA) || len(evidence.Verification) == 0 {
+			return ErrPendingReconcile
+		}
+		for _, check := range evidence.Verification {
+			if strings.ToLower(strings.TrimSpace(check.Outcome)) != "passed" || strings.TrimSpace(check.Command) == "" || strings.TrimSpace(check.Duration) == "" {
+				return ErrPendingReconcile
+			}
+		}
+		snapshot.Builder.CommitSHA = strings.ToLower(evidence.CommitSHA)
+		snapshot.Builder.Verification = nil
+		snapshot.Builder.VerificationEvidence = nil
+		for _, check := range evidence.Verification {
+			command := strings.TrimSpace(check.Command)
+			snapshot.Builder.Verification = append(snapshot.Builder.Verification, command)
+			snapshot.Builder.VerificationEvidence = append(snapshot.Builder.VerificationEvidence, state.VerificationEvidence{Command: command, Outcome: "passed", Duration: strings.TrimSpace(check.Duration)})
+		}
+		snapshot.Phase = contract.PhaseIntegrating
+		snapshot.ActionCursor = 0
+		return o.finish(ctx, snapshot, "Builder evidence reconcile 완료", true)
+	case "inspect_builder_commit":
+		inspector, ok := o.deps.Worktree.(WorktreeInspector)
+		if !ok {
+			return ErrPendingReconcile
+		}
+		inspection, err := inspector.InspectCommit(ctx, snapshot.BuilderWorktree.Path, runtime.contract.BaseCommit, runtime.builderBranch, snapshot.Builder.CommitSHA)
+		if err != nil || validateInspection(inspection, snapshot.Builder.CommitSHA, runtime.builderBranch, runtime.builderTask.AllowedPaths) != nil {
+			return ErrPendingReconcile
+		}
+		snapshot.Builder.Branch = inspection.Branch
+		snapshot.Builder.ChangedFiles = append([]string(nil), inspection.ChangedFiles...)
+		snapshot.Builder.Patch = inspection.Patch
+		return o.finish(ctx, snapshot, "Builder patch reconcile 완료", false)
+	case "merge_verified_commit":
+		locator, ok := o.deps.Worktree.(CurrentCommitLocator)
+		if !ok {
+			return ErrPendingReconcile
+		}
+		current, err := locator.CurrentCommit(ctx, snapshot.Integration.Path)
+		if err != nil || current != snapshot.Builder.CommitSHA {
+			return ErrPendingReconcile
+		}
+		snapshot.Phase = contract.PhaseReviewing
+		snapshot.ActionCursor = 0
+		return o.finish(ctx, snapshot, "기존 immutable merge reconcile 완료", true)
+	default:
+		return ErrPendingReconcile
+	}
 }
 
 func (o *Orchestrator) runtimeFor(ctx context.Context, snapshot state.RunSnapshot) (*runRuntime, error) {
@@ -465,7 +813,11 @@ func (o *Orchestrator) runtimeFor(ctx context.Context, snapshot state.RunSnapsho
 		return nil, err
 	}
 	builder := firstBuilder(c)
-	runtime = &runRuntime{contract: c, builderTask: builder, builderBranch: builder.Branch, integrationPath: snapshot.IntegrationPath, stage: stageFromSnapshot(snapshot)}
+	integrationBranch := snapshot.Integration.Branch
+	if integrationBranch == "" {
+		integrationBranch = "agent/" + safeBranchPart(c.Parent.Key) + "-integration"
+	}
+	runtime = &runRuntime{contract: c, builderTask: builder, builderBranch: builder.Branch, integrationPath: snapshot.IntegrationPath, integrationBranch: integrationBranch, stage: stageFromSnapshot(snapshot), worktree: herdr.Worktree{Path: snapshot.BuilderWorktree.Path, WorkspaceID: snapshot.BuilderWorktree.WorkspaceID, PaneID: snapshot.BuilderWorktree.PaneID}}
 	o.mu.Lock()
 	o.runs[snapshot.RunID] = runtime
 	o.mu.Unlock()
@@ -550,6 +902,14 @@ func (o *Orchestrator) nextRunID() contract.RunID {
 }
 
 func marker(id contract.RunID) string { return "td:" + string(id) }
+
+func safeBranchPart(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "run"
+	}
+	return strings.NewReplacer("/", "-", "\\", "-", " ", "-").Replace(value)
+}
 
 func checkContext(ctx context.Context) error {
 	if ctx == nil {

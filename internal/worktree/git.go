@@ -25,6 +25,17 @@ type Git struct {
 	RepositoryRoot string
 }
 
+// CommitInspection is derived from Git, not from Agent prose. Patch is the
+// bounded unified diff that a Reviewer may inspect.
+type CommitInspection struct {
+	CommitSHA    string
+	Branch       string
+	ChangedFiles []string
+	Patch        string
+}
+
+const maxReviewerPatchBytes = 512 * 1024
+
 // New constructs a Git adapter. The optional binary defaults to git. An
 // absolute optional argument is treated as the canonical repository root;
 // this also keeps New(runner, repositoryRoot) convenient for callers.
@@ -99,6 +110,118 @@ func (g *Git) Merge(ctx context.Context, worktreePath, branch string) error {
 		return errors.New("merge branch is required")
 	}
 	return g.run(ctx, worktreePath, "merge", "--no-edit", branch)
+}
+
+// InspectCommit verifies that sha exists, is reachable from branch, and
+// returns the actual changed paths and bounded patch against base.
+func (g *Git) InspectCommit(ctx context.Context, worktreePath, base, branch, sha string) (CommitInspection, error) {
+	if err := g.validateWorktreePath(worktreePath); err != nil {
+		return CommitInspection{}, err
+	}
+	if !isCommitSHA(sha) || strings.TrimSpace(branch) == "" || strings.TrimSpace(base) == "" {
+		return CommitInspection{}, errors.New("commit inspection requires base, branch, and a 40-character SHA")
+	}
+	resolved, err := g.command(ctx, worktreePath, "rev-parse", sha+"^{commit}")
+	if err != nil || strings.TrimSpace(resolved.Stdout) != sha {
+		return CommitInspection{}, errors.New("commit SHA could not be resolved")
+	}
+	if _, err := g.command(ctx, worktreePath, "merge-base", "--is-ancestor", sha, branch); err != nil {
+		return CommitInspection{}, errors.New("commit is not contained in the Builder branch")
+	}
+	names, err := g.command(ctx, worktreePath, "diff", "--name-only", base+".."+sha)
+	if err != nil {
+		return CommitInspection{}, err
+	}
+	patch, err := g.command(ctx, worktreePath, "diff", "--binary", base+".."+sha)
+	if err != nil {
+		return CommitInspection{}, err
+	}
+	if len(patch.Stdout) > maxReviewerPatchBytes {
+		return CommitInspection{}, errors.New("reviewer patch exceeds the size limit")
+	}
+	files := splitLines(names.Stdout)
+	return CommitInspection{CommitSHA: sha, Branch: branch, ChangedFiles: files, Patch: patch.Stdout}, nil
+}
+
+// MergeCommit merges the immutable, already-inspected SHA rather than a
+// movable branch name. It never targets the canonical checkout implicitly.
+func (g *Git) MergeCommit(ctx context.Context, worktreePath, sha string) error {
+	if err := g.validateWorktreePath(worktreePath); err != nil {
+		return err
+	}
+	if !isCommitSHA(sha) {
+		return errors.New("merge requires a 40-character commit SHA")
+	}
+	return g.run(ctx, worktreePath, "merge", "--no-edit", sha)
+}
+
+func (g *Git) CurrentCommit(ctx context.Context, worktreePath string) (string, error) {
+	if err := g.validateWorktreePath(worktreePath); err != nil {
+		return "", err
+	}
+	result, err := g.command(ctx, worktreePath, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(result.Stdout), nil
+}
+
+func (g *Git) CurrentBranch(ctx context.Context, worktreePath string) (string, error) {
+	if err := g.validateWorktreePath(worktreePath); err != nil {
+		return "", err
+	}
+	result, err := g.command(ctx, worktreePath, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(result.Stdout), nil
+}
+
+// ReconcileIntegrationWorktree is read-only. It verifies that the persisted
+// path is usable and that its current branch and commit are still real; it
+// never creates or mutates a Worktree.
+func (g *Git) ReconcileIntegrationWorktree(ctx context.Context, path, branch, base string) (bool, error) {
+	if strings.TrimSpace(path) == "" || strings.TrimSpace(branch) == "" || strings.TrimSpace(base) == "" {
+		return false, ErrUnsafeTarget
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return false, ErrUnsafeTarget
+	}
+	if _, err := g.Status(ctx, path); err != nil {
+		return false, err
+	}
+	currentBranch, err := g.CurrentBranch(ctx, path)
+	if err != nil || currentBranch != branch {
+		return false, errors.New("integration Worktree branch does not match durable state")
+	}
+	currentCommit, err := g.CurrentCommit(ctx, path)
+	if err != nil || !isCommitSHA(currentCommit) {
+		return false, errors.New("integration Worktree commit is unavailable")
+	}
+	return true, nil
+}
+
+func isCommitSHA(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func splitLines(output string) []string {
+	var result []string
+	for _, line := range strings.Split(output, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			result = append(result, line)
+		}
+	}
+	return result
 }
 
 func (g *Git) RemoveSafe(ctx context.Context, worktreePath string) error {

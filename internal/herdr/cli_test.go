@@ -61,6 +61,9 @@ func TestCreateWorktreeReturnsActualIDsAndUsesExplicitArguments(t *testing.T) {
 	if got.WorkspaceID != "workspace-redacted" || got.PaneID != "pane-redacted" {
 		t.Fatalf("result=%#v", got)
 	}
+	if got.Path != "/redacted/worktree" {
+		t.Fatalf("path=%q", got.Path)
+	}
 	want := [][]string{
 		{"herdr", "worktree", "create", "--cwd", "/repo", "--branch", "agent/184-integration", "--base", "main", "--label", "issue-184-integration", "--no-focus"},
 		{"herdr", "pane", "list", "--workspace", "workspace-redacted"},
@@ -131,6 +134,44 @@ func TestReadRecentReturnsRawStdout(t *testing.T) {
 	}
 	if got != readFixture(t, "testdata/v0.8.2/recent-output.txt") {
 		t.Fatalf("output=%q", got)
+	}
+}
+
+func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": `{"commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"2.3s"}]}`,
+	})
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil || got.CommitSHA == "" || got.Verification[0].Duration != "2.3s" {
+		t.Fatalf("evidence=%#v err=%v", got, err)
+	}
+}
+
+func TestFindWorktreeReconcilesPathWorkspaceAndPane(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00worktree\x00list":                             `{"result":{"worktrees":[{"branch":"agent/run-integration","label":"run","open_workspace_id":"workspace-run","path":"/work/run"}]}}`,
+		"herdr\x00pane\x00list\x00--workspace\x00workspace-run": `{"result":{"panes":[{"pane_id":"pane-run","workspace_id":"workspace-run"}]}}`,
+	})
+	got, found, err := NewCLI(r, "herdr").FindWorktree(context.Background(), "/work/run", "run")
+	if err != nil || !found || got.Path != "/work/run" || got.WorkspaceID != "workspace-run" || got.PaneID != "pane-run" {
+		t.Fatalf("worktree=%#v found=%v err=%v", got, found, err)
+	}
+}
+
+func TestReadEvidenceRejectsRawTranscriptAndMissingDuration(t *testing.T) {
+	for name, output := range map[string]string{
+		"raw":      "commit_sha: 0123456789abcdef0123456789abcdef01234567",
+		"duration": `{"commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed"}]}`,
+		"trailing": `{"commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}\nnot-json`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted untrusted evidence")
+			}
+		})
 	}
 }
 
