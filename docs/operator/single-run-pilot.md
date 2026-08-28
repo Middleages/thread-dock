@@ -26,8 +26,10 @@ Single-run 단계의 끝인 독립 Reviewer 전달까지만 확인합니다.
 - 설치된 `agentctl`, `herdr`, `opencode`, `git`, `gh`, `jq`
 - 설정 파일 `~/.config/threaddock/config.json`
 - 시험 저장소에 Issue를 만들 수 있는 `THREADDOCK_GH_TOKEN`
-- GitHub CLI(`gh`)의 사내 GitHub Enterprise 로그인
-- 승인된 GHES API 연결 차단·복구 방법
+- GitHub CLI(`gh`)의 대상 저장소 로그인 (GHES 또는 GitHub.com)
+
+GitHub Enterprise에서 실제 연결 중단을 시험하려면 승인된 GHES API 연결 차단·복구
+방법도 준비합니다. GitHub.com 시험 모드에서는 이 방법이 필요하지 않습니다.
 
 제품 저장소나 실제 업무용 `main`에서 처음 시험하지 마세요. 토큰은 파일에
 적지 않고, 회사 비밀 관리 도구를 통해 현재 WSL 터미널에만 주입합니다.
@@ -112,6 +114,22 @@ main 브랜치 보호                PASS  변경 전 SHA → 변경 후 SHA
 ```bash
 ./scripts/single-run-pilot.sh --check
 ```
+
+### GitHub.com 시험 모드
+
+GitHub.com 저장소에서 첫 등록 장애 구간만 안전하게 재현하려면 다음 명령을
+사용합니다.
+
+```bash
+./scripts/single-run-pilot.sh --simulate-outage OWNER REPOSITORY
+```
+
+이 모드는 방화벽이나 네트워크를 차단하라고 묻지 않습니다. `CONFIG_PATH`에서
+비밀이 없는 임시 설정을 만들고, 첫 `agentctl start`에만
+`apiBase=http://127.0.0.1:1`을 주입해 등록을 실패시킵니다. 장애가 기록된 뒤
+임시 설정은 삭제하며, 이후에는 원래 설정으로 같은 실행 ID를 `resume`합니다.
+토큰은 설정 파일이나 출력에 기록하지 않습니다. 이후 WSL 재시작과 `--continue`,
+`--check` 절차는 위와 같습니다.
 
 ## PASS 이후
 
