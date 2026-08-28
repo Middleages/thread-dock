@@ -162,7 +162,7 @@ printf '%s\n' '[{"body":"<!-- threaddock:td:td-not-ready -->"},{"body":"<!-- thr
 	}
 }
 
-func TestPilotContinueResumesPreWSLRunAndPersistsStage(t *testing.T) {
+func TestPilotContinueRecoversMissingAndStaleBootIDs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("WSL pilot script is exercised on Unix-like builders")
 	}
@@ -183,6 +183,9 @@ func TestPilotContinueResumesPreWSLRunAndPersistsStage(t *testing.T) {
 	writeFile(t, contractPath, `{"repository":{"owner":"PDX","name":"pilot-product"}}`, 0o600)
 	configPath := filepath.Join(temp, "config.json")
 	writeFile(t, configPath, `{"stateDir":"`+stateDir+`","ghesHost":"https://github.example.test"}`, 0o600)
+	bootIDPath := filepath.Join(temp, "boot_id")
+	currentBootID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	writeFile(t, bootIDPath, currentBootID+"\n", 0o600)
 	sessionPath := filepath.Join(temp, "pilot-session.json")
 	writeFile(t, sessionPath, `{"run":"`+runID+`","stateDir":"`+stateDir+`","mainBefore":"0123456789abcdef0123456789abcdef01234567","checkoutBefore":"","repoRoot":"`+repoRoot+`","contractPath":"`+contractPath+`","outagePassed":true,"wslRestartPassed":false,"snapshotDiffPassed":false}`, 0o600)
 
@@ -211,16 +214,20 @@ esac
 	}
 	writeExecutable(t, filepath.Join(fakeBin, "sleep"), "#!/usr/bin/env bash\nexit 0\n")
 
-	command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--continue")
-	command.Dir = repoRoot
-	command.Env = append(os.Environ(),
-		"PATH="+fakeBin+":"+os.Getenv("PATH"),
-		"THREADDOCK_PILOT_SESSION="+sessionPath,
-		"THREADDOCK_CONFIG="+configPath,
-		"THREADDOCK_GH_TOKEN=pilot-test-secret",
-		"PILOT_TEST_CALL_LOG="+callLog,
-	)
-	output, err := command.CombinedOutput()
+	runContinue := func() ([]byte, error) {
+		command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--continue")
+		command.Dir = repoRoot
+		command.Env = append(os.Environ(),
+			"PATH="+fakeBin+":"+os.Getenv("PATH"),
+			"THREADDOCK_PILOT_SESSION="+sessionPath,
+			"THREADDOCK_CONFIG="+configPath,
+			"THREADDOCK_BOOT_ID_PATH="+bootIDPath,
+			"THREADDOCK_GH_TOKEN=pilot-test-secret",
+			"PILOT_TEST_CALL_LOG="+callLog,
+		)
+		return command.CombinedOutput()
+	}
+	output, err := runContinue()
 	if err != nil {
 		t.Fatalf("pre-WSL continue failed: %v\n%s", err, output)
 	}
@@ -243,8 +250,8 @@ esac
 	if session["stage"] != "wait_wsl_restart" {
 		t.Fatalf("session stage=%v, want wait_wsl_restart", session["stage"])
 	}
-	if _, ok := session["bootIdBefore"]; ok {
-		t.Fatal("pre-WSL recovery unexpectedly wrote a boot ID")
+	if session["bootIdBefore"] != currentBootID {
+		t.Fatalf("session bootIdBefore=%v, want %q", session["bootIdBefore"], currentBootID)
 	}
 	beforeWSL, err := os.ReadFile(filepath.Join(stateDir, "pilot", "before-wsl.json"))
 	if err != nil {
@@ -255,6 +262,54 @@ esac
 	}
 	if strings.Contains(string(output), "WSL 재시작을 확인할 수 없습니다") || !strings.Contains(string(output), "wsl --shutdown") {
 		t.Fatalf("unexpected pre-WSL output:\n%s", output)
+	}
+
+	// A second interrupted first phase may retain a stale boot ID. It must be
+	// overwritten at the next first-phase handoff.
+	delete(session, "stage")
+	session["bootIdBefore"] = "ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb"
+	updatedSession, err := json.Marshal(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, sessionPath, string(updatedSession), 0o600)
+	writeFile(t, filepath.Join(runDir, "run.json"), `{"runId":"`+runID+`","phase":"building","pendingAction":"start_builder"}`, 0o600)
+
+	output, err = runContinue()
+	if err != nil {
+		t.Fatalf("stale-boot pre-WSL continue failed: %v\n%s", err, output)
+	}
+	contents, err = os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(contents, &session); err != nil {
+		t.Fatal(err)
+	}
+	if session["bootIdBefore"] != currentBootID {
+		t.Fatalf("stale bootIdBefore=%v, want current %q", session["bootIdBefore"], currentBootID)
+	}
+
+	// With the same current boot ID, the next --continue must retain the
+	// staged session and refuse to proceed until WSL has restarted.
+	beforeRetry := append([]byte(nil), contents...)
+	output, err = runContinue()
+	if err == nil || !strings.Contains(string(output), "WSL 재시작을 확인할 수 없습니다") {
+		t.Fatalf("expected unchanged-boot rejection, err=%v output:\n%s", err, output)
+	}
+	afterRetry, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterRetry) != string(beforeRetry) {
+		t.Fatalf("retry changed staged session:\nbefore=%safter=%s", beforeRetry, afterRetry)
+	}
+	calls, err = os.ReadFile(callLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(calls)), "resume|"+runID+"\nstop|"+runID+"\nresume|"+runID+"\nstop|"+runID; got != want {
+		t.Fatalf("agentctl calls=%q, want %q", got, want)
 	}
 }
 
