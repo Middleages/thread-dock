@@ -159,6 +159,123 @@ printf '%s\n' '[{"body":"<!-- threaddock:td:td-not-ready -->"},{"body":"<!-- thr
 	}
 }
 
+func TestPilotSimulateOutageUsesTemporaryConfigOnlyForStart(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	configPath := filepath.Join(temp, "config.json")
+	writeFile(t, configPath, `{"ghesHost":"https://github.example.test","apiBase":"https://github.example.test/api/v3","stateDir":"`+stateDir+`"}`, 0o600)
+
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "jq"), `#!/usr/bin/env bash
+exec /usr/bin/jq "$@"
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "git"), `#!/usr/bin/env bash
+case "$*" in
+  "rev-parse --show-toplevel") printf '%s\n' "${PILOT_TEST_REPO_ROOT}" ;;
+  "rev-parse HEAD") printf '%s\n' '0123456789abcdef0123456789abcdef01234567' ;;
+  "status --short") exit 0 ;;
+  *) printf 'unexpected git arguments: %s\n' "$*" >&2; exit 9 ;;
+esac
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "herdr"), `#!/usr/bin/env bash
+exit 0
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "opencode"), `#!/usr/bin/env bash
+exit 0
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "gh"), `#!/usr/bin/env bash
+exit 0
+`)
+	callLog := filepath.Join(temp, "agentctl.calls")
+	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s|%s|%s|%s\n' "$1" "${2:-}" "${THREADDOCK_CONFIG}" "$(/usr/bin/jq -r '.apiBase' "$THREADDOCK_CONFIG")" >>"${PILOT_TEST_CALL_LOG}"
+case "${1:-}" in
+  contract) exit 0 ;;
+  start)
+    run_id='td-simulated-outage'
+    printf 'diagnostic token=%s\n' "$THREADDOCK_GH_TOKEN" >&2
+    state_dir="$(/usr/bin/jq -r '.stateDir' "$THREADDOCK_CONFIG")"
+    mkdir -p "$state_dir/runs/$run_id"
+    cat >"$state_dir/runs/$run_id/run.json" <<'JSON'
+{"runId":"td-simulated-outage","phase":"registered","pendingAction":"register_issue_bundle","registration":{"status":"pending"},"parentIssue":0}
+JSON
+    printf '%s\n' "$run_id"
+    exit 1
+    ;;
+  resume)
+    test "${2:-}" = 'td-simulated-outage'
+    state_dir="$(/usr/bin/jq -r '.stateDir' "$THREADDOCK_CONFIG")"
+    cat >"$state_dir/runs/td-simulated-outage/run.json" <<'JSON'
+{"runId":"td-simulated-outage","phase":"reviewing","pendingAction":"","actionCursor":0,"integration":{"path":"/managed/integration"},"builder":{"commitSha":"abcdef0123456789abcdef0123456789abcdef01"}}
+JSON
+    ;;
+  stop) exit 0 ;;
+  *) printf 'unexpected agentctl arguments: %s\n' "$*" >&2; exit 9 ;;
+esac
+`)
+
+	command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--simulate-outage", "PDX", "pilot-product")
+	command.Dir = repoRoot
+	command.Env = append(os.Environ(),
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+		"THREADDOCK_CONFIG="+configPath,
+		"THREADDOCK_GH_TOKEN=pilot-test-secret",
+		"PILOT_TEST_CALL_LOG="+callLog,
+		"PILOT_TEST_REPO_ROOT="+repoRoot,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("simulated outage failed: %v\n%s", err, output)
+	}
+
+	calls, err := os.ReadFile(callLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("agentctl calls=%q", lines)
+	}
+	if !strings.HasPrefix(lines[0], "contract|") || !strings.HasPrefix(lines[1], "start|") || !strings.HasPrefix(lines[2], "resume|td-simulated-outage|") {
+		t.Fatalf("unexpected agentctl calls: %q", lines)
+	}
+	startFields := strings.SplitN(lines[1], "|", 4)
+	resumeFields := strings.SplitN(lines[2], "|", 4)
+	if len(startFields) != 4 || len(resumeFields) != 4 {
+		t.Fatalf("malformed agentctl calls: %q", lines)
+	}
+	startConfig := startFields[2]
+	resumeConfig := resumeFields[2]
+	if startConfig == configPath || resumeConfig != configPath {
+		t.Fatalf("config paths start=%q resume=%q original=%q", startConfig, resumeConfig, configPath)
+	}
+	if startFields[3] != "http://127.0.0.1:1" || resumeFields[3] != "https://github.example.test/api/v3" {
+		t.Fatalf("config API bases start=%q resume=%q", startFields[3], resumeFields[3])
+	}
+	if _, err := os.Stat(startConfig); !os.IsNotExist(err) {
+		t.Fatalf("temporary outage config still exists: %q (err=%v)", startConfig, err)
+	}
+	startError, err := os.ReadFile(filepath.Join(stateDir, "pilot", "start.err"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(output), "pilot-test-secret") || strings.Contains(string(calls), "pilot-test-secret") || strings.Contains(string(startError), "pilot-test-secret") {
+		t.Fatalf("token leaked in output or call log:\n%s", output)
+	}
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)
