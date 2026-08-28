@@ -214,7 +214,11 @@ func (c *RESTClient) validateIssuePageURL(raw, issuePath string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return (&url.URL{Path: issuePath, RawQuery: query.Encode()}).RequestURI(), nil
+	requestURI := issuePath
+	if encodedQuery := query.Encode(); encodedQuery != "" {
+		requestURI += "?" + encodedQuery
+	}
+	return requestURI, nil
 }
 
 func validateSensitivePaginationQuery(query url.Values, token string) error {
@@ -241,6 +245,11 @@ func copyPublicPaginationQuery(query url.Values, token string) (url.Values, erro
 		lower := strings.ToLower(key)
 		switch lower {
 		case "state", "per_page", "page":
+			filtered[lower] = append([]string(nil), values...)
+		case "after", "before":
+			if len(values) != 1 || strings.TrimSpace(values[0]) == "" || filtered[lower] != nil || (lower == "after" && filtered["before"] != nil) || (lower == "before" && filtered["after"] != nil) {
+				return nil, errors.New("github issue pagination link contains an invalid cursor")
+			}
 			filtered[lower] = append([]string(nil), values...)
 		default:
 			return nil, errors.New("github issue pagination link contains unsupported query data")

@@ -285,7 +285,7 @@ func TestGitHubComPaginationAcceptsRepositoryIDLink(t *testing.T) {
 			}
 			return &http.Response{
 				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"application/json"}, "Link": []string{"<https://api.github.com/repositories/123456/issues?state=all&per_page=100&page=2>; rel=\"next\""}},
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "Link": []string{"<https://api.github.com/repositories/123456/issues?state=all&per_page=100&after=cursor-abc123&page=2>; rel=\"next\""}},
 				Body:       io.NopCloser(strings.NewReader(`[{"number":1,"title":"unrelated","body":"no marker"}]`)),
 			}, nil
 		case "/repositories/123456/issues":
@@ -299,7 +299,7 @@ func TestGitHubComPaginationAcceptsRepositoryIDLink(t *testing.T) {
 	if err != nil || !found || bundle.Parent.Number != 184 {
 		t.Fatalf("bundle=%+v found=%v err=%v", bundle, found, err)
 	}
-	if got, want := strings.Join(paths, ","), "/repos/platform/payments-api/issues?state=all&per_page=100,/repos/platform/payments-api/issues?page=2&per_page=100&state=all"; got != want {
+	if got, want := strings.Join(paths, ","), "/repos/platform/payments-api/issues?state=all&per_page=100,/repos/platform/payments-api/issues?after=cursor-abc123&page=2&per_page=100&state=all"; got != want {
 		t.Fatalf("paths=%q want=%q", got, want)
 	}
 }
@@ -334,7 +334,7 @@ func TestGitHubComPaginationKeepsCanonicalLinkOnTrustedPath(t *testing.T) {
 		if len(paths) == 1 {
 			return &http.Response{
 				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"application/json"}, "Link": []string{"<https://api.github.com/repos/platform/payments-api/issues?state=all&per_page=100&page=2>; rel=\"next\""}},
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "Link": []string{"<https://api.github.com/repos/platform/payments-api/issues?state=all&per_page=100&before=cursor-before&page=2>; rel=\"next\""}},
 				Body:       io.NopCloser(strings.NewReader(`[{"number":1,"title":"unrelated","body":"no marker"}]`)),
 			}, nil
 		}
@@ -345,7 +345,7 @@ func TestGitHubComPaginationKeepsCanonicalLinkOnTrustedPath(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("found=%v err=%v", found, err)
 	}
-	if got, want := strings.Join(paths, ","), "/repos/platform/payments-api/issues?state=all&per_page=100,/repos/platform/payments-api/issues?page=2&per_page=100&state=all"; got != want {
+	if got, want := strings.Join(paths, ","), "/repos/platform/payments-api/issues?state=all&per_page=100,/repos/platform/payments-api/issues?before=cursor-before&page=2&per_page=100&state=all"; got != want {
 		t.Fatalf("paths=%q want=%q", got, want)
 	}
 }
@@ -367,6 +367,29 @@ func TestGitHubComPaginationRejectsUnknownQueryKeys(t *testing.T) {
 	_, _, err := client.FindIssueBundle(context.Background(), repo(), "run-184")
 	if err == nil {
 		t.Fatal("expected unknown pagination query key to be rejected")
+	}
+}
+
+func TestGitHubComPaginationRejectsAmbiguousCursors(t *testing.T) {
+	for _, query := range []string{
+		"state=all&per_page=100&page=2&after=",
+		"state=all&per_page=100&page=2&after=first&after=second",
+		"state=all&per_page=100&page=2&after=first&before=second",
+	} {
+		t.Run(query, func(t *testing.T) {
+			transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}, "Link": []string{"<https://api.github.com/repos/platform/payments-api/issues?" + query + ">; rel=\"next\""}},
+					Body:       io.NopCloser(strings.NewReader(`[{"number":1,"title":"unrelated","body":"no marker"}]`)),
+				}, nil
+			})
+			client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: transport})
+			_, _, err := client.FindIssueBundle(context.Background(), repo(), "run-184")
+			if err == nil {
+				t.Fatal("expected ambiguous cursor to be rejected")
+			}
+		})
 	}
 }
 
