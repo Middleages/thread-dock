@@ -23,6 +23,7 @@ type RESTClient struct {
 	baseURL      string
 	restBasePath string
 	graphqlPath  string
+	publicAPI    bool
 	token        string
 	apiVersion   string
 	httpClient   *http.Client
@@ -35,8 +36,10 @@ func NewRESTClient(baseURL, token, apiVersion string, httpClient *http.Client) *
 	baseURL = strings.TrimRight(baseURL, "/")
 	baseURL = strings.TrimSuffix(baseURL, "/api/v3")
 	restBasePath, graphqlPath := "/api/v3", "/api/graphql"
+	publicAPI := false
 	if parsed, err := url.Parse(baseURL); err == nil && strings.EqualFold(parsed.Hostname(), "api.github.com") {
 		restBasePath, graphqlPath = "", "/graphql"
+		publicAPI = true
 	}
 	if apiVersion == "" {
 		apiVersion = defaultAPIVersion
@@ -44,7 +47,7 @@ func NewRESTClient(baseURL, token, apiVersion string, httpClient *http.Client) *
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &RESTClient{baseURL: baseURL, restBasePath: restBasePath, graphqlPath: graphqlPath, token: token, apiVersion: apiVersion, httpClient: httpClient}
+	return &RESTClient{baseURL: baseURL, restBasePath: restBasePath, graphqlPath: graphqlPath, publicAPI: publicAPI, token: token, apiVersion: apiVersion, httpClient: httpClient}
 }
 
 // AuthError indicates missing or invalid GHES credentials.
@@ -198,7 +201,7 @@ func (c *RESTClient) validateIssuePageURL(raw, issuePath string) (string, error)
 	if !next.IsAbs() {
 		next = base.ResolveReference(next)
 	}
-	if next.Scheme != base.Scheme || next.Host != base.Host || next.Path != issuePath || next.Fragment != "" {
+	if next.Scheme != base.Scheme || next.Host != base.Host || !c.validIssuePagePath(next.Path, issuePath) || next.Fragment != "" {
 		return "", errors.New("github issue pagination link is outside the configured GitHub API base")
 	}
 	for key, values := range next.Query() {
@@ -213,6 +216,25 @@ func (c *RESTClient) validateIssuePageURL(raw, issuePath string) (string, error)
 		}
 	}
 	return next.RequestURI(), nil
+}
+
+func (c *RESTClient) validIssuePagePath(path, issuePath string) bool {
+	if path == issuePath {
+		return true
+	}
+	if !c.publicAPI || !strings.HasPrefix(path, "/repositories/") || !strings.HasSuffix(path, "/issues") {
+		return false
+	}
+	repositoryID := strings.TrimSuffix(strings.TrimPrefix(path, "/repositories/"), "/issues")
+	if repositoryID == "" {
+		return false
+	}
+	for _, character := range repositoryID {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *RESTClient) CreateIssueBundle(ctx context.Context, repo Repository, task contract.TaskContract, marker string) (IssueBundle, error) {

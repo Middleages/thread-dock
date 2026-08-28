@@ -272,6 +272,33 @@ func TestGitHubComPaginationRejectsSensitiveSameOriginLink(t *testing.T) {
 	}
 }
 
+func TestGitHubComPaginationAcceptsRepositoryIDLink(t *testing.T) {
+	var paths []string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/repos/platform/payments-api/issues":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "Link": []string{"<https://api.github.com/repositories/123456/issues?state=all&per_page=100&page=2>; rel=\"next\""}},
+				Body:       io.NopCloser(strings.NewReader(`[{"number":1,"title":"unrelated","body":"no marker"}]`)),
+			}, nil
+		case "/repositories/123456/issues":
+			return jsonResponse(http.StatusOK, `[{"number":184,"title":"parent","body":"<!-- threaddock:run-184:role=parent:key=parent -->"}]`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{"message":"unexpected path"}`), nil
+		}
+	})
+	client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: transport})
+	bundle, found, err := client.FindIssueBundle(context.Background(), repo(), "run-184")
+	if err != nil || !found || bundle.Parent.Number != 184 {
+		t.Fatalf("bundle=%+v found=%v err=%v", bundle, found, err)
+	}
+	if got, want := strings.Join(paths, ","), "/repos/platform/payments-api/issues,/repositories/123456/issues"; got != want {
+		t.Fatalf("paths=%q want=%q", got, want)
+	}
+}
+
 func repo() Repository { return Repository{Owner: "platform", Name: "payments-api"} }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
