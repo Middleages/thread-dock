@@ -1014,6 +1014,7 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 				return ErrPendingReconcile
 			}
 		}
+		snapshot.Builder.RequestID = evidence.RequestID
 		snapshot.Builder.CommitSHA = strings.ToLower(evidence.CommitSHA)
 		snapshot.Builder.Verification = nil
 		snapshot.Builder.VerificationEvidence = nil
