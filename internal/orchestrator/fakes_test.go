@@ -172,6 +172,7 @@ type fakeHerdr struct {
 	agentSeq            int64
 	agentInfoErr        error
 	agentInfoOverride   *herdr.AgentInfo
+	useTerminalIdentity bool
 	findWorktreeExists  bool
 	promptReceiptReads  int
 	lastPromptRequestID string
@@ -252,7 +253,15 @@ func (f *fakeHerdr) GetInfo(_ context.Context, name string) (herdr.AgentInfo, er
 	if strings.HasPrefix(name, "reviewer-") {
 		workspaceID, paneID = "workspace-review-184", "pane-review-184"
 	}
-	return herdr.AgentInfo{Name: name, SessionID: "session-" + name, PaneID: paneID, WorkspaceID: workspaceID, State: herdr.AgentStateWorking, StateChangeSeq: seq}, nil
+	sessionID := "session-" + name
+	if f.useTerminalIdentity {
+		role := "builder"
+		if strings.HasPrefix(name, "reviewer-") {
+			role = "reviewer"
+		}
+		sessionID = "herdr-terminal:terminal-" + role
+	}
+	return herdr.AgentInfo{Name: name, SessionID: sessionID, PaneID: paneID, WorkspaceID: workspaceID, State: herdr.AgentStateWorking, StateChangeSeq: seq}, nil
 }
 
 func (f *fakeHerdr) ReadPromptReceipt(_ context.Context, name, requestID string) (herdr.AgentInfo, bool, error) {

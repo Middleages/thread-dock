@@ -350,6 +350,7 @@ func (c *CLI) GetInfo(ctx context.Context, name string) (AgentInfo, error) {
 				CWD       string `json:"cwd"`
 				Status    string `json:"agent_status"`
 				Seq       int64  `json:"state_change_seq"`
+				Terminal  string `json:"terminal_id"`
 				Session   struct {
 					Value string `json:"value"`
 				} `json:"agent_session"`
@@ -359,7 +360,15 @@ func (c *CLI) GetInfo(ctx context.Context, name string) (AgentInfo, error) {
 	if err := decode(result.Stdout, &response); err != nil || response.Result.Agent.Name == "" || response.Result.Agent.PaneID == "" {
 		return AgentInfo{}, safeError("agent get", result.ExitCode)
 	}
-	return AgentInfo{Name: response.Result.Agent.Name, SessionID: response.Result.Agent.Session.Value, WorkspaceID: response.Result.Agent.Workspace, PaneID: response.Result.Agent.PaneID, Path: response.Result.Agent.CWD, State: ParseAgentState(response.Result.Agent.Status), StateChangeSeq: response.Result.Agent.Seq}, nil
+	sessionID := strings.TrimSpace(response.Result.Agent.Session.Value)
+	if sessionID == "" {
+		terminalID := strings.TrimSpace(response.Result.Agent.Terminal)
+		if terminalID == "" {
+			return AgentInfo{}, safeError("agent get", result.ExitCode)
+		}
+		sessionID = "herdr-terminal:" + terminalID
+	}
+	return AgentInfo{Name: response.Result.Agent.Name, SessionID: sessionID, WorkspaceID: response.Result.Agent.Workspace, PaneID: response.Result.Agent.PaneID, Path: response.Result.Agent.CWD, State: ParseAgentState(response.Result.Agent.Status), StateChangeSeq: response.Result.Agent.Seq}, nil
 }
 
 func (c *CLI) run(ctx context.Context, operation string, args ...string) (runner.Result, error) {
