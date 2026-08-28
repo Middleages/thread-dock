@@ -284,7 +284,7 @@ start_pilot() {
     trap 'cleanup_simulation_config' EXIT
     trap 'cleanup_simulation_config; exit 130' INT
     trap 'cleanup_simulation_config; exit 143' TERM
-    jq --arg apiBase "http://127.0.0.1:1" '{ghesHost,apiBase:$apiBase,apiVersion,stateDir,herdrBinary,gitBinary,workingWait,recoveryLimit,projectId,projectStatusFieldId,projectStatusOptions}' "$CONFIG_PATH" >"$SIMULATION_CONFIG_PATH"
+    jq --arg loopback "http://127.0.0.1:1" '{ghesHost:$loopback,apiBase:$loopback,apiVersion,stateDir,herdrBinary,gitBinary,workingWait,recoveryLimit,projectId,projectStatusFieldId,projectStatusOptions}' "$CONFIG_PATH" >"$SIMULATION_CONFIG_PATH"
     chmod 600 "$SIMULATION_CONFIG_PATH"
     say "GitHub.com 등록 장애를 로컬에서 시뮬레이션합니다. 네트워크 차단이나 복구는 필요하지 않습니다."
   else

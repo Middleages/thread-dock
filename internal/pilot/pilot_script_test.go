@@ -422,7 +422,7 @@ exit 0
 	callLog := filepath.Join(temp, "agentctl.calls")
 	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s|%s|%s|%s\n' "$1" "${2:-}" "${THREADDOCK_CONFIG}" "$("$PILOT_TEST_JQ_PATH" -r '.apiBase' "$THREADDOCK_CONFIG")" >>"${PILOT_TEST_CALL_LOG}"
+printf '%s|%s|%s|%s|%s\n' "$1" "${2:-}" "${THREADDOCK_CONFIG}" "$("$PILOT_TEST_JQ_PATH" -r '.ghesHost' "$THREADDOCK_CONFIG")" "$("$PILOT_TEST_JQ_PATH" -r '.apiBase' "$THREADDOCK_CONFIG")" >>"${PILOT_TEST_CALL_LOG}"
 case "${1:-}" in
   contract) exit 0 ;;
   start)
@@ -485,9 +485,9 @@ esac
 	if !strings.HasPrefix(lines[0], "contract|") || !strings.HasPrefix(lines[1], "start|") || !strings.HasPrefix(lines[2], "resume|td-simulated-outage|") {
 		t.Fatalf("unexpected agentctl calls: %q", lines)
 	}
-	startFields := strings.SplitN(lines[1], "|", 4)
-	resumeFields := strings.SplitN(lines[2], "|", 4)
-	if len(startFields) != 4 || len(resumeFields) != 4 {
+	startFields := strings.SplitN(lines[1], "|", 5)
+	resumeFields := strings.SplitN(lines[2], "|", 5)
+	if len(startFields) != 5 || len(resumeFields) != 5 {
 		t.Fatalf("malformed agentctl calls: %q", lines)
 	}
 	startConfig := startFields[2]
@@ -495,8 +495,8 @@ esac
 	if startConfig == configPath || resumeConfig != configPath {
 		t.Fatalf("config paths start=%q resume=%q original=%q", startConfig, resumeConfig, configPath)
 	}
-	if startFields[3] != "http://127.0.0.1:1" || resumeFields[3] != "https://api.github.com" {
-		t.Fatalf("config API bases start=%q resume=%q", startFields[3], resumeFields[3])
+	if startFields[3] != "http://127.0.0.1:1" || startFields[4] != "http://127.0.0.1:1" || resumeFields[3] != "https://github.com" || resumeFields[4] != "https://api.github.com" {
+		t.Fatalf("config endpoints start=%q/%q resume=%q/%q", startFields[3], startFields[4], resumeFields[3], resumeFields[4])
 	}
 	if _, err := os.Stat(startConfig); !os.IsNotExist(err) {
 		t.Fatalf("temporary outage config still exists: %q (err=%v)", startConfig, err)
@@ -509,7 +509,7 @@ esac
 	if err := json.Unmarshal(observed, &observedConfig); err != nil {
 		t.Fatal(err)
 	}
-	if observedConfig["apiBase"] != "http://127.0.0.1:1" || observedConfig["ghesHost"] != "https://github.com" {
+	if observedConfig["apiBase"] != "http://127.0.0.1:1" || observedConfig["ghesHost"] != "http://127.0.0.1:1" {
 		t.Fatalf("unexpected observed outage config: %s", observed)
 	}
 	for _, key := range []string{"apiToken", "THREADDOCK_GH_TOKEN"} {

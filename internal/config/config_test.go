@@ -145,6 +145,27 @@ func TestParseAcceptsGitHubPublicProfileOnlyWithHTTPSAPI(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsSanitizedSimulationConfigWithoutSecrets(t *testing.T) {
+	const capturedTemporaryConfig = `{"ghesHost":"http://127.0.0.1:1","apiBase":"http://127.0.0.1:1","apiVersion":"2022-11-28","stateDir":"/tmp/thread-dock/state","herdrBinary":"herdr-custom","gitBinary":"git-custom","workingWait":"5m","recoveryLimit":7,"projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`
+
+	got, err := Parse(strings.NewReader(capturedTemporaryConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(capturedTemporaryConfig, "secret") || strings.Contains(capturedTemporaryConfig, "token") {
+		t.Fatalf("temporary config contains secret-like data: %s", capturedTemporaryConfig)
+	}
+	if got.GHESHost != "http://127.0.0.1:1" || got.APIBase != "http://127.0.0.1:1" {
+		t.Fatalf("loopback endpoints=%q/%q", got.GHESHost, got.APIBase)
+	}
+	if got.StateDir != "/tmp/thread-dock/state" || got.HerdrBinary != "herdr-custom" || got.GitBinary != "git-custom" {
+		t.Fatalf("runtime fields=%#v", got)
+	}
+	if got.ProjectID != "PVT_1" || got.ProjectStatusFieldID != "PVTSSF_1" || got.ProjectStatusOptions["Done"] != "opt-5" {
+		t.Fatalf("project fields=%#v", got)
+	}
+}
+
 func TestParseRejectsNonCanonicalGitHubPublicProfileOverHTTPS(t *testing.T) {
 	tests := []struct {
 		name     string
