@@ -218,6 +218,48 @@ func TestReadEvidenceExtractsIndentedActualEnvelopeFromOpenCodeColumns(t *testin
 	}
 }
 
+func TestReadEvidenceExtractsLastDynamicSuffixEnvelope(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": readFixture(t, "testdata/v0.8.2/recent-output-opencode-dynamic-suffix.txt"),
+	})
+
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if got.RequestID != "run-32:latest" || got.CommitSHA != "abcdef0123456789abcdef0123456789abcdef01" {
+		t.Fatalf("evidence=%#v, want latest actual envelope", got)
+	}
+	if len(got.Verification) != 1 || got.Verification[0].Command != "test -f pilot-result.txt" {
+		t.Fatalf("verification=%#v, want latest singleton check", got.Verification)
+	}
+}
+
+func TestReadEvidenceRejectsDynamicMarkerSuffixWithoutExactSidebarBoundary(t *testing.T) {
+	valid := `{"requestId":"run-32:negative","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	const boundary = 40
+	markerLine := func(marker, suffix string, offset int) string {
+		left := "    " + marker
+		target := boundary + offset
+		return left + strings.Repeat(" ", target-len(left)) + suffix
+	}
+	cases := map[string]string{
+		"no boundary":       "    " + EvidenceBeginMarker + "\n    " + valid + "\n" + markerLine(EvidenceEndMarker, "6% used", 0) + "\n",
+		"misaligned suffix": strings.Repeat(" ", boundary) + "Context\n" + "    " + EvidenceBeginMarker + "\n    " + valid + "\n" + markerLine(EvidenceEndMarker, "6% used", 1) + "\n",
+		"prompt echo":       strings.Repeat(" ", boundary) + "Context\n  ┃  " + EvidenceBeginMarker + "\n  ┃  " + valid + "\n  ┃  " + markerLine(EvidenceEndMarker, "6% used", 0) + "\n",
+	}
+	for name, output := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted dynamic marker suffix without an exact actual-pane boundary")
+			}
+		})
+	}
+}
+
 func TestReadEvidenceRejectsPromptEchoOnlyEnvelope(t *testing.T) {
 	output := "  ┃  " + EvidenceBeginMarker + "\n" +
 		"  ┃  {\"requestId\":\"prompt-only\",\"commitSha\":\"0123456789abcdef0123456789abcdef01234567\",\"verification\":[]}" + "\n" +

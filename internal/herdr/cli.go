@@ -385,7 +385,11 @@ func actualEvidenceMarker(line, marker string, auxiliaryColumn int) bool {
 	}
 	remainder := value[len(marker):]
 	trimmed := strings.TrimLeft(remainder, " \t")
-	return len(remainder)-len(trimmed) >= minimumAuxiliaryGap && isOpenCodeAuxiliaryText(trimmed)
+	leading := len(remainder) - len(trimmed)
+	if leading < minimumAuxiliaryGap || auxiliaryColumn == 0 {
+		return false
+	}
+	return first+len(marker)+leading == auxiliaryColumn
 }
 
 func cleanEvidenceLine(line string, auxiliaryColumn int) (string, bool) {
