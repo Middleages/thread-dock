@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -218,7 +219,72 @@ func TestErrorNeverContainsToken(t *testing.T) {
 	}
 }
 
+func TestGitHubComUsesPublicRESTAndGraphQLEndpoints(t *testing.T) {
+	var paths []string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/repos/platform/payments-api/issues" {
+			return jsonResponse(http.StatusOK, `[ {"number":1,"title":"parent","body":"<!-- threaddock:run-184:role=parent:key=parent -->"} ]`), nil
+		}
+		if r.URL.Path == "/graphql" {
+			return jsonResponse(http.StatusOK, `{"data":{"addProjectV2ItemById":{"item":{"id":"ITEM_REVIEW"}}}}`), nil
+		}
+		return jsonResponse(http.StatusNotFound, `{"message":"unexpected path"}`), nil
+	})
+	client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: transport})
+
+	if _, _, err := client.FindIssueBundle(context.Background(), repo(), "run-184"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1", StatusOptions: map[string]string{"Review": "O_REVIEW"}}, "I1", "Review"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(paths, ","), "/repos/platform/payments-api/issues,/graphql,/graphql"; got != want {
+		t.Fatalf("paths=%q want=%q", got, want)
+	}
+}
+
+func TestGHESAPIv3InputKeepsEnterpriseEndpoints(t *testing.T) {
+	server, _ := fakeGHES(t)
+	defer server.Close()
+	client := NewRESTClient(server.URL+"/api/v3/", "token", "2022-11-28", server.Client())
+	if _, _, err := client.FindIssueBundle(context.Background(), repo(), "run-184"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGitHubComPaginationRejectsSensitiveSameOriginLink(t *testing.T) {
+	const token = "secret-token"
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/repos/platform/payments-api/issues" {
+			return jsonResponse(http.StatusNotFound, `{"message":"unexpected path"}`), nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Link": []string{"<https://api.github.com/repos/platform/payments-api/issues?page=2&access_token=" + token + ">; rel=\"next\""}},
+			Body:       io.NopCloser(strings.NewReader(`[{"number":1,"title":"unrelated","body":"no marker"}]`)),
+		}, nil
+	})
+	client := NewRESTClient("https://api.github.com", token, "2022-11-28", &http.Client{Transport: transport})
+	_, _, err := client.FindIssueBundle(context.Background(), repo(), "run-184")
+	if err == nil || strings.Contains(err.Error(), token) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func repo() Repository { return Repository{Owner: "platform", Name: "payments-api"} }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func jsonResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
 
 type callCounts struct {
 	createIssue int
