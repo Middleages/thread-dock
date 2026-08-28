@@ -34,22 +34,42 @@ func TestCreateIssueBundleIsIdempotent(t *testing.T) {
 }
 
 func TestRESTClientRejectsPlaintextGitHubPublicAPIBeforeRequest(t *testing.T) {
-	var requests int
-	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		requests++
-		if got := req.Header.Get("Authorization"); got != "" {
-			t.Fatalf("authorization header set before rejection: %q", got)
-		}
-		return jsonResponse(http.StatusOK, `{}`), nil
-	})
-	client := NewRESTClient("http://api.github.com", "plain-text-secret", "2022-11-28", &http.Client{Transport: transport})
+	for _, baseURL := range []string{"http://api.github.com", "http://API.GITHUB.COM", "http://api.github.com."} {
+		t.Run(baseURL, func(t *testing.T) {
+			var requests int
+			transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requests++
+				if got := req.Header.Get("Authorization"); got != "" {
+					t.Fatalf("authorization header set before rejection: %q", got)
+				}
+				return jsonResponse(http.StatusOK, `{}`), nil
+			})
+			client := NewRESTClient(baseURL, "plain-text-secret", "2022-11-28", &http.Client{Transport: transport})
 
-	_, _, err := client.FindIssueBundle(context.Background(), repo(), "run-plaintext")
-	if err == nil || !strings.Contains(err.Error(), "HTTPS") {
-		t.Fatalf("err=%v, want HTTPS rejection", err)
+			_, _, err := client.FindIssueBundle(context.Background(), repo(), "run-plaintext")
+			if err == nil || !strings.Contains(err.Error(), "HTTPS") {
+				t.Fatalf("err=%v, want HTTPS rejection", err)
+			}
+			if requests != 0 {
+				t.Fatalf("requests=%d, want 0", requests)
+			}
+		})
 	}
-	if requests != 0 {
-		t.Fatalf("requests=%d, want 0", requests)
+}
+
+func TestRESTClientTreatsHTTPSDNSCanonicalPublicAPIAsPublic(t *testing.T) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/repos/platform/payments-api/issues" {
+			t.Fatalf("path=%q, want public API path", req.URL.Path)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("authorization=%q", got)
+		}
+		return jsonResponse(http.StatusOK, `[]`), nil
+	})
+	client := NewRESTClient("https://API.GITHUB.COM.", "token", "2022-11-28", &http.Client{Transport: transport})
+	if _, _, err := client.FindIssueBundle(context.Background(), repo(), "run-public-canonical"); err != nil {
+		t.Fatal(err)
 	}
 }
 

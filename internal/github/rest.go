@@ -39,7 +39,7 @@ func NewRESTClient(baseURL, token, apiVersion string, httpClient *http.Client) *
 	restBasePath, graphqlPath := "/api/v3", "/api/graphql"
 	publicAPI := false
 	var initErr error
-	if parsed, err := url.Parse(baseURL); err == nil && strings.EqualFold(parsed.Hostname(), "api.github.com") {
+	if parsed, err := url.Parse(baseURL); err == nil && isPublicHostname(parsed.Hostname(), "api.github.com") {
 		if parsed.Scheme != "https" {
 			initErr = errors.New("github public API requires HTTPS")
 		}
@@ -53,6 +53,10 @@ func NewRESTClient(baseURL, token, apiVersion string, httpClient *http.Client) *
 		httpClient = http.DefaultClient
 	}
 	return &RESTClient{baseURL: baseURL, restBasePath: restBasePath, graphqlPath: graphqlPath, publicAPI: publicAPI, initErr: initErr, token: token, apiVersion: apiVersion, httpClient: httpClient}
+}
+
+func isPublicHostname(hostname, expected string) bool {
+	return strings.EqualFold(strings.TrimSuffix(hostname, "."), expected)
 }
 
 // AuthError indicates missing or invalid GHES credentials.

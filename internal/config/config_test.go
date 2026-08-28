@@ -120,6 +120,10 @@ func TestParseRejectsKnownGitHubPublicEndpointsOverHTTP(t *testing.T) {
 	}{
 		{name: "public api base", ghesHost: "https://github.example.test", apiBase: "http://api.github.com", field: "apiBase"},
 		{name: "public github host", ghesHost: "http://github.com", apiBase: "https://github.example.test/api/v3", field: "ghesHost"},
+		{name: "uppercase public api base", ghesHost: "https://github.example.test", apiBase: "http://API.GITHUB.COM", field: "apiBase"},
+		{name: "trailing dot public api base", ghesHost: "https://github.example.test", apiBase: "http://api.github.com.", field: "apiBase"},
+		{name: "uppercase public github host", ghesHost: "http://GITHUB.COM", apiBase: "https://github.example.test/api/v3", field: "ghesHost"},
+		{name: "trailing dot public github host", ghesHost: "http://github.com.", apiBase: "https://github.example.test/api/v3", field: "ghesHost"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -137,6 +141,16 @@ func TestParseAcceptsGitHubPublicProfileOnlyWithHTTPSAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.GHESHost != "https://github.com" || got.APIBase != "https://api.github.com" {
+		t.Fatalf("config=%#v", got)
+	}
+}
+
+func TestParseAcceptsDNSCanonicalGitHubPublicProfileOverHTTPS(t *testing.T) {
+	got, err := Parse(strings.NewReader(testConfigJSON("https://github.com.", "https://api.github.com.")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GHESHost != "https://github.com." || got.APIBase != "https://api.github.com." {
 		t.Fatalf("config=%#v", got)
 	}
 }
