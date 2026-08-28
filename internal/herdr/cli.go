@@ -3,9 +3,7 @@ package herdr
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"strings"
 
 	"thread-dock/internal/runner"
 )
@@ -26,7 +24,7 @@ func (c *CLI) CreateWorktree(ctx context.Context, req CreateWorktreeRequest) (Wo
 	if cwd == "" {
 		cwd = req.Repo
 	}
-	result, err := c.run(ctx, "worktree", "create", "--cwd", cwd, "--branch", req.Branch, "--base", req.Base, "--label", req.Label, "--no-focus")
+	result, err := c.run(ctx, "worktree create", "worktree", "create", "--cwd", cwd, "--branch", req.Branch, "--base", req.Base, "--label", req.Label, "--no-focus")
 	if err != nil {
 		return Worktree{}, err
 	}
@@ -42,47 +40,51 @@ func (c *CLI) CreateWorktree(ctx context.Context, req CreateWorktreeRequest) (Wo
 		} `json:"result"`
 	}
 	if err := decode(result.Stdout, &response); err != nil {
-		return Worktree{}, fmt.Errorf("parse worktree create response: %w", err)
+		return Worktree{}, safeError("worktree create", result.ExitCode)
 	}
 	workspaceID := response.Result.Workspace.WorkspaceID
 	paneID := response.Result.RootPane.PaneID
 	if workspaceID == "" || paneID == "" {
-		return Worktree{}, errors.New("worktree create response missing workspace_id or pane_id")
+		return Worktree{}, safeError("worktree create", result.ExitCode)
 	}
-	panes, err := c.run(ctx, "pane", "list", "--workspace", workspaceID)
+	if response.Result.RootPane.WorkspaceID != workspaceID {
+		return Worktree{}, safeError("worktree create", result.ExitCode)
+	}
+	panes, err := c.run(ctx, "pane list", "pane", "list", "--workspace", workspaceID)
 	if err != nil {
 		return Worktree{}, err
 	}
 	var paneResponse struct {
 		Result struct {
 			Panes []struct {
-				PaneID string `json:"pane_id"`
+				PaneID      string `json:"pane_id"`
+				WorkspaceID string `json:"workspace_id"`
 			} `json:"panes"`
 		} `json:"result"`
 	}
 	if err := decode(panes.Stdout, &paneResponse); err != nil {
-		return Worktree{}, fmt.Errorf("parse pane list response: %w", err)
+		return Worktree{}, safeError("pane list", panes.ExitCode)
 	}
 	for _, pane := range paneResponse.Result.Panes {
-		if pane.PaneID == paneID {
+		if pane.PaneID == paneID && pane.WorkspaceID == workspaceID {
 			return Worktree{WorkspaceID: workspaceID, PaneID: paneID}, nil
 		}
 	}
-	return Worktree{}, fmt.Errorf("created pane %q not found in workspace %q", paneID, workspaceID)
+	return Worktree{}, safeError("pane list", panes.ExitCode)
 }
 
 func (c *CLI) StartAgent(ctx context.Context, req StartAgentRequest) error {
-	_, err := c.run(ctx, "agent", "start", req.Name, "--kind", req.Kind, "--pane", req.PaneID)
+	_, err := c.run(ctx, "agent start", "agent", "start", req.Name, "--kind", "opencode", "--pane", req.PaneID)
 	return err
 }
 
 func (c *CLI) Prompt(ctx context.Context, name, packet string) error {
-	_, err := c.run(ctx, "agent", "prompt", name, packet, "--wait", "--timeout", promptTimeout)
+	_, err := c.run(ctx, "agent prompt", "agent", "prompt", name, packet, "--wait", "--timeout", promptTimeout)
 	return err
 }
 
 func (c *CLI) Get(ctx context.Context, name string) (AgentState, error) {
-	result, err := c.run(ctx, "agent", "get", name)
+	result, err := c.run(ctx, "agent get", "agent", "get", name)
 	if err != nil {
 		return AgentStateUnknown, err
 	}
@@ -94,40 +96,32 @@ func (c *CLI) Get(ctx context.Context, name string) (AgentState, error) {
 		} `json:"result"`
 	}
 	if err := decode(result.Stdout, &response); err != nil {
-		return AgentStateUnknown, fmt.Errorf("parse agent get response: %w", err)
+		return AgentStateUnknown, safeError("agent get", result.ExitCode)
 	}
 	if response.Result.Agent.Status == "" {
-		return AgentStateUnknown, errors.New("agent get response missing agent_status")
+		return AgentStateUnknown, safeError("agent get", result.ExitCode)
 	}
 	return ParseAgentState(response.Result.Agent.Status), nil
 }
 
 func (c *CLI) ReadRecent(ctx context.Context, name string) (string, error) {
-	result, err := c.run(ctx, "agent", "read", name, "--source", "recent-unwrapped", "--lines", "120")
+	result, err := c.run(ctx, "agent read", "agent", "read", name, "--source", "recent-unwrapped", "--lines", "120")
 	if err != nil {
 		return "", err
 	}
-	var response struct {
-		Result struct {
-			Output string `json:"output"`
-		} `json:"result"`
-	}
-	if err := decode(result.Stdout, &response); err != nil {
-		return "", fmt.Errorf("parse agent read response: %w", err)
-	}
-	return response.Result.Output, nil
+	return result.Stdout, nil
 }
 
-func (c *CLI) run(ctx context.Context, args ...string) (runner.Result, error) {
+func (c *CLI) run(ctx context.Context, operation string, args ...string) (runner.Result, error) {
 	result, err := c.runner.Run(ctx, "", c.executable, args...)
 	if err != nil {
-		message := strings.TrimSpace(result.Stderr)
-		if message == "" {
-			message = err.Error()
-		}
-		return result, fmt.Errorf("herdr %s: %s", strings.Join(args, " "), message)
+		return result, safeError(operation, result.ExitCode)
 	}
 	return result, nil
+}
+
+func safeError(operation string, exitCode int) error {
+	return fmt.Errorf("herdr %s failed (exit code %d)", operation, exitCode)
 }
 
 func decode(output string, target any) error {

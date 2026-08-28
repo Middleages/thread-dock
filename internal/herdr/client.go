@@ -26,7 +26,6 @@ type Worktree struct {
 
 type StartAgentRequest struct {
 	Name   string
-	Kind   string
 	PaneID string
 }
 

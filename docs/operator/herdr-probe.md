@@ -1,9 +1,8 @@
 # Herdr v0.8.2 probe
 
-Probe date: 2026-08-28 (Asia/Seoul). Binary: `/home/appuser/.local/bin/herdr`.
-All commands completed with exit code 0; measured command duration was `0.00 s`
-for each command using `/usr/bin/time -f 'duration=%e s'`. No mutating Herdr
-command was run during this probe.
+Probe date: 2026-08-28 (Asia/Seoul). Binary: `herdr` (v0.8.2).
+The authoritative fresh read-only probe run completed in about `0.1 s`; every
+command exited 0. No mutating Herdr command was run during that probe.
 
 ## Version and command contracts
 
@@ -79,24 +78,34 @@ output.
 
 ## Read-only workspace evidence
 
-Command: `herdr pane list --workspace w5` (exit 0, `0.00 s`). This is the
-actual response from the Builder Luna worktree; the live workspace, pane,
-terminal, session and path values are retained here as probe evidence.
+Command: `herdr pane list --workspace <workspace-id>` (exit 0). This is the
+actual response shape from the Builder Luna worktree. Live identifiers, title
+and path values are redacted below.
 
 ```json
-{"id":"cli:pane:list","result":{"panes":[{"agent":"codex","agent_session":{"agent":"codex","kind":"id","source":"herdr:codex","value":"01a045b9-9f18-7ac0-9009-5aa5a852d357"},"agent_status":"working","cwd":"/home/appuser/.herdr/worktrees/dev_system/agent-6-herdr-adapter","focused":false,"foreground_cwd":"/home/appuser/.herdr/worktrees/dev_system/agent-6-herdr-adapter","pane_id":"w5:p1","revision":2,"scroll":{"max_offset_from_bottom":43,"offset_from_bottom":0,"viewport_rows":50},"tab_id":"w5:t1","terminal_id":"term_65a105c7932837","terminal_title":"⠼ agent-6-herdr-adapter","terminal_title_stripped":"agent-6-herdr-adapter","workspace_id":"w5"}],"type":"pane_list"}}
+{"id":"cli:pane:list","result":{"panes":[{"agent":"codex","agent_session":{"agent":"codex","kind":"id","source":"herdr:codex","value":"session-redacted"},"agent_status":"working","cwd":"/redacted/worktree","focused":false,"foreground_cwd":"/redacted/worktree","pane_id":"pane-redacted","revision":2,"scroll":{"max_offset_from_bottom":43,"offset_from_bottom":0,"viewport_rows":50},"tab_id":"tab-redacted","terminal_id":"terminal-redacted","terminal_title":"redacted-title","terminal_title_stripped":"redacted-title","workspace_id":"workspace-redacted"}],"type":"pane_list"}}
 ```
 
-Command: `herdr agent get builder-6` (exit 0, `0.00 s`).
+Command: `herdr agent get <agent-name>` (exit 0).
 
 ```json
-{"id":"cli:agent:get","result":{"agent":{"agent":"codex","agent_session":{"agent":"codex","kind":"id","source":"herdr:codex","value":"01a045b9-9f18-7ac0-9009-5aa5a852d357"},"agent_status":"working","cwd":"/home/appuser/.herdr/worktrees/dev_system/agent-6-herdr-adapter","focused":false,"foreground_cwd":"/home/appuser/.herdr/worktrees/dev_system/agent-6-herdr-adapter","interactive_ready":true,"name":"builder-6","pane_id":"w5:p1","revision":2,"state_change_seq":110,"tab_id":"w5:t1","terminal_id":"term_65a105c7932837","terminal_title":"⠴ agent-6-herdr-adapter","terminal_title_stripped":"agent-6-herdr-adapter","workspace_id":"w5"},"type":"agent_info"}}
+{"id":"cli:agent:get","result":{"agent":{"agent":"codex","agent_session":{"agent":"codex","kind":"id","source":"herdr:codex","value":"session-redacted"},"agent_status":"working","cwd":"/redacted/worktree","focused":false,"foreground_cwd":"/redacted/worktree","interactive_ready":true,"name":"agent-redacted","pane_id":"pane-redacted","revision":2,"state_change_seq":110,"tab_id":"tab-redacted","terminal_id":"terminal-redacted","terminal_title":"redacted-title","terminal_title_stripped":"redacted-title","workspace_id":"workspace-redacted"},"type":"agent_info"}}
 ```
 
-The successful create fixture in `internal/herdr/testdata/v0.8.2/` is the
-provided exact v0.8.2 `worktree-create` response. The read-only fixtures retain
-the same response envelope and use only stable fixture values where tests need
-portable examples.
+## Worktree-create provenance
+
+Source command: `herdr worktree create --cwd <redacted-path> --branch
+agent/6-herdr-adapter --base agent/2-integration --label issue-6-herdr-adapter
+--no-focus`. It exited 0, was controller-authorized, and completed in about
+`0.1 s`. The response was supplied as the exact successful v0.8.2 response from
+this Worktree and is preserved in the fixture with its wire field names and
+relationships.
+
+Redaction procedure: replace absolute paths with `/redacted/...`, replace
+workspace/pane/tab/session/terminal IDs with relationship-preserving labels,
+and replace terminal titles and agent names only where they identify the live
+session. Keep booleans, numbers, field names and nesting unchanged. The raw
+output fixture retains only representative line/text shape and no live output.
 
 ## Adapter contract and verification
 
