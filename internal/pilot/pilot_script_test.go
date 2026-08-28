@@ -1,12 +1,15 @@
 package pilot
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestPilotCheckPrintsKoreanPassSummaryAndWritesEvidence(t *testing.T) {
@@ -171,7 +174,7 @@ func TestPilotSimulateOutageUsesTemporaryConfigOnlyForStart(t *testing.T) {
 	temp := t.TempDir()
 	stateDir := filepath.Join(temp, "state")
 	configPath := filepath.Join(temp, "config.json")
-	writeFile(t, configPath, `{"ghesHost":"https://github.example.test","apiBase":"https://github.example.test/api/v3","stateDir":"`+stateDir+`"}`, 0o600)
+	writeFile(t, configPath, `{"ghesHost":"https://github.example.test","apiBase":"https://github.example.test/api/v3","stateDir":"`+stateDir+`","apiToken":"config-secret","THREADDOCK_GH_TOKEN":"pilot-test-secret"}`, 0o600)
 
 	fakeBin := filepath.Join(temp, "bin")
 	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
@@ -206,6 +209,11 @@ case "${1:-}" in
   start)
     run_id='td-simulated-outage'
     printf 'diagnostic token=%s\n' "$THREADDOCK_GH_TOKEN" >&2
+    cp "$THREADDOCK_CONFIG" "$PILOT_TEST_OBSERVED_CONFIG"
+    if [[ "${PILOT_TEST_BLOCK_START:-false}" == true ]]; then
+      printf '%s\n' ready >"$PILOT_TEST_START_READY"
+      while [[ ! -f "$PILOT_TEST_START_RELEASE" ]]; do sleep 0.05; done
+    fi
     state_dir="$(/usr/bin/jq -r '.stateDir' "$THREADDOCK_CONFIG")"
     mkdir -p "$state_dir/runs/$run_id"
     cat >"$state_dir/runs/$run_id/run.json" <<'JSON'
@@ -233,6 +241,7 @@ esac
 		"THREADDOCK_CONFIG="+configPath,
 		"THREADDOCK_GH_TOKEN=pilot-test-secret",
 		"PILOT_TEST_CALL_LOG="+callLog,
+		"PILOT_TEST_OBSERVED_CONFIG="+filepath.Join(temp, "observed-config.json"),
 		"PILOT_TEST_REPO_ROOT="+repoRoot,
 	)
 	output, err := command.CombinedOutput()
@@ -267,12 +276,133 @@ esac
 	if _, err := os.Stat(startConfig); !os.IsNotExist(err) {
 		t.Fatalf("temporary outage config still exists: %q (err=%v)", startConfig, err)
 	}
-	startError, err := os.ReadFile(filepath.Join(stateDir, "pilot", "start.err"))
+	observed, err := os.ReadFile(filepath.Join(temp, "observed-config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(output), "pilot-test-secret") || strings.Contains(string(calls), "pilot-test-secret") || strings.Contains(string(startError), "pilot-test-secret") {
+	var observedConfig map[string]any
+	if err := json.Unmarshal(observed, &observedConfig); err != nil {
+		t.Fatal(err)
+	}
+	if observedConfig["apiBase"] != "http://127.0.0.1:1" || observedConfig["ghesHost"] != "https://github.example.test" {
+		t.Fatalf("unexpected observed outage config: %s", observed)
+	}
+	for _, key := range []string{"apiToken", "THREADDOCK_GH_TOKEN"} {
+		if _, ok := observedConfig[key]; ok {
+			t.Fatalf("secret-like config key persisted in outage config: %q", key)
+		}
+	}
+	for _, pattern := range []string{filepath.Join(stateDir, "pilot", "start.out*"), filepath.Join(stateDir, "pilot", "start.err*")} {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) != 0 {
+			t.Fatalf("raw start artifacts remain: %v", matches)
+		}
+	}
+	if strings.Contains(string(output), "pilot-test-secret") || strings.Contains(string(calls), "pilot-test-secret") || strings.Contains(string(observed), "pilot-test-secret") {
 		t.Fatalf("token leaked in output or call log:\n%s", output)
+	}
+}
+
+func TestPilotSimulateOutageCleansArtifactsOnInterrupt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	configPath := filepath.Join(temp, "config.json")
+	writeFile(t, configPath, `{"ghesHost":"https://github.example.test","apiBase":"https://github.example.test/api/v3","stateDir":"`+stateDir+`"}`, 0o600)
+	readyPath := filepath.Join(temp, "start.ready")
+	releasePath := filepath.Join(temp, "start.release")
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "jq"), `#!/usr/bin/env bash
+exec /usr/bin/jq "$@"
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "git"), `#!/usr/bin/env bash
+case "$*" in
+  "rev-parse --show-toplevel") printf '%s\n' "${PILOT_TEST_REPO_ROOT}" ;;
+  "rev-parse HEAD") printf '%s\n' '0123456789abcdef0123456789abcdef01234567' ;;
+  "status --short") exit 0 ;;
+  *) exit 9 ;;
+esac
+`)
+	for _, name := range []string{"herdr", "opencode", "gh"} {
+		writeExecutable(t, filepath.Join(fakeBin, name), "#!/usr/bin/env bash\nexit 0\n")
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  contract) exit 0 ;;
+  start)
+    printf '%s\n' ready >"${PILOT_TEST_START_READY}"
+    while [[ ! -f "${PILOT_TEST_START_RELEASE}" ]]; do sleep 0.05; done
+    printf '%s\n' td-interrupted
+    exit 1
+    ;;
+  *) exit 0 ;;
+esac
+`)
+
+	command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--simulate-outage", "PDX", "pilot-product")
+	command.Dir = repoRoot
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(),
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+		"THREADDOCK_CONFIG="+configPath,
+		"THREADDOCK_GH_TOKEN=pilot-test-secret",
+		"PILOT_TEST_REPO_ROOT="+repoRoot,
+		"PILOT_TEST_START_READY="+readyPath,
+		"PILOT_TEST_START_RELEASE="+releasePath,
+	)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("agentctl start did not begin")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := syscall.Kill(-command.Process.Pid, syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(releasePath, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("simulated outage process did not stop after interrupt")
+	}
+
+	for _, pattern := range []string{
+		filepath.Join(stateDir, "pilot", "simulate-config*"),
+		filepath.Join(stateDir, "pilot", "start.out*"),
+		filepath.Join(stateDir, "pilot", "start.err*"),
+	} {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) != 0 {
+			t.Fatalf("pilot artifacts remain after interrupt: %v", matches)
+		}
 	}
 }
 
