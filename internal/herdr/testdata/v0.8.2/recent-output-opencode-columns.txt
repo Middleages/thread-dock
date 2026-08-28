@@ -1,0 +1,14 @@
+  ┃  THREADDOCK_EVIDENCE_BEGIN                                                        Getting started
+  ┃  {"requestId":"prompt-echo","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"echo prompt","outcome":"passed","duration":"1ms"}]}  Connect provider
+  ┃  THREADDOCK_EVIDENCE_END                                                         /connect
+
+                                                                                   Context
+      THREADDOCK_EVIDENCE_BEGIN                                                   Context
+      {"requestId":"run-28:builder-prompt","commitSha":"abcdef0123456789abcdef0123456789abcdef01","verification":{        Context
+        "command":"test -f pilot-result.txt","outcome":"passed","duration":"1ms"}}        LSP
+                                                                                   LSPs are disabled
+      THREADDOCK_EVIDENCE_END                                                    Build · OpenCode
+
+  ┃  THREADDOCK_EVIDENCE_BEGIN                                                        prompt-only marker
+  ┃  {"requestId":"prompt-last","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[]}  prompt echo
+  ┃  THREADDOCK_EVIDENCE_END                                                         prompt-only marker

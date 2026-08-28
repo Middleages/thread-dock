@@ -284,36 +284,241 @@ func (c *CLI) ReadEvidence(ctx context.Context, name string) (Evidence, error) {
 }
 
 func lastEvidencePayload(recent string) (string, error) {
+	lines := strings.Split(recent, "\n")
+	auxiliaryColumn := inferAuxiliaryColumn(lines)
 	var payloads []string
 	inEnvelope := false
-	start := 0
-	offset := 0
-	for _, line := range strings.SplitAfter(recent, "\n") {
-		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		switch text {
-		case THREADDOCK_EVIDENCE_BEGIN:
+	var payloadLines []string
+	rawPayloadBytes := 0
+	for _, line := range lines {
+		text := strings.TrimSuffix(line, "\r")
+		if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_BEGIN, auxiliaryColumn) {
 			if inEnvelope {
 				return "", errors.New("herdr evidence has an incomplete envelope")
 			}
 			inEnvelope = true
-			start = offset + len(line)
-		case THREADDOCK_EVIDENCE_END:
+			payloadLines = nil
+			rawPayloadBytes = 0
+			continue
+		}
+		if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_END, auxiliaryColumn) {
 			if !inEnvelope {
 				return "", errors.New("herdr evidence has an unmatched envelope marker")
 			}
-			payload := recent[start:offset]
-			if len(payload) > MaxEvidencePayloadBytes {
+			payload := strings.Join(payloadLines, "\n")
+			if rawPayloadBytes > MaxEvidencePayloadBytes || len(payload) > MaxEvidencePayloadBytes {
 				return "", errors.New("herdr evidence payload is oversized")
 			}
 			payloads = append(payloads, payload)
 			inEnvelope = false
+			payloadLines = nil
+			continue
 		}
-		offset += len(line)
+		if inEnvelope {
+			rawPayloadBytes += len(text) + 1
+			if rawPayloadBytes > MaxEvidencePayloadBytes {
+				return "", errors.New("herdr evidence payload is oversized")
+			}
+			if clean, keep := cleanEvidenceLine(text, auxiliaryColumn); keep {
+				payloadLines = append(payloadLines, clean)
+			}
+		}
 	}
 	if inEnvelope || len(payloads) == 0 {
 		return "", errors.New("herdr evidence has no complete envelope")
 	}
-	return strings.TrimSpace(payloads[len(payloads)-1]), nil
+	return extractCompleteEvidenceObject(payloads[len(payloads)-1])
+}
+
+const (
+	minimumAuxiliaryColumn = 32
+	minimumAuxiliaryGap    = 8
+)
+
+// inferAuxiliaryColumn discovers the right-hand OpenCode pane from an
+// unmistakable sidebar-only UI line. In particular, it never derives a
+// boundary from JSON payload content: doing so would let payload whitespace
+// cause left-pane trailing data to be discarded.
+func inferAuxiliaryColumn(lines []string) int {
+	column := 0
+	inEnvelope := false
+	for _, line := range lines {
+		if isPromptEchoLine(line) {
+			continue
+		}
+		first := firstNonSpace(line)
+		if first < 0 {
+			continue
+		}
+		if actualEvidenceMarker(line, THREADDOCK_EVIDENCE_BEGIN, 0) {
+			inEnvelope = true
+			continue
+		}
+		if actualEvidenceMarker(line, THREADDOCK_EVIDENCE_END, 0) {
+			inEnvelope = false
+			continue
+		}
+		if inEnvelope {
+			continue
+		}
+		if first < minimumAuxiliaryColumn || !isOpenCodeAuxiliaryText(line[first:]) {
+			continue
+		}
+		if column == 0 || first < column {
+			column = first
+		}
+	}
+	return column
+}
+
+func actualEvidenceMarker(line, marker string, auxiliaryColumn int) bool {
+	first := firstNonSpace(line)
+	if first < 0 || isPromptEchoLine(line) || (auxiliaryColumn > 0 && first >= auxiliaryColumn) {
+		return false
+	}
+	value := line[first:]
+	if value == marker || (strings.HasPrefix(value, marker) && strings.TrimSpace(value[len(marker):]) == "") {
+		return true
+	}
+	if !strings.HasPrefix(value, marker) {
+		return false
+	}
+	remainder := value[len(marker):]
+	trimmed := strings.TrimLeft(remainder, " \t")
+	return len(remainder)-len(trimmed) >= minimumAuxiliaryGap && isOpenCodeAuxiliaryText(trimmed)
+}
+
+func cleanEvidenceLine(line string, auxiliaryColumn int) (string, bool) {
+	first := firstNonSpace(line)
+	if first < 0 {
+		return "", false
+	}
+	if auxiliaryColumn > 0 && first >= auxiliaryColumn && isOpenCodeAuxiliaryText(line[first:]) {
+		return "", false
+	}
+	if prefix, suffix, ok := wideSuffix(line); ok {
+		if auxiliaryColumn > 0 && suffix >= auxiliaryColumn && isOpenCodeAuxiliaryText(line[suffix:]) {
+			line = prefix
+		}
+	}
+	if strings.TrimSpace(line) == "" {
+		return "", false
+	}
+	return line, true
+}
+
+// isOpenCodeAuxiliaryText deliberately recognizes stable UI labels rather
+// than arbitrary right-column content. Dynamic or unknown text is retained so
+// strict JSON decoding can reject it when it is actually left-pane data.
+func isOpenCodeAuxiliaryText(value string) bool {
+	value = strings.TrimSpace(value)
+	for _, prefix := range []string{
+		"Context",
+		"LSP",
+		"LSPs are disabled",
+		"Getting started",
+		"Connect provider",
+		"OpenCode includes",
+		"Connect from",
+		"Build ·",
+	} {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPromptEchoLine(line string) bool {
+	first := firstNonSpace(line)
+	return first >= 0 && strings.HasPrefix(line[first:], "┃")
+}
+
+func firstNonSpace(value string) int {
+	for i := 0; i < len(value); i++ {
+		if value[i] != ' ' && value[i] != '\t' {
+			return i
+		}
+	}
+	return -1
+}
+
+// wideSuffix finds a non-JSON-string suffix separated by a wide whitespace
+// run. Tracking JSON strings prevents spaces inside a quoted command/value
+// from being mistaken for the auxiliary pane boundary.
+func wideSuffix(line string) (prefix string, suffix int, ok bool) {
+	inString := false
+	escaped := false
+	for i := 0; i < len(line); i++ {
+		char := line[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		if char == '"' {
+			inString = true
+			continue
+		}
+		if char != ' ' && char != '\t' {
+			continue
+		}
+		start := i
+		for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+			i++
+		}
+		if i-start >= minimumAuxiliaryGap && firstNonSpace(line[:start]) >= 0 && i < len(line) && line[i] != '\r' {
+			return line[:start], i, true
+		}
+		i--
+	}
+	return line, 0, false
+}
+
+func extractCompleteEvidenceObject(payload string) (string, error) {
+	payload = strings.TrimSpace(payload)
+	if payload == "" || payload[0] != '{' {
+		return "", errors.New("herdr evidence is not structured JSON")
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := 0; i < len(payload); i++ {
+		char := payload[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth < 0 {
+				return "", errors.New("herdr evidence is not structured JSON")
+			}
+			if depth == 0 {
+				if strings.TrimSpace(payload[i+1:]) != "" {
+					return "", errors.New("herdr evidence has trailing data")
+				}
+				return payload[:i+1], nil
+			}
+		}
+	}
+	return "", errors.New("herdr evidence is not structured JSON")
 }
 
 func validEvidenceSHA(value string) bool {

@@ -147,3 +147,10 @@ The outer Evidence object and each verification object remain strict (unknown
 fields, null/scalar values, malformed objects and empty arrays are rejected),
 and orchestrator validation still requires the exact task command count and
 matching passed checks with valid durations.
+
+OpenCode's multi-column `recent-unwrapped` output may indent actual response
+markers and append a right-hand auxiliary panel after a wide separator. The
+adapter infers that separator from the captured output and removes only the
+right column; lines prefixed with `┃` are prompt echoes and are never treated
+as response markers. Left-pane trailing text, nested or unmatched markers, and
+incomplete JSON remain invalid evidence.
