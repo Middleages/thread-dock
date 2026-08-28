@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 
+# Never allow an inherited or explicit xtrace option to inspect this script.
+# This must run before any variable expansion that could contain a secret.
+case $- in
+  *x*) set +x ;;
+esac
+
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly THREADDOCK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly CONFIG_PATH="${THREADDOCK_CONFIG:-$HOME/.config/threaddock/config.json}"
 SIMULATION_CONFIG_PATH=""
+readonly GITHUB_SIMULATION_PROFILE_ERROR="--simulate-outage는 원래 설정이 GitHub.com 공개 프로필이어야 합니다 (ghesHost=https://github.com, apiBase=https://api.github.com)."
 
 say() {
   printf '%s\n' "$*"
@@ -39,6 +46,16 @@ EOF
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "'$1' 명령을 찾을 수 없습니다. 설치 후 다시 실행해 주세요."
+}
+
+validate_github_simulation_profile() {
+  if ! jq -e '
+    def normalized: (tostring | gsub("^[[:space:]]+|[[:space:]]+$"; "") | sub("/+$"; ""));
+    ((.ghesHost // "") | normalized) == "https://github.com" and
+    ((.apiBase // "") | normalized) == "https://api.github.com"
+  ' "$CONFIG_PATH" >/dev/null 2>&1; then
+    fail "$GITHUB_SIMULATION_PROFILE_ERROR"
+  fi
 }
 
 read_json() {
@@ -242,6 +259,9 @@ start_pilot() {
   done
   [[ -f "$CONFIG_PATH" ]] || fail "설정 파일이 없습니다: $CONFIG_PATH"
   [[ -n "${THREADDOCK_GH_TOKEN:-}" ]] || fail "THREADDOCK_GH_TOKEN이 없습니다. 비밀 저장소에서 다시 주입해 주세요."
+  if [[ "$simulate_outage" == true ]]; then
+    validate_github_simulation_profile
+  fi
 
   REPO_ROOT="$(git rev-parse --show-toplevel)"
   cd "$REPO_ROOT"

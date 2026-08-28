@@ -24,6 +24,7 @@ type RESTClient struct {
 	restBasePath string
 	graphqlPath  string
 	publicAPI    bool
+	initErr      error
 	token        string
 	apiVersion   string
 	httpClient   *http.Client
@@ -37,7 +38,11 @@ func NewRESTClient(baseURL, token, apiVersion string, httpClient *http.Client) *
 	baseURL = strings.TrimSuffix(baseURL, "/api/v3")
 	restBasePath, graphqlPath := "/api/v3", "/api/graphql"
 	publicAPI := false
+	var initErr error
 	if parsed, err := url.Parse(baseURL); err == nil && strings.EqualFold(parsed.Hostname(), "api.github.com") {
+		if parsed.Scheme != "https" {
+			initErr = errors.New("github public API requires HTTPS")
+		}
 		restBasePath, graphqlPath = "", "/graphql"
 		publicAPI = true
 	}
@@ -47,7 +52,7 @@ func NewRESTClient(baseURL, token, apiVersion string, httpClient *http.Client) *
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &RESTClient{baseURL: baseURL, restBasePath: restBasePath, graphqlPath: graphqlPath, publicAPI: publicAPI, token: token, apiVersion: apiVersion, httpClient: httpClient}
+	return &RESTClient{baseURL: baseURL, restBasePath: restBasePath, graphqlPath: graphqlPath, publicAPI: publicAPI, initErr: initErr, token: token, apiVersion: apiVersion, httpClient: httpClient}
 }
 
 // AuthError indicates missing or invalid GHES credentials.
@@ -512,6 +517,9 @@ func (c *RESTClient) doJSON(ctx context.Context, method, path string, body any, 
 }
 
 func (c *RESTClient) doJSONWithLink(ctx context.Context, method, path string, body any, out any) (string, error) {
+	if c.initErr != nil {
+		return "", c.initErr
+	}
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)

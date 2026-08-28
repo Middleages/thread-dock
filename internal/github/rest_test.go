@@ -33,6 +33,26 @@ func TestCreateIssueBundleIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRESTClientRejectsPlaintextGitHubPublicAPIBeforeRequest(t *testing.T) {
+	var requests int
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if got := req.Header.Get("Authorization"); got != "" {
+			t.Fatalf("authorization header set before rejection: %q", got)
+		}
+		return jsonResponse(http.StatusOK, `{}`), nil
+	})
+	client := NewRESTClient("http://api.github.com", "plain-text-secret", "2022-11-28", &http.Client{Transport: transport})
+
+	_, _, err := client.FindIssueBundle(context.Background(), repo(), "run-plaintext")
+	if err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("err=%v, want HTTPS rejection", err)
+	}
+	if requests != 0 {
+		t.Fatalf("requests=%d, want 0", requests)
+	}
+}
+
 func TestIssuePostsContainCanonicalAndRoleKeyMarkers(t *testing.T) {
 	server, calls := fakeGHES(t)
 	defer server.Close()
