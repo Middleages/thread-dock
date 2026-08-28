@@ -419,7 +419,7 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 		return errors.New("관리 대상 Worktree 루트가 안전하지 않습니다")
 	}
 	for _, target := range targets {
-		if target.kind == cleanupIntegration && !pathWithinRoot(managedRoot, target.path) {
+		if sameCleanPath(target.path, snapshot.Integration.Path) && !pathWithinRoot(managedRoot, target.path) {
 			return errors.New("관리 대상 루트 밖의 Worktree가 있어 정리를 거부했습니다")
 		}
 	}
@@ -528,15 +528,27 @@ func cleanupTargets(snapshot state.RunSnapshot) ([]cleanupTarget, error) {
 	if strings.TrimSpace(snapshot.IntegrationPath) == "" || strings.TrimSpace(snapshot.Integration.Path) == "" {
 		return nil, errors.New("Integration Worktree 정보가 없어 정리할 수 없습니다")
 	}
-	targets := []cleanupTarget{{kind: cleanupIntegration, path: strings.TrimSpace(snapshot.Integration.Path)}}
-	for _, work := range []state.WorktreeState{snapshot.BuilderWorktree, snapshot.ReviewerWorktree} {
+	integrationPath := strings.TrimSpace(snapshot.Integration.Path)
+	if !sameCleanPath(strings.TrimSpace(snapshot.IntegrationPath), integrationPath) {
+		return nil, errors.New("Integration Worktree 경로가 persisted 상태와 달라 정리를 거부했습니다")
+	}
+	targets := []cleanupTarget{{kind: cleanupIntegration, path: integrationPath}}
+	for index, work := range []state.WorktreeState{snapshot.BuilderWorktree, snapshot.ReviewerWorktree} {
 		if strings.TrimSpace(work.Path) == "" && strings.TrimSpace(work.WorkspaceID) == "" && strings.TrimSpace(work.PaneID) == "" {
 			continue
 		}
 		if strings.TrimSpace(work.Path) == "" || strings.TrimSpace(work.WorkspaceID) == "" || strings.TrimSpace(work.PaneID) == "" {
 			return nil, errors.New("Builder/Reviewer Worktree 식별자가 불완전하여 정리를 거부했습니다")
 		}
-		targets = append(targets, cleanupTarget{kind: cleanupHerdr, path: strings.TrimSpace(work.Path), workspaceID: strings.TrimSpace(work.WorkspaceID), paneID: strings.TrimSpace(work.PaneID)})
+		target := cleanupTarget{kind: cleanupHerdr, path: strings.TrimSpace(work.Path), workspaceID: strings.TrimSpace(work.WorkspaceID), paneID: strings.TrimSpace(work.PaneID)}
+		if index == 1 && sameCleanPath(target.path, integrationPath) {
+			// Reviewer is the reconciled owner of a shared Integration checkout.
+			// Prefer its Herdr removal and replace the Git target so the physical
+			// checkout is removed exactly once.
+			targets[0] = target
+			continue
+		}
+		targets = append(targets, target)
 	}
 	return targets, nil
 }

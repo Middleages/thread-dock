@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,10 @@ import (
 )
 
 const promptTimeout = "3600000"
+
+const maxRecentEvidenceBytes = 64 * 1024
+
+var evidenceCredentialPattern = regexp.MustCompile(`(?im)(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|(?:AKIA|ASIA)[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:^|[^A-Za-z0-9])(?:token|secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)|[A-Za-z_][A-Za-z0-9_.-]*(?:token|secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)))[ \t]*[:=][ \t]*(?:Bearer[ \t]+)?[^\s,;}\]]+)`)
 
 type CLI struct {
 	runner     runner.Runner
@@ -239,11 +244,15 @@ func (c *CLI) ReadEvidence(ctx context.Context, name string) (Evidence, error) {
 	if err != nil {
 		return Evidence{}, err
 	}
-	if len(recent) > 64*1024 || strings.ContainsRune(recent, '\x00') {
+	if len(recent) > maxRecentEvidenceBytes || strings.ContainsRune(recent, '\x00') {
 		return Evidence{}, errors.New("herdr evidence is oversized or malformed")
 	}
+	payload, err := lastEvidencePayload(recent)
+	if err != nil {
+		return Evidence{}, err
+	}
 	var evidence Evidence
-	dec := json.NewDecoder(strings.NewReader(recent))
+	dec := json.NewDecoder(strings.NewReader(payload))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&evidence); err != nil {
 		return Evidence{}, errors.New("herdr evidence is not structured JSON")
@@ -254,14 +263,17 @@ func (c *CLI) ReadEvidence(ctx context.Context, name string) (Evidence, error) {
 	} else if !errors.Is(err, io.EOF) {
 		return Evidence{}, errors.New("herdr evidence has trailing data")
 	}
-	if strings.TrimSpace(evidence.RequestID) == "" || strings.TrimSpace(evidence.CommitSHA) == "" {
+	evidence.RequestID = strings.TrimSpace(evidence.RequestID)
+	evidence.CommitSHA = strings.TrimSpace(evidence.CommitSHA)
+	if evidence.RequestID == "" || !validEvidenceSHA(evidence.CommitSHA) || len(evidence.Verification) == 0 || evidenceCredentialPattern.MatchString(evidence.RequestID) || evidenceCredentialPattern.MatchString(evidence.CommitSHA) {
 		return Evidence{}, errors.New("herdr evidence is missing requestId or commitSha")
 	}
 	for i := range evidence.Verification {
 		check := &evidence.Verification[i]
 		check.Command = strings.TrimSpace(check.Command)
 		check.Outcome = strings.ToLower(strings.TrimSpace(check.Outcome))
-		if check.Command == "" || check.Duration == "" || (check.Outcome != "passed" && check.Outcome != "failed") || containsSecret(check.Command) {
+		check.Duration = strings.TrimSpace(check.Duration)
+		if check.Command == "" || check.Duration == "" || (check.Outcome != "passed" && check.Outcome != "failed") || evidenceCredentialPattern.MatchString(check.Command) || evidenceCredentialPattern.MatchString(check.Outcome) || evidenceCredentialPattern.MatchString(check.Duration) {
 			return Evidence{}, errors.New("herdr evidence contains an invalid verification")
 		}
 		if _, err := time.ParseDuration(check.Duration); err != nil {
@@ -269,6 +281,51 @@ func (c *CLI) ReadEvidence(ctx context.Context, name string) (Evidence, error) {
 		}
 	}
 	return evidence, nil
+}
+
+func lastEvidencePayload(recent string) (string, error) {
+	var payloads []string
+	inEnvelope := false
+	start := 0
+	offset := 0
+	for _, line := range strings.SplitAfter(recent, "\n") {
+		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		switch text {
+		case THREADDOCK_EVIDENCE_BEGIN:
+			if inEnvelope {
+				return "", errors.New("herdr evidence has an incomplete envelope")
+			}
+			inEnvelope = true
+			start = offset + len(line)
+		case THREADDOCK_EVIDENCE_END:
+			if !inEnvelope {
+				return "", errors.New("herdr evidence has an unmatched envelope marker")
+			}
+			payload := recent[start:offset]
+			if len(payload) > MaxEvidencePayloadBytes {
+				return "", errors.New("herdr evidence payload is oversized")
+			}
+			payloads = append(payloads, payload)
+			inEnvelope = false
+		}
+		offset += len(line)
+	}
+	if inEnvelope || len(payloads) == 0 {
+		return "", errors.New("herdr evidence has no complete envelope")
+	}
+	return strings.TrimSpace(payloads[len(payloads)-1]), nil
+}
+
+func validEvidenceSHA(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *CLI) GetInfo(ctx context.Context, name string) (AgentInfo, error) {
@@ -322,44 +379,4 @@ func decode(output string, target any) error {
 		return err
 	}
 	return nil
-}
-
-func findWorktreeObject(value any, path, label string) (Worktree, bool) {
-	switch current := value.(type) {
-	case []any:
-		for _, child := range current {
-			if found, ok := findWorktreeObject(child, path, label); ok {
-				return found, true
-			}
-		}
-	case map[string]any:
-		candidatePath, _ := current["path"].(string)
-		if candidatePath == "" {
-			candidatePath, _ = current["checkout_path"].(string)
-		}
-		candidateLabel, _ := current["label"].(string)
-		if (path != "" && candidatePath == path) || (label != "" && candidateLabel == label) {
-			workspace, _ := current["workspace_id"].(string)
-			pane, _ := current["pane_id"].(string)
-			if workspace != "" && pane != "" {
-				return Worktree{WorkspaceID: workspace, PaneID: pane, Path: candidatePath}, true
-			}
-		}
-		for _, child := range current {
-			if found, ok := findWorktreeObject(child, path, label); ok {
-				return found, true
-			}
-		}
-	}
-	return Worktree{}, false
-}
-
-func containsSecret(value string) bool {
-	value = strings.ToLower(value)
-	for _, word := range []string{"token", "secret", "password", "authorization"} {
-		if strings.Contains(value, word) {
-			return true
-		}
-	}
-	return false
 }

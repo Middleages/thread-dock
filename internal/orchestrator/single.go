@@ -34,7 +34,7 @@ const (
 	connectionProblem = "GitHub 연결 문제"
 )
 
-var credentialPattern = regexp.MustCompile(`(?im)(gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:apiKey|privateKey|clientSecret)\s*[:=])`)
+var credentialPattern = regexp.MustCompile(`(?im)(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|(?:AKIA|ASIA)[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:^|[^A-Za-z0-9])(?:token|secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)|[A-Za-z_][A-Za-z0-9_.-]*(?:token|secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)))[ \t]*[:=][ \t]*(?:Bearer[ \t]+)?[^\s,;}\]]+)`)
 
 type realClock struct{}
 
@@ -354,8 +354,17 @@ func (o *Orchestrator) baselinePrompt(ctx context.Context, snapshot *state.RunSn
 		return err
 	}
 	info, err := locator.GetInfo(ctx, name)
-	if err != nil || info.StateChangeSeq <= 0 {
+	work := snapshot.BuilderWorktree
+	if reviewer {
+		work = snapshot.ReviewerWorktree
+	}
+	if err != nil || info.StateChangeSeq <= 0 || !matchesAgentIdentity(info, name, work) {
 		return errors.New("Herdr agent state_change_seq is unavailable")
+	}
+	if reviewer {
+		snapshot.Reviewer.SessionID = info.SessionID
+	} else {
+		snapshot.Builder.SessionID = info.SessionID
 	}
 	receipt.BaselineSeq = info.StateChangeSeq
 	return o.finish(ctx, snapshot, "prompt baseline 저장", false)
@@ -379,7 +388,7 @@ func (o *Orchestrator) advanceBuilding(ctx context.Context, snapshot state.RunSn
 			_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Builder Agent 시작 실패: %v", err)})
 			return err
 		}
-		snapshot.Builder = state.AgentEvidence{Name: name, SessionID: name}
+		snapshot.Builder = state.AgentEvidence{Name: name}
 		return o.finish(ctx, &snapshot, "Builder Agent 준비 완료", false)
 	}
 	if snapshot.ActionCursor == 2 {
@@ -420,7 +429,6 @@ func (o *Orchestrator) advanceBuilding(ctx context.Context, snapshot state.RunSn
 	snapshot.Builder.Name = name
 	snapshot.Builder.RequestID = evidence.RequestID
 	snapshot.Builder.CommitSHA = strings.ToLower(evidence.CommitSHA)
-	snapshot.Builder.SessionID = name
 	snapshot.Builder.Verification = make([]string, 0, len(evidence.Verification))
 	snapshot.Builder.VerificationEvidence = make([]state.VerificationEvidence, 0, len(evidence.Verification))
 	for _, check := range evidence.Verification {
@@ -490,7 +498,7 @@ func (o *Orchestrator) advanceReview(ctx context.Context, snapshot state.RunSnap
 			return err
 		}
 		opened, err := opener.OpenWorktree(ctx, herdr.OpenWorktreeRequest{Cwd: snapshot.RepositoryPath, Path: snapshot.IntegrationPath, Label: "threaddock-review-" + string(snapshot.RunID)})
-		if err != nil || opened.Path == "" || opened.PaneID == "" || opened.WorkspaceID == "" {
+		if err != nil || opened.Path == "" || opened.PaneID == "" || opened.WorkspaceID == "" || filepath.Clean(opened.Path) != filepath.Clean(snapshot.IntegrationPath) {
 			return errors.New("Herdr returned incomplete Reviewer Worktree identity")
 		}
 		snapshot.ReviewerWorktree = state.WorktreeState{Path: opened.Path, WorkspaceID: opened.WorkspaceID, PaneID: opened.PaneID, Branch: snapshot.Integration.Branch}
@@ -505,7 +513,7 @@ func (o *Orchestrator) advanceReview(ctx context.Context, snapshot state.RunSnap
 			_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Reviewer Agent 시작 실패: %v", err)})
 			return err
 		}
-		snapshot.Reviewer = state.AgentEvidence{Name: name, SessionID: name}
+		snapshot.Reviewer = state.AgentEvidence{Name: name}
 		return o.finish(ctx, &snapshot, "독립 Reviewer session 준비 완료", false)
 	}
 	if snapshot.ActionCursor == 2 {
@@ -543,6 +551,13 @@ func hasEvidence(evidence state.AgentEvidence) bool {
 	return true
 }
 
+func matchesAgentIdentity(info herdr.AgentInfo, expectedName string, expectedWorktree state.WorktreeState) bool {
+	return strings.TrimSpace(info.Name) == strings.TrimSpace(expectedName) &&
+		strings.TrimSpace(info.SessionID) != "" &&
+		strings.TrimSpace(info.WorkspaceID) == strings.TrimSpace(expectedWorktree.WorkspaceID) &&
+		strings.TrimSpace(info.PaneID) == strings.TrimSpace(expectedWorktree.PaneID)
+}
+
 func verificationMatchesTask(checks []herdr.VerificationCheck, required []string) bool {
 	if len(checks) != len(required) || len(required) == 0 {
 		return false
@@ -562,7 +577,7 @@ func verificationMatchesTask(checks []herdr.VerificationCheck, required []string
 }
 
 func builderPacket(c contract.TaskContract, task contract.Task, requestID string) string {
-	return fmt.Sprintf("Builder acceptance criteria:\n- %s\n\nTask acceptance criteria:\n- %s\n\nRequired verification commands (each must be passed with a real duration):\n- %s\n\nReturn exactly one JSON object and no Markdown or other text. Use this schema exactly:\n%s\nUse requestId=%s. Do not substitute arbitrary commands or boolean values.", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), strings.Join(task.Verification, "\n- "), herdr.EvidenceSchemaExample, requestID)
+	return fmt.Sprintf("Builder acceptance criteria:\n- %s\n\nTask acceptance criteria:\n- %s\n\nRequired verification commands (each must be passed with a real duration):\n- %s\n\nYour final response must contain exactly one strict Evidence JSON payload between these markers, each on its own line:\n%s\n%s\n%s\n%s\nUI or diagnostic text may appear outside the markers. Put no Markdown or other fields inside the envelope. Use requestId=%s. Do not substitute arbitrary commands or boolean values.", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), strings.Join(task.Verification, "\n- "), herdr.THREADDOCK_EVIDENCE_BEGIN, herdr.EvidenceSchemaExample, herdr.THREADDOCK_EVIDENCE_END, "Return exactly one JSON object inside the envelope.", requestID)
 }
 
 func reviewerPacket(c contract.TaskContract, task contract.Task, evidence state.AgentEvidence, requestID string) string {
@@ -867,6 +882,13 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 			return o.markNotExecuted(ctx, snapshot, "Agent 미발견 확인; 다음 Advance에서 start 실행")
 		}
 		if err != nil || info.Name == "" {
+			return ErrPendingReconcile
+		}
+		work := snapshot.BuilderWorktree
+		if snapshot.PendingAction == "start_reviewer" {
+			work = snapshot.ReviewerWorktree
+		}
+		if !matchesAgentIdentity(info, name, work) {
 			return ErrPendingReconcile
 		}
 		if strings.HasPrefix(snapshot.PendingAction, "start_") {

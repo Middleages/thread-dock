@@ -216,8 +216,8 @@ func (f *fakeHerdr) ReadEvidence(_ context.Context, name string) (herdr.Evidence
 	return f.evidence, nil
 }
 
-func (f *fakeHerdr) OpenWorktree(context.Context, herdr.OpenWorktreeRequest) (herdr.Worktree, error) {
-	return herdr.Worktree{WorkspaceID: "workspace-review-184", PaneID: "pane-review-184", Path: "/tmp/integration-184"}, nil
+func (f *fakeHerdr) OpenWorktree(_ context.Context, request herdr.OpenWorktreeRequest) (herdr.Worktree, error) {
+	return herdr.Worktree{WorkspaceID: "workspace-review-184", PaneID: "pane-review-184", Path: request.Path}, nil
 }
 
 func (f *fakeHerdr) FindWorktree(_ context.Context, cwd, _, _ string) (herdr.Worktree, bool, error) {
@@ -237,7 +237,11 @@ func (f *fakeHerdr) GetInfo(_ context.Context, name string) (herdr.AgentInfo, er
 	if seq == 0 {
 		seq = 42
 	}
-	return herdr.AgentInfo{Name: name, SessionID: "session-" + name, PaneID: "pane-184", WorkspaceID: "workspace-184", State: herdr.AgentStateWorking, StateChangeSeq: seq}, nil
+	workspaceID, paneID := "workspace-184", "pane-184"
+	if strings.HasPrefix(name, "reviewer-") {
+		workspaceID, paneID = "workspace-review-184", "pane-review-184"
+	}
+	return herdr.AgentInfo{Name: name, SessionID: "session-" + name, PaneID: paneID, WorkspaceID: workspaceID, State: herdr.AgentStateWorking, StateChangeSeq: seq}, nil
 }
 
 func (f *fakeHerdr) ReadPromptReceipt(_ context.Context, name, requestID string) (herdr.AgentInfo, bool, error) {
