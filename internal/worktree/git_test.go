@@ -38,8 +38,9 @@ func (f *fakeRunner) Run(_ context.Context, cwd, executable string, args ...stri
 }
 
 func TestRemoveSafeRejectsDirtyWorktree(t *testing.T) {
-	git := New(&fakeRunner{results: []runner.Result{{Stdout: " M src/pay.go\n"}}}, "git")
-	err := git.RemoveSafe(context.Background(), "/work/issue-184")
+	r := &fakeRunner{results: []runner.Result{{Stdout: " M src/pay.go\n"}}}
+	git, _, target := configuredGit(t, r)
+	err := git.RemoveSafe(context.Background(), target)
 	if !errors.Is(err, ErrDirtyWorktree) {
 		t.Fatalf("err=%v", err)
 	}
@@ -103,11 +104,26 @@ func TestRemoveSafeRejectsDangerousTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
-	for _, target := range []string{"", "/", home, root} {
+	managed := t.TempDir()
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.Mkdir(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	r := &fakeRunner{}
+	git := New(r, "git")
+	git.ManagedRoot = managed
+	git.RepositoryRoot = repo
+	homeAlias := filepath.Join(managed, "home-alias")
+	if err := os.Symlink(home, homeAlias); err != nil {
+		t.Fatal(err)
+	}
+	repoAlias := filepath.Join(managed, "repo-alias")
+	if err := os.Symlink(repo, repoAlias); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"", "/", home, homeAlias, repo, repoAlias, managed} {
 		r := &fakeRunner{}
-		git := New(r, "git")
-		git.RepositoryRoot = root
+		git.Runner = r
 		if err := git.RemoveSafe(context.Background(), target); !errors.Is(err, ErrUnsafeTarget) {
 			t.Errorf("target %q err=%v", target, err)
 		}
@@ -118,13 +134,92 @@ func TestRemoveSafeRejectsDangerousTargets(t *testing.T) {
 }
 
 func TestRemoveSafeDoesNotForce(t *testing.T) {
-	r := &fakeRunner{}
-	git := New(r, "git")
-	git.RepositoryRoot = filepath.Join(t.TempDir(), "repo")
-	if err := git.RemoveSafe(context.Background(), filepath.Join(t.TempDir(), "worktree")); err != nil {
+	r := &fakeRunner{results: []runner.Result{{Stdout: ""}}}
+	git, repo, target := configuredGit(t, r)
+	if err := git.RemoveSafe(context.Background(), target); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.Join(r.calls[0].args, " "), "force") {
-		t.Fatalf("force removal: %#v", r.calls[0].args)
+	want := []fakeCall{
+		{cwd: target, exec: "git", args: []string{"status", "--porcelain=v1"}},
+		{cwd: repo, exec: "git", args: []string{"worktree", "remove", target}},
 	}
+	if !reflect.DeepEqual(r.calls, want) {
+		t.Fatalf("calls=%#v want=%#v", r.calls, want)
+	}
+	if strings.Contains(strings.Join(r.calls[1].args, " "), "force") {
+		t.Fatalf("force removal: %#v", r.calls[1].args)
+	}
+}
+
+func TestRemoveSafeRejectsOutsideTarget(t *testing.T) {
+	git, _, _ := configuredGit(t, &fakeRunner{})
+	outside := filepath.Join(filepath.Dir(git.ManagedRoot), "outside")
+	if err := os.Mkdir(outside, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{
+		outside,
+		filepath.Join(git.ManagedRoot, "..", "outside"),
+		filepath.Join(filepath.Dir(git.ManagedRoot), filepath.Base(git.ManagedRoot)+"-sibling"),
+	} {
+		if err := os.MkdirAll(target, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := git.RemoveSafe(context.Background(), target); !errors.Is(err, ErrUnsafeTarget) {
+			t.Errorf("target %q err=%v", target, err)
+		}
+	}
+}
+
+func TestRemoveSafeRejectsSymlinkEscape(t *testing.T) {
+	git, _, _ := configuredGit(t, &fakeRunner{})
+	escaped := filepath.Join(filepath.Dir(git.ManagedRoot), "escaped")
+	if err := os.Mkdir(escaped, 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(git.ManagedRoot, "link")
+	if err := os.Symlink(escaped, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := git.RemoveSafe(context.Background(), link); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestRemoveSafeRejectsResolutionFailures(t *testing.T) {
+	git, _, target := configuredGit(t, &fakeRunner{})
+	for name, mutate := range map[string]func(){
+		"managed root":    func() { git.ManagedRoot = filepath.Join(git.ManagedRoot, "missing") },
+		"repository root": func() { git.RepositoryRoot = filepath.Join(git.RepositoryRoot, "missing") },
+		"target":          func() { target = filepath.Join(target, "missing") },
+	} {
+		mutate()
+		if err := git.RemoveSafe(context.Background(), target); !errors.Is(err, ErrUnsafeTarget) {
+			t.Errorf("%s err=%v", name, err)
+		}
+	}
+}
+
+func TestRemoveSafeRequiresConfiguredRoots(t *testing.T) {
+	r := &fakeRunner{}
+	git := New(r, "git")
+	if err := git.RemoveSafe(context.Background(), t.TempDir()); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func configuredGit(t *testing.T, r *fakeRunner) (*Git, string, string) {
+	t.Helper()
+	managed := t.TempDir()
+	repo := filepath.Join(t.TempDir(), "repo")
+	target := filepath.Join(managed, "worktree")
+	for _, path := range []string{repo, target} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git := New(r, "git")
+	git.ManagedRoot = managed
+	git.RepositoryRoot = repo
+	return git, repo, target
 }

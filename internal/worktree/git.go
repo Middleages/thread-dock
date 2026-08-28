@@ -21,6 +21,7 @@ var (
 type Git struct {
 	Runner         runner.Runner
 	Binary         string
+	ManagedRoot    string
 	RepositoryRoot string
 }
 
@@ -29,18 +30,27 @@ type Git struct {
 // this also keeps New(runner, repositoryRoot) convenient for callers.
 func New(processRunner runner.Runner, options ...string) *Git {
 	binary := "git"
+	var absoluteOptions []string
 	var repositoryRoot string
 	for _, option := range options {
 		if strings.TrimSpace(option) == "" {
 			continue
 		}
 		if filepath.IsAbs(option) && repositoryRoot == "" {
-			repositoryRoot = option
+			absoluteOptions = append(absoluteOptions, option)
 			continue
 		}
 		binary = option
 	}
-	return &Git{Runner: processRunner, Binary: binary, RepositoryRoot: repositoryRoot}
+	if len(absoluteOptions) == 1 {
+		repositoryRoot = absoluteOptions[0]
+	}
+	git := &Git{Runner: processRunner, Binary: binary, RepositoryRoot: repositoryRoot}
+	if len(absoluteOptions) >= 2 {
+		git.ManagedRoot = absoluteOptions[0]
+		git.RepositoryRoot = absoluteOptions[1]
+	}
+	return git
 }
 
 func (g *Git) Create(ctx context.Context, repositoryPath, worktreePath, branch, base string) error {
@@ -92,21 +102,29 @@ func (g *Git) Merge(ctx context.Context, worktreePath, branch string) error {
 }
 
 func (g *Git) RemoveSafe(ctx context.Context, worktreePath string) error {
-	if err := g.validateRemovalTarget(worktreePath); err != nil {
+	managedRoot, repositoryRoot, target, home, err := g.resolveRemovalPaths(worktreePath)
+	if err != nil {
 		return err
 	}
-	status, err := g.Status(ctx, worktreePath)
+	if !strictlyContained(managedRoot, target) || samePath(target, home) || samePath(target, repositoryRoot) {
+		return ErrUnsafeTarget
+	}
+	status, err := g.statusAt(ctx, target)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(status) != "" {
 		return fmt.Errorf("%w: %s", ErrDirtyWorktree, strings.TrimSpace(status))
 	}
-	cwd := g.RepositoryRoot
-	if cwd == "" {
-		cwd = filepath.Dir(worktreePath)
+	return g.run(ctx, repositoryRoot, "worktree", "remove", target)
+}
+
+func (g *Git) statusAt(ctx context.Context, worktreePath string) (string, error) {
+	result, err := g.command(ctx, worktreePath, "status", "--porcelain=v1")
+	if err != nil {
+		return "", err
 	}
-	return g.run(ctx, cwd, "worktree", "remove", worktreePath)
+	return result.Stdout, nil
 }
 
 func (g *Git) run(ctx context.Context, cwd string, args ...string) error {
@@ -145,28 +163,69 @@ func (g *Git) validateWorktreePath(path string) error {
 }
 
 func (g *Git) validateRemovalTarget(path string) error {
-	if err := g.validateWorktreePath(path); err != nil {
-		return err
+	_, _, _, _, err := g.resolveRemovalPaths(path)
+	return err
+}
+
+func (g *Git) resolveRemovalPaths(targetPath string) (managedRoot, repositoryRoot, target, home string, err error) {
+	if err := g.validateWorktreePath(targetPath); err != nil {
+		return "", "", "", "", err
+	}
+	if g == nil || strings.TrimSpace(g.ManagedRoot) == "" || strings.TrimSpace(g.RepositoryRoot) == "" {
+		return "", "", "", "", ErrUnsafeTarget
+	}
+	managedRoot, err = resolvePath(g.ManagedRoot)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	repositoryRoot, err = resolvePath(g.RepositoryRoot)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	target, err = resolvePath(targetPath)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	homePath, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("resolve home: %w: %w", err, ErrUnsafeTarget)
+	}
+	home, err = resolvePath(homePath)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	if isFilesystemRoot(target) || samePath(managedRoot, home) || samePath(managedRoot, repositoryRoot) || samePath(repositoryRoot, home) {
+		return "", "", "", "", ErrUnsafeTarget
+	}
+	return managedRoot, repositoryRoot, target, home, nil
+}
+
+func resolvePath(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", ErrUnsafeTarget
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return fmt.Errorf("resolve worktree target: %w", err)
+		return "", fmt.Errorf("resolve path %q: %w: %w", path, err, ErrUnsafeTarget)
 	}
-	absPath = filepath.Clean(absPath)
-	if absPath == filepath.VolumeName(absPath)+string(filepath.Separator) {
-		return ErrUnsafeTarget
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(absPath))
+	if err != nil {
+		return "", fmt.Errorf("resolve path %q: %w: %w", path, err, ErrUnsafeTarget)
 	}
-	home, err := os.UserHomeDir()
-	if err == nil && samePath(absPath, home) {
-		return ErrUnsafeTarget
+	return filepath.Clean(resolved), nil
+}
+
+func strictlyContained(root, target string) bool {
+	relative, err := filepath.Rel(root, target)
+	if err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) {
+		return false
 	}
-	if g != nil && g.RepositoryRoot != "" {
-		root, err := filepath.Abs(g.RepositoryRoot)
-		if err == nil && samePath(absPath, root) {
-			return ErrUnsafeTarget
-		}
-	}
-	return nil
+	return !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func isFilesystemRoot(path string) bool {
+	clean := filepath.Clean(path)
+	return clean == filepath.VolumeName(clean)+string(filepath.Separator)
 }
 
 func samePath(left, right string) bool {
