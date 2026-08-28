@@ -153,6 +153,21 @@ snapshot_subset() {
   jq -S '{runId,parentIssue,integration,builderWorktree,reviewerWorktree,builderPrompt,reviewerPrompt,builderCommitSha:.builder.commitSha}' "$1"
 }
 
+finish_pre_wsl() {
+  resume_until integration_ready "Builder 작업과 integration 반영"
+  THREADDOCK_CONFIG="$CONFIG_PATH" agentctl stop "$RUN"
+  mkdir -p "$STATE_DIR/pilot"
+  snapshot_subset "$SNAPSHOT" >"$STATE_DIR/pilot/before-wsl.json"
+  set_session_value "stage" '"wait_wsl_restart"'
+
+  say ""
+  say "첫 번째 구간이 끝났습니다."
+  say "1. Windows PowerShell에서 다음 명령을 실행하세요: wsl --shutdown"
+  say "2. WSL, Herdr, OpenCode를 다시 시작하세요."
+  say "3. THREADDOCK_GH_TOKEN을 다시 주입하세요."
+  say "4. 이 저장소에서 실행하세요: ./scripts/single-run-pilot.sh --continue"
+}
+
 write_initial_session() {
   local boot_id="$1"
   local simulate_outage="${2:-false}"
@@ -264,17 +279,7 @@ start_pilot() {
     wait_for_enter "이제 GHES API 연결을 복구해 주세요."
   fi
 
-  resume_until integration_ready "Builder 작업과 integration 반영"
-  THREADDOCK_CONFIG="$CONFIG_PATH" agentctl stop "$RUN"
-  snapshot_subset "$SNAPSHOT" >"$STATE_DIR/pilot/before-wsl.json"
-  set_session_value "stage" '"wait_wsl_restart"'
-
-  say ""
-  say "첫 번째 구간이 끝났습니다."
-  say "1. Windows PowerShell에서 다음 명령을 실행하세요: wsl --shutdown"
-  say "2. WSL, Herdr, OpenCode를 다시 시작하세요."
-  say "3. THREADDOCK_GH_TOKEN을 다시 주입하세요."
-  say "4. 이 저장소에서 실행하세요: ./scripts/single-run-pilot.sh --continue"
+  finish_pre_wsl
 }
 
 continue_pilot() {
@@ -282,10 +287,14 @@ continue_pilot() {
     require_command "$command"
   done
   load_session
-  [[ "$(jq -r '.stage // ""' "$SESSION_FILE")" == "wait_wsl_restart" ]] || fail "이 파일럿은 아직 WSL 재시작 단계가 아닙니다."
   [[ -n "${THREADDOCK_GH_TOKEN:-}" ]] || fail "THREADDOCK_GH_TOKEN이 없습니다. 비밀 저장소에서 다시 주입해 주세요."
   [[ -d "$REPO_ROOT" ]] || fail "원래 저장소를 찾을 수 없습니다: $REPO_ROOT"
   cd "$REPO_ROOT"
+
+  if [[ "$(jq -r '.stage // ""' "$SESSION_FILE")" != "wait_wsl_restart" ]]; then
+    finish_pre_wsl
+    return
+  fi
 
   local before_boot current_boot
   before_boot="$(jq -r '.bootIdBefore // "unknown"' "$SESSION_FILE")"

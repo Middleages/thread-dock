@@ -162,6 +162,164 @@ printf '%s\n' '[{"body":"<!-- threaddock:td:td-not-ready -->"},{"body":"<!-- thr
 	}
 }
 
+func TestPilotContinueResumesPreWSLRunAndPersistsStage(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	runID := "run-1787925632789000929-1"
+	runDir := filepath.Join(stateDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(runDir, "run.json"), `{"runId":"`+runID+`","phase":"building","pendingAction":"start_builder"}`, 0o600)
+	contractPath := filepath.Join(temp, "pilot.json")
+	writeFile(t, contractPath, `{"repository":{"owner":"PDX","name":"pilot-product"}}`, 0o600)
+	configPath := filepath.Join(temp, "config.json")
+	writeFile(t, configPath, `{"stateDir":"`+stateDir+`","ghesHost":"https://github.example.test"}`, 0o600)
+	sessionPath := filepath.Join(temp, "pilot-session.json")
+	writeFile(t, sessionPath, `{"run":"`+runID+`","stateDir":"`+stateDir+`","mainBefore":"0123456789abcdef0123456789abcdef01234567","checkoutBefore":"","repoRoot":"`+repoRoot+`","contractPath":"`+contractPath+`","outagePassed":true,"wslRestartPassed":false,"snapshotDiffPassed":false}`, 0o600)
+
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	callLog := filepath.Join(temp, "agentctl.calls")
+	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s|%s\n' "${1:-}" "${2:-}" >>"${PILOT_TEST_CALL_LOG}"
+state_dir="`+stateDir+`"
+case "${1:-}" in
+  resume)
+    test "${2:-}" = '`+runID+`'
+    cat >"$state_dir/runs/`+runID+`/run.json" <<'JSON'
+{"runId":"`+runID+`","phase":"reviewing","pendingAction":"","actionCursor":0,"integration":{"path":"/managed/integration","branch":"agent/parent-integration"},"builder":{"commitSha":"abcdef0123456789abcdef0123456789abcdef01"}}
+JSON
+    ;;
+  stop) test "${2:-}" = '`+runID+`' ;;
+  *) printf 'unexpected agentctl arguments: %s\n' "$*" >&2; exit 9 ;;
+esac
+`)
+	for _, name := range []string{"herdr", "opencode", "gh"} {
+		writeExecutable(t, filepath.Join(fakeBin, name), "#!/usr/bin/env bash\nexit 0\n")
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "sleep"), "#!/usr/bin/env bash\nexit 0\n")
+
+	command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--continue")
+	command.Dir = repoRoot
+	command.Env = append(os.Environ(),
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+		"THREADDOCK_PILOT_SESSION="+sessionPath,
+		"THREADDOCK_CONFIG="+configPath,
+		"THREADDOCK_GH_TOKEN=pilot-test-secret",
+		"PILOT_TEST_CALL_LOG="+callLog,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pre-WSL continue failed: %v\n%s", err, output)
+	}
+
+	calls, err := os.ReadFile(callLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(calls)), "resume|"+runID+"\nstop|"+runID; got != want {
+		t.Fatalf("agentctl calls=%q, want %q", got, want)
+	}
+	var session map[string]any
+	contents, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(contents, &session); err != nil {
+		t.Fatal(err)
+	}
+	if session["stage"] != "wait_wsl_restart" {
+		t.Fatalf("session stage=%v, want wait_wsl_restart", session["stage"])
+	}
+	if _, ok := session["bootIdBefore"]; ok {
+		t.Fatal("pre-WSL recovery unexpectedly wrote a boot ID")
+	}
+	beforeWSL, err := os.ReadFile(filepath.Join(stateDir, "pilot", "before-wsl.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(beforeWSL), `"runId": "`+runID+`"`) {
+		t.Fatalf("before-wsl snapshot does not contain run ID: %s", beforeWSL)
+	}
+	if strings.Contains(string(output), "WSL 재시작을 확인할 수 없습니다") || !strings.Contains(string(output), "wsl --shutdown") {
+		t.Fatalf("unexpected pre-WSL output:\n%s", output)
+	}
+}
+
+func TestPilotContinueKeepsWSLRestartGateForStagedRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	runID := "td-wsl-gate"
+	runDir := filepath.Join(stateDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(runDir, "run.json"), `{"runId":"`+runID+`","phase":"reviewing","pendingAction":""}`, 0o600)
+	contractPath := filepath.Join(temp, "pilot.json")
+	writeFile(t, contractPath, `{"repository":{"owner":"PDX","name":"pilot-product"}}`, 0o600)
+	configPath := filepath.Join(temp, "config.json")
+	writeFile(t, configPath, `{"stateDir":"`+stateDir+`","ghesHost":"https://github.example.test"}`, 0o600)
+	bootID, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(temp, "pilot-session.json")
+	writeFile(t, sessionPath, `{"run":"`+runID+`","stateDir":"`+stateDir+`","mainBefore":"0123456789abcdef0123456789abcdef01234567","checkoutBefore":"","repoRoot":"`+repoRoot+`","contractPath":"`+contractPath+`","bootIdBefore":"`+strings.TrimSpace(string(bootID))+`","stage":"wait_wsl_restart"}`, 0o600)
+
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	callLog := filepath.Join(temp, "agentctl.calls")
+	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
+printf '%s|%s\n' "${1:-}" "${2:-}" >>"${PILOT_TEST_CALL_LOG}"
+exit 0
+`)
+	for _, name := range []string{"herdr", "opencode", "gh"} {
+		writeExecutable(t, filepath.Join(fakeBin, name), "#!/usr/bin/env bash\nexit 0\n")
+	}
+
+	command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--continue")
+	command.Dir = repoRoot
+	command.Env = append(os.Environ(),
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+		"THREADDOCK_PILOT_SESSION="+sessionPath,
+		"THREADDOCK_CONFIG="+configPath,
+		"THREADDOCK_GH_TOKEN=pilot-test-secret",
+		"PILOT_TEST_CALL_LOG="+callLog,
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected WSL restart gate failure, output:\n%s", output)
+	}
+	if !strings.Contains(string(output), "WSL 재시작을 확인할 수 없습니다") {
+		t.Fatalf("unexpected output:\n%s", output)
+	}
+	if calls, err := os.ReadFile(callLog); err == nil && len(strings.TrimSpace(string(calls))) != 0 {
+		t.Fatalf("agentctl called before WSL restart: %s", calls)
+	}
+}
+
 func TestPilotSimulateOutageUsesTemporaryConfigOnlyForStart(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("WSL pilot script is exercised on Unix-like builders")
