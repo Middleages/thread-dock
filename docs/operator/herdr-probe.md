@@ -139,3 +139,11 @@ agent read NAME --source recent-unwrapped --lines 120
 `working`, `blocked`, `idle`, `done` and `unknown` are lifecycle states only.
 They are not completion proof; commit and verification evidence remain a
 separate concern.
+
+Evidence normally reports `verification` as an array. For compatibility with
+live Herdr/OpenCode output, exactly one verification check may also be encoded
+as a JSON object; the adapter normalizes that object to a one-element array.
+The outer Evidence object and each verification object remain strict (unknown
+fields, null/scalar values, malformed objects and empty arrays are rejected),
+and orchestrator validation still requires the exact task command count and
+matching passed checks with valid durations.

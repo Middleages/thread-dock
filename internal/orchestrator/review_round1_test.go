@@ -588,6 +588,14 @@ func TestRound2RejectsExactVerificationCommandMismatch(t *testing.T) {
 	}
 }
 
+func TestVerificationMatchesTaskRejectsOneCheckForMultipleRequiredCommands(t *testing.T) {
+	checks := []herdr.VerificationCheck{{Command: "test -f pilot-result.txt", Outcome: "passed", Duration: "1ms"}}
+	required := []string{"test -f pilot-result.txt", "go test ./internal/herdr"}
+	if verificationMatchesTask(checks, required) {
+		t.Fatal("accepted one normalized verification check for multiple required commands")
+	}
+}
+
 func TestRound2BlocksCredentialInGitPatchBeforeReviewerPrompt(t *testing.T) {
 	h := newHarness(t)
 	h.git.inspection.Patch = "diff --git a/config b/config\n+apiKey = \\\"value\\\"\n"

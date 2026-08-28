@@ -182,6 +182,47 @@ func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
 	}
 }
 
+func TestReadEvidenceAcceptsLiveSingletonVerificationObject(t *testing.T) {
+	const payload = `{"requestId":"run-26:builder-prompt","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":{"command":"test -f pilot-result.txt","outcome":"passed","duration":"1ms"}}`
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": EvidenceBeginMarker + "\n" + payload + "\n" + EvidenceEndMarker,
+	})
+
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(got.Verification) != 1 {
+		t.Fatalf("verification=%#v, want one check", got.Verification)
+	}
+	check := got.Verification[0]
+	if check.Command != "test -f pilot-result.txt" || check.Outcome != "passed" || check.Duration != "1ms" {
+		t.Fatalf("check=%#v, want live pilot check", check)
+	}
+}
+
+func TestReadEvidenceRejectsInvalidSingletonVerificationShapes(t *testing.T) {
+	const prefix = `{"requestId":"run-26:builder-prompt","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":`
+	for name, verification := range map[string]string{
+		"null":                    `null`,
+		"scalar":                  `"test -f pilot-result.txt"`,
+		"empty array":             `[]`,
+		"malformed object":        `{"command":`,
+		"multi-command shorthand": `{"command":["test -f pilot-result.txt","go test ./..."],"outcome":"passed","duration":"1ms"}`,
+		"unknown field":           `{"command":"test -f pilot-result.txt","outcome":"passed","duration":"1ms","extra":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload := prefix + verification + `}`
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": EvidenceBeginMarker + "\n" + payload + "\n" + EvidenceEndMarker,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted invalid singleton verification shape")
+			}
+		})
+	}
+}
+
 func TestReadEvidenceExtractsLastCompleteEnvelopeFromUITranscript(t *testing.T) {
 	output := "recent UI output\n" + EvidenceBeginMarker + "\n" +
 		`{"requestId":"prompt-old","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./old","outcome":"passed","duration":"1s"}]}` +
