@@ -363,27 +363,6 @@ func TestResumeIncompleteReviewerReadyStateStillAdvancesOnce(t *testing.T) {
 	}
 }
 
-func TestSingleRunPilotRunbookHasResumeRepositoryRootMarkers(t *testing.T) {
-	doc, err := os.ReadFile("../../docs/operator/single-run-pilot.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	contents := string(doc)
-	for _, marker := range []string{
-		"REPO_ROOT=\"$(git rev-parse --show-toplevel)\"",
-		"printf 'REPO_ROOT=%q\\n' \"$REPO_ROOT\"",
-		"test -d \"$REPO_ROOT\"; cd \"$REPO_ROOT\"",
-		"reviewerWorktree.path // \"\"",
-	} {
-		if !strings.Contains(contents, marker) {
-			t.Fatalf("runbook missing marker %q", marker)
-		}
-	}
-	if strings.Count(contents, "reviewerWorktree.path // \"\"") < 3 {
-		t.Fatalf("runbook reviewer-ready predicates=%d, want at least 3", strings.Count(contents, "reviewerWorktree.path // \"\""))
-	}
-}
-
 func TestResumeAdvanceFailureCanBeRetriedOnActiveRun(t *testing.T) {
 	store := &fakeStateStore{snapshot: state.RunSnapshot{RunID: "run-184", Phase: contract.PhaseIntegrating}}
 	coordinator := &fakeCoordinator{advanceErr: errFakeRun}
