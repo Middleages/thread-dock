@@ -276,6 +276,13 @@ var allowedRiskCategories = map[string]struct{}{
 	"public_contract": {},
 }
 
+// IsRiskCategory reports whether category is one of the contract's exact
+// allowed risk categories. Callers must pass the canonical spelling.
+func IsRiskCategory(category string) bool {
+	_, ok := allowedRiskCategories[category]
+	return ok
+}
+
 func validateRiskCategories(violations *[]Violation, categories []string) {
 	seen := make(map[string]struct{}, len(categories))
 	for i, category := range categories {
@@ -288,7 +295,7 @@ func validateRiskCategories(violations *[]Violation, categories []string) {
 			})
 		}
 		seen[category] = struct{}{}
-		if _, allowed := allowedRiskCategories[category]; !allowed {
+		if !IsRiskCategory(category) {
 			*violations = append(*violations, Violation{
 				Code:    "required",
 				Field:   field,

@@ -1,6 +1,7 @@
 package herdr
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"thread-dock/internal/contract"
+	"thread-dock/internal/pathscope"
 	"thread-dock/internal/runner"
 )
 
@@ -283,7 +286,100 @@ func (c *CLI) ReadEvidence(ctx context.Context, name string) (Evidence, error) {
 	return evidence, nil
 }
 
+// ReadReviewEvidence accepts only strict structured Reviewer output between
+// the review markers. It returns no transcript text or unvalidated fields.
+func (c *CLI) ReadReviewEvidence(ctx context.Context, name, expectedRequestID string) (ReviewEvidence, error) {
+	recent, err := c.ReadRecent(ctx, name)
+	if err != nil {
+		return ReviewEvidence{}, err
+	}
+	if len(recent) > maxRecentEvidenceBytes || strings.ContainsRune(recent, '\x00') {
+		return ReviewEvidence{}, errors.New("herdr review evidence is oversized or malformed")
+	}
+	if strings.TrimSpace(expectedRequestID) == "" || strings.TrimSpace(expectedRequestID) != expectedRequestID || evidenceCredentialPattern.MatchString(expectedRequestID) {
+		return ReviewEvidence{}, errors.New("herdr review evidence has an invalid expected requestId")
+	}
+	payload, err := lastMarkedPayload(recent, THREADDOCK_REVIEW_BEGIN, THREADDOCK_REVIEW_END, "review evidence")
+	if err != nil {
+		return ReviewEvidence{}, err
+	}
+	var evidence ReviewEvidence
+	if err := decodeEvidenceJSON([]byte(payload), &evidence); err != nil {
+		return ReviewEvidence{}, errors.New("herdr review evidence is not structured JSON")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil || !jsonArrayField(fields, "blockingFindings") || !jsonArrayField(fields, "riskCategories") {
+		return ReviewEvidence{}, errors.New("herdr review evidence requires findings and risk category arrays")
+	}
+	if evidence.RequestID == "" || strings.TrimSpace(evidence.RequestID) != evidence.RequestID || evidence.RequestID != expectedRequestID || evidenceCredentialPattern.MatchString(evidence.RequestID) {
+		return ReviewEvidence{}, errors.New("herdr review evidence has a stale or invalid requestId")
+	}
+	if evidence.Decision != "accept" && evidence.Decision != "block" || evidenceCredentialPattern.MatchString(evidence.Decision) {
+		return ReviewEvidence{}, errors.New("herdr review evidence has an invalid decision")
+	}
+	if evidence.Decision == "accept" && len(evidence.BlockingFindings) != 0 {
+		return ReviewEvidence{}, errors.New("accepted review evidence cannot contain blocking findings")
+	}
+	if evidence.Decision == "block" && len(evidence.BlockingFindings) == 0 {
+		return ReviewEvidence{}, errors.New("blocked review evidence requires blocking findings")
+	}
+	seenIDs := make(map[string]struct{}, len(evidence.BlockingFindings))
+	for i := range evidence.BlockingFindings {
+		finding := &evidence.BlockingFindings[i]
+		if finding.ID == "" || strings.TrimSpace(finding.ID) != finding.ID || evidenceCredentialPattern.MatchString(finding.ID) {
+			return ReviewEvidence{}, errors.New("herdr review evidence contains an invalid finding ID")
+		}
+		if _, exists := seenIDs[finding.ID]; exists {
+			return ReviewEvidence{}, errors.New("herdr review evidence contains duplicate finding IDs")
+		}
+		seenIDs[finding.ID] = struct{}{}
+		if finding.Summary == "" || strings.TrimSpace(finding.Summary) != finding.Summary || evidenceCredentialPattern.MatchString(finding.Summary) {
+			return ReviewEvidence{}, errors.New("herdr review evidence contains an invalid finding summary")
+		}
+		if len(finding.Paths) == 0 {
+			return ReviewEvidence{}, errors.New("herdr review evidence finding paths are required")
+		}
+		for _, path := range finding.Paths {
+			if !canonicalReviewPath(path) || evidenceCredentialPattern.MatchString(path) {
+				return ReviewEvidence{}, errors.New("herdr review evidence contains an invalid finding path")
+			}
+		}
+	}
+	seenRisk := make(map[string]struct{}, len(evidence.RiskCategories))
+	for _, category := range evidence.RiskCategories {
+		if !contract.IsRiskCategory(category) || evidenceCredentialPattern.MatchString(category) {
+			return ReviewEvidence{}, errors.New("herdr review evidence contains an invalid risk category")
+		}
+		if _, exists := seenRisk[category]; exists {
+			return ReviewEvidence{}, errors.New("herdr review evidence contains duplicate risk categories")
+		}
+		seenRisk[category] = struct{}{}
+	}
+	return evidence, nil
+}
+
+func jsonArrayField(fields map[string]json.RawMessage, name string) bool {
+	raw, ok := fields[name]
+	return ok && len(bytes.TrimSpace(raw)) > 0 && bytes.TrimSpace(raw)[0] == '['
+}
+
+func canonicalReviewPath(path string) bool {
+	if path == "" || strings.TrimSpace(path) != path {
+		return false
+	}
+	normalized, err := pathscope.Normalize(path)
+	return err == nil && normalized == path
+}
+
 func lastEvidencePayload(recent string) (string, error) {
+	return lastMarkedPayload(recent, THREADDOCK_EVIDENCE_BEGIN, THREADDOCK_EVIDENCE_END, "evidence")
+}
+
+// lastMarkedPayload extracts the latest complete structured envelope while
+// preserving the Builder parser's sidebar-boundary and payload-size rules.
+// Marker names are parameters so Reviewer output cannot accidentally share
+// the Builder marker protocol.
+func lastMarkedPayload(recent, beginMarker, endMarker, kind string) (string, error) {
 	lines := strings.Split(recent, "\n")
 	auxiliaryColumn := 0
 	var payloads []string
@@ -294,13 +390,13 @@ func lastEvidencePayload(recent string) (string, error) {
 	for _, line := range lines {
 		text := strings.TrimSuffix(line, "\r")
 		if inEnvelope {
-			if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_BEGIN, envelopeAuxiliaryColumn) {
-				return "", errors.New("herdr evidence has an incomplete envelope")
+			if actualEvidenceMarker(text, beginMarker, envelopeAuxiliaryColumn) {
+				return "", fmt.Errorf("herdr %s has an incomplete envelope", kind)
 			}
-			if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_END, envelopeAuxiliaryColumn) {
+			if actualEvidenceMarker(text, endMarker, envelopeAuxiliaryColumn) {
 				payload := strings.Join(payloadLines, "\n")
 				if rawPayloadBytes > MaxEvidencePayloadBytes || len(payload) > MaxEvidencePayloadBytes {
-					return "", errors.New("herdr evidence payload is oversized")
+					return "", fmt.Errorf("herdr %s payload is oversized", kind)
 				}
 				payloads = append(payloads, payload)
 				inEnvelope = false
@@ -309,31 +405,31 @@ func lastEvidencePayload(recent string) (string, error) {
 			}
 			rawPayloadBytes += len(text) + 1
 			if rawPayloadBytes > MaxEvidencePayloadBytes {
-				return "", errors.New("herdr evidence payload is oversized")
+				return "", fmt.Errorf("herdr %s payload is oversized", kind)
 			}
 			if clean, keep := cleanEvidenceLine(text, envelopeAuxiliaryColumn); keep {
 				payloadLines = append(payloadLines, clean)
 			}
 			continue
 		}
-		if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_BEGIN, auxiliaryColumn) {
+		if actualEvidenceMarker(text, beginMarker, auxiliaryColumn) {
 			inEnvelope = true
 			envelopeAuxiliaryColumn = auxiliaryColumn
 			payloadLines = nil
 			rawPayloadBytes = 0
 			continue
 		}
-		if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_END, auxiliaryColumn) {
-			return "", errors.New("herdr evidence has an unmatched envelope marker")
+		if actualEvidenceMarker(text, endMarker, auxiliaryColumn) {
+			return "", fmt.Errorf("herdr %s has an unmatched envelope marker", kind)
 		}
 		if boundary, ok := sidebarBoundary(text); ok {
 			auxiliaryColumn = boundary
 		}
 	}
 	if inEnvelope || len(payloads) == 0 {
-		return "", errors.New("herdr evidence has no complete envelope")
+		return "", fmt.Errorf("herdr %s has no complete envelope", kind)
 	}
-	return extractCompleteEvidenceObject(payloads[len(payloads)-1])
+	return extractCompleteObject(payloads[len(payloads)-1], kind)
 }
 
 const (
@@ -463,9 +559,13 @@ func wideSuffix(line string) (prefix string, suffix int, ok bool) {
 }
 
 func extractCompleteEvidenceObject(payload string) (string, error) {
+	return extractCompleteObject(payload, "evidence")
+}
+
+func extractCompleteObject(payload, kind string) (string, error) {
 	payload = strings.TrimSpace(payload)
 	if payload == "" || payload[0] != '{' {
-		return "", errors.New("herdr evidence is not structured JSON")
+		return "", fmt.Errorf("herdr %s is not structured JSON", kind)
 	}
 	depth := 0
 	inString := false
@@ -490,17 +590,17 @@ func extractCompleteEvidenceObject(payload string) (string, error) {
 		case '}':
 			depth--
 			if depth < 0 {
-				return "", errors.New("herdr evidence is not structured JSON")
+				return "", fmt.Errorf("herdr %s is not structured JSON", kind)
 			}
 			if depth == 0 {
 				if strings.TrimSpace(payload[i+1:]) != "" {
-					return "", errors.New("herdr evidence has trailing data")
+					return "", fmt.Errorf("herdr %s has trailing data", kind)
 				}
 				return payload[:i+1], nil
 			}
 		}
 	}
-	return "", errors.New("herdr evidence is not structured JSON")
+	return "", fmt.Errorf("herdr %s is not structured JSON", kind)
 }
 
 func validEvidenceSHA(value string) bool {

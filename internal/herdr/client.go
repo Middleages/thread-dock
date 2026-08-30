@@ -56,6 +56,23 @@ type Evidence struct {
 	Verification []VerificationCheck `json:"verification"`
 }
 
+// ReviewFinding is one concrete issue that blocks acceptance of the
+// integrated result.
+type ReviewFinding struct {
+	ID      string   `json:"id"`
+	Summary string   `json:"summary"`
+	Paths   []string `json:"paths"`
+}
+
+// ReviewEvidence is the only structured Reviewer result accepted by the
+// runtime boundary. Decision is exactly "accept" or "block".
+type ReviewEvidence struct {
+	RequestID        string          `json:"requestId"`
+	Decision         string          `json:"decision"`
+	BlockingFindings []ReviewFinding `json:"blockingFindings"`
+	RiskCategories   []string        `json:"riskCategories"`
+}
+
 // UnmarshalJSON accepts the array form emitted by the documented protocol and
 // the singleton object form emitted by some live Herdr/OpenCode runs. Both
 // forms are normalized to the same slice so downstream task matching keeps
@@ -133,13 +150,22 @@ func decodeEvidenceJSON(data []byte, target any) error {
 }
 
 const EvidenceSchemaExample = `{"requestId":"<prompt request ID>","commitSha":"<40 lowercase hex>","verification":[{"command":"<required command>","outcome":"passed","duration":"<Go duration>"}]}`
+const ReviewEvidenceSchemaExample = `{"requestId":"<prompt request ID>","decision":"accept","blockingFindings":[],"riskCategories":[]}`
+const ReviewSchemaExample = ReviewEvidenceSchemaExample
 
 const (
-	THREADDOCK_EVIDENCE_BEGIN = "THREADDOCK_EVIDENCE_BEGIN"
-	THREADDOCK_EVIDENCE_END   = "THREADDOCK_EVIDENCE_END"
-	EvidenceBeginMarker       = THREADDOCK_EVIDENCE_BEGIN
-	EvidenceEndMarker         = THREADDOCK_EVIDENCE_END
-	MaxEvidencePayloadBytes   = 16 * 1024
+	THREADDOCK_EVIDENCE_BEGIN     = "THREADDOCK_EVIDENCE_BEGIN"
+	THREADDOCK_EVIDENCE_END       = "THREADDOCK_EVIDENCE_END"
+	THREADDOCK_REVIEW_BEGIN       = "THREADDOCK_REVIEW_BEGIN"
+	THREADDOCK_REVIEW_END         = "THREADDOCK_REVIEW_END"
+	EvidenceBeginMarker           = THREADDOCK_EVIDENCE_BEGIN
+	EvidenceEndMarker             = THREADDOCK_EVIDENCE_END
+	ReviewBeginMarker             = THREADDOCK_REVIEW_BEGIN
+	ReviewEndMarker               = THREADDOCK_REVIEW_END
+	ReviewEvidenceBeginMarker     = THREADDOCK_REVIEW_BEGIN
+	ReviewEvidenceEndMarker       = THREADDOCK_REVIEW_END
+	MaxEvidencePayloadBytes       = 16 * 1024
+	MaxReviewEvidencePayloadBytes = MaxEvidencePayloadBytes
 )
 
 type AgentInfo struct {

@@ -182,6 +182,87 @@ func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
 	}
 }
 
+func TestReadReviewEvidenceAcceptsStrictBlockEnvelope(t *testing.T) {
+	payload := `{"requestId":"review-1","decision":"block","blockingFindings":[{"id":"F-1","summary":"missing test","paths":["internal/api.go"]}],"riskCategories":["data"]}`
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00reviewer_api\x00--source\x00recent-unwrapped\x00--lines\x00120": THREADDOCK_REVIEW_BEGIN + "\n" + payload + "\n" + THREADDOCK_REVIEW_END,
+	})
+	got, err := NewCLI(r, "herdr").ReadReviewEvidence(context.Background(), "reviewer_api", "review-1")
+	if err != nil || got.Decision != "block" || len(got.BlockingFindings) != 1 || got.BlockingFindings[0].Paths[0] != "internal/api.go" {
+		t.Fatalf("evidence=%#v err=%v", got, err)
+	}
+}
+
+func TestReadReviewEvidenceAcceptsStrictAcceptEnvelope(t *testing.T) {
+	payload := `{"requestId":"review-accept","decision":"accept","blockingFindings":[],"riskCategories":["public_contract"]}`
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00reviewer_api\x00--source\x00recent-unwrapped\x00--lines\x00120": THREADDOCK_REVIEW_BEGIN + "\n" + payload + "\n" + THREADDOCK_REVIEW_END,
+	})
+	got, err := NewCLI(r, "herdr").ReadReviewEvidence(context.Background(), "reviewer_api", "review-accept")
+	if err != nil || got.Decision != "accept" || len(got.BlockingFindings) != 0 || len(got.RiskCategories) != 1 {
+		t.Fatalf("evidence=%#v err=%v", got, err)
+	}
+}
+
+func TestReadReviewEvidenceRejectsAcceptWithFindingsAndStaleRequest(t *testing.T) {
+	for name, payload := range map[string]string{
+		"accept findings": `{"requestId":"review-1","decision":"accept","blockingFindings":[{"id":"F-1","summary":"x","paths":["src/api.go"]}]}`,
+		"stale request":   `{"requestId":"review-old","decision":"accept","blockingFindings":[]}`,
+		"raw only":        "review accepted",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00reviewer_api\x00--source\x00recent-unwrapped\x00--lines\x00120": THREADDOCK_REVIEW_BEGIN + "\n" + payload + "\n" + THREADDOCK_REVIEW_END,
+			})
+			if _, err := NewCLI(r, "herdr").ReadReviewEvidence(context.Background(), "reviewer_api", "review-1"); err == nil {
+				t.Fatal("expected rejection")
+			}
+		})
+	}
+}
+
+func TestReadReviewEvidenceRejectsEveryStrictnessGuard(t *testing.T) {
+	validFinding := `{"id":"F-1","summary":"missing test","paths":["internal/api.go"]}`
+	validAccept := `{"requestId":"review-1","decision":"accept","blockingFindings":[],"riskCategories":[]}`
+	cases := map[string]string{
+		"unknown field":     `{"requestId":"review-1","decision":"accept","blockingFindings":[],"riskCategories":[],"extra":true}`,
+		"trailing data":     `{"requestId":"review-1","decision":"accept","blockingFindings":[],"riskCategories":[]} trailing`,
+		"block no findings": `{"requestId":"review-1","decision":"block","blockingFindings":[],"riskCategories":[]}`,
+		"duplicate IDs":     `{"requestId":"review-1","decision":"block","blockingFindings":[` + validFinding + `,` + validFinding + `],"riskCategories":[]}`,
+		"unknown risk":      `{"requestId":"review-1","decision":"accept","blockingFindings":[],"riskCategories":["unknown"]}`,
+		"duplicate risk":    `{"requestId":"review-1","decision":"accept","blockingFindings":[],"riskCategories":["data","data"]}`,
+		"noncanonical path": `{"requestId":"review-1","decision":"block","blockingFindings":[{"id":"F-1","summary":"x","paths":["./internal/api.go"]}],"riskCategories":[]}`,
+		"credential":        `{"requestId":"review-1","decision":"block","blockingFindings":[{"id":"F-1","summary":"token: ghp_supersecret","paths":["internal/api.go"]}],"riskCategories":[]}`,
+		"NUL":               "{\"requestId\":\"review-1\",\"decision\":\"accept\",\"blockingFindings\":[],\"riskCategories\":[]}\x00",
+		"oversized":         `{"requestId":"review-1","decision":"block","blockingFindings":[{"id":"F-1","summary":"` + strings.Repeat("x", MaxEvidencePayloadBytes) + `","paths":["internal/api.go"]}],"riskCategories":[]}`,
+	}
+	for name, payload := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00reviewer_api\x00--source\x00recent-unwrapped\x00--lines\x00120": THREADDOCK_REVIEW_BEGIN + "\n" + payload + "\n" + THREADDOCK_REVIEW_END,
+			})
+			if _, err := NewCLI(r, "herdr").ReadReviewEvidence(context.Background(), "reviewer_api", "review-1"); err == nil {
+				t.Fatal("expected rejection")
+			}
+		})
+	}
+	for name, output := range map[string]string{
+		"missing envelope": validAccept,
+		"unmatched end":    THREADDOCK_REVIEW_END,
+		"incomplete begin": THREADDOCK_REVIEW_BEGIN + "\n" + validAccept,
+		"nested begin":     THREADDOCK_REVIEW_BEGIN + "\n" + THREADDOCK_REVIEW_BEGIN + "\n" + validAccept + "\n" + THREADDOCK_REVIEW_END,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00reviewer_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadReviewEvidence(context.Background(), "reviewer_api", "review-1"); err == nil {
+				t.Fatal("expected rejection")
+			}
+		})
+	}
+}
+
 func TestReadEvidenceAcceptsLiveSingletonVerificationObject(t *testing.T) {
 	const payload = `{"requestId":"run-26:builder-prompt","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":{"command":"test -f pilot-result.txt","outcome":"passed","duration":"1ms"}}`
 	r := fixtureRunner(t, map[string]string{

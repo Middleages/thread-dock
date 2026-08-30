@@ -119,6 +119,19 @@ func TestValidateRejectsUnknownAndDuplicateRiskCategories(t *testing.T) {
 	}
 }
 
+func TestIsRiskCategoryUsesContractAllowedSet(t *testing.T) {
+	for _, category := range []string{"data", "authentication", "authorization", "deployment", "supply_chain", "public_contract"} {
+		if !IsRiskCategory(category) {
+			t.Fatalf("IsRiskCategory(%q) = false", category)
+		}
+	}
+	for _, category := range []string{"", "DATA", "unknown", " data"} {
+		if IsRiskCategory(category) {
+			t.Fatalf("IsRiskCategory(%q) = true", category)
+		}
+	}
+}
+
 func TestValidateNormalizesPathOwnershipBeforeComparing(t *testing.T) {
 	c := validContract()
 	c.Tasks[0].AllowedPaths = []string{`./src\payments/**`}
