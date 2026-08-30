@@ -94,6 +94,47 @@ func TestValidateAllowsContractWithoutChildIssues(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsOptionalRiskCategories(t *testing.T) {
+	c := validContract()
+	c.RiskCategories = []string{"data", "authentication", "authorization", "deployment", "supply_chain", "public_contract"}
+
+	if got := Validate(c); len(got) != 0 {
+		t.Fatalf("violations = %#v", got)
+	}
+}
+
+func TestValidateRejectsUnknownAndDuplicateRiskCategories(t *testing.T) {
+	c := validContract()
+	c.RiskCategories = []string{"data", "data", "unknown"}
+
+	got := Validate(c)
+	if !hasViolation(got, "duplicate", "riskCategories[1]") {
+		t.Fatalf("missing duplicate violation: %#v", got)
+	}
+	if !hasViolation(got, "required", "riskCategories[2]") {
+		t.Fatalf("missing unknown-category violation: %#v", got)
+	}
+}
+
+func TestValidateNormalizesPathOwnershipBeforeComparing(t *testing.T) {
+	c := validContract()
+	c.Tasks[0].AllowedPaths = []string{`./src\payments/**`}
+	c.Tasks[1].AllowedPaths = []string{"src/payments/api/**"}
+
+	if got := Validate(c); !hasCode(got, "path_overlap") {
+		t.Fatalf("violations = %#v", got)
+	}
+}
+
+func TestValidateRejectsPathTraversal(t *testing.T) {
+	c := validContract()
+	c.Tasks[0].AllowedPaths = []string{"src/../authentication/**"}
+
+	if got := Validate(c); !hasCode(got, "path_overlap") {
+		t.Fatalf("violations = %#v", got)
+	}
+}
+
 func TestValidateRejectsUnsafeBaseCommit(t *testing.T) {
 	c := validContract()
 	c.BaseCommit = "0123456789abcdef0123456789abcdef0123456G"

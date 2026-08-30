@@ -9,14 +9,15 @@ import (
 const CurrentVersion = version.Contract
 
 type TaskContract struct {
-	Version      int           `json:"version"`
-	Parent       IssueDraft    `json:"parent"`
-	Children     []IssueDraft  `json:"children"`
-	Repository   RepositoryRef `json:"repository"`
-	BaseCommit   string        `json:"baseCommit"`
-	Tasks        []Task        `json:"tasks"`
-	Protected    []string      `json:"protectedPaths"`
-	Verification []string      `json:"verification"`
+	Version        int           `json:"version"`
+	Parent         IssueDraft    `json:"parent"`
+	Children       []IssueDraft  `json:"children"`
+	Repository     RepositoryRef `json:"repository"`
+	BaseCommit     string        `json:"baseCommit"`
+	Tasks          []Task        `json:"tasks"`
+	Protected      []string      `json:"protectedPaths"`
+	Verification   []string      `json:"verification"`
+	RiskCategories []string      `json:"riskCategories,omitempty"`
 }
 
 type IssueDraft struct {

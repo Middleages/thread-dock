@@ -3,6 +3,9 @@ package contract
 import (
 	"fmt"
 	"strings"
+
+	"thread-dock/internal/dag"
+	"thread-dock/internal/pathscope"
 )
 
 // Validate reports every violation of the version 1 task contract.
@@ -35,6 +38,7 @@ func Validate(c TaskContract) []Violation {
 	validateTasks(&violations, c)
 	validateProtectedPaths(&violations, c.Protected)
 	requireStrings(&violations, "verification", c.Verification)
+	validateRiskCategories(&violations, c.RiskCategories)
 
 	return violations
 }
@@ -107,24 +111,27 @@ func validateTasks(violations *[]Violation, c TaskContract) {
 		}
 	}
 
+	graphNodes := make([]dag.Node, len(c.Tasks))
 	for i, task := range c.Tasks {
-		for _, dependency := range task.DependsOn {
-			if _, exists := taskIDs[dependency]; !exists || strings.TrimSpace(dependency) == "" {
-				*violations = append(*violations, Violation{
-					Code:    "missing_dependency",
-					Field:   fmt.Sprintf("tasks[%d].dependsOn", i),
-					Message: fmt.Sprintf("Task 의존성 %q가 존재하지 않습니다", dependency),
-				})
-			}
-		}
+		graphNodes[i] = dag.Node{ID: task.ID, DependsOn: task.DependsOn}
 	}
-
-	if hasDependencyCycle(c.Tasks) {
-		*violations = append(*violations, Violation{
-			Code:    "missing_dependency",
-			Field:   "tasks.dependsOn",
-			Message: "Task 의존성은 순환할 수 없습니다",
-		})
+	_, graphViolations := dag.Build(graphNodes)
+	for _, graphViolation := range graphViolations {
+		switch graphViolation.Code {
+		case dag.MissingDependency:
+			index := taskIndex(c.Tasks, graphViolation.NodeID)
+			*violations = append(*violations, Violation{
+				Code:    "missing_dependency",
+				Field:   fmt.Sprintf("tasks[%d].dependsOn", index),
+				Message: fmt.Sprintf("Task 의존성 %q가 존재하지 않습니다", graphViolation.Dependency),
+			})
+		case dag.DependencyCycle:
+			*violations = append(*violations, Violation{
+				Code:    "missing_dependency",
+				Field:   "tasks.dependsOn",
+				Message: "Task 의존성은 순환할 수 없습니다",
+			})
+		}
 	}
 
 	validatePathOwnership(violations, c.Tasks, c.Protected)
@@ -179,50 +186,15 @@ func isLowerHexCommit(value string) bool {
 	return true
 }
 
-func hasDependencyCycle(tasks []Task) bool {
-	dependencies := make(map[string][]string, len(tasks))
-	for _, task := range tasks {
-		dependencies[task.ID] = task.DependsOn
-	}
-
-	const (
-		unvisited = iota
-		visiting
-		visited
-	)
-	states := make(map[string]int, len(tasks))
-	var visit func(string) bool
-	visit = func(id string) bool {
-		switch states[id] {
-		case visiting:
-			return true
-		case visited:
-			return false
-		}
-		states[id] = visiting
-		for _, dependency := range dependencies[id] {
-			if _, exists := dependencies[dependency]; exists && visit(dependency) {
-				return true
-			}
-		}
-		states[id] = visited
-		return false
-	}
-
-	for id := range dependencies {
-		if visit(id) {
-			return true
-		}
-	}
-	return false
-}
-
 func validatePathOwnership(violations *[]Violation, tasks []Task, protectedPaths []string) {
 	for i, left := range tasks {
 		for j := i + 1; j < len(tasks); j++ {
 			for _, leftPath := range left.AllowedPaths {
 				for _, rightPath := range tasks[j].AllowedPaths {
-					if pathsOverlap(leftPath, rightPath) {
+					overlaps, err := pathscope.Overlaps(leftPath, rightPath)
+					if err != nil {
+						appendInvalidPathViolation(violations, fmt.Sprintf("tasks[%d].allowedPaths", j), rightPath)
+					} else if overlaps {
 						*violations = append(*violations, Violation{
 							Code:    "path_overlap",
 							Field:   fmt.Sprintf("tasks[%d].allowedPaths", j),
@@ -234,7 +206,10 @@ func validatePathOwnership(violations *[]Violation, tasks []Task, protectedPaths
 		}
 		for _, allowedPath := range left.AllowedPaths {
 			for _, protectedPath := range protectedPaths {
-				if pathsOverlap(allowedPath, protectedPath) {
+				overlaps, err := pathscope.Overlaps(allowedPath, protectedPath)
+				if err != nil {
+					appendInvalidPathViolation(violations, fmt.Sprintf("tasks[%d].allowedPaths", i), allowedPath)
+				} else if overlaps {
 					*violations = append(*violations, Violation{
 						Code:    "path_overlap",
 						Field:   fmt.Sprintf("tasks[%d].allowedPaths", i),
@@ -246,8 +221,50 @@ func validatePathOwnership(violations *[]Violation, tasks []Task, protectedPaths
 	}
 }
 
-func pathsOverlap(left, right string) bool {
-	left = strings.TrimSuffix(left, "/**")
-	right = strings.TrimSuffix(right, "/**")
-	return left == right || strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/")
+func appendInvalidPathViolation(violations *[]Violation, field, path string) {
+	*violations = append(*violations, Violation{
+		Code:    "path_overlap",
+		Field:   field,
+		Message: fmt.Sprintf("경로 %q가 올바른 저장소 상대 경로가 아닙니다", path),
+	})
+}
+
+func taskIndex(tasks []Task, id string) int {
+	for i, task := range tasks {
+		if task.ID == id {
+			return i
+		}
+	}
+	return 0
+}
+
+var allowedRiskCategories = map[string]struct{}{
+	"data":            {},
+	"authentication":  {},
+	"authorization":   {},
+	"deployment":      {},
+	"supply_chain":    {},
+	"public_contract": {},
+}
+
+func validateRiskCategories(violations *[]Violation, categories []string) {
+	seen := make(map[string]struct{}, len(categories))
+	for i, category := range categories {
+		field := fmt.Sprintf("riskCategories[%d]", i)
+		if _, exists := seen[category]; exists {
+			*violations = append(*violations, Violation{
+				Code:    "duplicate",
+				Field:   field,
+				Message: fmt.Sprintf("위험 범주 %q가 중복됩니다", category),
+			})
+		}
+		seen[category] = struct{}{}
+		if _, allowed := allowedRiskCategories[category]; !allowed {
+			*violations = append(*violations, Violation{
+				Code:    "required",
+				Field:   field,
+				Message: fmt.Sprintf("위험 범주 %q를 사용할 수 없습니다", category),
+			})
+		}
+	}
 }
