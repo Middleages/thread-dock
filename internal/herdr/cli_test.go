@@ -207,15 +207,19 @@ func TestReadReviewEvidenceAcceptsStrictAcceptEnvelope(t *testing.T) {
 func TestReadReviewEvidenceRejectsAcceptWithFindingsAndStaleRequest(t *testing.T) {
 	for name, payload := range map[string]string{
 		"accept findings": `{"requestId":"review-1","decision":"accept","blockingFindings":[{"id":"F-1","summary":"x","paths":["src/api.go"]}],"riskCategories":[]}`,
-		"stale request":   `{"requestId":"review-old","decision":"accept","blockingFindings":[]}`,
+		"stale request":   `{"requestId":"review-old","decision":"accept","blockingFindings":[],"riskCategories":[]}`,
 		"raw only":        "review accepted",
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := fixtureRunner(t, map[string]string{
 				"herdr\x00agent\x00read\x00reviewer_api\x00--source\x00recent-unwrapped\x00--lines\x00120": THREADDOCK_REVIEW_BEGIN + "\n" + payload + "\n" + THREADDOCK_REVIEW_END,
 			})
-			if _, err := NewCLI(r, "herdr").ReadReviewEvidence(context.Background(), "reviewer_api", "review-1"); err == nil {
+			_, err := NewCLI(r, "herdr").ReadReviewEvidence(context.Background(), "reviewer_api", "review-1")
+			if err == nil {
 				t.Fatal("expected rejection")
+			}
+			if name == "stale request" && !strings.Contains(err.Error(), "stale or invalid requestId") {
+				t.Fatalf("error=%q, want stale request category", err)
 			}
 		})
 	}
