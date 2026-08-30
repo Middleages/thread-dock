@@ -19,6 +19,8 @@ const (
 	Block         Kind = "block"
 )
 
+const maxRecoveryAttempts = 3
+
 // Policy bounds how long a live working agent may be left without progress
 // and how many recovery actions may be attempted without progress.
 type Policy struct {
@@ -72,7 +74,10 @@ func Decide(now time.Time, policy Policy, agent AgentSnapshot) Decision {
 	if agent.Alive {
 		switch agent.State {
 		case "working":
-			if agent.LastProgress.IsZero() || now.Sub(agent.LastProgress) < policy.WorkingWait {
+			if agent.LastProgress.IsZero() {
+				return Decision{Kind: AskOperator, NextCount: count}
+			}
+			if now.Sub(agent.LastProgress) < policy.WorkingWait {
 				return Decision{Kind: Wait, NextCount: count}
 			}
 			// Herdr v0.8.2 cannot prove foreground activity or exclude a
@@ -105,5 +110,9 @@ func continueDecision(policy Policy, count int) Decision {
 }
 
 func exhausted(policy Policy, count int) bool {
-	return policy.Limit <= 0 || count >= policy.Limit
+	limit := policy.Limit
+	if limit > maxRecoveryAttempts {
+		limit = maxRecoveryAttempts
+	}
+	return limit <= 0 || count >= limit
 }
