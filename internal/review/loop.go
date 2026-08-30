@@ -23,9 +23,11 @@ type ReviewResult struct {
 
 // Finding identifies one concrete blocking review issue.
 type Finding struct {
-	ID      string
-	Summary string
-	Paths   []string
+	ID         string
+	Summary    string
+	Paths      []string
+	CheckName  string
+	CheckState string
 }
 
 // DecisionKind is the next action selected by Decide.

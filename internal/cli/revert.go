@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"thread-dock/internal/contract"
@@ -62,26 +61,14 @@ func (s *RevertRunServiceImpl) CreateRevert(ctx context.Context, id contract.Run
 	if err != nil {
 		return github.PullRequest{}, err
 	}
-	if snapshot.Phase != contract.PhaseCompleted || !snapshot.PullRequestMerged || strings.TrimSpace(snapshot.MergeSHA) == "" || strings.TrimSpace(snapshot.ContractPath) == "" {
+	if snapshot.Phase != contract.PhaseCompleted || !snapshot.PullRequestMerged || strings.TrimSpace(snapshot.MergeSHA) == "" || strings.TrimSpace(snapshot.ContractPath) == "" || strings.TrimSpace(snapshot.Repository.Owner) == "" || strings.TrimSpace(snapshot.Repository.Name) == "" || strings.TrimSpace(snapshot.Repository.DefaultBranch) == "" {
 		return github.PullRequest{}, errors.New("revert requires an exact completed merge state")
 	}
-	file, err := os.Open(snapshot.ContractPath)
-	if err != nil {
-		return github.PullRequest{}, contract.NewUnreadableError(err)
-	}
-	c, err := contract.Read(file)
-	closeErr := file.Close()
-	if err != nil {
-		return github.PullRequest{}, err
-	}
-	if closeErr != nil {
-		return github.PullRequest{}, closeErr
-	}
 	return s.creator.Create(ctx, revert.Request{
-		Repository:     github.Repository{Owner: c.Repository.Owner, Name: c.Repository.Name},
+		Repository:     github.Repository{Owner: snapshot.Repository.Owner, Name: snapshot.Repository.Name},
 		RepositoryPath: snapshot.RepositoryPath, ManagedRoot: s.managedRoot,
-		Parent: github.Issue{Number: snapshot.ParentIssue}, DefaultBranch: c.Repository.DefaultBranch,
-		BaseCommit: c.BaseCommit, MergeSHA: snapshot.MergeSHA, Remote: "origin", Reason: reason,
+		Parent: github.Issue{Number: snapshot.ParentIssue}, DefaultBranch: snapshot.Repository.DefaultBranch,
+		BaseCommit: snapshot.MergeSHA, MergeSHA: snapshot.MergeSHA, Remote: "origin", Reason: reason,
 	})
 }
 

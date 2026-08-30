@@ -48,9 +48,9 @@ func TestParallelStories(t *testing.T) {
 	}{
 		{name: "ordinary auto merge", want: contract.PhaseCompleted},
 		{name: "third repair blocks", configure: func(h *parallelHarness) { h.reviewFailures = 1; h.ciFailures = 2 }, want: contract.PhaseBlocked},
-		{name: "protected waits", configure: func(h *parallelHarness) { h.changedFiles = []string{"authentication/policy.go"} }, want: contract.PhaseNeedsOperator},
+		{name: "protected waits", configure: func(h *parallelHarness) { h.protectedRiskCategories = []string{"authentication"} }, want: contract.PhaseNeedsOperator},
 		{name: "git conflict blocks", configure: func(h *parallelHarness) { h.mergeConflict = true }, want: contract.PhaseBlocked},
-		{name: "three recoveries block", configure: func(h *parallelHarness) { h.stallRecoveries = 3 }, want: contract.PhaseBlocked},
+		{name: "three recoveries block", configure: func(h *parallelHarness) { h.stallRecoveries = 99 }, want: contract.PhaseBlocked},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -60,6 +60,12 @@ func TestParallelStories(t *testing.T) {
 			}
 			if got := h.runToStable(); got != tc.want {
 				t.Fatalf("phase=%s, want %s", got, tc.want)
+			}
+			if tc.name == "protected waits" && len(h.parallelGH.protectedComments) != 1 {
+				t.Fatalf("protected comments=%d, want one", len(h.parallelGH.protectedComments))
+			}
+			if tc.name == "protected waits" && !strings.Contains(h.parallelGH.protectedComments[0], "<!-- threaddock:") {
+				t.Fatalf("protected comment missing unique marker: %q", h.parallelGH.protectedComments[0])
 			}
 		})
 	}
@@ -98,6 +104,9 @@ func TestRepairsRequireFreshCommitAndReuseOnePR(t *testing.T) {
 		t.Fatalf("ready mutations=%d, want one (reused ready PR is skipped)", h.parallelGH.readyCalls)
 	}
 	snapshot := h.mustLoadRun()
+	if snapshot.PullRequestNodeID != "PR_node" {
+		t.Fatalf("pull request node ID=%q, want durable PR_node", snapshot.PullRequestNodeID)
+	}
 	for _, task := range snapshot.Tasks {
 		if task.Agent.CommitSHA == task.PreviousCommitSHA && task.PreviousCommitSHA != "" {
 			t.Fatalf("repair reused stale commit %s", task.Agent.CommitSHA)
@@ -130,7 +139,7 @@ func TestWorkingAgentWaitsThenStaleLiveRequiresOperator(t *testing.T) {
 		}
 	}
 	h.clock.now = h.clock.now.Add(2 * time.Hour)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 6; i++ {
 		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
 			t.Fatal(err)
 		}
@@ -156,7 +165,7 @@ func TestUnknownMergeabilityIsRereadAndBounded(t *testing.T) {
 
 func TestProtectedConfirmationIsIdempotentAndResumesMerge(t *testing.T) {
 	h := newParallelHarness(t)
-	h.changedFiles = []string{"authentication/policy.go"}
+	h.protectedRiskCategories = []string{"authentication"}
 	if got := h.runToStable(); got != contract.PhaseNeedsOperator {
 		t.Fatalf("phase=%s", got)
 	}
@@ -185,9 +194,9 @@ func TestProtectedConfirmationIsIdempotentAndResumesMerge(t *testing.T) {
 	}
 }
 
-func TestProtectedConfirmationDuringMergingIsNoOp(t *testing.T) {
+func TestProtectedConfirmationRestartsLatestMainBeforeMerge(t *testing.T) {
 	h := newParallelHarness(t)
-	h.changedFiles = []string{"authentication/policy.go"}
+	h.protectedRiskCategories = []string{"authentication"}
 	if got := h.runToStable(); got != contract.PhaseNeedsOperator {
 		t.Fatalf("phase=%s", got)
 	}
@@ -198,8 +207,8 @@ func TestProtectedConfirmationDuringMergingIsNoOp(t *testing.T) {
 	if err := h.orchestrator.ConfirmProtectedChange(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.mustLoad(id); got.Phase != contract.PhaseMerging {
-		t.Fatalf("phase after first confirmation=%s", got.Phase)
+	if got := h.mustLoad(id); got.Phase != contract.PhaseCI {
+		t.Fatalf("phase after first confirmation=%s, want CI revalidation", got.Phase)
 	}
 	merges := h.parallelGH.mergeCalls
 	if err := h.orchestrator.ConfirmProtectedChange(context.Background(), id); err != nil {

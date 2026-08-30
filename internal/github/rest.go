@@ -555,6 +555,114 @@ func (c *RESTClient) CreateIssueComment(ctx context.Context, repo Repository, nu
 	}{Body: body}, nil)
 }
 
+// FindIssueComment scans every page of issue comments for one exact marker.
+// It is used only to reconcile a comment mutation whose response may have
+// been lost after GitHub accepted it.
+func (c *RESTClient) FindIssueComment(ctx context.Context, repo Repository, number int, marker string) (bool, error) {
+	if err := validateRepository(repo); err != nil {
+		return false, err
+	}
+	if number <= 0 || strings.TrimSpace(marker) == "" || marker != strings.TrimSpace(marker) || !safeUserText(marker) {
+		return false, errors.New("github issue comment lookup requires a valid marker")
+	}
+	rootPath := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
+	path := rootPath + "?per_page=100"
+	seenPages := make(map[string]struct{})
+	for page := 0; page < 1000; page++ {
+		if _, seen := seenPages[path]; seen {
+			return false, errors.New("github issue comment pagination repeated a page")
+		}
+		seenPages[path] = struct{}{}
+		var comments []struct {
+			ID   int64  `json:"id"`
+			Body string `json:"body"`
+		}
+		link, err := c.doSafeJSONWithLink(ctx, "find issue comment", http.MethodGet, path, nil, &comments)
+		if err != nil {
+			return false, err
+		}
+		for _, comment := range comments {
+			if strings.Contains(comment.Body, marker) {
+				return true, nil
+			}
+		}
+		if page == 999 {
+			return false, errors.New("github issue comment pagination exceeded the safety limit")
+		}
+		next := nextIssueLink(link)
+		if next == "" && len(comments) == 100 {
+			u, parseErr := url.Parse(path)
+			if parseErr != nil {
+				return false, errors.New("github issue comment pagination is malformed")
+			}
+			query := u.Query()
+			pageNumber, parseErr := strconv.Atoi(query.Get("page"))
+			if parseErr != nil || pageNumber < 1 {
+				pageNumber = 1
+			}
+			query.Set("page", strconv.Itoa(pageNumber+1))
+			u.RawQuery = query.Encode()
+			next = u.RequestURI()
+		}
+		if next == "" {
+			return false, nil
+		}
+		path, err = c.validateIssueCommentPageURL(next, rootPath)
+		if err != nil {
+			return false, err
+		}
+	}
+	return false, errors.New("github issue comment pagination is unreachable")
+}
+
+func (c *RESTClient) validateIssueCommentPageURL(raw, rootPath string) (string, error) {
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", errors.New("github issue comment pagination base is malformed")
+	}
+	next, err := url.Parse(raw)
+	if err != nil || next.User != nil {
+		return "", errors.New("github issue comment pagination link is malformed")
+	}
+	if !next.IsAbs() {
+		next = base.ResolveReference(next)
+	}
+	if !sameOrigin(next, base) || !c.validIssueCommentPagePath(next.Path, rootPath) || next.Fragment != "" {
+		return "", errors.New("github issue comment pagination link is outside the configured GitHub API base")
+	}
+	for key, values := range next.Query() {
+		if key != "page" && key != "per_page" {
+			return "", errors.New("github issue comment pagination link contains unsupported query data")
+		}
+		if len(values) != 1 || strings.TrimSpace(values[0]) == "" {
+			return "", errors.New("github issue comment pagination link contains an invalid query")
+		}
+	}
+	return next.RequestURI(), nil
+}
+
+func (c *RESTClient) validIssueCommentPagePath(path, rootPath string) bool {
+	if path == rootPath {
+		return true
+	}
+	if !c.publicAPI || !strings.HasPrefix(path, "/repositories/") || !strings.HasSuffix(path, "/comments") {
+		return false
+	}
+	value := strings.TrimSuffix(strings.TrimPrefix(path, "/repositories/"), "/comments")
+	parts := strings.Split(value, "/issues/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, number := range []string{parts[0], parts[1]} {
+		for _, character := range number {
+			if character < '0' || character > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func safeUserText(value string) bool {
 	if !utf8.ValidString(value) {
 		return false
@@ -567,25 +675,83 @@ func safeUserText(value string) bool {
 	return true
 }
 
-// MarkReadyForReview transitions a pull request from draft to ready and
-// returns the provider response through the same normalized PullRequest type.
-func (c *RESTClient) MarkReadyForReview(ctx context.Context, repo Repository, number int) (PullRequest, error) {
+// MarkReadyForReview transitions a pull request from draft to ready using the
+// durable GraphQL pull-request node ID. GitHub has no supported REST ready
+// endpoint; using the node ID also prevents a stale/reused PR number from
+// receiving the mutation.
+func (c *RESTClient) MarkReadyForReview(ctx context.Context, repo Repository, nodeID string) (PullRequest, error) {
 	if err := validateRepository(repo); err != nil {
 		return PullRequest{}, err
 	}
-	if number <= 0 {
-		return PullRequest{}, errors.New("github pull request number must be positive")
+	if !validGraphQLNodeID(nodeID) {
+		return PullRequest{}, errors.New("github pull request node ID is required")
 	}
-	path := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/ready_for_review", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
-	var wire pullRequestWire
-	if err := c.doSafeJSON(ctx, "mark pull request ready", http.MethodPost, path, nil, &wire); err != nil {
+	const mutation = `mutation MarkPullRequestReady($pullRequestId: ID!) {
+  markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
+    pullRequest {
+      id
+      number
+      isDraft
+      headRefName
+      headRefOid
+      baseRefName
+      url
+    }
+  }
+}`
+	payload := struct {
+		Query     string `json:"query"`
+		Variables struct {
+			PullRequestID string `json:"pullRequestId"`
+		} `json:"variables"`
+	}{Query: mutation}
+	payload.Variables.PullRequestID = nodeID
+	var response graphQLReadyResponse
+	if err := c.doSafeJSON(ctx, "mark pull request ready", http.MethodPost, c.graphqlPath, payload, &response); err != nil {
 		return PullRequest{}, err
 	}
-	pr := wire.toPullRequest()
-	if pr.Number != number || pr.Draft {
-		return PullRequest{}, errors.New("github ready response did not identify a non-draft requested pull request")
+	if err := response.graphQLError(c.token); err != nil {
+		return PullRequest{}, err
+	}
+	pr := response.Data.Mark.PullRequest.toPullRequest()
+	if pr.NodeID != nodeID || pr.Number <= 0 || pr.Draft {
+		return PullRequest{}, errors.New("github ready response did not identify the exact non-draft requested pull request")
 	}
 	return pr, nil
+}
+
+func validGraphQLNodeID(value string) bool {
+	return strings.TrimSpace(value) != "" && strings.TrimSpace(value) == value && safeUserText(value) && !strings.ContainsAny(value, "\x00\r\n \t")
+}
+
+type graphQLReadyResponse struct {
+	Data struct {
+		Mark struct {
+			PullRequest graphQLReadyPullRequest `json:"pullRequest"`
+		} `json:"markPullRequestReadyForReview"`
+	} `json:"data"`
+	Errors []graphQLErrorItem `json:"errors"`
+}
+
+func (r graphQLReadyResponse) graphQLError(token string) error {
+	if len(r.Errors) > 0 {
+		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: sanitize(r.Errors[0].Message, token)}
+	}
+	return nil
+}
+
+type graphQLReadyPullRequest struct {
+	ID          string `json:"id"`
+	Number      int    `json:"number"`
+	IsDraft     bool   `json:"isDraft"`
+	HeadRefName string `json:"headRefName"`
+	HeadRefOID  string `json:"headRefOid"`
+	BaseRefName string `json:"baseRefName"`
+	URL         string `json:"url"`
+}
+
+func (p graphQLReadyPullRequest) toPullRequest() PullRequest {
+	return PullRequest{NodeID: p.ID, Number: p.Number, Draft: p.IsDraft, Head: p.HeadRefName, HeadSHA: p.HeadRefOID, Base: p.BaseRefName, HTMLURL: p.URL}
 }
 
 // FindOpenPullRequest finds a draft or ready open PR whose head and base refs
@@ -1336,6 +1502,7 @@ func sanitize(message, token string) string {
 var _ Client = (*RESTClient)(nil)
 var _ CheckReader = (*RESTClient)(nil)
 var _ IssueCommenter = (*RESTClient)(nil)
+var _ IssueCommentFinder = (*RESTClient)(nil)
 var _ PullRequestReadier = (*RESTClient)(nil)
 var _ PullRequestFinder = (*RESTClient)(nil)
 var _ SafeDraftPRCreator = (*RESTClient)(nil)

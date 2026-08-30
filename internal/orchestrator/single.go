@@ -142,6 +142,7 @@ func (o *Orchestrator) Start(ctx context.Context, contractPath string) (contract
 		RunID:           id,
 		Phase:           contract.PhaseRegistered,
 		ContractPath:    contractPath,
+		Repository:      c.Repository,
 		RepositoryPath:  repositoryPath,
 		IntegrationPath: integrationPath,
 		Integration:     state.WorktreeState{Path: integrationPath, Branch: integrationBranch},

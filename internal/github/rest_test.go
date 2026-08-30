@@ -996,7 +996,7 @@ func assertHeaders(t *testing.T, r *http.Request) {
 	}
 }
 
-func TestChecksReadyCommentAndMergeUseBothRESTProfiles(t *testing.T) {
+func TestChecksGraphQLReadyCommentAndMergeUseBothProfiles(t *testing.T) {
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	for _, profile := range []struct {
 		name string
@@ -1020,8 +1020,10 @@ func TestChecksReadyCommentAndMergeUseBothRESTProfiles(t *testing.T) {
 					}
 					w.Header().Set("Link", "")
 					_, _ = io.WriteString(w, `{"total_count":3,"check_runs":[{"name":"z-ci","status":"completed","conclusion":"success"},{"name":"a-ci","status":"completed","conclusion":"failure"},{"name":"waiting","status":"queued","conclusion":null}]}`)
+				case "/graphql", "/api/graphql":
+					_, _ = io.WriteString(w, `{"data":{"markPullRequestReadyForReview":{"pullRequest":{"id":"PR_node","number":17,"isDraft":false,"headRefName":"feature","headRefOid":"`+sha+`","baseRefName":"main"}}}}`)
 				case profile.path + "/pulls/17/ready_for_review":
-					_, _ = io.WriteString(w, `{"number":17,"draft":false,"head":{"ref":"feature","sha":"`+sha+`"},"mergeable":null}`)
+					t.Fatalf("invented REST ready endpoint called")
 				case profile.path + "/issues/17/comments":
 					var body map[string]any
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1062,7 +1064,7 @@ func TestChecksReadyCommentAndMergeUseBothRESTProfiles(t *testing.T) {
 			if !reflect.DeepEqual(checks, wantChecks) {
 				t.Fatalf("checks=%#v want=%#v", checks, wantChecks)
 			}
-			pr, err := client.MarkReadyForReview(context.Background(), repo(), 17)
+			pr, err := client.MarkReadyForReview(context.Background(), repo(), "PR_node")
 			if err != nil || pr.HeadSHA != sha || pr.Mergeable != nil || pr.Head != "feature" {
 				t.Fatalf("pr=%+v err=%v", pr, err)
 			}
@@ -1077,7 +1079,12 @@ func TestChecksReadyCommentAndMergeUseBothRESTProfiles(t *testing.T) {
 			}
 			wantPaths := []string{
 				profile.path + "/commits/" + sha + "/check-runs?per_page=100",
-				profile.path + "/pulls/17/ready_for_review",
+				func() string {
+					if profile.name == "github.com" {
+						return "/graphql"
+					}
+					return "/api/graphql"
+				}(),
 				profile.path + "/issues/17/comments",
 				profile.path + "/pulls/17/merge",
 			}
@@ -1204,11 +1211,11 @@ func TestGetChecksMapsOnlyAllowlistedStatuses(t *testing.T) {
 
 func TestMarkReadyForReviewRejectsMismatchedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"number":18,"draft":true,"head":{"ref":"feature","sha":"0123456789abcdef0123456789abcdef01234567"}}`)
+		_, _ = io.WriteString(w, `{"data":{"markPullRequestReadyForReview":{"pullRequest":{"id":"other","number":18,"isDraft":true}}}}`)
 	}))
 	defer server.Close()
 	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
-	if _, err := client.MarkReadyForReview(context.Background(), repo(), 17); err == nil {
+	if _, err := client.MarkReadyForReview(context.Background(), repo(), "PR_node"); err == nil {
 		t.Fatal("accepted mismatched ready response")
 	}
 }
@@ -1224,7 +1231,7 @@ func TestNewEndpointFailuresDoNotExposeProviderBody(t *testing.T) {
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	checksErr := func() error { _, err := client.GetChecks(context.Background(), repo(), sha); return err }
 	commentErr := func() error { return client.CreateIssueComment(context.Background(), repo(), 17, "body") }
-	readyErr := func() error { _, err := client.MarkReadyForReview(context.Background(), repo(), 17); return err }
+	readyErr := func() error { _, err := client.MarkReadyForReview(context.Background(), repo(), "PR_node"); return err }
 	mergeErr := func() error {
 		_, err := client.MergePullRequest(context.Background(), repo(), 17, sha, "merge")
 		return err

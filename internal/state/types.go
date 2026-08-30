@@ -78,16 +78,22 @@ type TaskRunState struct {
 // ReviewFinding is the durable, provider-neutral form of one blocking
 // Reviewer/CI finding. It intentionally contains no provider payload.
 type ReviewFinding struct {
-	ID      string   `json:"id"`
-	Summary string   `json:"summary"`
-	Paths   []string `json:"paths"`
+	ID         string   `json:"id"`
+	Summary    string   `json:"summary"`
+	Paths      []string `json:"paths"`
+	CheckName  string   `json:"checkName,omitempty"`
+	CheckState string   `json:"checkState,omitempty"`
 }
 
 type RunSnapshot struct {
-	ContractVersion  int                     `json:"contractVersion"`
-	RunID            contract.RunID          `json:"runId"`
-	Phase            contract.RunPhase       `json:"phase"`
-	ContractPath     string                  `json:"contractPath"`
+	ContractVersion int               `json:"contractVersion"`
+	RunID           contract.RunID    `json:"runId"`
+	Phase           contract.RunPhase `json:"phase"`
+	ContractPath    string            `json:"contractPath"`
+	// Repository is the immutable owner/name/default-branch identity captured
+	// at Start. Later recovery and revert operations must not reread a mutable
+	// contract file to choose their GitHub target.
+	Repository       contract.RepositoryRef  `json:"repository"`
 	RepositoryPath   string                  `json:"repositoryPath"`
 	IntegrationPath  string                  `json:"integrationPath"`
 	ParentIssue      int                     `json:"parentIssue"`
@@ -119,6 +125,7 @@ type RunSnapshot struct {
 	RepairBaseSHA            string                 `json:"repairBaseSha,omitempty"`
 	IntegrationVerification  []VerificationEvidence `json:"integrationVerification,omitempty"`
 	PullRequest              int                    `json:"pullRequest,omitempty"`
+	PullRequestNodeID        string                 `json:"pullRequestNodeId,omitempty"`
 	PullRequestURL           string                 `json:"pullRequestUrl,omitempty"`
 	PullRequestHeadSHA       string                 `json:"pullRequestHeadSha,omitempty"`
 	ExpectedMergeHeadSHA     string                 `json:"expectedMergeHeadSha,omitempty"`
@@ -130,6 +137,8 @@ type RunSnapshot struct {
 	MainSHA                  string                 `json:"mainSha,omitempty"`
 	ProtectedReasons         []string               `json:"protectedReasons,omitempty"`
 	ProtectedConfirmed       bool                   `json:"protectedConfirmed,omitempty"`
+	ProtectedCommentMarker   string                 `json:"protectedCommentMarker,omitempty"`
+	ProtectedCommentPosted   bool                   `json:"protectedCommentPosted,omitempty"`
 	ProjectAutomationEnabled bool                   `json:"projectAutomationEnabled,omitempty"`
 	ProjectStatus            string                 `json:"projectStatus,omitempty"`
 	ProjectItemID            string                 `json:"projectItemId,omitempty"`

@@ -167,9 +167,16 @@ type IssueCommenter interface {
 	CreateIssueComment(context.Context, Repository, int, string) error
 }
 
+// IssueCommentFinder reconciles a comment write after a lost response. The
+// marker is an exact, deterministic run marker and the implementation must
+// inspect all provider pages before reporting that it is absent.
+type IssueCommentFinder interface {
+	FindIssueComment(context.Context, Repository, int, string) (bool, error)
+}
+
 // PullRequestReadier transitions a draft PR to ready for review.
 type PullRequestReadier interface {
-	MarkReadyForReview(context.Context, Repository, int) (PullRequest, error)
+	MarkReadyForReview(context.Context, Repository, string) (PullRequest, error)
 }
 
 // PullRequestFinder finds an existing open PR for an exact head/base pair.

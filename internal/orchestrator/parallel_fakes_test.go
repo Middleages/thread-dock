@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -16,14 +18,16 @@ import (
 
 type parallelHarness struct {
 	*harness
-	reviewFailures  int
-	ciFailures      int
-	changedFiles    []string
-	mergeConflict   bool
-	stallRecoveries int
-	stallMode       bool
-	parallelGH      *parallelGitHub
-	parallelHD      *parallelHerdr
+	reviewFailures          int
+	ciFailures              int
+	changedFiles            []string
+	mergeConflict           bool
+	stallRecoveries         int
+	stallMode               bool
+	protectedRiskCategories []string
+	parallelGH              *parallelGitHub
+	parallelHD              *parallelHerdr
+	parallelGit             *parallelGit
 }
 
 func (h *parallelHarness) mustLoadRun() state.RunSnapshot {
@@ -49,8 +53,9 @@ type parallelHerdr struct {
 
 type parallelGit struct {
 	*fakeGit
-	harness   *parallelHarness
-	remoteSHA string
+	harness     *parallelHarness
+	remoteSHA   string
+	abortMerges int
 }
 
 type parallelGitHub struct {
@@ -70,6 +75,7 @@ type parallelGitHub struct {
 	projectAddResponseLost    bool
 	projectUpdateResponseLost bool
 	projectObservation        *github.ProjectStatus
+	protectedComments         []string
 }
 
 func newParallelHarness(t *testing.T) *parallelHarness {
@@ -86,6 +92,7 @@ func newParallelHarness(t *testing.T) *parallelHarness {
 	ph.Deps.Herdr, ph.Deps.Worktree, ph.Deps.Git, ph.Deps.GitHub = hd, gg, gg, gh
 	ph.parallelGH = gh
 	ph.parallelHD = hd
+	ph.parallelGit = gg
 	ph.herdr = hd.fakeHerdr
 	ph.git = gg.fakeGit
 	ph.github = gh.fakeGitHub
@@ -96,16 +103,28 @@ func newParallelHarness(t *testing.T) *parallelHarness {
 func (h *parallelHarness) runToStable() contract.RunPhase {
 	h.t.Helper()
 	h.stallMode = h.stallRecoveries > 0
+	if len(h.protectedRiskCategories) > 0 {
+		file, err := os.Open(h.contractPath)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		c, err := contract.Read(file)
+		_ = file.Close()
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		c.RiskCategories = append([]string(nil), h.protectedRiskCategories...)
+		var encoded bytes.Buffer
+		if err := contract.Write(&encoded, c); err != nil {
+			h.t.Fatal(err)
+		}
+		if err := os.WriteFile(h.contractPath, encoded.Bytes(), 0600); err != nil {
+			h.t.Fatal(err)
+		}
+	}
 	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
 	if err != nil {
 		h.t.Fatal(err)
-	}
-	if len(h.changedFiles) == 1 && strings.HasPrefix(h.changedFiles[0], "authentication/") {
-		for _, runtime := range h.orchestrator.runs {
-			for index := range runtime.contract.Tasks {
-				runtime.contract.Tasks[index].AllowedPaths = append(runtime.contract.Tasks[index].AllowedPaths, "authentication/**")
-			}
-		}
 	}
 	for i := 0; i < 120; i++ {
 		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
@@ -245,7 +264,7 @@ func (h *parallelGit) MergeCommitNoFF(context.Context, string, string) error {
 	return nil
 }
 
-func (h *parallelGit) AbortMerge(context.Context, string) error { return nil }
+func (h *parallelGit) AbortMerge(context.Context, string) error { h.abortMerges++; return nil }
 
 func (h *parallelGit) RunChecks(_ context.Context, _ string, commands []string) ([]worktree.VerificationCheck, error) {
 	checks := make([]worktree.VerificationCheck, 0, len(commands))
@@ -268,12 +287,15 @@ func (h *parallelGit) IsAncestor(context.Context, string, string) (bool, error) 
 
 func (h *parallelGitHub) CreateDraftPR(_ context.Context, _ github.Repository, request github.DraftPRRequest) (github.PullRequest, error) {
 	h.draftCalls++
-	h.pr = github.PullRequest{Number: 185, HTMLURL: "https://github.example/185", State: "open", Draft: true, Head: request.Head, HeadSHA: validSHA, Base: request.Base}
+	h.pr = github.PullRequest{Number: 185, NodeID: "PR_node", HTMLURL: "https://github.example/185", State: "open", Draft: true, Head: request.Head, HeadSHA: validSHA, Base: request.Base}
 	return h.pr, nil
 }
 
 func (h *parallelGitHub) GetPullRequest(context.Context, github.Repository, int) (github.PullRequest, error) {
 	pr := h.pr
+	if pr.Number > 0 && pr.NodeID == "" {
+		pr.NodeID = "PR_node"
+	}
 	if h.mergeableUnknown > 0 {
 		h.mergeableUnknown--
 		return pr, nil
@@ -290,18 +312,32 @@ func (h *parallelGitHub) FindOpenPullRequest(context.Context, github.Repository,
 	return h.pr, true, nil
 }
 
-func (h *parallelGitHub) MarkReadyForReview(context.Context, github.Repository, int) (github.PullRequest, error) {
+func (h *parallelGitHub) MarkReadyForReview(context.Context, github.Repository, string) (github.PullRequest, error) {
 	h.readyCalls++
 	h.pr.Draft = false
 	return h.pr, nil
 }
 
+func (h *parallelGitHub) CreateIssueComment(_ context.Context, _ github.Repository, _ int, body string) error {
+	h.protectedComments = append(h.protectedComments, body)
+	return nil
+}
+
+func (h *parallelGitHub) FindIssueComment(_ context.Context, _ github.Repository, _ int, marker string) (bool, error) {
+	for _, body := range h.protectedComments {
+		if strings.Contains(body, marker) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (h *parallelGitHub) GetChecks(context.Context, github.Repository, string) ([]github.CheckState, error) {
 	if h.harness.ciFailures > 0 {
 		h.harness.ciFailures--
-		return []github.CheckState{{Name: "ci", State: "failure"}}, nil
+		return []github.CheckState{{Name: "go test ./internal/payments", State: "failure"}}, nil
 	}
-	return []github.CheckState{{Name: "ci", State: "success"}}, nil
+	return []github.CheckState{{Name: "go test ./internal/payments", State: "success"}}, nil
 }
 
 func (h *parallelGitHub) MergePullRequest(context.Context, github.Repository, int, string, string) (github.MergePullRequestResult, error) {

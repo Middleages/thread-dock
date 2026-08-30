@@ -55,12 +55,17 @@ snapshot and append-only event log, then record:
    blocks (or any three shared Reviewer/CI blocks). Each repair must be a new
    Task packet, new strict evidence, and a new immutable commit before
    reintegration. The third block must end in `blocked` with no blind retry.
-3. **Protected wait and confirmation.** Change a file under a protected path
-   (for example `authentication/`). Verify `needs_operator` contains the
-   canonical protected reason and no merge call occurs. Run
+3. **Protected wait and confirmation.** Declare the valid contract
+   `riskCategories` values (for example `authentication` or
+   `public_contract`); do not broaden a Task's `allowedPaths` to make a
+   protected story pass validation. Verify the PR contains exactly one
+   secret-free `<!-- threaddock:RUN:protected-change -->` marker with the
+   protected reasons before `needs_operator` is persisted. Run
    `agentctl confirm RUN protected-change` twice; the first persists the intent
-   and audit record and resumes, while the second is idempotent. Merge only
-   after the exact final SHA/check/mergeability gate is true.
+   and audit record before invalidating all latest-main, Full Suite, check, and
+   mergeability evidence, then resumes the complete refresh/recheck sequence.
+   The second is idempotent. Merge only after the exact final SHA/check/
+   mergeability gate is true.
 4. **Git conflict.** Make immutable integration report a confirmed merge
    conflict. Verify the run is `blocked`, conflict evidence is recorded, and
    there is no reset, automatic conflict resolution, push, or main merge.
@@ -72,9 +77,11 @@ snapshot and append-only event log, then record:
    resume.
 6. **Revert the ordinary merge.** On the completed ordinary run, execute
    `agentctl create-revert RUN --reason "pilot regression"`. Verify the command
-   uses the exact persisted merge SHA and completed state, creates a deterministic
-   managed revert branch and Draft Revert PR, and leaves main unchanged. Record
-   the Revert PR link/number, branch, merge SHA, reason, and secret-scan result.
+   uses the immutable owner/name/default branch and exact persisted merge SHA
+   captured in the run snapshot (not a reread contract), creates a
+   deterministic managed revert branch and Draft Revert PR, and leaves main
+   unchanged. Record the Revert PR link/number, branch, merge SHA, reason, and
+   secret-scan result.
 
 ## Acceptance and cleanup
 

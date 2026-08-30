@@ -364,7 +364,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement progress and exclusion rules**
 
-Orchestration constructs the progress fingerprint from the immutable commit SHA, `worktree.Fingerprint`, sorted completed Task IDs, and normalized verification evidence. A changed non-empty fingerprint resets `RecoveryCount` to zero. Incomplete `idle/done` returns `Continue`. A live `working` Agent waits for `WorkingWait`; after that it returns `AskOperator` because Herdr v0.8.2 exposes no safe foreground-command or duplicate-process exclusion signal.
+Orchestration constructs the progress fingerprint from the immutable commit SHA, the Builder Task's `worktree.Fingerprint` (never the integration checkout), sorted completed Task IDs, and normalized verification evidence. Recovery observation recomputes that managed fingerprint as its own durable action and compares it before invoking policy; it does not overwrite the previous fingerprint to manufacture no-progress. A changed non-empty fingerprint resets `RecoveryCount` to zero. Incomplete `idle/done` returns `Continue` for counts 1, 2, and 3; only a policy `Block` at count 3/no progress stops the run. A live `working` Agent waits for `WorkingWait`; after that it returns `AskOperator` because Herdr v0.8.2 exposes no safe foreground-command or duplicate-process exclusion signal.
 
 - [ ] **Step 4: Cap recovery and preserve evidence**
 
@@ -394,7 +394,7 @@ git commit -m "feat: 느린 모델 자동 복구 정책 추가"
 
 **Interfaces:**
 - Produces: `mergegate.Evaluate(Input) Decision`
-- Adds narrow optional ports in `internal/github/client.go`: `CheckReader.GetChecks(ctx, repo, sha)`, `IssueCommenter.CreateIssueComment(ctx, repo, number, body)`, `PullRequestReadier.MarkReadyForReview(ctx, repo, number)`, and `PullRequestMerger.MergePullRequest(ctx, repo, number, exactSHA, method)`. `github.Client` keeps its current methods so existing Single-run fakes continue to compile.
+- Adds narrow optional ports in `internal/github/client.go`: `CheckReader.GetChecks(ctx, repo, sha)`, `IssueCommenter.CreateIssueComment(ctx, repo, number, body)`, `IssueCommentFinder.FindIssueComment(ctx, repo, number, marker)`, `PullRequestReadier.MarkReadyForReview(ctx, repo, pullRequestNodeID)`, and `PullRequestMerger.MergePullRequest(ctx, repo, number, exactSHA, method)`. Ready-for-review uses GitHub GraphQL's `markPullRequestReadyForReview` mutation with the exact durable PR node ID; a PR create/read response without a node ID must be separately observed before mutation. `github.Client` keeps its current methods so existing Single-run fakes continue to compile.
 - Extends `github.PullRequest` with exact `HeadSHA string` and nullable `Mergeable *bool`; a null mergeability result evaluates to `Wait`, never `Merge`.
 - Produces: `revert.Service.Create(ctx, Request) (github.PullRequest, error)` by composing narrow Git and GitHub ports; the REST adapter never runs Git.
 - Decisions: `Wait`, `NeedsOperator`, `Merge`, `Block`
@@ -444,7 +444,7 @@ Mark protected when changed files match `migrations/**`, `authentication/**`, `.
 
 - [ ] **Step 4: Implement GitHub.com/GHES checks and merge endpoints**
 
-Before gate evaluation, fetch latest main, merge it into the integration branch and rerun all global verification commands. A conflict returns `Block`; a changed integration SHA invalidates earlier checks and requires fresh CI. Read checks and PR mergeability only for that final SHA. REST paths use `c.restBasePath`, so GitHub.com calls `/repos/...` and GHES calls `/api/v3/repos/...`; endpoint tests assert both profiles. After Reviewer acceptance, mark the Draft PR ready for review; call the merge endpoint only for `Merge`, with method `merge` and the exact final SHA. A `NeedsOperator` decision writes a PR comment and waits for `agentctl confirm RUN protected-change`.
+Before gate evaluation, fetch latest main, merge it into the integration branch and rerun all global verification commands. A confirmed conflict first runs `AbortMerge`; an abort failure remains in the audit stream before `Block`. A changed integration SHA invalidates earlier checks and requires fresh CI. Read checks and PR mergeability only for that final SHA. REST paths use `c.restBasePath`, so GitHub.com calls `/repos/...` and GHES calls `/api/v3/repos/...`; endpoint tests assert both profiles. After Reviewer acceptance, mark the Draft PR ready for review through GraphQL's `markPullRequestReadyForReview` using the exact persisted PR node ID; a missing node requires a separate PR observation. Call the merge endpoint only for `Merge`, with method `merge` and the exact final SHA. A `NeedsOperator` decision durably intends and posts a unique marker comment, reconciles all paginated comments before setting `PhaseNeedsOperator`, and waits for `agentctl confirm RUN protected-change`. Confirmation audits before saving, invalidates all latest-main/full-suite/check/mergeability evidence, and restarts the complete CI sequence.
 
 `revert.Service` creates `revert/<parent>-<merge-sha-prefix>` in a validated managed Worktree, runs `git revert --no-edit MERGE_SHA`, pushes the explicit branch, and calls the existing Draft PR API with a Parent link. A revert conflict aborts the revert and returns `Blocked` without reset, force-push, or main mutation.
 
@@ -492,7 +492,7 @@ func TestParallelStories(t *testing.T) {
     cases := []struct{name string; configure func(*parallelHarness); want contract.RunPhase}{
         {"ordinary auto merge", func(h *parallelHarness){}, contract.PhaseCompleted},
         {"third repair blocks", func(h *parallelHarness){ h.reviewFailures=1; h.ciFailures=2 }, contract.PhaseBlocked},
-        {"protected waits", func(h *parallelHarness){ h.changedFiles=[]string{"authentication/policy.go"} }, contract.PhaseNeedsOperator},
+        {"protected waits", func(h *parallelHarness){ h.protectedRiskCategories=[]string{"authentication"} }, contract.PhaseNeedsOperator},
         {"git conflict blocks", func(h *parallelHarness){ h.mergeConflict=true }, contract.PhaseBlocked},
         {"three recoveries block", func(h *parallelHarness){ h.stallRecoveries=3 }, contract.PhaseBlocked},
     }
@@ -543,7 +543,7 @@ Expected: FAIL.
 
 Persist an intent event before every Issue write, enabled Project status update, Agent start, Git merge, Reviewer prompt, CI observation and main merge. After restart, reconcile the intended action with GitHub, Git and Herdr before retrying it. Set Organization Project states `Ready` after Issue approval, `In Progress` after dispatch, `Review` after final PR creation and `Done` after main merge only when `projectAutomationEnabled=true`; otherwise append an audit event that Project automation was skipped and never treat placeholder IDs as evidence.
 
-The successful transition order is: validate contract and initialize task state; dispatch up to two ready task IDs; collect strict Builder Evidence; inspect and merge immutable SHAs in contract order; run Wave End Verification; collect strict Review Evidence; apply a bounded Reviewer repair when needed; push the integration branch and create one Draft PR; merge latest main and rerun Full Suite; push the resulting final SHA and mark the PR ready; observe checks for that exact SHA; apply a bounded CI repair when needed; re-read main before gate evaluation and repeat latest-main integration, Full Suite, push, and fresh checks if main moved; evaluate Merge Gate; merge ordinary changes or wait for Protected Change confirmation. Each `Advance` performs at most one external action.
+The successful transition order is: validate contract and initialize task state; dispatch up to two ready task IDs; collect strict Builder Evidence; inspect and merge immutable SHAs in contract order; run Wave End Verification; collect strict Review Evidence; apply a bounded Reviewer repair when needed; push the integration branch and create one Draft PR; merge latest main and rerun Full Suite; push the resulting final SHA; observe the PR node ID separately when create/read omitted it; mark the PR ready with the GraphQL node mutation; observe checks for that exact SHA; attribute a failing check only to a uniquely matching Task verification command and apply a bounded CI repair with `RepairBaseSHA=FinalSHA`; re-read main before gate evaluation and repeat latest-main integration, Full Suite, push, and fresh checks if main moved; evaluate Merge Gate; merge ordinary changes or durably comment and wait for Protected Change confirmation. Confirmation invalidates stale evidence and restarts the latest-main sequence. Each `Advance` performs at most one external action.
 
 - [ ] **Step 4: Run deterministic E2E tests and real pilot drills**
 
