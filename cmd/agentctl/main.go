@@ -12,6 +12,7 @@ import (
 	"thread-dock/internal/github"
 	"thread-dock/internal/herdr"
 	"thread-dock/internal/orchestrator"
+	"thread-dock/internal/revert"
 	"thread-dock/internal/runner"
 	"thread-dock/internal/state"
 	"thread-dock/internal/worktree"
@@ -59,17 +60,21 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 	}
 	worktreeRoot := filepath.Join(cfg.StateDir, "worktrees")
 	store := state.NewStore(cfg.StateDir)
-	git := worktree.New(process, cfg.GitBinary)
+	// Configure both roots so managed integration/revert operations can prove
+	// ownership before touching a checkout.
+	git := worktree.New(process, cfg.GitBinary, worktreeRoot, repositoryPath)
 	ghes := github.NewRESTClient(cfg.APIBase, token, cfg.APIVersion, nil)
 	herdrClient := herdr.NewCLI(process, cfg.HerdrBinary)
-	orch := orchestrator.New(orchestrator.Dependencies{
-		Store:          store,
-		GitHub:         ghes,
-		Herdr:          herdrClient,
-		Git:            git,
-		Worktree:       git,
-		RepositoryPath: repositoryPath,
-		WorktreeRoot:   worktreeRoot,
+	orch := orchestrator.NewAuto(orchestrator.Dependencies{
+		Store:                    store,
+		GitHub:                   ghes,
+		Herdr:                    herdrClient,
+		Git:                      git,
+		Worktree:                 git,
+		RepositoryPath:           repositoryPath,
+		WorktreeRoot:             worktreeRoot,
+		ProjectAutomationEnabled: cfg.ProjectAutomationEnabled,
+		Project:                  github.ProjectRef{ID: cfg.ProjectID, StatusFieldID: cfg.ProjectStatusFieldID, StatusOptions: cfg.ProjectStatusOptions},
 	})
 	service := cli.NewOrchestratorRunService(
 		orch,
@@ -79,7 +84,7 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 		nil,
 		worktreeRoot,
 	)
-	return cli.Dependencies{Runs: service}, nil
+	return cli.Dependencies{Runs: service, Confirmer: orch, Reverter: cli.NewRevertRunService(store, revert.New(git, ghes), worktreeRoot)}, nil
 }
 
 type repositoryDiscoverer func(context.Context, runner.Runner, string) (string, error)
@@ -98,5 +103,5 @@ func requiresGHESCredential(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	return args[0] == "start" || args[0] == "resume"
+	return args[0] == "start" || args[0] == "resume" || args[0] == "confirm" || args[0] == "create-revert"
 }

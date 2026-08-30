@@ -18,6 +18,10 @@ type AgentEvidence struct {
 	Branch               string                 `json:"branch"`
 	Patch                string                 `json:"patch"`
 	VerificationEvidence []VerificationEvidence `json:"verificationEvidence"`
+	// IdentitySource records whether SessionID came from a provider session or
+	// the terminal fallback. Terminal identities are addressable for
+	// reconciliation but never eligible for native resume.
+	IdentitySource string `json:"identitySource,omitempty"`
 }
 
 type VerificationEvidence struct {
@@ -53,12 +57,23 @@ type PromptReceipt struct {
 // the legacy single-run flow.
 type TaskRunState struct {
 	State               string        `json:"state"`
+	Stage               string        `json:"stage,omitempty"`
 	Agent               AgentEvidence `json:"agent"`
 	Worktree            WorktreeState `json:"worktree"`
 	Prompt              PromptReceipt `json:"prompt"`
 	ProgressFingerprint string        `json:"progressFingerprint"`
 	LastProgressAt      time.Time     `json:"lastProgressAt"`
 	RecoveryCount       int           `json:"recoveryCount"`
+	NativeResume        bool          `json:"nativeResume,omitempty"`
+	RepairCount         int           `json:"repairCount,omitempty"`
+}
+
+// ReviewFinding is the durable, provider-neutral form of one blocking
+// Reviewer/CI finding. It intentionally contains no provider payload.
+type ReviewFinding struct {
+	ID      string   `json:"id"`
+	Summary string   `json:"summary"`
+	Paths   []string `json:"paths"`
 }
 
 type RunSnapshot struct {
@@ -84,7 +99,34 @@ type RunSnapshot struct {
 	BuilderPrompt    PromptReceipt           `json:"builderPrompt"`
 	ReviewerPrompt   PromptReceipt           `json:"reviewerPrompt"`
 	Tasks            map[string]TaskRunState `json:"tasks,omitempty"`
-	UpdatedAt        time.Time               `json:"updatedAt"`
+	// Strategy is additive so legacy snapshots decode as the original
+	// Single-run strategy when it is absent.
+	Strategy                 string                 `json:"strategy,omitempty"`
+	CurrentTask              string                 `json:"currentTask,omitempty"`
+	TaskOrder                []string               `json:"taskOrder,omitempty"`
+	IntegrationSHA           string                 `json:"integrationSha,omitempty"`
+	IntegrationVerification  []VerificationEvidence `json:"integrationVerification,omitempty"`
+	PullRequest              int                    `json:"pullRequest,omitempty"`
+	PullRequestURL           string                 `json:"pullRequestUrl,omitempty"`
+	PullRequestHeadSHA       string                 `json:"pullRequestHeadSha,omitempty"`
+	PullRequestDraft         bool                   `json:"pullRequestDraft,omitempty"`
+	PullRequestMerged        bool                   `json:"pullRequestMerged,omitempty"`
+	FinalSHA                 string                 `json:"finalSha,omitempty"`
+	FinalChecksSHA           string                 `json:"finalChecksSha,omitempty"`
+	FinalChecks              []VerificationEvidence `json:"finalChecks,omitempty"`
+	MainSHA                  string                 `json:"mainSha,omitempty"`
+	ProtectedReasons         []string               `json:"protectedReasons,omitempty"`
+	ProtectedConfirmed       bool                   `json:"protectedConfirmed,omitempty"`
+	ProjectAutomationEnabled bool                   `json:"projectAutomationEnabled,omitempty"`
+	ProjectStatus            string                 `json:"projectStatus,omitempty"`
+	ReviewDecision           string                 `json:"reviewDecision,omitempty"`
+	ReviewFindings           []ReviewFinding        `json:"reviewFindings,omitempty"`
+	ReviewRiskCategories     []string               `json:"reviewRiskCategories,omitempty"`
+	CIState                  string                 `json:"ciState,omitempty"`
+	MergeabilityKnown        bool                   `json:"mergeabilityKnown,omitempty"`
+	Mergeable                bool                   `json:"mergeable,omitempty"`
+	MergeSHA                 string                 `json:"mergeSha,omitempty"`
+	UpdatedAt                time.Time              `json:"updatedAt"`
 }
 
 // Event is one append-only state transition or diagnostic record.

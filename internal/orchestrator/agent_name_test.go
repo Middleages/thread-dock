@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"thread-dock/internal/contract"
+	"thread-dock/internal/herdr"
 	"thread-dock/internal/state"
 )
 
@@ -42,6 +43,33 @@ func TestAgentNameLongRunIDIsStableDistinctAndHerdrCompatible(t *testing.T) {
 	}
 	if builder == reviewer || builder == agentName("builder", otherID) || reviewer == agentName("reviewer", otherID) {
 		t.Fatalf("agent names are not collision-resistant: builder=%q reviewer=%q", builder, reviewer)
+	}
+}
+
+func TestTaskAgentNamesCompareFullExecutionIdentity(t *testing.T) {
+	name := taskAgentName("builder", "run-184", "api")
+	work := state.WorktreeState{Path: "/managed/api", WorkspaceID: "workspace-api", PaneID: "pane-api"}
+	base := herdr.AgentInfo{Name: name, SessionID: "provider-session", WorkspaceID: work.WorkspaceID, PaneID: work.PaneID, Path: work.Path}
+	if !matchesParallelAgentIdentity(base, name, work) {
+		t.Fatal("complete provider identity did not reconcile")
+	}
+	for field := range map[string]struct{}{"name": {}, "session": {}, "workspace": {}, "pane": {}, "path": {}} {
+		got := base
+		switch field {
+		case "name":
+			got.Name = "other"
+		case "session":
+			got.SessionID = ""
+		case "workspace":
+			got.WorkspaceID = "other"
+		case "pane":
+			got.PaneID = "other"
+		case "path":
+			got.Path = "/managed/other"
+		}
+		if matchesParallelAgentIdentity(got, name, work) {
+			t.Fatalf("identity mismatch %s was accepted", field)
+		}
 	}
 }
 

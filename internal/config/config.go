@@ -27,17 +27,18 @@ var requiredProjectStatuses = []string{"Backlog", "Ready", "In Progress", "Revie
 // Config contains local paths, GHES connection metadata and Project status
 // option IDs. It deliberately contains no credentials.
 type Config struct {
-	GHESHost             string            `json:"ghesHost"`
-	APIBase              string            `json:"apiBase"`
-	APIVersion           string            `json:"apiVersion"`
-	StateDir             string            `json:"stateDir"`
-	HerdrBinary          string            `json:"herdrBinary"`
-	GitBinary            string            `json:"gitBinary"`
-	WorkingWait          time.Duration     `json:"workingWait"`
-	RecoveryLimit        int               `json:"recoveryLimit"`
-	ProjectID            string            `json:"projectId"`
-	ProjectStatusFieldID string            `json:"projectStatusFieldId"`
-	ProjectStatusOptions map[string]string `json:"projectStatusOptions"`
+	GHESHost                 string            `json:"ghesHost"`
+	APIBase                  string            `json:"apiBase"`
+	APIVersion               string            `json:"apiVersion"`
+	StateDir                 string            `json:"stateDir"`
+	HerdrBinary              string            `json:"herdrBinary"`
+	GitBinary                string            `json:"gitBinary"`
+	WorkingWait              time.Duration     `json:"workingWait"`
+	RecoveryLimit            int               `json:"recoveryLimit"`
+	ProjectAutomationEnabled bool              `json:"projectAutomationEnabled"`
+	ProjectID                string            `json:"projectId"`
+	ProjectStatusFieldID     string            `json:"projectStatusFieldId"`
+	ProjectStatusOptions     map[string]string `json:"projectStatusOptions"`
 }
 
 // Load reads and validates a JSON configuration file.
@@ -109,17 +110,18 @@ func Parse(r io.Reader) (Config, error) {
 	}
 
 	c := Config{
-		GHESHost:             host,
-		APIBase:              apiBase,
-		APIVersion:           apiVersion,
-		StateDir:             stateDir,
-		HerdrBinary:          herdrBinary,
-		GitBinary:            gitBinary,
-		WorkingWait:          workingWait,
-		RecoveryLimit:        recoveryLimit,
-		ProjectID:            strings.TrimSpace(raw.ProjectID),
-		ProjectStatusFieldID: strings.TrimSpace(raw.ProjectStatusFieldID),
-		ProjectStatusOptions: cloneOptions(raw.ProjectStatusOptions),
+		GHESHost:                 host,
+		APIBase:                  apiBase,
+		APIVersion:               apiVersion,
+		StateDir:                 stateDir,
+		HerdrBinary:              herdrBinary,
+		GitBinary:                gitBinary,
+		WorkingWait:              workingWait,
+		RecoveryLimit:            recoveryLimit,
+		ProjectAutomationEnabled: raw.ProjectAutomationEnabled,
+		ProjectID:                strings.TrimSpace(raw.ProjectID),
+		ProjectStatusFieldID:     strings.TrimSpace(raw.ProjectStatusFieldID),
+		ProjectStatusOptions:     cloneOptions(raw.ProjectStatusOptions),
 	}
 	if err := validate(c); err != nil {
 		return Config{}, err
@@ -128,17 +130,18 @@ func Parse(r io.Reader) (Config, error) {
 }
 
 type configJSON struct {
-	GHESHost             string            `json:"ghesHost"`
-	APIBase              string            `json:"apiBase"`
-	APIVersion           string            `json:"apiVersion"`
-	StateDir             string            `json:"stateDir"`
-	HerdrBinary          string            `json:"herdrBinary"`
-	GitBinary            string            `json:"gitBinary"`
-	WorkingWait          json.RawMessage   `json:"workingWait"`
-	RecoveryLimit        int               `json:"recoveryLimit"`
-	ProjectID            string            `json:"projectId"`
-	ProjectStatusFieldID string            `json:"projectStatusFieldId"`
-	ProjectStatusOptions map[string]string `json:"projectStatusOptions"`
+	GHESHost                 string            `json:"ghesHost"`
+	APIBase                  string            `json:"apiBase"`
+	APIVersion               string            `json:"apiVersion"`
+	StateDir                 string            `json:"stateDir"`
+	HerdrBinary              string            `json:"herdrBinary"`
+	GitBinary                string            `json:"gitBinary"`
+	WorkingWait              json.RawMessage   `json:"workingWait"`
+	RecoveryLimit            int               `json:"recoveryLimit"`
+	ProjectAutomationEnabled bool              `json:"projectAutomationEnabled"`
+	ProjectID                string            `json:"projectId"`
+	ProjectStatusFieldID     string            `json:"projectStatusFieldId"`
+	ProjectStatusOptions     map[string]string `json:"projectStatusOptions"`
 }
 
 func decodeDuration(data json.RawMessage) (time.Duration, error) {

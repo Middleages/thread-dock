@@ -29,6 +29,19 @@ func TestParseAppliesSafeDefaults(t *testing.T) {
 	if got.WorkingWait != 60*time.Minute || got.RecoveryLimit != 3 {
 		t.Fatalf("timing defaults=%#v", got)
 	}
+	if got.ProjectAutomationEnabled {
+		t.Fatal("project automation must default to disabled")
+	}
+}
+
+func TestParseProjectAutomationFlag(t *testing.T) {
+	got, err := Parse(strings.NewReader(`{"ghesHost":"https://github.example.test","projectAutomationEnabled":true,"projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.ProjectAutomationEnabled {
+		t.Fatal("project automation flag was not parsed")
+	}
 }
 
 func TestParseRejectsMissingProjectStatusOption(t *testing.T) {

@@ -31,7 +31,9 @@ type RunService interface {
 // Dependencies are the injectable command dependencies. Contract commands do
 // not require Runs, preserving the original agentctl contract interface.
 type Dependencies struct {
-	Runs RunService
+	Runs      RunService
+	Confirmer ProtectedChangeConfirmer
+	Reverter  RevertRunService
 }
 
 var errRunServiceMissing = errors.New("실행 서비스가 구성되지 않았습니다")
@@ -45,6 +47,10 @@ func NeedsProductionDependencies(args []string) bool {
 	switch args[0] {
 	case "start", "stop", "resume", "cleanup":
 		return len(args) == 2 && strings.TrimSpace(args[1]) != ""
+	case "confirm":
+		return len(args) == 3 && strings.TrimSpace(args[1]) != "" && args[2] == "protected-change"
+	case "create-revert":
+		return len(args) == 3 && strings.TrimSpace(args[1]) != "" && args[1] == "--reason" && args[2] != ""
 	case "status":
 		_, _, ok := parseStatusArgs(args[1:])
 		return ok
@@ -482,7 +488,7 @@ func statusView(snapshot state.RunSnapshot) contract.StatusView {
 		Phase:           snapshot.Phase,
 		Summary:         snapshot.Summary,
 		Agents:          make([]contract.AgentView, 0, 2),
-		GitHub:          contract.GitHubView{ParentIssue: snapshot.ParentIssue},
+		GitHub:          contract.GitHubView{ParentIssue: snapshot.ParentIssue, PullRequest: snapshot.PullRequest, URL: snapshot.PullRequestURL, CI: snapshot.CIState},
 		UpdatedAt:       snapshot.UpdatedAt,
 	}
 	if snapshot.PendingAction != "" {
@@ -504,6 +510,8 @@ func statusView(snapshot state.RunSnapshot) contract.StatusView {
 func resumablePhase(phase contract.RunPhase) bool {
 	switch phase {
 	case contract.PhaseRegistered, contract.PhaseAnalyzing, contract.PhaseBuilding, contract.PhaseIntegrating, contract.PhaseReviewing:
+		return true
+	case contract.PhaseCI, contract.PhaseMerging:
 		return true
 	default:
 		return false

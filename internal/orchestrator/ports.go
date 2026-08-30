@@ -100,4 +100,26 @@ type Dependencies struct {
 	RepositoryPath string
 	WorktreeRoot   string
 	RunID          func(time.Time) contract.RunID
+	// Project automation is opt-in. The project reference remains structurally
+	// available for legacy configuration compatibility, but no ProjectV2 call
+	// is made unless ProjectAutomationEnabled is true.
+	ProjectAutomationEnabled bool
+	Project                  github.ProjectRef
+}
+
+// ReviewEvidenceReader is optional on legacy Herdr clients and required by
+// the parallel strategy before a review can be accepted.
+type ReviewEvidenceReader interface {
+	ReadReviewEvidence(context.Context, string, string) (herdr.ReviewEvidence, error)
+}
+
+// ParallelGit is the optional set of immutable integration and publication
+// operations consumed by NewParallel. Keeping these as narrow assertions
+// preserves the original Worktree port and test doubles.
+type ParallelGit interface {
+	MergeCommitNoFF(context.Context, string, string) error
+	AbortMerge(context.Context, string) error
+	RunChecks(context.Context, string, []string) ([]worktree.VerificationCheck, error)
+	CurrentCommit(context.Context, string) (string, error)
+	PushBranch(context.Context, string, string, string) error
 }

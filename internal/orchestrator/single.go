@@ -68,11 +68,12 @@ type runRuntime struct {
 // small and complements the durable snapshot; the snapshot and event log are
 // the source of truth for phase and evidence.
 type Orchestrator struct {
-	deps  Dependencies
-	mu    sync.Mutex
-	seq   uint64
-	runs  map[contract.RunID]*runRuntime
-	locks map[contract.RunID]*sync.Mutex
+	deps     Dependencies
+	parallel bool
+	mu       sync.Mutex
+	seq      uint64
+	runs     map[contract.RunID]*runRuntime
+	locks    map[contract.RunID]*sync.Mutex
 }
 
 func New(deps Dependencies) *Orchestrator {
@@ -83,6 +84,15 @@ func New(deps Dependencies) *Orchestrator {
 		deps.Clock = realClock{}
 	}
 	return &Orchestrator{deps: deps, runs: make(map[contract.RunID]*runRuntime), locks: make(map[contract.RunID]*sync.Mutex)}
+}
+
+// NewParallel selects the durable multi-task strategy while sharing the
+// existing dependency boundary and persistence/locking helpers. New keeps
+// the historical Single-run strategy unchanged.
+func NewParallel(deps Dependencies) *Orchestrator {
+	o := New(deps)
+	o.parallel = true
+	return o
 }
 
 // Start validates the contract, commits a local registered run, then
@@ -138,7 +148,22 @@ func (o *Orchestrator) Start(ctx context.Context, contractPath string) (contract
 		Registration:    state.RegistrationState{Status: "pending", Marker: marker(id)},
 		PendingAction:   "register_issue_bundle",
 		Summary:         "GHES Issue 등록 대기 중",
-		UpdatedAt:       o.now(),
+		Strategy: func() string {
+			if o.parallel {
+				return "parallel"
+			}
+			return ""
+		}(),
+		UpdatedAt: o.now(),
+	}
+	if o.parallel {
+		snapshot.ProjectAutomationEnabled = o.deps.ProjectAutomationEnabled
+		snapshot.TaskOrder = make([]string, 0, len(c.Tasks))
+		snapshot.Tasks = make(map[string]state.TaskRunState, len(c.Tasks))
+		for _, task := range c.Tasks {
+			snapshot.TaskOrder = append(snapshot.TaskOrder, task.ID)
+			snapshot.Tasks[task.ID] = state.TaskRunState{State: "pending"}
+		}
 	}
 	if err := o.deps.Store.Create(ctx, snapshot); err != nil {
 		return "", err
@@ -207,6 +232,9 @@ func (o *Orchestrator) Advance(ctx context.Context, id contract.RunID) error {
 	runtime, err := o.runtimeFor(ctx, snapshot)
 	if err != nil {
 		return err
+	}
+	if o.parallel || snapshot.Strategy == "parallel" {
+		return o.advanceParallel(ctx, &snapshot, runtime)
 	}
 	if snapshot.PendingAction != "" {
 		return o.reconcilePending(ctx, &snapshot, runtime)
