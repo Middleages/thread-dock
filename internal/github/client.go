@@ -4,7 +4,9 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"thread-dock/internal/contract"
 )
@@ -42,6 +44,13 @@ type DraftPRRequest struct {
 // MaxIssueCommentBytes is the conservative limit applied before posting an
 // operator or audit comment.
 const MaxIssueCommentBytes = 16 * 1024
+
+// MaxDraftPRTitleBytes and MaxDraftPRBodyBytes bound the safe draft-PR port
+// before any filesystem or network side effect.
+const (
+	MaxDraftPRTitleBytes = 256
+	MaxDraftPRBodyBytes  = 16 * 1024
+)
 
 // PullRequest is the subset of a pull request used by ThreadDock.
 type PullRequest struct {
@@ -136,6 +145,18 @@ type PullRequestFinder interface {
 // bodies in endpoint errors. It is intentionally separate from legacy Client.
 type SafeDraftPRCreator interface {
 	CreateSafeDraftPR(context.Context, Repository, DraftPRRequest) (PullRequest, error)
+}
+
+// ValidateSafeDraftPRRequest validates the canonical, bounded request shared
+// by the Revert service and REST safe-draft creator.
+func ValidateSafeDraftPRRequest(repo Repository, req DraftPRRequest) error {
+	if err := validateRepository(repo); err != nil {
+		return err
+	}
+	if req.IssueNumber <= 0 || strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.Title) != req.Title || len(req.Title) > MaxDraftPRTitleBytes || !safeUserText(req.Title) || strings.TrimSpace(req.Body) == "" || strings.TrimSpace(req.Body) != req.Body || len(req.Body) > MaxDraftPRBodyBytes || !safeUserText(req.Body) || !validRefInput(req.Head) || !validRefInput(req.Base) {
+		return errors.New("github draft pull request request is invalid")
+	}
+	return nil
 }
 
 // PullRequestMerger merges a PR only at an exact commit SHA.

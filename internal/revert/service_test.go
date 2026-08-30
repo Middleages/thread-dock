@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"thread-dock/internal/github"
+	"thread-dock/internal/runner"
 	"thread-dock/internal/worktree"
 )
 
@@ -59,24 +60,115 @@ func (f *fakeGit) PushBranch(_ context.Context, worktreePath, remote, branch str
 }
 
 type fakeGitHub struct {
-	request     github.DraftPRRequest
-	result      github.PullRequest
-	existing    github.PullRequest
-	found       bool
-	lookupCalls int
-	createCalls int
-	err         error
+	request      github.DraftPRRequest
+	result       github.PullRequest
+	existing     github.PullRequest
+	found        bool
+	autoExisting bool
+	created      bool
+	lookupCalls  int
+	createCalls  int
+	err          error
 }
 
 func (f *fakeGitHub) FindOpenPullRequest(_ context.Context, _ github.Repository, _, _ string) (github.PullRequest, bool, error) {
 	f.lookupCalls++
+	if f.autoExisting && f.created {
+		return f.result, true, nil
+	}
 	return f.existing, f.found, nil
 }
 
 func (f *fakeGitHub) CreateSafeDraftPR(_ context.Context, _ github.Repository, request github.DraftPRRequest) (github.PullRequest, error) {
 	f.createCalls++
+	f.created = true
 	f.request = request
 	return f.result, f.err
+}
+
+func TestCreateRevertRetriesAgainstRealGitLinkedWorktree(t *testing.T) {
+	root := t.TempDir()
+	bare := filepath.Join(root, "origin.git")
+	repository := filepath.Join(root, "repo")
+	if err := os.Mkdir(bare, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runSetupGit(t, "", "init", "--bare", bare)
+	runSetupGit(t, "", "clone", bare, repository)
+	runSetupGit(t, repository, "config", "user.email", "test@example.com")
+	runSetupGit(t, repository, "config", "user.name", "ThreadDock Test")
+	writeTestFile(t, filepath.Join(repository, "README.md"), "base\n")
+	runSetupGit(t, repository, "add", "README.md")
+	runSetupGit(t, repository, "commit", "-m", "base")
+	runSetupGit(t, repository, "branch", "-M", "main")
+	base := strings.TrimSpace(runSetupGit(t, repository, "rev-parse", "HEAD"))
+	runSetupGit(t, repository, "push", "origin", "main")
+	runSetupGit(t, repository, "checkout", "-b", "feature")
+	writeTestFile(t, filepath.Join(repository, "change.txt"), "feature\n")
+	runSetupGit(t, repository, "add", "change.txt")
+	runSetupGit(t, repository, "commit", "-m", "feature")
+	runSetupGit(t, repository, "checkout", "main")
+	runSetupGit(t, repository, "merge", "--no-ff", "--no-edit", "feature")
+	mergeSHA := strings.TrimSpace(runSetupGit(t, repository, "rev-parse", "HEAD"))
+	runSetupGit(t, repository, "push", "origin", "main")
+	configured := filepath.Join(root, "configured-linked")
+	runSetupGit(t, repository, "worktree", "add", "--detach", configured, base)
+	managed := filepath.Join(root, "managed")
+	if err := os.Mkdir(managed, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	git := worktree.New(runner.OSRunner{}, "git", managed, configured)
+	prErr := errors.New("simulated transient draft response")
+	gh := &fakeGitHub{autoExisting: true, result: github.PullRequest{Number: 207}, err: prErr}
+	request := Request{
+		Repository:     github.Repository{Owner: "platform", Name: "payments-api"},
+		RepositoryPath: configured,
+		ManagedRoot:    managed,
+		Parent:         github.Issue{Number: 184},
+		DefaultBranch:  "main",
+		BaseCommit:     mergeSHA,
+		MergeSHA:       mergeSHA,
+		Reason:         "real git retry",
+	}
+	service := New(git, gh)
+	if _, err := service.Create(context.Background(), request); !errors.Is(err, prErr) {
+		t.Fatalf("first create err=%v", err)
+	}
+	branch := "revert/184-" + mergeSHA[:12]
+	target := filepath.Join(managed, ".revert-worktrees", strings.ReplaceAll(branch, "/", "-"))
+	headAfterFirst := strings.TrimSpace(runSetupGit(t, target, "rev-parse", "HEAD"))
+	remoteAfterFirst := strings.TrimSpace(runSetupGit(t, "", "--git-dir", bare, "rev-parse", "refs/heads/"+branch))
+	if headAfterFirst != remoteAfterFirst || gh.createCalls != 1 {
+		t.Fatalf("first head=%s remote=%s creates=%d", headAfterFirst, remoteAfterFirst, gh.createCalls)
+	}
+	gh.err = nil
+	got, err := service.Create(context.Background(), request)
+	if err != nil || got.Number != 207 {
+		status, reconcileErr := git.ReconcileRevertWorktree(context.Background(), configured, target, branch, mergeSHA, mergeSHA)
+		t.Fatalf("second pr=%+v err=%v reconcile=%+v reconcileErr=%v", got, err, status, reconcileErr)
+	}
+	headAfterSecond := strings.TrimSpace(runSetupGit(t, target, "rev-parse", "HEAD"))
+	remoteAfterSecond := strings.TrimSpace(runSetupGit(t, "", "--git-dir", bare, "rev-parse", "refs/heads/"+branch))
+	if headAfterSecond != headAfterFirst || remoteAfterSecond != remoteAfterFirst || gh.createCalls != 1 {
+		t.Fatalf("second head=%s/%s remote=%s/%s creates=%d", headAfterSecond, headAfterFirst, remoteAfterSecond, remoteAfterFirst, gh.createCalls)
+	}
+}
+
+func runSetupGit(t *testing.T, cwd string, args ...string) string {
+	t.Helper()
+	result, err := (runner.OSRunner{}).Run(context.Background(), cwd, "git", args...)
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("git %v cwd=%q exit=%d err=%v stderr=%q", args, cwd, result.ExitCode, err, result.Stderr)
+	}
+	return result.Stdout
+}
+
+func writeTestFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestCreateRevertUsesManagedWorktreeAndExplicitPush(t *testing.T) {
@@ -305,6 +397,16 @@ func TestCreateRevertRejectsOversizedOrControlReasonBeforeCommands(t *testing.T)
 		if _, err := New(git, &fakeGitHub{}).Create(context.Background(), request); err == nil || len(git.calls) != 0 {
 			t.Fatalf("reason=%q calls=%v err=%v", reason, git.calls, err)
 		}
+	}
+}
+
+func TestCreateRevertRejectsEscapedDraftExpansionBeforeAnyPort(t *testing.T) {
+	_, _, _, request := validRequest(t)
+	request.Reason = strings.Repeat("<", MaxRevertReasonBytes)
+	git := &fakeGit{}
+	gh := &fakeGitHub{}
+	if _, err := New(git, gh).Create(context.Background(), request); err == nil || len(git.calls) != 0 || git.reconcileCalls != 0 || gh.lookupCalls != 0 || gh.createCalls != 0 {
+		t.Fatalf("calls=%v reconcile=%d lookup=%d create=%d err=%v", git.calls, git.reconcileCalls, gh.lookupCalls, gh.createCalls, err)
 	}
 }
 

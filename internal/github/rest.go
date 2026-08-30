@@ -366,11 +366,8 @@ func (c *RESTClient) CreateDraftPR(ctx context.Context, repo Repository, req Dra
 // CreateSafeDraftPR is the narrow draft-PR port used by retryable workflows.
 // Unlike legacy CreateDraftPR, all endpoint errors discard provider bodies.
 func (c *RESTClient) CreateSafeDraftPR(ctx context.Context, repo Repository, req DraftPRRequest) (PullRequest, error) {
-	if err := validateRepository(repo); err != nil {
+	if err := ValidateSafeDraftPRRequest(repo, req); err != nil {
 		return PullRequest{}, err
-	}
-	if !validRefInput(req.Head) || !validRefInput(req.Base) || strings.TrimSpace(req.Title) == "" || !safeUserText(req.Title) || len(req.Body) > MaxIssueCommentBytes || !safeUserText(req.Body) {
-		return PullRequest{}, errors.New("github draft pull request request is invalid")
 	}
 	path := fmt.Sprintf("%s/repos/%s/%s/pulls", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
 	payload := struct {
@@ -384,7 +381,11 @@ func (c *RESTClient) CreateSafeDraftPR(ctx context.Context, repo Repository, req
 	if err := c.doSafeJSON(ctx, "create draft pull request", http.MethodPost, path, payload, &wire); err != nil {
 		return PullRequest{}, err
 	}
-	return wire.toPullRequest(), nil
+	pr := wire.toPullRequest()
+	if pr.Number <= 0 || !pr.Draft || pr.Head != req.Head || pr.Base != req.Base {
+		return PullRequest{}, errors.New("github draft pull request response did not match the requested identity")
+	}
+	return pr, nil
 }
 
 func (c *RESTClient) UpdateIssueState(ctx context.Context, repo Repository, number int, state string) error {

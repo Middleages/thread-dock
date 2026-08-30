@@ -99,6 +99,16 @@ func (s *Service) Create(ctx context.Context, request Request) (github.PullReque
 	if err != nil {
 		return github.PullRequest{}, err
 	}
+	draftRequest := github.DraftPRRequest{
+		Title:       "Revert merge " + normalized.mergeSHA[:12],
+		Body:        normalized.body,
+		Head:        normalized.branch,
+		Base:        normalized.defaultBranch,
+		IssueNumber: normalized.parentIssue,
+	}
+	if err := github.ValidateSafeDraftPRRequest(normalized.repository, draftRequest); err != nil {
+		return github.PullRequest{}, err
+	}
 	if err := ensureGeneratedParent(normalized.createParent, normalized.managedRoot); err != nil {
 		return github.PullRequest{}, err
 	}
@@ -137,13 +147,7 @@ func (s *Service) Create(ctx context.Context, request Request) (github.PullReque
 	if found {
 		return existing, nil
 	}
-	pr, err := s.github.CreateSafeDraftPR(ctx, normalized.repository, github.DraftPRRequest{
-		Title:       "Revert merge " + normalized.mergeSHA[:12],
-		Body:        normalized.body,
-		Head:        normalized.branch,
-		Base:        normalized.defaultBranch,
-		IssueNumber: normalized.parentIssue,
-	})
+	pr, err := s.github.CreateSafeDraftPR(ctx, normalized.repository, draftRequest)
 	if err != nil {
 		return github.PullRequest{}, err
 	}

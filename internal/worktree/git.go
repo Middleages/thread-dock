@@ -151,23 +151,12 @@ func (g *Git) ReconcileRevertWorktree(ctx context.Context, repositoryPath, workt
 	if info, statErr := os.Stat(target); statErr != nil || !info.IsDir() {
 		return RevertWorktreeStatus{}, ErrUnsafeTarget
 	}
-	commonDirResult, err := g.command(ctx, target, "rev-parse", "--git-common-dir")
+	targetCommonDir, err := g.gitCommonDir(ctx, target)
 	if err != nil {
 		return RevertWorktreeStatus{}, err
 	}
-	commonDir := strings.TrimSpace(commonDirResult.Stdout)
-	if commonDir == "" {
-		return RevertWorktreeStatus{}, ErrUnsafeTarget
-	}
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(target, commonDir)
-	}
-	commonDir, err = resolvePath(commonDir)
-	if err != nil {
-		return RevertWorktreeStatus{}, ErrUnsafeTarget
-	}
-	configuredCommonDir, err := resolvePath(filepath.Join(repositoryRoot, ".git"))
-	if err != nil || !samePath(commonDir, configuredCommonDir) {
+	configuredCommonDir, err := g.gitCommonDir(ctx, repositoryRoot)
+	if err != nil || !samePath(targetCommonDir, configuredCommonDir) {
 		return RevertWorktreeStatus{}, ErrUnsafeTarget
 	}
 	branchResult, err := g.command(ctx, target, "rev-parse", "--abbrev-ref", "HEAD")
@@ -215,6 +204,25 @@ func (g *Git) ReconcileRevertWorktree(ctx context.Context, repositoryPath, workt
 		return RevertWorktreeStatus{}, ErrUnsafeTarget
 	}
 	return RevertWorktreeStatus{Exists: true, Reverted: true}, nil
+}
+
+func (g *Git) gitCommonDir(ctx context.Context, cwd string) (string, error) {
+	result, err := g.command(ctx, cwd, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	commonDir := strings.TrimSpace(result.Stdout)
+	if commonDir == "" {
+		return "", ErrUnsafeTarget
+	}
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(cwd, commonDir)
+	}
+	resolved, err := resolvePath(commonDir)
+	if err != nil {
+		return "", ErrUnsafeTarget
+	}
+	return resolved, nil
 }
 
 // RevertMergeCommit reverts an ordinary merge commit using its first parent.
