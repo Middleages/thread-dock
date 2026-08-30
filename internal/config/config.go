@@ -179,6 +179,9 @@ func validate(c Config) error {
 	if err := validateAPIBase(c.APIBase); err != nil {
 		return err
 	}
+	if err := validatePublicEndpointPair(c.GHESHost, c.APIBase); err != nil {
+		return err
+	}
 	if strings.TrimSpace(c.APIVersion) == "" {
 		return errors.New("apiVersion is required")
 	}
@@ -200,6 +203,43 @@ func validate(c Config) error {
 		}
 	}
 	return nil
+}
+
+func validatePublicEndpointPair(ghesHost, apiBase string) error {
+	host, hostErr := url.Parse(ghesHost)
+	api, apiErr := url.Parse(apiBase)
+	if hostErr != nil || apiErr != nil {
+		return nil // The field-specific endpoint validators report this error.
+	}
+	publicHost := isPublicHostname(host.Hostname(), "github.com")
+	publicAPI := isPublicHostname(api.Hostname(), "api.github.com")
+	if publicHost {
+		if host.Scheme != "https" {
+			return errors.New("ghesHost must use HTTPS for github.com")
+		}
+		if host.Host != "github.com" {
+			return errors.New("ghesHost must be exactly https://github.com")
+		}
+		if !publicAPI || api.Scheme != "https" || api.Host != "api.github.com" || api.Path != "" {
+			return errors.New("apiBase must be https://api.github.com for GitHub.com")
+		}
+	}
+	if publicAPI {
+		if api.Scheme != "https" {
+			return errors.New("apiBase must use HTTPS for api.github.com")
+		}
+		if api.Host != "api.github.com" || api.Path != "" {
+			return errors.New("apiBase must be exactly https://api.github.com")
+		}
+		if !publicHost {
+			return errors.New("ghesHost must be https://github.com when apiBase targets GitHub.com")
+		}
+	}
+	return nil
+}
+
+func isPublicHostname(hostname, expected string) bool {
+	return strings.EqualFold(strings.TrimSuffix(hostname, "."), expected)
 }
 
 func validateGHESHost(value string) error {

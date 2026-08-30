@@ -2,8 +2,11 @@
 package herdr
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 )
 
 var ErrClosedWorkspace = errors.New("Herdr workspace is closed and must be reopened")
@@ -51,6 +54,82 @@ type Evidence struct {
 	RequestID    string              `json:"requestId"`
 	CommitSHA    string              `json:"commitSha"`
 	Verification []VerificationCheck `json:"verification"`
+}
+
+// UnmarshalJSON accepts the array form emitted by the documented protocol and
+// the singleton object form emitted by some live Herdr/OpenCode runs. Both
+// forms are normalized to the same slice so downstream task matching keeps
+// its exact count and command semantics.
+func (e *Evidence) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		RequestID    string          `json:"requestId"`
+		CommitSHA    string          `json:"commitSha"`
+		Verification json.RawMessage `json:"verification"`
+	}
+	if err := decodeEvidenceJSON(data, &wire); err != nil {
+		return err
+	}
+	checks, err := decodeVerificationChecks(wire.Verification)
+	if err != nil {
+		return err
+	}
+	*e = Evidence{RequestID: wire.RequestID, CommitSHA: wire.CommitSHA, Verification: checks}
+	return nil
+}
+
+func decodeVerificationChecks(data []byte) ([]VerificationCheck, error) {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 {
+		return nil, errors.New("verification is required")
+	}
+
+	switch data[0] {
+	case '{':
+		var check VerificationCheck
+		if err := decodeEvidenceJSON(data, &check); err != nil {
+			return nil, err
+		}
+		return []VerificationCheck{check}, nil
+	case '[':
+		var rawChecks []json.RawMessage
+		if err := json.Unmarshal(data, &rawChecks); err != nil {
+			return nil, err
+		}
+		if len(rawChecks) == 0 {
+			return nil, errors.New("verification must contain at least one check")
+		}
+		checks := make([]VerificationCheck, 0, len(rawChecks))
+		for _, rawCheck := range rawChecks {
+			trimmed := bytes.TrimSpace(rawCheck)
+			if len(trimmed) == 0 || trimmed[0] != '{' {
+				return nil, errors.New("verification check must be an object")
+			}
+			var check VerificationCheck
+			if err := decodeEvidenceJSON(rawCheck, &check); err != nil {
+				return nil, err
+			}
+			checks = append(checks, check)
+		}
+		return checks, nil
+	default:
+		return nil, errors.New("verification must be an object or array")
+	}
+}
+
+func decodeEvidenceJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("JSON has trailing data")
+		}
+		return err
+	}
+	return nil
 }
 
 const EvidenceSchemaExample = `{"requestId":"<prompt request ID>","commitSha":"<40 lowercase hex>","verification":[{"command":"<required command>","outcome":"passed","duration":"<Go duration>"}]}`

@@ -68,14 +68,36 @@ func TestSingleRunPersistsActualAgentSessionIDsSeparatelyFromNames(t *testing.T)
 		}
 	}
 	got := h.mustLoad(id)
-	if got.Builder.Name != "builder-"+string(id) || got.Reviewer.Name != "reviewer-"+string(id) {
+	if got.Builder.Name != agentName("builder", id) || got.Reviewer.Name != agentName("reviewer", id) {
 		t.Fatalf("agent names=%q/%q", got.Builder.Name, got.Reviewer.Name)
 	}
-	if got.Builder.SessionID != "session-builder-"+string(id) || got.Reviewer.SessionID != "session-reviewer-"+string(id) {
+	if got.Builder.SessionID != "session-"+agentName("builder", id) || got.Reviewer.SessionID != "session-"+agentName("reviewer", id) {
 		t.Fatalf("agent sessions=%q/%q", got.Builder.SessionID, got.Reviewer.SessionID)
 	}
 	if got.Builder.SessionID == got.Builder.Name || got.Reviewer.SessionID == got.Reviewer.Name || got.Builder.SessionID == got.Reviewer.SessionID {
 		t.Fatalf("session IDs were replaced by names or are not distinct: %#v", got)
+	}
+}
+
+func TestSingleRunPersistsDistinctTerminalIdentitiesForSeparateAgentWorkspaces(t *testing.T) {
+	h := newHarness(t)
+	h.herdr.useTerminalIdentity = true
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 14 && len(h.herdr.prompts) < 2; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := h.mustLoad(id)
+	if got.Builder.SessionID != "herdr-terminal:terminal-builder" || got.Reviewer.SessionID != "herdr-terminal:terminal-reviewer" {
+		t.Fatalf("terminal identities=%q/%q", got.Builder.SessionID, got.Reviewer.SessionID)
+	}
+	if got.Builder.SessionID == got.Reviewer.SessionID || got.BuilderWorktree.WorkspaceID == got.ReviewerWorktree.WorkspaceID {
+		t.Fatalf("separate identities/workspaces were not persisted: %#v", got)
 	}
 }
 

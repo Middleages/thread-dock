@@ -9,6 +9,7 @@ fmt:
 	gofmt -w $$(find cmd internal -name '*.go')
 
 test:
+	bash -n scripts/single-run-pilot.sh
 	go test ./...
 
 test-focused:
@@ -21,5 +22,6 @@ vet-focused:
 
 check:
 	@test -z "$$(gofmt -l $$(find cmd internal -name '*.go'))"
+	bash -n scripts/single-run-pilot.sh
 	go vet ./...
 	go test ./...

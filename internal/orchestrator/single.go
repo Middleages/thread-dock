@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -334,6 +336,43 @@ func promptRequestID(id contract.RunID, role string) string {
 	return string(id) + ":" + role + "-prompt"
 }
 
+const maxHerdrAgentNameLength = 32
+
+// agentName returns the stable name used to address a role's Herdr agent.
+// Existing names remain unchanged while they fit Herdr's name contract. For
+// longer or otherwise incompatible run IDs, the role stays readable and the
+// remaining space carries a truncated SHA-256 digest of the run ID.
+func agentName(role string, id contract.RunID) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	legacy := role + "-" + string(id)
+	if validHerdrAgentName(legacy) {
+		return legacy
+	}
+
+	digest := sha256.Sum256([]byte(id))
+	suffix := hex.EncodeToString(digest[:])
+	available := maxHerdrAgentNameLength - len(role) - 1
+	if available < 1 {
+		return suffix[:maxHerdrAgentNameLength]
+	}
+	if available > len(suffix) {
+		available = len(suffix)
+	}
+	return role + "-" + suffix[:available]
+}
+
+func validHerdrAgentName(name string) bool {
+	if len(name) == 0 || len(name) > maxHerdrAgentNameLength {
+		return false
+	}
+	for _, char := range name {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return false
+		}
+	}
+	return true
+}
+
 func (o *Orchestrator) baselinePrompt(ctx context.Context, snapshot *state.RunSnapshot, reviewer bool) error {
 	locator, ok := o.deps.Herdr.(AgentLocator)
 	if !ok {
@@ -374,7 +413,7 @@ func (o *Orchestrator) advanceBuilding(ctx context.Context, snapshot state.RunSn
 	if snapshot.ActionCursor == 0 && snapshot.BuilderWorktree.PaneID == "" && runtime.worktree.PaneID == "" {
 		return errors.New("Builder Worktree ID is unavailable; resume requires reconciliation")
 	}
-	name := "builder-" + string(snapshot.RunID)
+	name := agentName("builder", snapshot.RunID)
 	if snapshot.ActionCursor == 0 {
 		snapshot.Builder.Name = name
 		if err := o.prepare(ctx, &snapshot, "start_builder", "Builder Agent 시작", map[string]any{"agent": name}); err != nil {
@@ -488,7 +527,7 @@ func (o *Orchestrator) integrate(ctx context.Context, snapshot state.RunSnapshot
 }
 
 func (o *Orchestrator) advanceReview(ctx context.Context, snapshot state.RunSnapshot, runtime *runRuntime) error {
-	name := "reviewer-" + string(snapshot.RunID)
+	name := agentName("reviewer", snapshot.RunID)
 	if snapshot.ActionCursor == 0 {
 		opener, ok := o.deps.Herdr.(WorktreeOpener)
 		if !ok {
@@ -577,7 +616,7 @@ func verificationMatchesTask(checks []herdr.VerificationCheck, required []string
 }
 
 func builderPacket(c contract.TaskContract, task contract.Task, requestID string) string {
-	return fmt.Sprintf("Builder acceptance criteria:\n- %s\n\nTask acceptance criteria:\n- %s\n\nRequired verification commands (each must be passed with a real duration):\n- %s\n\nYour final response must contain exactly one strict Evidence JSON payload between these markers, each on its own line:\n%s\n%s\n%s\n%s\nUI or diagnostic text may appear outside the markers. Put no Markdown or other fields inside the envelope. Use requestId=%s. Do not substitute arbitrary commands or boolean values.", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), strings.Join(task.Verification, "\n- "), herdr.THREADDOCK_EVIDENCE_BEGIN, herdr.EvidenceSchemaExample, herdr.THREADDOCK_EVIDENCE_END, "Return exactly one JSON object inside the envelope.", requestID)
+	return fmt.Sprintf("Builder acceptance criteria:\n- %s\n\nTask acceptance criteria:\n- %s\n\nBefore submitting final evidence, stage and commit all allowed changes on the task branch. After committing, use the 40-character lowercase SHA from git rev-parse HEAD as commitSha; do not submit the base commit. Run each exact required verification command against the committed result before final evidence. Follow repository commit policy; this packet does not prescribe a commit message or staging/commit command.\n\nRequired verification commands (each must be passed with a real duration):\n- %s\n\nYour final response must contain exactly one strict Evidence JSON payload between these markers, each on its own line:\n%s\n%s\n%s\n%s\nUI or diagnostic text may appear outside the markers. Put no Markdown or other fields inside the envelope. Use requestId=%s. Do not substitute arbitrary commands or boolean values.", strings.Join(c.Parent.AcceptanceCriteria, "\n- "), strings.Join(task.AcceptanceCriteria, "\n- "), strings.Join(task.Verification, "\n- "), herdr.THREADDOCK_EVIDENCE_BEGIN, herdr.EvidenceSchemaExample, herdr.THREADDOCK_EVIDENCE_END, "Return exactly one JSON object inside the envelope.", requestID)
 }
 
 func reviewerPacket(c contract.TaskContract, task contract.Task, evidence state.AgentEvidence, requestID string) string {
@@ -873,9 +912,20 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 		if !ok {
 			return ErrPendingReconcile
 		}
+		role := "builder"
 		name := snapshot.Builder.Name
-		if snapshot.PendingAction == "start_reviewer" || snapshot.PendingAction == "prompt_reviewer" {
+		if snapshot.PendingAction == "start_reviewer" {
+			role = "reviewer"
 			name = snapshot.Reviewer.Name
+		}
+		legacyName := role + "-" + string(snapshot.RunID)
+		if name == legacyName && name != agentName(role, snapshot.RunID) {
+			if role == "reviewer" {
+				snapshot.Reviewer.Name = agentName(role, snapshot.RunID)
+			} else {
+				snapshot.Builder.Name = agentName(role, snapshot.RunID)
+			}
+			return o.markNotExecuted(ctx, snapshot, "legacy Agent name migrated; next Advance retries start")
 		}
 		info, err := locator.GetInfo(ctx, name)
 		if errors.Is(err, herdr.ErrAgentNotFound) {
@@ -964,6 +1014,7 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 				return ErrPendingReconcile
 			}
 		}
+		snapshot.Builder.RequestID = evidence.RequestID
 		snapshot.Builder.CommitSHA = strings.ToLower(evidence.CommitSHA)
 		snapshot.Builder.Verification = nil
 		snapshot.Builder.VerificationEvidence = nil

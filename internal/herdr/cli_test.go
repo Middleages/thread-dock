@@ -182,6 +182,232 @@ func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
 	}
 }
 
+func TestReadEvidenceAcceptsLiveSingletonVerificationObject(t *testing.T) {
+	const payload = `{"requestId":"run-26:builder-prompt","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":{"command":"test -f pilot-result.txt","outcome":"passed","duration":"1ms"}}`
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": EvidenceBeginMarker + "\n" + payload + "\n" + EvidenceEndMarker,
+	})
+
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(got.Verification) != 1 {
+		t.Fatalf("verification=%#v, want one check", got.Verification)
+	}
+	check := got.Verification[0]
+	if check.Command != "test -f pilot-result.txt" || check.Outcome != "passed" || check.Duration != "1ms" {
+		t.Fatalf("check=%#v, want live pilot check", check)
+	}
+}
+
+func TestReadEvidenceExtractsIndentedActualEnvelopeFromOpenCodeColumns(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": readFixture(t, "testdata/v0.8.2/recent-output-opencode-columns.txt"),
+	})
+
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if got.RequestID != "run-28:builder-prompt" || got.CommitSHA != "abcdef0123456789abcdef0123456789abcdef01" {
+		t.Fatalf("evidence=%#v, want actual response envelope", got)
+	}
+	if len(got.Verification) != 1 || got.Verification[0].Command != "test -f pilot-result.txt" {
+		t.Fatalf("verification=%#v, want singleton actual check", got.Verification)
+	}
+}
+
+func TestReadEvidenceExtractsLastDynamicSuffixEnvelope(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": readFixture(t, "testdata/v0.8.2/recent-output-opencode-dynamic-suffix.txt"),
+	})
+
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if got.RequestID != "run-32:latest" || got.CommitSHA != "abcdef0123456789abcdef0123456789abcdef01" {
+		t.Fatalf("evidence=%#v, want latest actual envelope", got)
+	}
+	if len(got.Verification) != 1 || got.Verification[0].Command != "test -f pilot-result.txt" {
+		t.Fatalf("verification=%#v, want latest singleton check", got.Verification)
+	}
+}
+
+func TestReadEvidenceRejectsDynamicMarkerSuffixWithoutExactSidebarBoundary(t *testing.T) {
+	valid := `{"requestId":"run-32:negative","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	const boundary = 40
+	markerLine := func(marker, suffix string, offset int) string {
+		left := "    " + marker
+		target := boundary + offset
+		return left + strings.Repeat(" ", target-len(left)) + suffix
+	}
+	cases := map[string]string{
+		"no boundary":       "    " + EvidenceBeginMarker + "\n    " + valid + "\n" + markerLine(EvidenceEndMarker, "6% used", 0) + "\n",
+		"misaligned suffix": strings.Repeat(" ", boundary) + "Context\n" + "    " + EvidenceBeginMarker + "\n    " + valid + "\n" + markerLine(EvidenceEndMarker, "6% used", 1) + "\n",
+		"prompt echo":       strings.Repeat(" ", boundary) + "Context\n  ┃  " + EvidenceBeginMarker + "\n  ┃  " + valid + "\n  ┃  " + markerLine(EvidenceEndMarker, "6% used", 0) + "\n",
+	}
+	for name, output := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted dynamic marker suffix without an exact actual-pane boundary")
+			}
+		})
+	}
+}
+
+func TestReadEvidenceDoesNotRetroactivelyUseSidebarBoundary(t *testing.T) {
+	valid := `{"requestId":"run-32:retroactive","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	const boundary = 40
+	markerLine := func(marker, suffix string, target int) string {
+		left := "    " + marker
+		return left + strings.Repeat(" ", target-len(left)) + suffix
+	}
+	cases := map[string]string{
+		"sidebar inside envelope": markerLine(EvidenceBeginMarker, "dynamic begin", boundary) + "\n" +
+			"    " + valid + "\n" + strings.Repeat(" ", boundary) + "Context\n" +
+			"    " + EvidenceEndMarker + "\n",
+		"sidebar after envelope": markerLine(EvidenceBeginMarker, "dynamic begin", boundary) + "\n" +
+			"    " + valid + "\n    " + EvidenceEndMarker + "\n" +
+			strings.Repeat(" ", boundary) + "Context\n",
+	}
+	for name, output := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted dynamic marker using a retroactively inferred sidebar boundary")
+			}
+		})
+	}
+}
+
+func TestReadEvidenceAllowsOnlyProspectiveSidebarBoundaryForLaterEnvelope(t *testing.T) {
+	valid := `{"requestId":"run-32:prospective","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	const boundary = 40
+	markerLine := func(marker, suffix string) string {
+		left := "    " + marker
+		return left + strings.Repeat(" ", boundary-len(left)) + suffix
+	}
+	output := "    " + EvidenceBeginMarker + "\n    " + valid + "\n    " + EvidenceEndMarker + "\n" +
+		strings.Repeat(" ", boundary) + "Context\n" +
+		markerLine(EvidenceBeginMarker, "dynamic begin") + "\n    " + valid + "\n" +
+		markerLine(EvidenceEndMarker, "dynamic end") + "\n"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil || got.RequestID != "run-32:prospective" {
+		t.Fatalf("evidence=%#v err=%v, want later envelope after boundary", got, err)
+	}
+}
+
+func TestReadEvidenceRejectsPromptEchoOnlyEnvelope(t *testing.T) {
+	output := "  ┃  " + EvidenceBeginMarker + "\n" +
+		"  ┃  {\"requestId\":\"prompt-only\",\"commitSha\":\"0123456789abcdef0123456789abcdef01234567\",\"verification\":[]}" + "\n" +
+		"  ┃  " + EvidenceEndMarker + "\n"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+		t.Fatal("accepted prompt echo as actual evidence")
+	}
+}
+
+func TestReadEvidenceRejectsLeftPaneTrailingDataAfterObject(t *testing.T) {
+	valid := `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	output := "    " + EvidenceBeginMarker + "\n    " + valid + "\n    {}\n    " + EvidenceEndMarker + "\n"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+		t.Fatal("accepted left-pane trailing JSON")
+	}
+}
+
+func TestReadEvidenceRejectsLeftPaneTrailingTextAfterObjectOnSameLine(t *testing.T) {
+	valid := `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	output := "    " + EvidenceBeginMarker + "\n    " + valid + "        trailing left-pane text\n    " + EvidenceEndMarker + "\n"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+		t.Fatal("accepted left-pane trailing text separated by spaces")
+	}
+}
+
+func TestReadEvidenceRejectsAlignedLeftPaneTrailingJSONDespiteAuxiliaryMarkers(t *testing.T) {
+	valid := `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	output := "    " + EvidenceBeginMarker + "        Context\n" +
+		"    " + valid + "        {}\n" +
+		"    " + EvidenceEndMarker + "        Context\n"
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+	if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+		t.Fatal("accepted aligned left-pane trailing JSON as auxiliary text")
+	}
+}
+
+func TestReadEvidenceBalancesBracesInsideEscapedJSONStrings(t *testing.T) {
+	payload := `{"requestId":"run-28:quoted","commitSha":"abcdef0123456789abcdef0123456789abcdef01","verification":[{"command":"printf \"{\\\"nested\\\":true}\"","outcome":"passed","duration":"1ms"}]}`
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": EvidenceBeginMarker + "\n" + payload + "\n" + EvidenceEndMarker,
+	})
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if got.Verification[0].Command != `printf "{\"nested\":true}"` {
+		t.Fatalf("command=%q, want escaped braces preserved", got.Verification[0].Command)
+	}
+}
+
+func TestReadEvidenceRejectsNestedAndUnmatchedActualMarkers(t *testing.T) {
+	valid := `{"requestId":"prompt-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./...","outcome":"passed","duration":"1s"}]}`
+	for name, output := range map[string]string{
+		"nested":          EvidenceBeginMarker + "\n" + EvidenceBeginMarker + "\n" + valid + "\n" + EvidenceEndMarker + "\n" + EvidenceEndMarker,
+		"unmatched begin": EvidenceBeginMarker + "\n" + valid,
+		"unmatched end":   EvidenceEndMarker + "\n" + valid,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted malformed actual marker sequence")
+			}
+		})
+	}
+}
+
+func TestReadEvidenceRejectsInvalidSingletonVerificationShapes(t *testing.T) {
+	const prefix = `{"requestId":"run-26:builder-prompt","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":`
+	for name, verification := range map[string]string{
+		"null":                    `null`,
+		"scalar":                  `"test -f pilot-result.txt"`,
+		"empty array":             `[]`,
+		"malformed object":        `{"command":`,
+		"multi-command shorthand": `{"command":["test -f pilot-result.txt","go test ./..."],"outcome":"passed","duration":"1ms"}`,
+		"unknown field":           `{"command":"test -f pilot-result.txt","outcome":"passed","duration":"1ms","extra":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload := prefix + verification + `}`
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": EvidenceBeginMarker + "\n" + payload + "\n" + EvidenceEndMarker,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted invalid singleton verification shape")
+			}
+		})
+	}
+}
+
 func TestReadEvidenceExtractsLastCompleteEnvelopeFromUITranscript(t *testing.T) {
 	output := "recent UI output\n" + EvidenceBeginMarker + "\n" +
 		`{"requestId":"prompt-old","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./old","outcome":"passed","duration":"1s"}]}` +
@@ -295,6 +521,45 @@ func TestGetInfoParsesStateChangeSequence(t *testing.T) {
 	got, err := NewCLI(r, "herdr").GetInfo(context.Background(), "builder_api")
 	if err != nil || got.StateChangeSeq != 110 {
 		t.Fatalf("info=%#v err=%v", got, err)
+	}
+}
+
+func TestGetInfoUsesNamespacedTerminalIdentityWhenOpenCodeSessionIsAbsent(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder-opencode": readFixture(t, "testdata/v0.8.2/agent-get-opencode-terminal-only.txt"),
+	})
+
+	got, err := NewCLI(r, "herdr").GetInfo(context.Background(), "builder-opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SessionID != "herdr-terminal:term-opencode-builder" {
+		t.Fatalf("session id=%q, want namespaced terminal identity", got.SessionID)
+	}
+}
+
+func TestGetInfoPrefersProviderSessionIdentityOverTerminalIdentity(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder_api": readFixture(t, "testdata/v0.8.2/agent-get.txt"),
+	})
+
+	got, err := NewCLI(r, "herdr").GetInfo(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SessionID != "session-redacted" {
+		t.Fatalf("session id=%q, want provider session identity", got.SessionID)
+	}
+}
+
+func TestGetInfoRejectsAgentWithoutProviderSessionOrTerminalIdentity(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00get\x00builder-opencode": readFixture(t, "testdata/v0.8.2/agent-get-opencode-no-identity.txt"),
+	})
+
+	_, err := NewCLI(r, "herdr").GetInfo(context.Background(), "builder-opencode")
+	if err == nil || err.Error() != "herdr agent get failed (exit code 0)" {
+		t.Fatalf("err=%v, want safe identity error", err)
 	}
 }
 

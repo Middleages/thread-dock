@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -197,7 +198,7 @@ func TestRound2PromptPendingSequenceDefersOrConfirmsExactlyOnce(t *testing.T) {
 	snapshot := h.mustLoad(id)
 	snapshot.Phase = contract.PhaseBuilding
 	snapshot.ActionCursor = 2
-	snapshot.Builder = state.AgentEvidence{Name: "builder-" + string(id), SessionID: "builder-session"}
+	snapshot.Builder = state.AgentEvidence{Name: agentName("builder", id), SessionID: "builder-session"}
 	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: string(id) + ":builder-prompt", BaselineSeq: 42}
 	snapshot.PendingAction = "prompt_builder"
 	if err := h.store.Save(context.Background(), snapshot); err != nil {
@@ -254,7 +255,7 @@ func TestRound2ReviewerPromptPendingWithMissingReceiptStaysUncertain(t *testing.
 	snapshot := h.mustLoad(id)
 	snapshot.Phase = contract.PhaseReviewing
 	snapshot.ActionCursor = 3
-	snapshot.Reviewer = state.AgentEvidence{Name: "reviewer-" + string(id), SessionID: "reviewer-session"}
+	snapshot.Reviewer = state.AgentEvidence{Name: agentName("reviewer", id), SessionID: "reviewer-session"}
 	snapshot.ReviewerPrompt = state.PromptReceipt{RequestID: string(id) + ":reviewer-prompt", BaselineSeq: 42}
 	snapshot.PendingAction = "prompt_reviewer"
 	if err := h.store.Save(context.Background(), snapshot); err != nil {
@@ -268,6 +269,82 @@ func TestRound2ReviewerPromptPendingWithMissingReceiptStaysUncertain(t *testing.
 	got := h.mustLoad(id)
 	if got.PendingAction != "prompt_reviewer" || got.ActionCursor != 3 || len(h.herdr.prompts) != 0 || h.herdr.promptReceiptReads != 1 {
 		t.Fatalf("reviewer uncertain state=%#v prompts=%d", got, len(h.herdr.prompts))
+	}
+}
+
+func TestRound2BuilderEvidenceReconcilePersistsNormalPathFields(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := agentName("builder", id)
+	requestID := string(id) + ":builder-prompt"
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseBuilding
+	snapshot.ActionCursor = 3
+	snapshot.Builder = state.AgentEvidence{Name: name, SessionID: "builder-session"}
+	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: requestID, BaselineSeq: 42}
+	snapshot.PendingAction = "collect_builder_evidence"
+	h.herdr.evidence.RequestID = requestID
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := New(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+
+	got := h.mustLoad(id)
+	want := state.AgentEvidence{
+		Name:         name,
+		SessionID:    "builder-session",
+		RequestID:    requestID,
+		CommitSHA:    validSHA,
+		Verification: []string{"go test ./internal/payments"},
+		VerificationEvidence: []state.VerificationEvidence{{
+			Command:  "go test ./internal/payments",
+			Outcome:  "passed",
+			Duration: "1.2s",
+		}},
+	}
+	if !reflect.DeepEqual(got.Builder, want) {
+		t.Fatalf("reconciled Builder = %#v, want normal-path fields %#v", got.Builder, want)
+	}
+	if got.Phase != contract.PhaseIntegrating || got.PendingAction != "" || got.ActionCursor != 0 {
+		t.Fatalf("reconciled state = %#v", got)
+	}
+}
+
+func TestRound2BuilderEvidenceReconcileRejectsMismatchedRequestID(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := h.mustLoad(id)
+	snapshot.Phase = contract.PhaseBuilding
+	snapshot.ActionCursor = 3
+	snapshot.Builder = state.AgentEvidence{Name: agentName("builder", id), SessionID: "builder-session"}
+	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: string(id) + ":builder-prompt", BaselineSeq: 42}
+	snapshot.PendingAction = "collect_builder_evidence"
+	h.herdr.evidence.RequestID = "stale-builder-prompt"
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := New(h.Deps).Advance(context.Background(), id); !errors.Is(err, ErrPendingReconcile) {
+		t.Fatalf("error=%v want pending reconcile", err)
+	}
+
+	got := h.mustLoad(id)
+	if got.Phase != contract.PhaseBuilding || got.PendingAction != "collect_builder_evidence" || got.ActionCursor != 3 {
+		t.Fatalf("mismatched request transitioned state = %#v", got)
+	}
+	if got.Builder.RequestID != "" || got.Builder.CommitSHA != "" || len(got.Builder.VerificationEvidence) != 0 {
+		t.Fatalf("mismatched request persisted evidence = %#v", got.Builder)
 	}
 }
 
@@ -307,7 +384,7 @@ func TestRound2AgentStartNotFoundReconcileDefersStartToNextAdvance(t *testing.T)
 	snapshot.Phase = contract.PhaseBuilding
 	snapshot.ActionCursor = 0
 	snapshot.BuilderWorktree = state.WorktreeState{Path: "/tmp/builder", WorkspaceID: "workspace-184", PaneID: "pane-184", Branch: "agent/api"}
-	snapshot.Builder = state.AgentEvidence{Name: "builder-" + string(id)}
+	snapshot.Builder = state.AgentEvidence{Name: agentName("builder", id)}
 	snapshot.PendingAction = "start_builder"
 	if err := h.store.Save(context.Background(), snapshot); err != nil {
 		t.Fatal(err)
@@ -446,7 +523,7 @@ func TestRound2BaselineCrashReconcileStoresSeqBeforePrompt(t *testing.T) {
 	snapshot.Phase = contract.PhaseBuilding
 	snapshot.ActionCursor = 1
 	snapshot.BuilderWorktree = state.WorktreeState{WorkspaceID: "workspace-184", PaneID: "pane-184"}
-	snapshot.Builder = state.AgentEvidence{Name: "builder-" + string(id)}
+	snapshot.Builder = state.AgentEvidence{Name: agentName("builder", id)}
 	snapshot.BuilderPrompt = state.PromptReceipt{RequestID: string(id) + ":builder-prompt"}
 	snapshot.PendingAction = "baseline_builder_prompt"
 	if err := h.store.Save(context.Background(), snapshot); err != nil {
@@ -456,7 +533,7 @@ func TestRound2BaselineCrashReconcileStoresSeqBeforePrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := h.mustLoad(id)
-	if got.PendingAction != "" || got.ActionCursor != 2 || got.Builder.SessionID != "session-builder-"+string(id) || got.BuilderPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
+	if got.PendingAction != "" || got.ActionCursor != 2 || got.Builder.SessionID != "session-"+agentName("builder", id) || got.BuilderPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
 		t.Fatalf("baseline reconcile state=%#v prompts=%d", got, len(h.herdr.prompts))
 	}
 }
@@ -470,7 +547,7 @@ func TestRound2ReviewerBaselineCrashReconcileStoresActualSessionAndSeq(t *testin
 	snapshot := h.mustLoad(id)
 	snapshot.Phase = contract.PhaseReviewing
 	snapshot.ActionCursor = 3
-	snapshot.Reviewer = state.AgentEvidence{Name: "reviewer-" + string(id)}
+	snapshot.Reviewer = state.AgentEvidence{Name: agentName("reviewer", id)}
 	snapshot.ReviewerWorktree = state.WorktreeState{Path: "/tmp/review", WorkspaceID: "workspace-review-184", PaneID: "pane-review-184"}
 	snapshot.ReviewerPrompt = state.PromptReceipt{RequestID: string(id) + ":reviewer-prompt"}
 	snapshot.PendingAction = "baseline_reviewer_prompt"
@@ -481,7 +558,7 @@ func TestRound2ReviewerBaselineCrashReconcileStoresActualSessionAndSeq(t *testin
 		t.Fatal(err)
 	}
 	got := h.mustLoad(id)
-	if got.PendingAction != "" || got.ActionCursor != 4 || got.Reviewer.SessionID != "session-reviewer-"+string(id) || got.ReviewerPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
+	if got.PendingAction != "" || got.ActionCursor != 4 || got.Reviewer.SessionID != "session-"+agentName("reviewer", id) || got.ReviewerPrompt.BaselineSeq != 42 || len(h.herdr.prompts) != 0 {
 		t.Fatalf("baseline reconcile state=%#v prompts=%d", got, len(h.herdr.prompts))
 	}
 }
@@ -514,11 +591,11 @@ func TestRound2BaselineCrashReconcileRejectsWrongIdentityForBuilderAndReviewer(t
 			snapshot.ActionCursor = 1
 			snapshot.BuilderWorktree = state.WorktreeState{WorkspaceID: "workspace-184", PaneID: "pane-184"}
 			snapshot.ReviewerWorktree = state.WorktreeState{WorkspaceID: "workspace-review-184", PaneID: "pane-review-184"}
-			name := "builder-" + string(id)
+			name := agentName("builder", id)
 			if tc.reviewer {
 				snapshot.Phase = contract.PhaseReviewing
 				snapshot.ActionCursor = 3
-				name = "reviewer-" + string(id)
+				name = agentName("reviewer", id)
 				snapshot.Reviewer = state.AgentEvidence{Name: name}
 				snapshot.ReviewerPrompt = state.PromptReceipt{RequestID: string(id) + ":reviewer-prompt"}
 			} else {
@@ -585,6 +662,14 @@ func TestRound2RejectsExactVerificationCommandMismatch(t *testing.T) {
 	}
 	if got := h.mustLoad(id).Phase; got != contract.PhaseBuilding {
 		t.Fatalf("phase=%s want building", got)
+	}
+}
+
+func TestVerificationMatchesTaskRejectsOneCheckForMultipleRequiredCommands(t *testing.T) {
+	checks := []herdr.VerificationCheck{{Command: "test -f pilot-result.txt", Outcome: "passed", Duration: "1ms"}}
+	required := []string{"test -f pilot-result.txt", "go test ./internal/herdr"}
+	if verificationMatchesTask(checks, required) {
+		t.Fatal("accepted one normalized verification check for multiple required commands")
 	}
 }
 

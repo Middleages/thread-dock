@@ -92,6 +92,21 @@ Command: `herdr agent get <agent-name>` (exit 0).
 {"id":"cli:agent:get","result":{"agent":{"agent":"codex","agent_session":{"agent":"codex","kind":"id","source":"herdr:codex","value":"session-redacted"},"agent_status":"working","cwd":"/redacted/worktree","focused":false,"foreground_cwd":"/redacted/worktree","interactive_ready":true,"name":"agent-redacted","pane_id":"pane-redacted","revision":2,"state_change_seq":110,"tab_id":"tab-redacted","terminal_id":"terminal-redacted","terminal_title":"redacted-title","terminal_title_stripped":"redacted-title","workspace_id":"workspace-redacted"},"type":"agent_info"}}
 ```
 
+OpenCode on Herdr v0.8.2 can omit `agent_session` even after a prompt while
+still returning `terminal_id`, `workspace_id`, `pane_id` and
+`state_change_seq`. The adapter therefore chooses identity in this order:
+
+1. A non-empty `agent_session.value` is the preferred provider identity.
+2. If it is absent, `herdr-terminal:<terminal_id>` is the durable fallback.
+3. If both are absent, the agent is rejected because its identity cannot be
+   safely persisted.
+
+Builder and Reviewer must remain in separate Herdr workspaces, panes and
+terminals, so their fallback identities remain distinct. A terminal fallback
+cannot distinguish manual replacement of the agent process in the same
+terminal as strongly as a provider session ID; local operational compatibility
+with OpenCode v0.8.2 is the deliberate trade-off.
+
 ## Worktree-create provenance
 
 Source command: `herdr worktree create --cwd <redacted-path> --branch
@@ -124,3 +139,18 @@ agent read NAME --source recent-unwrapped --lines 120
 `working`, `blocked`, `idle`, `done` and `unknown` are lifecycle states only.
 They are not completion proof; commit and verification evidence remain a
 separate concern.
+
+Evidence normally reports `verification` as an array. For compatibility with
+live Herdr/OpenCode output, exactly one verification check may also be encoded
+as a JSON object; the adapter normalizes that object to a one-element array.
+The outer Evidence object and each verification object remain strict (unknown
+fields, null/scalar values, malformed objects and empty arrays are rejected),
+and orchestrator validation still requires the exact task command count and
+matching passed checks with valid durations.
+
+OpenCode's multi-column `recent-unwrapped` output may indent actual response
+markers and append a right-hand auxiliary panel after a wide separator. The
+adapter infers that separator from the captured output and removes only the
+right column; lines prefixed with `┃` are prompt echoes and are never treated
+as response markers. Left-pane trailing text, nested or unmatched markers, and
+incomplete JSON remain invalid evidence.

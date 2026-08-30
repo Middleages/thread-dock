@@ -20,24 +20,60 @@ const defaultAPIVersion = "2022-11-28"
 
 // RESTClient implements Client against the GHES REST and GraphQL endpoints.
 type RESTClient struct {
-	baseURL    string
-	token      string
-	apiVersion string
-	httpClient *http.Client
+	baseURL      string
+	restBasePath string
+	graphqlPath  string
+	publicAPI    bool
+	initErr      error
+	token        string
+	apiVersion   string
+	httpClient   *http.Client
 }
 
-// NewRESTClient creates a GHES client. The base URL may be either the GHES
-// host or its /api/v3 REST root; both forms are accepted.
+// NewRESTClient creates a GitHub API client. GitHub.com uses its public API
+// paths, while a GHES base URL may be either the host or its /api/v3 REST
+// root; both GHES forms are accepted.
 func NewRESTClient(baseURL, token, apiVersion string, httpClient *http.Client) *RESTClient {
 	baseURL = strings.TrimRight(baseURL, "/")
 	baseURL = strings.TrimSuffix(baseURL, "/api/v3")
+	restBasePath, graphqlPath := "/api/v3", "/api/graphql"
+	publicAPI := false
+	var initErr error
+	if parsed, err := url.Parse(baseURL); err == nil && isPublicHostname(parsed.Hostname(), "api.github.com") {
+		if parsed.Scheme != "https" {
+			initErr = errors.New("github public API requires HTTPS")
+		} else {
+			parsed.Host = canonicalPublicOriginHost(parsed)
+			baseURL = parsed.String()
+		}
+		restBasePath, graphqlPath = "", "/graphql"
+		publicAPI = true
+	}
 	if apiVersion == "" {
 		apiVersion = defaultAPIVersion
 	}
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &RESTClient{baseURL: baseURL, token: token, apiVersion: apiVersion, httpClient: httpClient}
+	return &RESTClient{baseURL: baseURL, restBasePath: restBasePath, graphqlPath: graphqlPath, publicAPI: publicAPI, initErr: initErr, token: token, apiVersion: apiVersion, httpClient: httpClient}
+}
+
+func isPublicHostname(hostname, expected string) bool {
+	return strings.EqualFold(strings.TrimSuffix(hostname, "."), expected)
+}
+
+func canonicalPublicOriginHost(u *url.URL) string {
+	if !isPublicHostname(u.Hostname(), "api.github.com") {
+		return u.Host
+	}
+	if port := u.Port(); port != "" && port != "443" {
+		return "api.github.com:" + port
+	}
+	return "api.github.com"
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return a.Scheme == b.Scheme && canonicalPublicOriginHost(a) == canonicalPublicOriginHost(b)
 }
 
 // AuthError indicates missing or invalid GHES credentials.
@@ -98,7 +134,7 @@ func (c *RESTClient) FindIssueBundle(ctx context.Context, repo Repository, marke
 }
 
 func (c *RESTClient) findIssueBundle(ctx context.Context, repo Repository, marker string) (IssueBundle, bool, map[string]Issue, error) {
-	issuePath := fmt.Sprintf("/api/v3/repos/%s/%s/issues", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	issuePath := fmt.Sprintf("%s/repos/%s/%s/issues", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
 	path := issuePath + "?state=all&per_page=100"
 	var issues []Issue
 	seenPages := make(map[string]struct{})
@@ -185,27 +221,86 @@ func (c *RESTClient) validateIssuePageURL(raw, issuePath string) (string, error)
 		return "", errors.New("github issue pagination base is malformed")
 	}
 	next, err := url.Parse(raw)
-	if err != nil || next.IsAbs() && (next.Scheme != base.Scheme || next.Host != base.Host) || next.User != nil {
-		return "", errors.New("github issue pagination link is outside the configured GHES base")
+	if err != nil || next.IsAbs() && !sameOrigin(next, base) || next.User != nil {
+		return "", errors.New("github issue pagination link is outside the configured GitHub API base")
 	}
 	if !next.IsAbs() {
 		next = base.ResolveReference(next)
 	}
-	if next.Scheme != base.Scheme || next.Host != base.Host || next.Path != issuePath || next.Fragment != "" {
-		return "", errors.New("github issue pagination link is outside the configured GHES base")
+	if !sameOrigin(next, base) || !c.validIssuePagePath(next.Path, issuePath) || next.Fragment != "" {
+		return "", errors.New("github issue pagination link is outside the configured GitHub API base")
 	}
-	for key, values := range next.Query() {
+	if !c.publicAPI {
+		if err := validateSensitivePaginationQuery(next.Query(), c.token); err != nil {
+			return "", err
+		}
+		return next.RequestURI(), nil
+	}
+	query, err := copyPublicPaginationQuery(next.Query(), c.token)
+	if err != nil {
+		return "", err
+	}
+	requestURI := issuePath
+	if encodedQuery := query.Encode(); encodedQuery != "" {
+		requestURI += "?" + encodedQuery
+	}
+	return requestURI, nil
+}
+
+func validateSensitivePaginationQuery(query url.Values, token string) error {
+	for key, values := range query {
 		lower := strings.ToLower(key)
 		if strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "password") || strings.Contains(lower, "authorization") {
-			return "", errors.New("github issue pagination link contains sensitive query data")
+			return errors.New("github issue pagination link contains sensitive query data")
 		}
 		for _, value := range values {
-			if c.token != "" && strings.Contains(value, c.token) {
-				return "", errors.New("github issue pagination link contains sensitive query data")
+			if token != "" && strings.Contains(value, token) {
+				return errors.New("github issue pagination link contains sensitive query data")
 			}
 		}
 	}
-	return next.RequestURI(), nil
+	return nil
+}
+
+func copyPublicPaginationQuery(query url.Values, token string) (url.Values, error) {
+	if err := validateSensitivePaginationQuery(query, token); err != nil {
+		return nil, err
+	}
+	filtered := make(url.Values)
+	for key, values := range query {
+		lower := strings.ToLower(key)
+		switch lower {
+		case "state", "per_page", "page":
+			filtered[lower] = append([]string(nil), values...)
+		case "after", "before":
+			if len(values) != 1 || strings.TrimSpace(values[0]) == "" || filtered[lower] != nil || (lower == "after" && filtered["before"] != nil) || (lower == "before" && filtered["after"] != nil) {
+				return nil, errors.New("github issue pagination link contains an invalid cursor")
+			}
+			filtered[lower] = append([]string(nil), values...)
+		default:
+			return nil, errors.New("github issue pagination link contains unsupported query data")
+		}
+	}
+	return filtered, nil
+}
+
+func (c *RESTClient) validIssuePagePath(path, issuePath string) bool {
+	if path == issuePath {
+		return true
+	}
+	if !c.publicAPI || !strings.HasPrefix(path, "/repositories/") || !strings.HasSuffix(path, "/issues") {
+		return false
+	}
+	repositoryID := strings.TrimSuffix(strings.TrimPrefix(path, "/repositories/"), "/issues")
+	if repositoryID == "" {
+		return false
+	}
+	for _, character := range repositoryID {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *RESTClient) CreateIssueBundle(ctx context.Context, repo Repository, task contract.TaskContract, marker string) (IssueBundle, error) {
@@ -237,7 +332,7 @@ func (c *RESTClient) CreateIssueBundle(ctx context.Context, repo Repository, tas
 }
 
 func (c *RESTClient) createIssue(ctx context.Context, repo Repository, title, body string, labels []string) (Issue, error) {
-	path := fmt.Sprintf("/api/v3/repos/%s/%s/issues", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	path := fmt.Sprintf("%s/repos/%s/%s/issues", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
 	payload := struct {
 		Title  string   `json:"title"`
 		Body   string   `json:"body"`
@@ -251,7 +346,7 @@ func (c *RESTClient) createIssue(ctx context.Context, repo Repository, title, bo
 }
 
 func (c *RESTClient) CreateDraftPR(ctx context.Context, repo Repository, req DraftPRRequest) (PullRequest, error) {
-	path := fmt.Sprintf("/api/v3/repos/%s/%s/pulls", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	path := fmt.Sprintf("%s/repos/%s/%s/pulls", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
 	payload := struct {
 		Title string `json:"title"`
 		Body  string `json:"body"`
@@ -267,14 +362,14 @@ func (c *RESTClient) CreateDraftPR(ctx context.Context, repo Repository, req Dra
 }
 
 func (c *RESTClient) UpdateIssueState(ctx context.Context, repo Repository, number int, state string) error {
-	path := fmt.Sprintf("/api/v3/repos/%s/%s/issues/%d", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
+	path := fmt.Sprintf("%s/repos/%s/%s/issues/%d", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
 	return c.doJSON(ctx, http.MethodPatch, path, struct {
 		State string `json:"state"`
 	}{State: state}, nil)
 }
 
 func (c *RESTClient) GetPullRequest(ctx context.Context, repo Repository, number int) (PullRequest, error) {
-	path := fmt.Sprintf("/api/v3/repos/%s/%s/pulls/%d", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
+	path := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
 	var wire pullRequestWire
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, &wire); err != nil {
 		return PullRequest{}, err
@@ -321,7 +416,7 @@ func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, i
 	addPayload.Variables.ProjectID = projectID
 	addPayload.Variables.ContentID = issueNodeID
 	var addResponse graphQLAddResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/api/graphql", addPayload, &addResponse); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, c.graphqlPath, addPayload, &addResponse); err != nil {
 		return err
 	}
 	if err := addResponse.graphQLError(c.token); err != nil {
@@ -353,7 +448,7 @@ func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, i
 	payload.Variables.FieldID = project.StatusFieldID
 	payload.Variables.Value.SingleSelectOptionID = optionID
 	var response graphQLResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/api/graphql", payload, &response); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, c.graphqlPath, payload, &response); err != nil {
 		return err
 	}
 	return response.graphQLError(c.token)
@@ -443,6 +538,9 @@ func (c *RESTClient) doJSON(ctx context.Context, method, path string, body any, 
 }
 
 func (c *RESTClient) doJSONWithLink(ctx context.Context, method, path string, body any, out any) (string, error) {
+	if c.initErr != nil {
+		return "", c.initErr
+	}
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)

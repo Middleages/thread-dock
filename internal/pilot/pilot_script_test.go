@@ -1,0 +1,806 @@
+package pilot
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"thread-dock/internal/config"
+)
+
+func TestPilotCheckPrintsKoreanPassSummaryAndWritesEvidence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	runID := "td-test-run"
+	runDir := filepath.Join(stateDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	mainSHA := "0123456789abcdef0123456789abcdef01234567"
+	snapshot := `{
+  "runId":"td-test-run",
+  "phase":"reviewing",
+  "pendingAction":"",
+  "parentIssue":101,
+  "integration":{"path":"/managed/integration","branch":"agent/parent-integration"},
+  "builder":{"name":"builder-td-test-run","commitSha":"abcdef0123456789abcdef0123456789abcdef01"},
+  "reviewer":{"name":"reviewer-td-test-run","verification":["review schema sent"]},
+  "builderWorktree":{"path":"/managed/builder","workspaceId":"ws-builder","paneId":"pane-builder"},
+  "reviewerWorktree":{"path":"/managed/integration","workspaceId":"ws-reviewer","paneId":"pane-reviewer"},
+  "builderPrompt":{"requestId":"td-test-run:builder-prompt"},
+  "reviewerPrompt":{"requestId":"td-test-run:reviewer-prompt"}
+}`
+	writeFile(t, filepath.Join(runDir, "run.json"), snapshot, 0o600)
+	contractPath := filepath.Join(temp, "pilot.json")
+	writeFile(t, contractPath, `{"repository":{"owner":"PDX","name":"pilot-product"}}`, 0o600)
+	configPath := filepath.Join(temp, "config.json")
+	writeFile(t, configPath, `{"ghesHost":"https://github.example.test"}`, 0o600)
+
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "git"), `#!/usr/bin/env bash
+case "$*" in
+  "rev-parse HEAD") printf '%s\n' "${PILOT_TEST_MAIN_SHA}" ;;
+  "status --short") exit 0 ;;
+  "rev-parse --show-toplevel") printf '%s\n' "${PILOT_TEST_REPO_ROOT}" ;;
+  *) printf 'unexpected git arguments: %s\n' "$*" >&2; exit 9 ;;
+esac
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "herdr"), `#!/usr/bin/env bash
+printf '%s\n' '{"result":{"worktrees":[{"path":"/managed/builder","branch":"agent/pilot"},{"path":"/managed/integration","branch":"agent/parent-integration"}]}}'
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "gh"), `#!/usr/bin/env bash
+printf '%s\n' '[{"number":101,"body":"<!-- threaddock:td:td-test-run -->","html_url":"https://github.example.test/PDX/pilot-product/issues/101"},{"number":102,"body":"<!-- threaddock:td:td-test-run -->","html_url":"https://github.example.test/PDX/pilot-product/issues/102"}]'
+`)
+
+	sessionPath := filepath.Join(temp, "pilot-session.json")
+	writeFile(t, sessionPath, `{"run":"`+runID+`","stateDir":"`+stateDir+`","mainBefore":"`+mainSHA+`","checkoutBefore":"","repoRoot":"`+repoRoot+`","contractPath":"`+contractPath+`","outagePassed":true,"wslRestartPassed":true,"snapshotDiffPassed":true}`, 0o600)
+
+	command := exec.Command("bash", "-x", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--check")
+	command.Dir = repoRoot
+	command.Env = append(os.Environ(),
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+		"THREADDOCK_PILOT_SESSION="+sessionPath,
+		"THREADDOCK_CONFIG="+configPath,
+		"PILOT_TEST_MAIN_SHA="+mainSHA,
+		"PILOT_TEST_REPO_ROOT="+repoRoot,
+		"THREADDOCK_GH_TOKEN=pilot-xtrace-token",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pilot check failed: %v\n%s", err, output)
+	}
+	text := string(output)
+	for _, want := range []string{
+		"Single-run 파일럿 결과",
+		"GHES Issue 중복 방지",
+		"Herdr Worktree 중복 방지",
+		"main 브랜치 보호",
+		"전체 결과: PASS",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("output missing %q:\n%s", want, text)
+		}
+	}
+
+	evidencePath := filepath.Join(stateDir, "pilot-results", runID+".md")
+	evidence, err := os.ReadFile(evidencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(output), "pilot-xtrace-token") || strings.Contains(string(evidence), "pilot-xtrace-token") ||
+		strings.Contains(string(evidence), "THREADDOCK_GH_TOKEN") ||
+		!strings.Contains(string(evidence), "전체 결과: PASS") ||
+		!strings.Contains(string(evidence), "ws-reviewer/pane-reviewer") {
+		t.Fatalf("unexpected evidence:\n%s", evidence)
+	}
+}
+
+func TestPilotRejectsCheckWhenReviewerIsNotReady(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	runID := "td-not-ready"
+	runDir := filepath.Join(stateDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(runDir, "run.json"), `{"runId":"td-not-ready","phase":"building","pendingAction":"prompt_builder"}`, 0o600)
+	contractPath := filepath.Join(temp, "pilot.json")
+	writeFile(t, contractPath, `{"repository":{"owner":"PDX","name":"pilot-product"}}`, 0o600)
+	configPath := filepath.Join(temp, "config.json")
+	writeFile(t, configPath, `{"ghesHost":"https://github.example.test"}`, 0o600)
+	sessionPath := filepath.Join(temp, "pilot-session.json")
+	writeFile(t, sessionPath, `{"run":"`+runID+`","stateDir":"`+stateDir+`","mainBefore":"0123456789abcdef0123456789abcdef01234567","checkoutBefore":"","repoRoot":"`+repoRoot+`","contractPath":"`+contractPath+`","outagePassed":true,"wslRestartPassed":true,"snapshotDiffPassed":true}`, 0o600)
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "git"), `#!/usr/bin/env bash
+case "$*" in
+  "rev-parse HEAD") printf '%s\n' '0123456789abcdef0123456789abcdef01234567' ;;
+  "status --short") exit 0 ;;
+  *) exit 9 ;;
+esac
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "herdr"), `#!/usr/bin/env bash
+printf '%s\n' '{"result":{"worktrees":[]}}'
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "gh"), `#!/usr/bin/env bash
+printf '%s\n' '[{"body":"<!-- threaddock:td:td-not-ready -->"},{"body":"<!-- threaddock:td:td-not-ready -->"}]'
+`)
+
+	command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--check")
+	command.Dir = repoRoot
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "THREADDOCK_PILOT_SESSION="+sessionPath, "THREADDOCK_CONFIG="+configPath)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected failure, output:\n%s", output)
+	}
+	if !strings.Contains(string(output), "Reviewer 준비 상태") || !strings.Contains(string(output), "FAIL") {
+		t.Fatalf("unexpected output:\n%s", output)
+	}
+}
+
+func TestPilotContinueRecoversMissingAndStaleBootIDs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	runID := "run-1787925632789000929-1"
+	runDir := filepath.Join(stateDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(runDir, "run.json"), `{"runId":"`+runID+`","phase":"building","pendingAction":"start_builder"}`, 0o600)
+	contractPath := filepath.Join(temp, "pilot.json")
+	writeFile(t, contractPath, `{"repository":{"owner":"PDX","name":"pilot-product"}}`, 0o600)
+	configPath := filepath.Join(temp, "config.json")
+	writeFile(t, configPath, `{"stateDir":"`+stateDir+`","ghesHost":"https://github.example.test"}`, 0o600)
+	bootIDPath := filepath.Join(temp, "boot_id")
+	currentBootID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	writeFile(t, bootIDPath, currentBootID+"\n", 0o600)
+	sessionPath := filepath.Join(temp, "pilot-session.json")
+	writeFile(t, sessionPath, `{"run":"`+runID+`","stateDir":"`+stateDir+`","mainBefore":"0123456789abcdef0123456789abcdef01234567","checkoutBefore":"","repoRoot":"`+repoRoot+`","contractPath":"`+contractPath+`","outagePassed":true,"wslRestartPassed":false,"snapshotDiffPassed":false}`, 0o600)
+
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	callLog := filepath.Join(temp, "agentctl.calls")
+	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s|%s\n' "${1:-}" "${2:-}" >>"${PILOT_TEST_CALL_LOG}"
+state_dir="`+stateDir+`"
+case "${1:-}" in
+  resume)
+    test "${2:-}" = '`+runID+`'
+    cat >"$state_dir/runs/`+runID+`/run.json" <<'JSON'
+{"runId":"`+runID+`","phase":"reviewing","pendingAction":"","actionCursor":0,"integration":{"path":"/managed/integration","branch":"agent/parent-integration"},"builder":{"commitSha":"abcdef0123456789abcdef0123456789abcdef01"}}
+JSON
+    ;;
+  stop) test "${2:-}" = '`+runID+`' ;;
+  *) printf 'unexpected agentctl arguments: %s\n' "$*" >&2; exit 9 ;;
+esac
+`)
+	for _, name := range []string{"herdr", "opencode", "gh"} {
+		writeExecutable(t, filepath.Join(fakeBin, name), "#!/usr/bin/env bash\nexit 0\n")
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "sleep"), "#!/usr/bin/env bash\nexit 0\n")
+
+	runContinue := func() ([]byte, error) {
+		command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--continue")
+		command.Dir = repoRoot
+		command.Env = append(os.Environ(),
+			"PATH="+fakeBin+":"+os.Getenv("PATH"),
+			"THREADDOCK_PILOT_SESSION="+sessionPath,
+			"THREADDOCK_CONFIG="+configPath,
+			"THREADDOCK_BOOT_ID_PATH="+bootIDPath,
+			"THREADDOCK_GH_TOKEN=pilot-test-secret",
+			"PILOT_TEST_CALL_LOG="+callLog,
+		)
+		return command.CombinedOutput()
+	}
+	output, err := runContinue()
+	if err != nil {
+		t.Fatalf("pre-WSL continue failed: %v\n%s", err, output)
+	}
+
+	calls, err := os.ReadFile(callLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(calls)), "resume|"+runID+"\nstop|"+runID; got != want {
+		t.Fatalf("agentctl calls=%q, want %q", got, want)
+	}
+	var session map[string]any
+	contents, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(contents, &session); err != nil {
+		t.Fatal(err)
+	}
+	if session["stage"] != "wait_wsl_restart" {
+		t.Fatalf("session stage=%v, want wait_wsl_restart", session["stage"])
+	}
+	if session["bootIdBefore"] != currentBootID {
+		t.Fatalf("session bootIdBefore=%v, want %q", session["bootIdBefore"], currentBootID)
+	}
+	beforeWSL, err := os.ReadFile(filepath.Join(stateDir, "pilot", "before-wsl.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(beforeWSL), `"runId": "`+runID+`"`) {
+		t.Fatalf("before-wsl snapshot does not contain run ID: %s", beforeWSL)
+	}
+	if strings.Contains(string(output), "WSL 재시작을 확인할 수 없습니다") || !strings.Contains(string(output), "wsl --shutdown") {
+		t.Fatalf("unexpected pre-WSL output:\n%s", output)
+	}
+
+	// A second interrupted first phase may retain a stale boot ID. It must be
+	// overwritten at the next first-phase handoff.
+	delete(session, "stage")
+	session["bootIdBefore"] = "ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb"
+	updatedSession, err := json.Marshal(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, sessionPath, string(updatedSession), 0o600)
+	writeFile(t, filepath.Join(runDir, "run.json"), `{"runId":"`+runID+`","phase":"building","pendingAction":"start_builder"}`, 0o600)
+
+	output, err = runContinue()
+	if err != nil {
+		t.Fatalf("stale-boot pre-WSL continue failed: %v\n%s", err, output)
+	}
+	contents, err = os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(contents, &session); err != nil {
+		t.Fatal(err)
+	}
+	if session["bootIdBefore"] != currentBootID {
+		t.Fatalf("stale bootIdBefore=%v, want current %q", session["bootIdBefore"], currentBootID)
+	}
+
+	// With the same current boot ID, the next --continue must retain the
+	// staged session and refuse to proceed until WSL has restarted.
+	beforeRetry := append([]byte(nil), contents...)
+	output, err = runContinue()
+	if err == nil || !strings.Contains(string(output), "WSL 재시작을 확인할 수 없습니다") {
+		t.Fatalf("expected unchanged-boot rejection, err=%v output:\n%s", err, output)
+	}
+	afterRetry, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterRetry) != string(beforeRetry) {
+		t.Fatalf("retry changed staged session:\nbefore=%safter=%s", beforeRetry, afterRetry)
+	}
+	calls, err = os.ReadFile(callLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(calls)), "resume|"+runID+"\nstop|"+runID+"\nresume|"+runID+"\nstop|"+runID; got != want {
+		t.Fatalf("agentctl calls=%q, want %q", got, want)
+	}
+}
+
+func TestPilotContinueKeepsWSLRestartGateForStagedRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	runID := "td-wsl-gate"
+	runDir := filepath.Join(stateDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(runDir, "run.json"), `{"runId":"`+runID+`","phase":"reviewing","pendingAction":""}`, 0o600)
+	contractPath := filepath.Join(temp, "pilot.json")
+	writeFile(t, contractPath, `{"repository":{"owner":"PDX","name":"pilot-product"}}`, 0o600)
+	configPath := filepath.Join(temp, "config.json")
+	writeFile(t, configPath, `{"stateDir":"`+stateDir+`","ghesHost":"https://github.example.test"}`, 0o600)
+	bootID, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(temp, "pilot-session.json")
+	writeFile(t, sessionPath, `{"run":"`+runID+`","stateDir":"`+stateDir+`","mainBefore":"0123456789abcdef0123456789abcdef01234567","checkoutBefore":"","repoRoot":"`+repoRoot+`","contractPath":"`+contractPath+`","bootIdBefore":"`+strings.TrimSpace(string(bootID))+`","stage":"wait_wsl_restart"}`, 0o600)
+
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	callLog := filepath.Join(temp, "agentctl.calls")
+	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
+printf '%s|%s\n' "${1:-}" "${2:-}" >>"${PILOT_TEST_CALL_LOG}"
+exit 0
+`)
+	for _, name := range []string{"herdr", "opencode", "gh"} {
+		writeExecutable(t, filepath.Join(fakeBin, name), "#!/usr/bin/env bash\nexit 0\n")
+	}
+
+	command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--continue")
+	command.Dir = repoRoot
+	command.Env = append(os.Environ(),
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+		"THREADDOCK_PILOT_SESSION="+sessionPath,
+		"THREADDOCK_CONFIG="+configPath,
+		"THREADDOCK_GH_TOKEN=pilot-test-secret",
+		"PILOT_TEST_CALL_LOG="+callLog,
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected WSL restart gate failure, output:\n%s", output)
+	}
+	if !strings.Contains(string(output), "WSL 재시작을 확인할 수 없습니다") {
+		t.Fatalf("unexpected output:\n%s", output)
+	}
+	if calls, err := os.ReadFile(callLog); err == nil && len(strings.TrimSpace(string(calls))) != 0 {
+		t.Fatalf("agentctl called before WSL restart: %s", calls)
+	}
+}
+
+func TestPilotSimulateOutageUsesTemporaryConfigOnlyForStart(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	configPath := filepath.Join(temp, "config.json")
+	sourceConfig := []byte(`{"ghesHost":"https://github.com","apiBase":"https://api.github.com","apiVersion":"2022-11-28","stateDir":"` + stateDir + `","herdrBinary":"herdr-custom","gitBinary":"git-custom","workingWait":"5m","recoveryLimit":7,"projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`)
+	writeFile(t, configPath, string(sourceConfig), 0o600)
+	if _, err := config.Parse(bytes.NewReader(sourceConfig)); err != nil {
+		t.Fatalf("source config does not pass config.Parse: %v\n%s", err, sourceConfig)
+	}
+
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	jqPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "jq"), `#!/usr/bin/env bash
+exec "$PILOT_TEST_JQ_PATH" "$@"
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "git"), `#!/usr/bin/env bash
+case "$*" in
+  "rev-parse --show-toplevel") printf '%s\n' "${PILOT_TEST_REPO_ROOT}" ;;
+  "rev-parse HEAD") printf '%s\n' '0123456789abcdef0123456789abcdef01234567' ;;
+  "status --short") exit 0 ;;
+  *) printf 'unexpected git arguments: %s\n' "$*" >&2; exit 9 ;;
+esac
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "herdr"), `#!/usr/bin/env bash
+exit 0
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "opencode"), `#!/usr/bin/env bash
+exit 0
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "gh"), `#!/usr/bin/env bash
+exit 0
+`)
+	callLog := filepath.Join(temp, "agentctl.calls")
+	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s|%s|%s|%s|%s\n' "$1" "${2:-}" "${THREADDOCK_CONFIG}" "$("$PILOT_TEST_JQ_PATH" -r '.ghesHost' "$THREADDOCK_CONFIG")" "$("$PILOT_TEST_JQ_PATH" -r '.apiBase' "$THREADDOCK_CONFIG")" >>"${PILOT_TEST_CALL_LOG}"
+case "${1:-}" in
+  contract) exit 0 ;;
+  start)
+    run_id='td-simulated-outage'
+    printf 'diagnostic sentinel=pilot-test-secret\n' >&2
+    cp "$THREADDOCK_CONFIG" "$PILOT_TEST_OBSERVED_CONFIG"
+    state_dir="$("$PILOT_TEST_JQ_PATH" -r '.stateDir' "$THREADDOCK_CONFIG")"
+    if compgen -G "$state_dir/pilot/start.out*" >/dev/null || compgen -G "$state_dir/pilot/start.err*" >/dev/null; then
+      printf '%s\n' raw-start-artifact-found >"$PILOT_TEST_ARTIFACT_MARKER"
+    fi
+    if [[ "${PILOT_TEST_BLOCK_START:-false}" == true ]]; then
+      printf '%s\n' ready >"$PILOT_TEST_START_READY"
+      while [[ ! -f "$PILOT_TEST_START_RELEASE" ]]; do sleep 0.05; done
+    fi
+    state_dir="$("$PILOT_TEST_JQ_PATH" -r '.stateDir' "$THREADDOCK_CONFIG")"
+    mkdir -p "$state_dir/runs/$run_id"
+    cat >"$state_dir/runs/$run_id/run.json" <<'JSON'
+{"runId":"td-simulated-outage","phase":"registered","pendingAction":"register_issue_bundle","registration":{"status":"pending"},"parentIssue":0}
+JSON
+    printf '%s\n' "$run_id"
+    exit 1
+    ;;
+  resume)
+    test "${2:-}" = 'td-simulated-outage'
+    state_dir="$("$PILOT_TEST_JQ_PATH" -r '.stateDir' "$THREADDOCK_CONFIG")"
+    cat >"$state_dir/runs/td-simulated-outage/run.json" <<'JSON'
+{"runId":"td-simulated-outage","phase":"reviewing","pendingAction":"","actionCursor":0,"integration":{"path":"/managed/integration"},"builder":{"commitSha":"abcdef0123456789abcdef0123456789abcdef01"}}
+JSON
+    ;;
+  stop) exit 0 ;;
+  *) printf 'unexpected agentctl arguments: %s\n' "$*" >&2; exit 9 ;;
+esac
+`)
+
+	command := exec.Command("bash", "-x", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--simulate-outage", "PDX", "pilot-product")
+	command.Dir = repoRoot
+	command.Env = append(os.Environ(),
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+		"PILOT_TEST_JQ_PATH="+jqPath,
+		"THREADDOCK_CONFIG="+configPath,
+		"THREADDOCK_GH_TOKEN=pilot-test-secret",
+		"PILOT_TEST_CALL_LOG="+callLog,
+		"PILOT_TEST_OBSERVED_CONFIG="+filepath.Join(temp, "observed-config.json"),
+		"PILOT_TEST_ARTIFACT_MARKER="+filepath.Join(temp, "raw-artifact.marker"),
+		"PILOT_TEST_REPO_ROOT="+repoRoot,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("simulated outage failed: %v\n%s", err, output)
+	}
+
+	calls, err := os.ReadFile(callLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("agentctl calls=%q", lines)
+	}
+	if !strings.HasPrefix(lines[0], "contract|") || !strings.HasPrefix(lines[1], "start|") || !strings.HasPrefix(lines[2], "resume|td-simulated-outage|") {
+		t.Fatalf("unexpected agentctl calls: %q", lines)
+	}
+	startFields := strings.SplitN(lines[1], "|", 5)
+	resumeFields := strings.SplitN(lines[2], "|", 5)
+	if len(startFields) != 5 || len(resumeFields) != 5 {
+		t.Fatalf("malformed agentctl calls: %q", lines)
+	}
+	startConfig := startFields[2]
+	resumeConfig := resumeFields[2]
+	if startConfig == configPath || resumeConfig != configPath {
+		t.Fatalf("config paths start=%q resume=%q original=%q", startConfig, resumeConfig, configPath)
+	}
+	if startFields[3] != "http://127.0.0.1:1" || startFields[4] != "http://127.0.0.1:1" || resumeFields[3] != "https://github.com" || resumeFields[4] != "https://api.github.com" {
+		t.Fatalf("config endpoints start=%q/%q resume=%q/%q", startFields[3], startFields[4], resumeFields[3], resumeFields[4])
+	}
+	if _, err := os.Stat(startConfig); !os.IsNotExist(err) {
+		t.Fatalf("temporary outage config still exists: %q (err=%v)", startConfig, err)
+	}
+	observed, err := os.ReadFile(filepath.Join(temp, "observed-config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observedConfig map[string]any
+	if err := json.Unmarshal(observed, &observedConfig); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := config.Parse(bytes.NewReader(observed))
+	if err != nil {
+		t.Fatalf("captured temporary config does not pass config.Parse: %v\n%s", err, observed)
+	}
+	if parsed.GHESHost != "http://127.0.0.1:1" || parsed.APIBase != "http://127.0.0.1:1" {
+		t.Fatalf("parsed endpoints=%q/%q", parsed.GHESHost, parsed.APIBase)
+	}
+	if parsed.APIVersion != "2022-11-28" || parsed.WorkingWait != 5*time.Minute || parsed.RecoveryLimit != 7 {
+		t.Fatalf("parsed API/timing fields=%#v", parsed)
+	}
+	if parsed.StateDir != stateDir || parsed.HerdrBinary != "herdr-custom" || parsed.GitBinary != "git-custom" {
+		t.Fatalf("parsed runtime fields=%#v", parsed)
+	}
+	if parsed.ProjectID != "PVT_1" || parsed.ProjectStatusFieldID != "PVTSSF_1" {
+		t.Fatalf("parsed project fields=%#v", parsed)
+	}
+	for status, wantOption := range map[string]string{
+		"Backlog":     "opt-1",
+		"Ready":       "opt-2",
+		"In Progress": "opt-3",
+		"Review":      "opt-4",
+		"Done":        "opt-5",
+	} {
+		if parsed.ProjectStatusOptions[status] != wantOption {
+			t.Fatalf("parsed project option %q=%q, want %q", status, parsed.ProjectStatusOptions[status], wantOption)
+		}
+	}
+	if observedConfig["apiBase"] != "http://127.0.0.1:1" || observedConfig["ghesHost"] != "http://127.0.0.1:1" {
+		t.Fatalf("unexpected observed outage config: %s", observed)
+	}
+	for _, key := range []string{"apiToken", "THREADDOCK_GH_TOKEN"} {
+		if _, ok := observedConfig[key]; ok {
+			t.Fatalf("secret-like config key persisted in outage config: %q", key)
+		}
+	}
+	for _, pattern := range []string{filepath.Join(stateDir, "pilot", "start.out*"), filepath.Join(stateDir, "pilot", "start.err*")} {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) != 0 {
+			t.Fatalf("raw start artifacts remain: %v", matches)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(temp, "raw-artifact.marker")); err == nil {
+		t.Fatal("agentctl observed a raw start artifact while running")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for label, data := range map[string][]byte{
+		"command output":            output,
+		"agentctl call log":         calls,
+		"captured temporary config": observed,
+	} {
+		for _, marker := range []string{"pilot-test-secret", `"apiToken"`, `"THREADDOCK_GH_TOKEN"`} {
+			if bytes.Contains(data, []byte(marker)) {
+				t.Fatalf("%s contains forbidden credential marker %q: %s", label, marker, data)
+			}
+		}
+	}
+	assertTreeFreeOfValues(t, stateDir, "pilot-test-secret", `"apiToken"`, `"THREADDOCK_GH_TOKEN"`)
+}
+
+func TestPilotSimulateOutageRejectsGHESBeforeAgentctlOrWrites(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	configPath := filepath.Join(temp, "config.json")
+	writeFile(t, configPath, `{"ghesHost":"https://github.example.test","apiBase":"https://github.example.test/api/v3","stateDir":"`+stateDir+`"}`, 0o600)
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	callLog := filepath.Join(temp, "agentctl.calls")
+	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$PILOT_TEST_CALL_LOG"
+exit 99
+`)
+	for _, name := range []string{"git", "herdr", "opencode", "gh"} {
+		writeExecutable(t, filepath.Join(fakeBin, name), "#!/usr/bin/env bash\nexit 99\n")
+	}
+
+	command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--simulate-outage", "PDX", "pilot-product")
+	command.Dir = repoRoot
+	command.Env = append(os.Environ(),
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+		"THREADDOCK_CONFIG="+configPath,
+		"THREADDOCK_GH_TOKEN=simulation-token",
+		"PILOT_TEST_CALL_LOG="+callLog,
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected GHES simulation rejection, output:\n%s", output)
+	}
+	want := "--simulate-outage는 원래 설정이 GitHub.com 공개 프로필이어야 합니다"
+	if !strings.Contains(string(output), want) {
+		t.Fatalf("output missing fixed error %q:\n%s", want, output)
+	}
+	if calls, readErr := os.ReadFile(callLog); readErr == nil && len(strings.TrimSpace(string(calls))) != 0 {
+		t.Fatalf("agentctl called before profile validation: %s", calls)
+	}
+	if _, statErr := os.Stat(filepath.Join(stateDir, "pilot")); !os.IsNotExist(statErr) {
+		t.Fatalf("simulation wrote state before profile validation, stat err=%v", statErr)
+	}
+}
+
+func TestPilotSimulateOutageCleansArtifactsOnInterrupt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("WSL pilot script is exercised on Unix-like builders")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+
+	repoRoot := repositoryRoot(t)
+	temp := t.TempDir()
+	stateDir := filepath.Join(temp, "state")
+	configPath := filepath.Join(temp, "config.json")
+	writeFile(t, configPath, `{"ghesHost":"https://github.com","apiBase":"https://api.github.com","stateDir":"`+stateDir+`"}`, 0o600)
+	readyPath := filepath.Join(temp, "start.ready")
+	releasePath := filepath.Join(temp, "start.release")
+	fakeBin := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	jqPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("pilot runtime prerequisite jq is not installed")
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "jq"), `#!/usr/bin/env bash
+exec "$PILOT_TEST_JQ_PATH" "$@"
+`)
+	writeExecutable(t, filepath.Join(fakeBin, "git"), `#!/usr/bin/env bash
+case "$*" in
+  "rev-parse --show-toplevel") printf '%s\n' "${PILOT_TEST_REPO_ROOT}" ;;
+  "rev-parse HEAD") printf '%s\n' '0123456789abcdef0123456789abcdef01234567' ;;
+  "status --short") exit 0 ;;
+  *) exit 9 ;;
+esac
+`)
+	for _, name := range []string{"herdr", "opencode", "gh"} {
+		writeExecutable(t, filepath.Join(fakeBin, name), "#!/usr/bin/env bash\nexit 0\n")
+	}
+	writeExecutable(t, filepath.Join(fakeBin, "agentctl"), `#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  contract) exit 0 ;;
+  start)
+    state_dir="$("$PILOT_TEST_JQ_PATH" -r '.stateDir' "$THREADDOCK_CONFIG")"
+    printf 'diagnostic sentinel=pilot-test-secret\n' >&2
+    if compgen -G "$state_dir/pilot/start.out*" >/dev/null || compgen -G "$state_dir/pilot/start.err*" >/dev/null; then
+      printf '%s\n' raw-start-artifact-found >"$PILOT_TEST_ARTIFACT_MARKER"
+    fi
+    printf '%s\n' ready >"${PILOT_TEST_START_READY}"
+    while [[ ! -f "${PILOT_TEST_START_RELEASE}" ]]; do sleep 0.05; done
+    printf '%s\n' td-interrupted
+    exit 1
+    ;;
+  *) exit 0 ;;
+esac
+`)
+
+	command := exec.Command("bash", filepath.Join(repoRoot, "scripts", "single-run-pilot.sh"), "--simulate-outage", "PDX", "pilot-product")
+	command.Dir = repoRoot
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(),
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+		"PILOT_TEST_JQ_PATH="+jqPath,
+		"THREADDOCK_CONFIG="+configPath,
+		"THREADDOCK_GH_TOKEN=pilot-test-secret",
+		"PILOT_TEST_REPO_ROOT="+repoRoot,
+		"PILOT_TEST_START_READY="+readyPath,
+		"PILOT_TEST_START_RELEASE="+releasePath,
+		"PILOT_TEST_ARTIFACT_MARKER="+filepath.Join(temp, "raw-artifact.marker"),
+	)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("agentctl start did not begin")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := syscall.Kill(-command.Process.Pid, syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(releasePath, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("simulated outage process did not stop after interrupt")
+	}
+
+	for _, pattern := range []string{
+		filepath.Join(stateDir, "pilot", "simulate-config*"),
+		filepath.Join(stateDir, "pilot", "start.out*"),
+		filepath.Join(stateDir, "pilot", "start.err*"),
+	} {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) != 0 {
+			t.Fatalf("pilot artifacts remain after interrupt: %v", matches)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(temp, "raw-artifact.marker")); err == nil {
+		t.Fatal("agentctl observed a raw start artifact while running")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	assertTreeFreeOfSecret(t, stateDir, "pilot-test-secret")
+}
+
+func assertTreeFreeOfSecret(t *testing.T, root, secret string) {
+	assertTreeFreeOfValues(t, root, secret)
+}
+
+func assertTreeFreeOfValues(t *testing.T, root string, forbidden ...string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		for _, value := range forbidden {
+			if strings.Contains(entry.Name(), value) {
+				t.Fatalf("forbidden value %q appears in state path: %s", value, path)
+			}
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, value := range forbidden {
+			if strings.Contains(string(contents), value) {
+				t.Fatalf("forbidden value %q appears in state file: %s", value, path)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func repositoryRoot(t *testing.T) string {
+	t.Helper()
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("test source path is unavailable")
+	}
+	root, err := filepath.Abs(filepath.Join(filepath.Dir(filename), "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func writeFile(t *testing.T, path, contents string, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeExecutable(t *testing.T, path, contents string) {
+	t.Helper()
+	writeFile(t, path, contents, 0o755)
+}

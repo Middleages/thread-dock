@@ -284,36 +284,223 @@ func (c *CLI) ReadEvidence(ctx context.Context, name string) (Evidence, error) {
 }
 
 func lastEvidencePayload(recent string) (string, error) {
+	lines := strings.Split(recent, "\n")
+	auxiliaryColumn := 0
 	var payloads []string
 	inEnvelope := false
-	start := 0
-	offset := 0
-	for _, line := range strings.SplitAfter(recent, "\n") {
-		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		switch text {
-		case THREADDOCK_EVIDENCE_BEGIN:
-			if inEnvelope {
+	envelopeAuxiliaryColumn := 0
+	var payloadLines []string
+	rawPayloadBytes := 0
+	for _, line := range lines {
+		text := strings.TrimSuffix(line, "\r")
+		if inEnvelope {
+			if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_BEGIN, envelopeAuxiliaryColumn) {
 				return "", errors.New("herdr evidence has an incomplete envelope")
 			}
-			inEnvelope = true
-			start = offset + len(line)
-		case THREADDOCK_EVIDENCE_END:
-			if !inEnvelope {
-				return "", errors.New("herdr evidence has an unmatched envelope marker")
+			if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_END, envelopeAuxiliaryColumn) {
+				payload := strings.Join(payloadLines, "\n")
+				if rawPayloadBytes > MaxEvidencePayloadBytes || len(payload) > MaxEvidencePayloadBytes {
+					return "", errors.New("herdr evidence payload is oversized")
+				}
+				payloads = append(payloads, payload)
+				inEnvelope = false
+				payloadLines = nil
+				continue
 			}
-			payload := recent[start:offset]
-			if len(payload) > MaxEvidencePayloadBytes {
+			rawPayloadBytes += len(text) + 1
+			if rawPayloadBytes > MaxEvidencePayloadBytes {
 				return "", errors.New("herdr evidence payload is oversized")
 			}
-			payloads = append(payloads, payload)
-			inEnvelope = false
+			if clean, keep := cleanEvidenceLine(text, envelopeAuxiliaryColumn); keep {
+				payloadLines = append(payloadLines, clean)
+			}
+			continue
 		}
-		offset += len(line)
+		if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_BEGIN, auxiliaryColumn) {
+			inEnvelope = true
+			envelopeAuxiliaryColumn = auxiliaryColumn
+			payloadLines = nil
+			rawPayloadBytes = 0
+			continue
+		}
+		if actualEvidenceMarker(text, THREADDOCK_EVIDENCE_END, auxiliaryColumn) {
+			return "", errors.New("herdr evidence has an unmatched envelope marker")
+		}
+		if boundary, ok := sidebarBoundary(text); ok {
+			auxiliaryColumn = boundary
+		}
 	}
 	if inEnvelope || len(payloads) == 0 {
 		return "", errors.New("herdr evidence has no complete envelope")
 	}
-	return strings.TrimSpace(payloads[len(payloads)-1]), nil
+	return extractCompleteEvidenceObject(payloads[len(payloads)-1])
+}
+
+const (
+	minimumAuxiliaryColumn = 32
+	minimumAuxiliaryGap    = 8
+)
+
+func actualEvidenceMarker(line, marker string, auxiliaryColumn int) bool {
+	first := firstNonSpace(line)
+	if first < 0 || isPromptEchoLine(line) || (auxiliaryColumn > 0 && first >= auxiliaryColumn) {
+		return false
+	}
+	value := line[first:]
+	if value == marker || (strings.HasPrefix(value, marker) && strings.TrimSpace(value[len(marker):]) == "") {
+		return true
+	}
+	if !strings.HasPrefix(value, marker) {
+		return false
+	}
+	remainder := value[len(marker):]
+	trimmed := strings.TrimLeft(remainder, " \t")
+	leading := len(remainder) - len(trimmed)
+	if leading < minimumAuxiliaryGap || auxiliaryColumn == 0 {
+		return false
+	}
+	return first+len(marker)+leading == auxiliaryColumn
+}
+
+func sidebarBoundary(line string) (int, bool) {
+	first := firstNonSpace(line)
+	if first < minimumAuxiliaryColumn || isPromptEchoLine(line) || !isOpenCodeAuxiliaryText(line[first:]) {
+		return 0, false
+	}
+	return first, true
+}
+
+func cleanEvidenceLine(line string, auxiliaryColumn int) (string, bool) {
+	first := firstNonSpace(line)
+	if first < 0 {
+		return "", false
+	}
+	if auxiliaryColumn > 0 && first >= auxiliaryColumn && isOpenCodeAuxiliaryText(line[first:]) {
+		return "", false
+	}
+	if prefix, suffix, ok := wideSuffix(line); ok {
+		if auxiliaryColumn > 0 && suffix >= auxiliaryColumn && isOpenCodeAuxiliaryText(line[suffix:]) {
+			line = prefix
+		}
+	}
+	if strings.TrimSpace(line) == "" {
+		return "", false
+	}
+	return line, true
+}
+
+// isOpenCodeAuxiliaryText deliberately recognizes stable UI labels rather
+// than arbitrary right-column content. Dynamic or unknown text is retained so
+// strict JSON decoding can reject it when it is actually left-pane data.
+func isOpenCodeAuxiliaryText(value string) bool {
+	value = strings.TrimSpace(value)
+	for _, prefix := range []string{
+		"Context",
+		"LSP",
+		"LSPs are disabled",
+		"Getting started",
+		"Connect provider",
+		"OpenCode includes",
+		"Connect from",
+		"Build ·",
+	} {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPromptEchoLine(line string) bool {
+	first := firstNonSpace(line)
+	return first >= 0 && strings.HasPrefix(line[first:], "┃")
+}
+
+func firstNonSpace(value string) int {
+	for i := 0; i < len(value); i++ {
+		if value[i] != ' ' && value[i] != '\t' {
+			return i
+		}
+	}
+	return -1
+}
+
+// wideSuffix finds a non-JSON-string suffix separated by a wide whitespace
+// run. Tracking JSON strings prevents spaces inside a quoted command/value
+// from being mistaken for the auxiliary pane boundary.
+func wideSuffix(line string) (prefix string, suffix int, ok bool) {
+	inString := false
+	escaped := false
+	for i := 0; i < len(line); i++ {
+		char := line[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		if char == '"' {
+			inString = true
+			continue
+		}
+		if char != ' ' && char != '\t' {
+			continue
+		}
+		start := i
+		for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+			i++
+		}
+		if i-start >= minimumAuxiliaryGap && firstNonSpace(line[:start]) >= 0 && i < len(line) && line[i] != '\r' {
+			return line[:start], i, true
+		}
+		i--
+	}
+	return line, 0, false
+}
+
+func extractCompleteEvidenceObject(payload string) (string, error) {
+	payload = strings.TrimSpace(payload)
+	if payload == "" || payload[0] != '{' {
+		return "", errors.New("herdr evidence is not structured JSON")
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := 0; i < len(payload); i++ {
+		char := payload[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth < 0 {
+				return "", errors.New("herdr evidence is not structured JSON")
+			}
+			if depth == 0 {
+				if strings.TrimSpace(payload[i+1:]) != "" {
+					return "", errors.New("herdr evidence has trailing data")
+				}
+				return payload[:i+1], nil
+			}
+		}
+	}
+	return "", errors.New("herdr evidence is not structured JSON")
 }
 
 func validEvidenceSHA(value string) bool {
@@ -350,6 +537,7 @@ func (c *CLI) GetInfo(ctx context.Context, name string) (AgentInfo, error) {
 				CWD       string `json:"cwd"`
 				Status    string `json:"agent_status"`
 				Seq       int64  `json:"state_change_seq"`
+				Terminal  string `json:"terminal_id"`
 				Session   struct {
 					Value string `json:"value"`
 				} `json:"agent_session"`
@@ -359,7 +547,15 @@ func (c *CLI) GetInfo(ctx context.Context, name string) (AgentInfo, error) {
 	if err := decode(result.Stdout, &response); err != nil || response.Result.Agent.Name == "" || response.Result.Agent.PaneID == "" {
 		return AgentInfo{}, safeError("agent get", result.ExitCode)
 	}
-	return AgentInfo{Name: response.Result.Agent.Name, SessionID: response.Result.Agent.Session.Value, WorkspaceID: response.Result.Agent.Workspace, PaneID: response.Result.Agent.PaneID, Path: response.Result.Agent.CWD, State: ParseAgentState(response.Result.Agent.Status), StateChangeSeq: response.Result.Agent.Seq}, nil
+	sessionID := strings.TrimSpace(response.Result.Agent.Session.Value)
+	if sessionID == "" {
+		terminalID := strings.TrimSpace(response.Result.Agent.Terminal)
+		if terminalID == "" {
+			return AgentInfo{}, safeError("agent get", result.ExitCode)
+		}
+		sessionID = "herdr-terminal:" + terminalID
+	}
+	return AgentInfo{Name: response.Result.Agent.Name, SessionID: sessionID, WorkspaceID: response.Result.Agent.Workspace, PaneID: response.Result.Agent.PaneID, Path: response.Result.Agent.CWD, State: ParseAgentState(response.Result.Agent.Status), StateChangeSeq: response.Result.Agent.Seq}, nil
 }
 
 func (c *CLI) run(ctx context.Context, operation string, args ...string) (runner.Result, error) {

@@ -90,6 +90,12 @@ files                 0600
 
 설치된 JavaScript Plugin은 session ID와 `working`, `blocked`, `idle` lifecycle state를 local socket으로 보고한다. 검토한 source는 prompt 내용, tool argument 또는 tool 결과를 report payload에 넣지 않는다. [Official integration docs](https://herdr.dev/docs/integrations/#opencode), [v0.8.2 OpenCode integration source](https://github.com/herdrdev/herdr/blob/v0.8.2/src/integration/assets/opencode/herdr-agent-state.js#L61-L118)
 
+실제 v0.8.2 OpenCode 응답에서 `agent_session`이 비어 있을 수 있으므로
+ThreadDock은 `terminal_id`를 `herdr-terminal:<terminal_id>`로 namespacing해
+실행 identity fallback으로 사용한다. 같은 terminal에서 수동으로 process를
+교체하면 provider session ID만큼 강하게 구분할 수 없다는 trade-off가 있어,
+Builder와 Reviewer는 서로 다른 Workspace·pane·terminal에서 실행한다.
+
 ### 잔여 위험
 
 보고된 session ID 또는 session path는 `session.json`에 남고 같은 사용자 권한을 가진 프로세스가 native resume에 사용할 수 있다. 이는 인증 credential은 아니지만 대화 session의 식별자다. 민감도가 높은 환경에서는 integration을 설치하지 않고 bundled/local screen detection만 사용한다. `[session] resume_agents_on_restore = false`는 자동 재개를 막지만 integration이 session reference를 보고·저장하는 것 자체를 보안 경계로 차단하지는 않는다.
