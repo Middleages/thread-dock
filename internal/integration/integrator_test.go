@@ -74,6 +74,38 @@ func TestValidateResultRequiresExactVerificationEvidence(t *testing.T) {
 	}
 }
 
+func TestValidateResultRejectsNonCanonicalBranchEvidenceAndDurations(t *testing.T) {
+	baseTask := contract.Task{ID: "api", Branch: "agent/api", AllowedPaths: []string{"src/**"}, Verification: []string{"go test ./..."}}
+	baseInspection := worktree.CommitInspection{CommitSHA: apiSHA, Branch: "agent/api", ChangedFiles: []string{"src/main.go"}, Patch: "bounded"}
+	tests := []struct {
+		name     string
+		task     contract.Task
+		inspect  worktree.CommitInspection
+		evidence state.AgentEvidence
+	}{
+		{name: "task branch leading whitespace", task: func() contract.Task { task := baseTask; task.Branch = " agent/api"; return task }(), inspect: baseInspection, evidence: validEvidence(apiSHA)},
+		{name: "inspection branch trailing whitespace", task: baseTask, inspect: func() worktree.CommitInspection {
+			inspection := baseInspection
+			inspection.Branch = "agent/api "
+			return inspection
+		}(), evidence: validEvidence(apiSHA)},
+		{name: "evidence command leading whitespace", task: baseTask, inspect: baseInspection, evidence: state.AgentEvidence{CommitSHA: apiSHA, VerificationEvidence: []state.VerificationEvidence{{Command: " go test ./...", Outcome: "passed", Duration: "1s"}}}},
+		{name: "outcome whitespace", task: baseTask, inspect: baseInspection, evidence: state.AgentEvidence{CommitSHA: apiSHA, VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./...", Outcome: " passed", Duration: "1s"}}}},
+		{name: "outcome case", task: baseTask, inspect: baseInspection, evidence: state.AgentEvidence{CommitSHA: apiSHA, VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./...", Outcome: "PASSED", Duration: "1s"}}}},
+		{name: "duration leading whitespace", task: baseTask, inspect: baseInspection, evidence: state.AgentEvidence{CommitSHA: apiSHA, VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./...", Outcome: "passed", Duration: " 1s"}}}},
+		{name: "duration trailing whitespace", task: baseTask, inspect: baseInspection, evidence: state.AgentEvidence{CommitSHA: apiSHA, VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./...", Outcome: "passed", Duration: "1s "}}}},
+		{name: "zero duration", task: baseTask, inspect: baseInspection, evidence: state.AgentEvidence{CommitSHA: apiSHA, VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./...", Outcome: "passed", Duration: "0s"}}}},
+		{name: "negative duration", task: baseTask, inspect: baseInspection, evidence: state.AgentEvidence{CommitSHA: apiSHA, VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./...", Outcome: "passed", Duration: "-1s"}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateResult(tc.task, tc.evidence, tc.inspect); err == nil {
+				t.Fatal("expected non-canonical evidence rejection")
+			}
+		})
+	}
+}
+
 func TestValidateResultUsesVerificationMultiset(t *testing.T) {
 	task := contract.Task{ID: "api", Branch: "agent/api", AllowedPaths: []string{"src/**"}, Verification: []string{"go test ./...", "go test ./..."}}
 	evidence := validEvidence(apiSHA)

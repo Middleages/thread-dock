@@ -179,14 +179,14 @@ func (g *Git) MergeCommit(ctx context.Context, worktreePath, sha string) error {
 // branch. A merge failure is classified as a conflict only after Git reports
 // an actual unmerged path in the target Worktree.
 func (g *Git) MergeCommitNoFF(ctx context.Context, worktreePath, sha string) error {
-	if err := g.validateWorktreePath(worktreePath); err != nil {
+	if err := g.validateManagedWorktreePath(worktreePath); err != nil {
 		return err
 	}
 	if !isCommitSHA(sha) {
 		return errors.New("merge requires a 40-character commit SHA")
 	}
 	result, err := g.command(ctx, worktreePath, "merge", "--no-ff", "--no-edit", sha)
-	if err == nil && result.ExitCode <= 0 {
+	if err == nil && result.ExitCode == 0 {
 		return nil
 	}
 	if err == nil {
@@ -201,7 +201,7 @@ func (g *Git) MergeCommitNoFF(ctx context.Context, worktreePath, sha string) err
 
 // AbortMerge delegates recovery to Git and never resets or resolves files.
 func (g *Git) AbortMerge(ctx context.Context, worktreePath string) error {
-	if err := g.validateWorktreePath(worktreePath); err != nil {
+	if err := g.validateManagedWorktreePath(worktreePath); err != nil {
 		return err
 	}
 	return g.run(ctx, worktreePath, "merge", "--abort")
@@ -211,11 +211,14 @@ func (g *Git) AbortMerge(ctx context.Context, worktreePath string) error {
 // boundary. A non-zero process exit is a failed check; runner/context errors
 // that do not represent a process exit remain infrastructure errors.
 func (g *Git) RunChecks(ctx context.Context, worktreePath string, commands []string) ([]VerificationCheck, error) {
-	if err := g.validateWorktreePath(worktreePath); err != nil {
+	if err := g.validateManagedWorktreePath(worktreePath); err != nil {
 		return nil, err
 	}
 	if g == nil || g.Runner == nil {
 		return nil, errors.New("runner is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	checks := make([]VerificationCheck, 0, len(commands))
 	for _, raw := range commands {
@@ -223,17 +226,27 @@ func (g *Git) RunChecks(ctx context.Context, worktreePath string, commands []str
 		if command == "" {
 			return nil, errors.New("verification command is required")
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		start := g.now()
 		result, err := g.Runner.Run(ctx, worktreePath, "bash", "-lc", command)
 		end := g.now()
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
 		if end.Before(start) {
 			end = start
 		}
 		duration := end.Sub(start).String()
-		if err != nil && result.ExitCode <= 0 {
-			return nil, fmt.Errorf("run verification %q: %w", command, err)
+		if err != nil {
+			var exited exitCoder
+			if !errors.As(err, &exited) || exited.ExitCode() <= 0 {
+				return nil, fmt.Errorf("run verification %q: %w", command, err)
+			}
+			result.ExitCode = exited.ExitCode()
 		}
-		if err == nil && result.ExitCode < 0 {
+		if result.ExitCode < 0 {
 			return nil, fmt.Errorf("run verification %q: invalid exit code %d", command, result.ExitCode)
 		}
 		outcome := "passed"
@@ -257,18 +270,18 @@ func (g *Git) now() time.Time {
 // index object IDs, and current worktree object ID (or a deletion marker).
 // Raw Git output is used only while calculating the digest and is not stored.
 func (g *Git) Fingerprint(ctx context.Context, worktreePath string) (string, error) {
-	if err := g.validateWorktreePath(worktreePath); err != nil {
+	if err := g.validateManagedWorktreePath(worktreePath); err != nil {
 		return "", err
 	}
 	commit, err := g.CurrentCommit(ctx, worktreePath)
 	if err != nil {
 		return "", err
 	}
-	status, err := g.command(ctx, worktreePath, "status", "--porcelain=v1", "-uall", "--no-renames")
+	status, err := g.command(ctx, worktreePath, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames")
 	if err != nil {
 		return "", err
 	}
-	entries := parseStatusEntries(status.Stdout)
+	entries := parseNULStatusEntries(status.Stdout)
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].path == entries[j].path {
 			return entries[i].status < entries[j].status
@@ -276,35 +289,30 @@ func (g *Git) Fingerprint(ctx context.Context, worktreePath string) (string, err
 		return entries[i].path < entries[j].path
 	})
 	var material strings.Builder
-	material.WriteString("commit\t")
-	material.WriteString(strings.TrimSpace(commit))
-	material.WriteByte('\n')
+	appendFingerprintField(&material, "commit")
+	appendFingerprintField(&material, strings.TrimSpace(commit))
 	for _, entry := range entries {
-		material.WriteString("status\t")
-		material.WriteString(entry.status)
-		material.WriteByte('\t')
-		material.WriteString(entry.path)
-		material.WriteByte('\n')
+		appendFingerprintField(&material, "status")
+		appendFingerprintField(&material, entry.status)
+		appendFingerprintField(&material, entry.path)
 		indexIDs, err := g.indexObjectIDs(ctx, worktreePath, entry.path)
 		if err != nil {
 			return "", err
 		}
 		for _, id := range indexIDs {
-			material.WriteString("index\t")
-			material.WriteString(id)
-			material.WriteByte('\n')
+			appendFingerprintField(&material, "index")
+			appendFingerprintField(&material, id)
 		}
 		worktreeID, exists, err := g.worktreeObjectID(ctx, worktreePath, entry.path)
 		if err != nil {
 			return "", err
 		}
-		material.WriteString("worktree\t")
+		appendFingerprintField(&material, "worktree")
 		if exists {
-			material.WriteString(worktreeID)
+			appendFingerprintField(&material, worktreeID)
 		} else {
-			material.WriteString("<deleted>")
+			appendFingerprintField(&material, "<deleted>")
 		}
-		material.WriteByte('\n')
 	}
 	digest := sha256.Sum256([]byte(material.String()))
 	return fmt.Sprintf("%x", digest[:]), nil
@@ -331,13 +339,35 @@ func parseStatusEntries(output string) []statusEntry {
 	return entries
 }
 
+func parseNULStatusEntries(output string) []statusEntry {
+	var entries []statusEntry
+	for _, record := range strings.Split(output, "\x00") {
+		if len(record) < 3 {
+			continue
+		}
+		status := record[:2]
+		path := record[3:]
+		if path == "" {
+			continue
+		}
+		entries = append(entries, statusEntry{status: status, path: path})
+	}
+	return entries
+}
+
+func appendFingerprintField(material *strings.Builder, value string) {
+	fmt.Fprintf(material, "%d:", len(value))
+	material.WriteString(value)
+	material.WriteByte(';')
+}
+
 func (g *Git) indexObjectIDs(ctx context.Context, worktreePath, path string) ([]string, error) {
-	result, err := g.command(ctx, worktreePath, "ls-files", "--stage", "--", path)
+	result, err := g.command(ctx, worktreePath, "ls-files", "--stage", "-z", "--", path)
 	if err != nil {
 		return nil, err
 	}
 	var ids []string
-	for _, line := range splitLines(result.Stdout) {
+	for _, line := range strings.Split(result.Stdout, "\x00") {
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && isObjectID(fields[1]) {
 			ids = append(ids, fields[1])
@@ -530,6 +560,24 @@ func (g *Git) validateWorktreePath(path string) error {
 		return ErrUnsafeTarget
 	}
 	return nil
+}
+
+// validateManagedWorktreePath is deliberately separate from the legacy
+// validator. New integration operations require both configured roots and an
+// existing target that resolves strictly inside ManagedRoot.
+func (g *Git) validateManagedWorktreePath(path string) error {
+	managedRoot, repositoryRoot, target, home, err := g.resolveRemovalPaths(path)
+	if err != nil {
+		return ErrUnsafeTarget
+	}
+	if !strictlyContained(managedRoot, target) || samePath(target, repositoryRoot) || samePath(target, home) || isFilesystemRoot(target) {
+		return ErrUnsafeTarget
+	}
+	return nil
+}
+
+type exitCoder interface {
+	ExitCode() int
 }
 
 func (g *Git) validateRemovalTarget(path string) error {

@@ -67,7 +67,7 @@ func ValidateResult(task contract.Task, evidence state.AgentEvidence, inspection
 	if !isCommitSHA(evidence.CommitSHA) || !isCommitSHA(inspection.CommitSHA) || evidence.CommitSHA != inspection.CommitSHA {
 		return fmt.Errorf("%w: commit SHA mismatch", ErrInvalidResult)
 	}
-	if strings.TrimSpace(inspection.Branch) != strings.TrimSpace(task.Branch) || strings.TrimSpace(task.Branch) == "" {
+	if task.Branch == "" || inspection.Branch == "" || inspection.Branch != task.Branch {
 		return fmt.Errorf("%w: Builder branch mismatch", ErrInvalidResult)
 	}
 	if len(inspection.ChangedFiles) == 0 || strings.TrimSpace(inspection.Patch) == "" {
@@ -97,21 +97,20 @@ func exactVerification(evidence []state.VerificationEvidence, required []string)
 	}
 	want := make(map[string]int, len(required))
 	for _, raw := range required {
-		command := strings.TrimSpace(raw)
-		if command == "" {
+		if raw == "" || strings.TrimSpace(raw) != raw {
 			return false
 		}
-		want[command]++
+		want[raw]++
 	}
 	for _, check := range evidence {
-		command := strings.TrimSpace(check.Command)
-		if want[command] == 0 || strings.TrimSpace(check.Outcome) != "passed" || strings.TrimSpace(check.Duration) == "" {
+		if check.Command == "" || strings.TrimSpace(check.Command) != check.Command || want[check.Command] == 0 || check.Outcome != "passed" || check.Duration == "" || strings.TrimSpace(check.Duration) != check.Duration {
 			return false
 		}
-		if _, err := time.ParseDuration(strings.TrimSpace(check.Duration)); err != nil {
+		duration, err := time.ParseDuration(check.Duration)
+		if err != nil || duration <= 0 {
 			return false
 		}
-		want[command]--
+		want[check.Command]--
 	}
 	for _, count := range want {
 		if count != 0 {

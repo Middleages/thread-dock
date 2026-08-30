@@ -16,7 +16,8 @@ import (
 func TestMergeCommitNoFFUsesImmutableSHA(t *testing.T) {
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	r := &fakeRunner{}
-	if err := New(r, "git").MergeCommitNoFF(context.Background(), "/work/integration", sha); err != nil {
+	git, _, target := configuredGit(t, r)
+	if err := git.MergeCommitNoFF(context.Background(), target, sha); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"merge", "--no-ff", "--no-edit", sha}
@@ -28,7 +29,8 @@ func TestMergeCommitNoFFUsesImmutableSHA(t *testing.T) {
 func TestMergeCommitNoFFConfirmsUnmergedPathBeforeConflict(t *testing.T) {
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	r := &fakeRunner{results: []runner.Result{{ExitCode: 1, Stderr: "CONFLICT (content): merge conflict"}, {Stdout: "UU src/file.go\n"}}, errors: []error{errors.New("exit status 1")}}
-	err := New(r, "git").MergeCommitNoFF(context.Background(), "/work/integration", sha)
+	git, _, target := configuredGit(t, r)
+	err := git.MergeCommitNoFF(context.Background(), target, sha)
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("err=%v", err)
 	}
@@ -40,7 +42,8 @@ func TestMergeCommitNoFFConfirmsUnmergedPathBeforeConflict(t *testing.T) {
 func TestMergeCommitNoFFDoesNotClassifyUnrelatedErrorAsConflict(t *testing.T) {
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	r := &fakeRunner{results: []runner.Result{{ExitCode: 1, Stderr: "fatal: repository unavailable"}}, errors: []error{errors.New("exit status 1")}}
-	err := New(r, "git").MergeCommitNoFF(context.Background(), "/work/integration", sha)
+	git, _, target := configuredGit(t, r)
+	err := git.MergeCommitNoFF(context.Background(), target, sha)
 	if errors.Is(err, ErrConflict) || err == nil {
 		t.Fatalf("err=%v", err)
 	}
@@ -48,7 +51,8 @@ func TestMergeCommitNoFFDoesNotClassifyUnrelatedErrorAsConflict(t *testing.T) {
 
 func TestAbortMergeUsesAbortOnly(t *testing.T) {
 	r := &fakeRunner{}
-	if err := New(r, "git").AbortMerge(context.Background(), "/work/integration"); err != nil {
+	git, _, target := configuredGit(t, r)
+	if err := git.AbortMerge(context.Background(), target); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(r.calls[0].args, []string{"merge", "--abort"}) {
@@ -60,9 +64,9 @@ func TestRunChecksUsesBashAndNormalizesResultWithoutOutput(t *testing.T) {
 	r := &fakeRunner{results: []runner.Result{{ExitCode: 0, Stdout: "passed output", Stderr: "diagnostic"}, {ExitCode: 2, Stdout: "failed output", Stderr: "secret"}}}
 	start := time.Unix(100, 0)
 	clock := &testClock{times: []time.Time{start, start.Add(1500 * time.Millisecond), start.Add(3 * time.Second)}}
-	git := New(r, "git")
+	git, _, target := configuredGit(t, r)
 	git.Clock = clock
-	checks, err := git.RunChecks(context.Background(), "/work/integration", []string{" go test ./... ", "go vet ./..."})
+	checks, err := git.RunChecks(context.Background(), target, []string{" go test ./... ", "go vet ./..."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,45 +83,179 @@ func TestRunChecksUsesBashAndNormalizesResultWithoutOutput(t *testing.T) {
 
 func TestRunChecksRejectsEmptyCommandAndInfrastructureError(t *testing.T) {
 	r := &fakeRunner{errors: []error{errors.New("context canceled")}}
-	git := New(r, "git")
-	if _, err := git.RunChecks(context.Background(), "/work/integration", []string{"  "}); err == nil {
+	git, _, target := configuredGit(t, r)
+	if _, err := git.RunChecks(context.Background(), target, []string{"  "}); err == nil {
 		t.Fatal("expected empty command rejection")
 	}
-	if _, err := git.RunChecks(context.Background(), "/work/integration", []string{"go test ./..."}); err == nil || !strings.Contains(err.Error(), "context canceled") {
+	if _, err := git.RunChecks(context.Background(), target, []string{"go test ./..."}); err == nil || !strings.Contains(err.Error(), "context canceled") {
 		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestFingerprintUsesCommitPathsAndObjectIDs(t *testing.T) {
 	path := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(path, "src"), 0700); err != nil {
+	managed := filepath.Join(path, "managed")
+	repo := filepath.Join(path, "repo")
+	target := filepath.Join(managed, "target")
+	for _, dir := range []string{managed, repo, target} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(target, "src"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	for name := range map[string]string{"src/z.go": "worktree", "untracked.txt": "untracked"} {
-		if err := os.WriteFile(filepath.Join(path, name), []byte(name), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(target, name), []byte(name), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	r := &fakeRunner{results: []runner.Result{
 		{Stdout: "0123456789abcdef0123456789abcdef01234567\n"},
-		{Stdout: " M src/z.go\nD  src/deleted.go\n?? untracked.txt\n"},
+		{Stdout: " M src/z.go\x00D  src/deleted.go\x00?? untracked.txt\x00"},
 		{Stdout: "100644 0000000000000000000000000000000000000000 0 src/deleted.go\n"},
 		{},
 		{Stdout: "2222222222222222222222222222222222222222\n"},
 		{Stdout: "100644 1111111111111111111111111111111111111111 0 src/z.go\n"},
 		{Stdout: "3333333333333333333333333333333333333333\n"},
 	}}
-	got, err := New(r, "git").Fingerprint(context.Background(), path)
+	git := New(r, "git", managed, repo)
+	got, err := git.Fingerprint(context.Background(), target)
 	if err != nil || len(got) != 64 {
 		t.Fatalf("fingerprint=%q err=%v", got, err)
 	}
 	if strings.Contains(got, "src/") || strings.Contains(got, "git diff") {
 		t.Fatalf("fingerprint contains raw output: %q", got)
 	}
-	if !reflect.DeepEqual(r.calls[1].args, []string{"status", "--porcelain=v1", "-uall", "--no-renames"}) {
+	if !reflect.DeepEqual(r.calls[1].args, []string{"status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"}) {
 		t.Fatalf("status call=%#v", r.calls[1].args)
 	}
 }
+
+func TestFingerprintPreservesNULSafeUnusualPathAndContentIdentity(t *testing.T) {
+	git, _, target := configuredGit(t, &fakeRunner{})
+	name := "odd\tline\nquote\".txt"
+	if err := os.WriteFile(filepath.Join(target, name), []byte("content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	makeRunner := func(objectID string) *fakeRunner {
+		return &fakeRunner{results: []runner.Result{
+			{Stdout: "0123456789abcdef0123456789abcdef01234567\n"},
+			{Stdout: "?? " + name + "\x00"},
+			{},
+			{Stdout: objectID + "\n"},
+		}}
+	}
+	first := makeRunner("1111111111111111111111111111111111111111")
+	git.Runner = first
+	fingerprintOne, err := git.Fingerprint(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := makeRunner("2222222222222222222222222222222222222222")
+	git.Runner = second
+	fingerprintTwo, err := git.Fingerprint(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fingerprintOne == fingerprintTwo {
+		t.Fatal("content object ID change did not change fingerprint")
+	}
+	for _, calls := range [][]fakeCall{first.calls, second.calls} {
+		if len(calls) != 4 || calls[2].args[len(calls[2].args)-1] != name || calls[3].args[len(calls[3].args)-1] != name {
+			t.Fatalf("unusual path was not preserved: %#v", calls)
+		}
+	}
+}
+
+func TestNewOperationsRejectUnmanagedTargetsWithoutCommands(t *testing.T) {
+	git, repo, target := configuredGit(t, &fakeRunner{})
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.Mkdir(outside, 0700); err != nil {
+		t.Fatal(err)
+	}
+	escaped := filepath.Join(t.TempDir(), "escaped")
+	if err := os.Mkdir(escaped, 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(git.ManagedRoot, "escape")
+	if err := os.Symlink(escaped, link); err != nil {
+		t.Fatal(err)
+	}
+	cases := []string{"", repo, outside, link, "/"}
+	for _, path := range cases {
+		for name, call := range map[string]func(string) error{
+			"merge": func(path string) error {
+				return git.MergeCommitNoFF(context.Background(), path, "0123456789abcdef0123456789abcdef01234567")
+			},
+			"abort": func(path string) error { return git.AbortMerge(context.Background(), path) },
+			"checks": func(path string) error {
+				_, err := git.RunChecks(context.Background(), path, []string{"true"})
+				return err
+			},
+			"fingerprint": func(path string) error { _, err := git.Fingerprint(context.Background(), path); return err },
+		} {
+			fake := &fakeRunner{}
+			git.Runner = fake
+			if err := call(path); !errors.Is(err, ErrUnsafeTarget) {
+				t.Errorf("%s target %q err=%v", name, path, err)
+			}
+			if len(fake.calls) != 0 {
+				t.Errorf("%s target %q made calls=%#v", name, path, fake.calls)
+			}
+		}
+	}
+	git.Runner = &fakeRunner{}
+	git.ManagedRoot = ""
+	if err := git.AbortMerge(context.Background(), target); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("blank managed root err=%v", err)
+	}
+	git.ManagedRoot = filepath.Dir(target)
+	git.RepositoryRoot = ""
+	if _, err := git.Fingerprint(context.Background(), target); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("blank repository root err=%v", err)
+	}
+}
+
+func TestRunChecksHonorsContextAndDistinguishesProcessExit(t *testing.T) {
+	git, _, target := configuredGit(t, &fakeRunner{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := git.RunChecks(ctx, target, []string{"true"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled context err=%v", err)
+	}
+
+	generic := errors.New("transport failed")
+	git.Runner = &fakeRunner{results: []runner.Result{{ExitCode: 137}}, errors: []error{generic}}
+	if _, err := git.RunChecks(context.Background(), target, []string{"true"}); !errors.Is(err, generic) {
+		t.Fatalf("generic positive-exit error=%v", err)
+	}
+
+	git.Runner = &fakeRunner{results: []runner.Result{{ExitCode: 7}}, errors: []error{processExitError{code: 7}}}
+	checks, err := git.RunChecks(context.Background(), target, []string{"true"})
+	if err != nil || len(checks) != 1 || checks[0].Outcome != "failed" || checks[0].ExitCode != 7 {
+		t.Fatalf("process exit checks=%#v err=%v", checks, err)
+	}
+
+	ctx, cancel = context.WithCancel(context.Background())
+	git.Runner = &fakeRunner{results: []runner.Result{{ExitCode: 137}}, errors: []error{processExitError{code: 137}}}
+	cancel()
+	if _, err := git.RunChecks(ctx, target, []string{"true"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled process err=%v", err)
+	}
+}
+
+func TestMergeCommitNoFFRejectsNegativeExit(t *testing.T) {
+	git, _, target := configuredGit(t, &fakeRunner{results: []runner.Result{{ExitCode: -1}}, errors: []error{nil}})
+	if err := git.MergeCommitNoFF(context.Background(), target, "0123456789abcdef0123456789abcdef01234567"); err == nil {
+		t.Fatal("expected negative merge exit failure")
+	}
+}
+
+type processExitError struct{ code int }
+
+func (e processExitError) Error() string { return "process exited" }
+func (e processExitError) ExitCode() int { return e.code }
 
 type testClock struct{ times []time.Time }
 
