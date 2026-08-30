@@ -59,6 +59,58 @@ func TestSaveAtomicallyReplacesSnapshot(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadPersistsTaskMapDeterministically(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	first := RunSnapshot{
+		RunID: "run-tasks",
+		Phase: contract.PhaseBuilding,
+		Tasks: map[string]TaskRunState{
+			"tests": {State: "pending", ProgressFingerprint: "tests-fingerprint", RecoveryCount: 1},
+			"api":   {State: "running", ProgressFingerprint: "api-fingerprint", RecoveryCount: 2},
+		},
+	}
+	if err := store.Save(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	wantBytes, err := os.ReadFile(filepath.Join(root, "runs", "run-tasks", "run.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.Tasks = map[string]TaskRunState{
+		"api":   first.Tasks["api"],
+		"tests": first.Tasks["tests"],
+	}
+	if err := store.Save(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	gotBytes, err := os.ReadFile(filepath.Join(root, "runs", "run-tasks", "run.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotBytes, wantBytes) {
+		t.Fatalf("snapshot JSON is not deterministic:\nfirst=%ssecond=%s", wantBytes, gotBytes)
+	}
+	got, err := store.Load(context.Background(), "run-tasks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Tasks, first.Tasks) {
+		t.Fatalf("tasks=%#v want=%#v", got.Tasks, first.Tasks)
+	}
+}
+
+func TestLegacySingleRunSnapshotStillDecodes(t *testing.T) {
+	var got RunSnapshot
+	if err := json.Unmarshal([]byte(`{"runId":"run-1","builder":{"name":"builder-run-1"}}`), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Builder.Name != "builder-run-1" || got.Tasks != nil {
+		t.Fatalf("snapshot=%#v", got)
+	}
+}
+
 func TestAppendWritesCompleteJSONLines(t *testing.T) {
 	store := NewStore(t.TempDir())
 	if err := store.Create(context.Background(), RunSnapshot{RunID: "run-1", Phase: contract.PhaseRegistered}); err != nil {

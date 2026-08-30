@@ -48,29 +48,43 @@ type PromptReceipt struct {
 	BaselineSeq int64  `json:"baselineSeq"`
 }
 
+// TaskRunState is the durable execution state for one contract task. The
+// nested identities reuse the same evidence, worktree, and prompt records as
+// the legacy single-run flow.
+type TaskRunState struct {
+	State               string        `json:"state"`
+	Agent               AgentEvidence `json:"agent"`
+	Worktree            WorktreeState `json:"worktree"`
+	Prompt              PromptReceipt `json:"prompt"`
+	ProgressFingerprint string        `json:"progressFingerprint"`
+	LastProgressAt      time.Time     `json:"lastProgressAt"`
+	RecoveryCount       int           `json:"recoveryCount"`
+}
+
 type RunSnapshot struct {
-	ContractVersion  int               `json:"contractVersion"`
-	RunID            contract.RunID    `json:"runId"`
-	Phase            contract.RunPhase `json:"phase"`
-	ContractPath     string            `json:"contractPath"`
-	RepositoryPath   string            `json:"repositoryPath"`
-	IntegrationPath  string            `json:"integrationPath"`
-	ParentIssue      int               `json:"parentIssue"`
-	RepairCount      int               `json:"repairCount"`
-	RecoveryCount    int               `json:"recoveryCount"`
-	Builder          AgentEvidence     `json:"builder"`
-	Reviewer         AgentEvidence     `json:"reviewer"`
-	Integration      WorktreeState     `json:"integration"`
-	BuilderWorktree  WorktreeState     `json:"builderWorktree"`
-	ReviewerWorktree WorktreeState     `json:"reviewerWorktree"`
-	Registration     RegistrationState `json:"registration"`
-	ActionCursor     int               `json:"actionCursor"`
-	PendingAction    string            `json:"pendingAction"`
-	Summary          string            `json:"summary"`
-	PreviousPhase    contract.RunPhase `json:"previousPhase,omitempty"`
-	BuilderPrompt    PromptReceipt     `json:"builderPrompt"`
-	ReviewerPrompt   PromptReceipt     `json:"reviewerPrompt"`
-	UpdatedAt        time.Time         `json:"updatedAt"`
+	ContractVersion  int                     `json:"contractVersion"`
+	RunID            contract.RunID          `json:"runId"`
+	Phase            contract.RunPhase       `json:"phase"`
+	ContractPath     string                  `json:"contractPath"`
+	RepositoryPath   string                  `json:"repositoryPath"`
+	IntegrationPath  string                  `json:"integrationPath"`
+	ParentIssue      int                     `json:"parentIssue"`
+	RepairCount      int                     `json:"repairCount"`
+	RecoveryCount    int                     `json:"recoveryCount"`
+	Builder          AgentEvidence           `json:"builder"`
+	Reviewer         AgentEvidence           `json:"reviewer"`
+	Integration      WorktreeState           `json:"integration"`
+	BuilderWorktree  WorktreeState           `json:"builderWorktree"`
+	ReviewerWorktree WorktreeState           `json:"reviewerWorktree"`
+	Registration     RegistrationState       `json:"registration"`
+	ActionCursor     int                     `json:"actionCursor"`
+	PendingAction    string                  `json:"pendingAction"`
+	Summary          string                  `json:"summary"`
+	PreviousPhase    contract.RunPhase       `json:"previousPhase,omitempty"`
+	BuilderPrompt    PromptReceipt           `json:"builderPrompt"`
+	ReviewerPrompt   PromptReceipt           `json:"reviewerPrompt"`
+	Tasks            map[string]TaskRunState `json:"tasks,omitempty"`
+	UpdatedAt        time.Time               `json:"updatedAt"`
 }
 
 // Event is one append-only state transition or diagnostic record.
