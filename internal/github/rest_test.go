@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -741,5 +742,135 @@ func assertHeaders(t *testing.T, r *http.Request) {
 	}
 	if got := r.Header.Get("Authorization"); got != "Bearer token" {
 		t.Fatalf("authorization=%q", got)
+	}
+}
+
+func TestChecksReadyCommentAndMergeUseBothRESTProfiles(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	for _, profile := range []struct {
+		name string
+		path string
+	}{
+		{name: "github.com", path: "/repos/platform/payments-api"},
+		{name: "ghes", path: "/api/v3/repos/platform/payments-api"},
+	} {
+		t.Run(profile.name, func(t *testing.T) {
+			var paths []string
+			var methods []string
+			var mergeBody map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertHeaders(t, r)
+				paths = append(paths, r.URL.RequestURI())
+				methods = append(methods, r.Method)
+				switch r.URL.Path {
+				case profile.path + "/commits/" + sha + "/check-runs":
+					if r.URL.Query().Get("per_page") != "100" {
+						t.Fatalf("check query=%q", r.URL.RawQuery)
+					}
+					w.Header().Set("Link", "")
+					_, _ = io.WriteString(w, `{"total_count":3,"check_runs":[{"name":"z-ci","status":"completed","conclusion":"success"},{"name":"a-ci","status":"completed","conclusion":"failure"},{"name":"waiting","status":"queued","conclusion":null}]}`)
+				case profile.path + "/pulls/17/ready_for_review":
+					_, _ = io.WriteString(w, `{"number":17,"draft":false,"head":{"ref":"feature","sha":"`+sha+`"},"mergeable":null}`)
+				case profile.path + "/issues/17/comments":
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Fatal(err)
+					}
+					if body["body"] != "operator confirmation" {
+						t.Fatalf("comment body=%#v", body)
+					}
+					_, _ = io.WriteString(w, `{"id":1}`)
+				case profile.path + "/pulls/17/merge":
+					if err := json.NewDecoder(r.Body).Decode(&mergeBody); err != nil {
+						t.Fatal(err)
+					}
+					_, _ = io.WriteString(w, `{"sha":"`+sha+`","merged":true,"message":"merged"}`)
+				default:
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+			}))
+			defer server.Close()
+			baseURL := server.URL + "/api/v3"
+			httpClient := server.Client()
+			if profile.name == "github.com" {
+				baseURL = "https://api.github.com"
+				httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					rewritten := req.Clone(req.Context())
+					rewritten.URL.Scheme = "http"
+					rewritten.URL.Host = strings.TrimPrefix(server.URL, "http://")
+					return server.Client().Transport.RoundTrip(rewritten)
+				})}
+			}
+			client := NewRESTClient(baseURL, "token", "2022-11-28", httpClient)
+			checks, err := client.GetChecks(context.Background(), repo(), sha)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantChecks := []CheckState{{Name: "a-ci", State: "failure"}, {Name: "waiting", State: "pending"}, {Name: "z-ci", State: "success"}}
+			if !reflect.DeepEqual(checks, wantChecks) {
+				t.Fatalf("checks=%#v want=%#v", checks, wantChecks)
+			}
+			pr, err := client.MarkReadyForReview(context.Background(), repo(), 17)
+			if err != nil || pr.HeadSHA != sha || pr.Mergeable != nil || pr.Head != "feature" {
+				t.Fatalf("pr=%+v err=%v", pr, err)
+			}
+			if err := client.CreateIssueComment(context.Background(), repo(), 17, "operator confirmation"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.MergePullRequest(context.Background(), repo(), 17, sha, "merge"); err != nil {
+				t.Fatal(err)
+			}
+			if mergeBody["sha"] != sha || mergeBody["merge_method"] != "merge" || len(mergeBody) != 2 {
+				t.Fatalf("merge body=%#v", mergeBody)
+			}
+			wantPaths := []string{
+				profile.path + "/commits/" + sha + "/check-runs?per_page=100",
+				profile.path + "/pulls/17/ready_for_review",
+				profile.path + "/issues/17/comments",
+				profile.path + "/pulls/17/merge",
+			}
+			if !reflect.DeepEqual(paths, wantPaths) || !reflect.DeepEqual(methods, []string{"GET", "POST", "POST", "PUT"}) {
+				t.Fatalf("requests paths=%v methods=%v", paths, methods)
+			}
+		})
+	}
+}
+
+func TestGetChecksRejectsUnsafeSHAEmptyAndDuplicateNames(t *testing.T) {
+	client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"check_runs":[{"name":"ci","status":"completed","conclusion":"success"},{"name":"ci","status":"completed","conclusion":"success"}]}`), nil
+	})})
+	for _, sha := range []string{"", "0123456789abcdef0123456789abcdef0123456Z", "0123456789abcdef0123456789abcdef0123456789"} {
+		if _, err := client.GetChecks(context.Background(), repo(), sha); err == nil {
+			t.Fatalf("sha=%q accepted", sha)
+		}
+	}
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	if _, err := client.GetChecks(context.Background(), repo(), sha); err == nil {
+		t.Fatal("duplicate check names accepted")
+	}
+}
+
+func TestGitHubPortsValidateArgumentsAndMergedFalse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"sha":"0123456789abcdef0123456789abcdef01234567","merged":false,"message":"not merged"}`)
+	}))
+	defer server.Close()
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	if _, err := client.MergePullRequest(context.Background(), repo(), 17, sha, "squash"); err == nil {
+		t.Fatal("invalid merge method accepted")
+	}
+	if _, err := client.MergePullRequest(context.Background(), repo(), 0, sha, "merge"); err == nil {
+		t.Fatal("invalid issue number accepted")
+	}
+	if err := client.CreateIssueComment(context.Background(), Repository{}, 17, "body"); err == nil {
+		t.Fatal("invalid repository accepted")
+	}
+	result, err := client.MergePullRequest(context.Background(), repo(), 17, sha, "merge")
+	var mergeErr *MergeError
+	if !errors.As(err, &mergeErr) || result.Merged {
+		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }

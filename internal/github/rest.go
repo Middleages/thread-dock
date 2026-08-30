@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -377,6 +378,180 @@ func (c *RESTClient) GetPullRequest(ctx context.Context, repo Repository, number
 	return wire.toPullRequest(), nil
 }
 
+type checkRunsWire struct {
+	CheckRuns []checkRunWire `json:"check_runs"`
+}
+
+type checkRunWire struct {
+	Name       string  `json:"name"`
+	Status     string  `json:"status"`
+	Conclusion *string `json:"conclusion"`
+}
+
+// GetChecks reads all check-runs for an exact, immutable commit SHA. The
+// result contains no provider payload or output and is deterministic by name.
+func (c *RESTClient) GetChecks(ctx context.Context, repo Repository, sha string) ([]CheckState, error) {
+	if err := validateRepository(repo); err != nil {
+		return nil, err
+	}
+	if !isLowerCommitSHA(sha) {
+		return nil, errors.New("github checks require an exact 40-character lowercase SHA")
+	}
+	rootPath := fmt.Sprintf("%s/repos/%s/%s/commits/%s/check-runs", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), sha)
+	path := rootPath + "?per_page=100"
+	var checks []CheckState
+	seenPages := make(map[string]struct{})
+	seenNames := make(map[string]struct{})
+	for page := 0; page < 1000; page++ {
+		if _, seen := seenPages[path]; seen {
+			return nil, errors.New("github check pagination repeated a page")
+		}
+		seenPages[path] = struct{}{}
+		var wire checkRunsWire
+		link, err := c.doJSONWithLink(ctx, http.MethodGet, path, nil, &wire)
+		if err != nil {
+			return nil, err
+		}
+		for _, run := range wire.CheckRuns {
+			name := strings.TrimSpace(run.Name)
+			if name == "" || name != run.Name {
+				return nil, errors.New("github check run name is required")
+			}
+			if _, exists := seenNames[name]; exists {
+				return nil, fmt.Errorf("github check run %q is duplicated", name)
+			}
+			seenNames[name] = struct{}{}
+			checks = append(checks, CheckState{Name: name, State: normalizeCheckState(run.Status, run.Conclusion)})
+		}
+		if page == 999 {
+			return nil, errors.New("github check pagination exceeded the safety limit")
+		}
+		next := nextIssueLink(link)
+		if next == "" && len(wire.CheckRuns) == 100 {
+			u, parseErr := url.Parse(path)
+			if parseErr != nil {
+				return nil, errors.New("github check pagination is malformed")
+			}
+			query := u.Query()
+			pageNumber, parseErr := strconv.Atoi(query.Get("page"))
+			if parseErr != nil || pageNumber < 1 {
+				pageNumber = 1
+			}
+			query.Set("page", strconv.Itoa(pageNumber+1))
+			u.RawQuery = query.Encode()
+			next = u.RequestURI()
+		}
+		if next == "" {
+			break
+		}
+		path, err = c.validateChecksPageURL(next, rootPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sort.Slice(checks, func(i, j int) bool { return checks[i].Name < checks[j].Name })
+	return checks, nil
+}
+
+func normalizeCheckState(status string, conclusion *string) string {
+	if status != "completed" {
+		return "pending"
+	}
+	if conclusion != nil && *conclusion == "success" {
+		return "success"
+	}
+	return "failure"
+}
+
+func (c *RESTClient) validateChecksPageURL(raw, rootPath string) (string, error) {
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", errors.New("github check pagination base is malformed")
+	}
+	next, err := url.Parse(raw)
+	if err != nil || next.User != nil {
+		return "", errors.New("github check pagination link is malformed")
+	}
+	if !next.IsAbs() {
+		next = base.ResolveReference(next)
+	}
+	if !sameOrigin(next, base) || next.Path != rootPath || next.Fragment != "" {
+		return "", errors.New("github check pagination link is outside the configured GitHub API base")
+	}
+	for key, values := range next.Query() {
+		if key != "page" && key != "per_page" {
+			return "", errors.New("github check pagination link contains unsupported query data")
+		}
+		if len(values) != 1 || strings.TrimSpace(values[0]) == "" {
+			return "", errors.New("github check pagination link contains an invalid query")
+		}
+	}
+	return next.RequestURI(), nil
+}
+
+// CreateIssueComment posts a non-empty issue comment.
+func (c *RESTClient) CreateIssueComment(ctx context.Context, repo Repository, number int, body string) error {
+	if err := validateRepository(repo); err != nil {
+		return err
+	}
+	if number <= 0 {
+		return errors.New("github issue number must be positive")
+	}
+	if strings.TrimSpace(body) == "" {
+		return errors.New("github issue comment body is required")
+	}
+	path := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
+	return c.doJSON(ctx, http.MethodPost, path, struct {
+		Body string `json:"body"`
+	}{Body: body}, nil)
+}
+
+// MarkReadyForReview transitions a pull request from draft to ready and
+// returns the provider response through the same normalized PullRequest type.
+func (c *RESTClient) MarkReadyForReview(ctx context.Context, repo Repository, number int) (PullRequest, error) {
+	if err := validateRepository(repo); err != nil {
+		return PullRequest{}, err
+	}
+	if number <= 0 {
+		return PullRequest{}, errors.New("github pull request number must be positive")
+	}
+	path := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/ready_for_review", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
+	var wire pullRequestWire
+	if err := c.doJSON(ctx, http.MethodPost, path, nil, &wire); err != nil {
+		return PullRequest{}, err
+	}
+	return wire.toPullRequest(), nil
+}
+
+// MergePullRequest merges only with the exact requested commit SHA and the
+// ordinary GitHub merge method. A 2xx response with merged=false is an error.
+func (c *RESTClient) MergePullRequest(ctx context.Context, repo Repository, number int, exactSHA, method string) (MergePullRequestResult, error) {
+	if err := validateRepository(repo); err != nil {
+		return MergePullRequestResult{}, err
+	}
+	if number <= 0 {
+		return MergePullRequestResult{}, errors.New("github pull request number must be positive")
+	}
+	if !isLowerCommitSHA(exactSHA) {
+		return MergePullRequestResult{}, errors.New("github merge requires an exact 40-character lowercase SHA")
+	}
+	if method != "merge" {
+		return MergePullRequestResult{}, errors.New("github merge method must be exactly merge")
+	}
+	path := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/merge", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
+	var result MergePullRequestResult
+	if err := c.doJSON(ctx, http.MethodPut, path, struct {
+		SHA         string `json:"sha"`
+		MergeMethod string `json:"merge_method"`
+	}{SHA: exactSHA, MergeMethod: method}, &result); err != nil {
+		return MergePullRequestResult{}, err
+	}
+	if !result.Merged {
+		return result, &MergeError{Result: result}
+	}
+	return result, nil
+}
+
 type pullRequestWire struct {
 	Number  int    `json:"number"`
 	NodeID  string `json:"node_id"`
@@ -387,14 +562,16 @@ type pullRequestWire struct {
 	Draft   bool   `json:"draft"`
 	Head    struct {
 		Ref string `json:"ref"`
+		SHA string `json:"sha"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
 	} `json:"base"`
+	Mergeable *bool `json:"mergeable"`
 }
 
 func (w pullRequestWire) toPullRequest() PullRequest {
-	return PullRequest{Number: w.Number, NodeID: w.NodeID, Title: w.Title, Body: w.Body, HTMLURL: w.HTMLURL, State: w.State, Draft: w.Draft, Head: w.Head.Ref, Base: w.Base.Ref}
+	return PullRequest{Number: w.Number, NodeID: w.NodeID, Title: w.Title, Body: w.Body, HTMLURL: w.HTMLURL, State: w.State, Draft: w.Draft, Head: w.Head.Ref, HeadSHA: w.Head.SHA, Base: w.Base.Ref, Mergeable: w.Mergeable}
 }
 
 func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, issueNodeID, status string) error {
@@ -537,6 +714,27 @@ func (c *RESTClient) doJSON(ctx context.Context, method, path string, body any, 
 	return err
 }
 
+func validateRepository(repo Repository) error {
+	for field, value := range map[string]string{"owner": repo.Owner, "name": repo.Name} {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value || strings.ContainsAny(value, "/\\\x00\r\n") || value == "." || value == ".." {
+			return fmt.Errorf("github repository %s is invalid", field)
+		}
+	}
+	return nil
+}
+
+func isLowerCommitSHA(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' && character < 'a' || character > 'f' {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *RESTClient) doJSONWithLink(ctx context.Context, method, path string, body any, out any) (string, error) {
 	if c.initErr != nil {
 		return "", c.initErr
@@ -631,3 +829,7 @@ func sanitize(message, token string) string {
 }
 
 var _ Client = (*RESTClient)(nil)
+var _ CheckReader = (*RESTClient)(nil)
+var _ IssueCommenter = (*RESTClient)(nil)
+var _ PullRequestReadier = (*RESTClient)(nil)
+var _ PullRequestMerger = (*RESTClient)(nil)

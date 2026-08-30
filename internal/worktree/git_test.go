@@ -272,3 +272,54 @@ func configuredGit(t *testing.T, r *fakeRunner) (*Git, string, string) {
 	git.RepositoryRoot = repo
 	return git, repo, target
 }
+
+func TestCreateManagedWorktreeUsesExplicitBaseAndValidatesTarget(t *testing.T) {
+	r := &fakeRunner{}
+	git, repo, _ := configuredGit(t, r)
+	target := filepath.Join(git.ManagedRoot, "new-revert")
+	if err := git.CreateManagedWorktree(context.Background(), repo, target, "revert/184-0123456789ab", "0123456789abcdef0123456789abcdef01234567"); err != nil {
+		t.Fatal(err)
+	}
+	want := fakeCall{cwd: repo, exec: "git", args: []string{"worktree", "add", "-b", "revert/184-0123456789ab", target, "0123456789abcdef0123456789abcdef01234567"}}
+	if !reflect.DeepEqual(r.calls, []fakeCall{want}) {
+		t.Fatalf("calls=%#v want=%#v", r.calls, []fakeCall{want})
+	}
+}
+
+func TestRevertMergeCommitUsesMainlineAndConfirmsConflict(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	r := &fakeRunner{results: []runner.Result{{ExitCode: 1}, {Stdout: "UU src/file.go\n"}}, errors: []error{errors.New("conflict"), nil}}
+	git, _, target := configuredGit(t, r)
+	err := git.RevertMergeCommit(context.Background(), target, sha)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("err=%v", err)
+	}
+	want := []fakeCall{
+		{cwd: target, exec: "git", args: []string{"revert", "-m", "1", "--no-edit", sha}},
+		{cwd: target, exec: "git", args: []string{"status", "--porcelain=v1"}},
+	}
+	if !reflect.DeepEqual(r.calls, want) {
+		t.Fatalf("calls=%#v want=%#v", r.calls, want)
+	}
+}
+
+func TestAbortRevertAndPushBranchNeverForce(t *testing.T) {
+	r := &fakeRunner{}
+	git, _, target := configuredGit(t, r)
+	if err := git.AbortRevert(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	if err := git.PushBranch(context.Background(), target, "origin", "revert/184-0123456789ab"); err != nil {
+		t.Fatal(err)
+	}
+	want := []fakeCall{
+		{cwd: target, exec: "git", args: []string{"revert", "--abort"}},
+		{cwd: target, exec: "git", args: []string{"push", "origin", "revert/184-0123456789ab:revert/184-0123456789ab"}},
+	}
+	if !reflect.DeepEqual(r.calls, want) {
+		t.Fatalf("calls=%#v want=%#v", r.calls, want)
+	}
+	if strings.Contains(strings.Join(r.calls[1].args, " "), "--force") || strings.Contains(strings.Join(r.calls[1].args, " "), " -f") {
+		t.Fatalf("force push: %#v", r.calls[1].args)
+	}
+}

@@ -91,6 +91,64 @@ func (g *Git) Create(ctx context.Context, repositoryPath, worktreePath, branch, 
 	return g.run(ctx, repositoryPath, "worktree", "add", "-b", branch, worktreePath, base)
 }
 
+// CreateManagedWorktree creates a fresh branch Worktree from an explicit base
+// commit. Unlike the legacy Create method, its target must be strictly inside
+// the configured ManagedRoot and the target itself must not already exist.
+func (g *Git) CreateManagedWorktree(ctx context.Context, repositoryPath, worktreePath, branch, base string) error {
+	if err := g.validateManagedCreateTarget(repositoryPath, worktreePath, branch, base); err != nil {
+		return err
+	}
+	target, exists, err := resolveCreatePath(worktreePath)
+	if err != nil || exists {
+		return ErrUnsafeTarget
+	}
+	return g.run(ctx, repositoryPath, "worktree", "add", "-b", branch, target, base)
+}
+
+// RevertMergeCommit reverts an ordinary merge commit using its first parent.
+// A conflict is reported only when Git confirms unmerged paths in the target.
+func (g *Git) RevertMergeCommit(ctx context.Context, worktreePath, mergeSHA string) error {
+	if err := g.validateManagedWorktreePath(worktreePath); err != nil {
+		return err
+	}
+	if !isCommitSHA(mergeSHA) {
+		return errors.New("revert requires a 40-character commit SHA")
+	}
+	result, err := g.command(ctx, worktreePath, "revert", "-m", "1", "--no-edit", mergeSHA)
+	if err == nil && result.ExitCode == 0 {
+		return nil
+	}
+	if err == nil {
+		err = fmt.Errorf("git revert exited with status %d", result.ExitCode)
+	}
+	status, statusErr := g.command(ctx, worktreePath, "status", "--porcelain=v1")
+	if statusErr == nil && hasUnmergedPaths(status.Stdout) {
+		return fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	return err
+}
+
+// AbortRevert delegates conflict cleanup to git revert --abort. It never
+// resets files or removes the managed Worktree.
+func (g *Git) AbortRevert(ctx context.Context, worktreePath string) error {
+	if err := g.validateManagedWorktreePath(worktreePath); err != nil {
+		return err
+	}
+	return g.run(ctx, worktreePath, "revert", "--abort")
+}
+
+// PushBranch publishes an explicit branch ref without force or a movable
+// source target. The destination is deliberately branch:branch.
+func (g *Git) PushBranch(ctx context.Context, worktreePath, remote, branch string) error {
+	if err := g.validateManagedWorktreePath(worktreePath); err != nil {
+		return err
+	}
+	if !validGitRef(remote) || !validGitRef(branch) {
+		return errors.New("push requires valid remote and branch")
+	}
+	return g.run(ctx, worktreePath, "push", remote, branch+":"+branch)
+}
+
 func (g *Git) Status(ctx context.Context, worktreePath string) (string, error) {
 	if err := g.validateWorktreePath(worktreePath); err != nil {
 		return "", err
@@ -574,6 +632,84 @@ func (g *Git) validateManagedWorktreePath(path string) error {
 		return ErrUnsafeTarget
 	}
 	return nil
+}
+
+func (g *Git) validateManagedCreateTarget(repositoryPath, worktreePath, branch, base string) error {
+	if g == nil || g.Runner == nil || strings.TrimSpace(repositoryPath) == "" || strings.TrimSpace(worktreePath) == "" {
+		return ErrUnsafeTarget
+	}
+	if strings.TrimSpace(repositoryPath) != repositoryPath || strings.TrimSpace(worktreePath) != worktreePath || !validGitRef(branch) || !isCommitSHA(base) {
+		return ErrUnsafeTarget
+	}
+	managedRoot, err := resolvePath(g.ManagedRoot)
+	if err != nil {
+		return ErrUnsafeTarget
+	}
+	repositoryRoot, err := resolvePath(repositoryPath)
+	if err != nil {
+		return ErrUnsafeTarget
+	}
+	homePath, err := os.UserHomeDir()
+	if err != nil {
+		return ErrUnsafeTarget
+	}
+	home, err := resolvePath(homePath)
+	if err != nil || samePath(managedRoot, home) || samePath(repositoryRoot, home) || samePath(managedRoot, repositoryRoot) {
+		return ErrUnsafeTarget
+	}
+	target, exists, err := resolveCreatePath(worktreePath)
+	if err != nil || exists {
+		return ErrUnsafeTarget
+	}
+	if !strictlyContained(managedRoot, target) || samePath(target, repositoryRoot) || samePath(target, home) || isFilesystemRoot(target) {
+		return ErrUnsafeTarget
+	}
+	return nil
+}
+
+// resolveCreatePath resolves every existing parent to detect symlink escapes,
+// while preserving the not-yet-created leaf needed by worktree add.
+func resolveCreatePath(path string) (resolved string, exists bool, err error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", false, err
+	}
+	absPath = filepath.Clean(absPath)
+	if _, statErr := os.Lstat(absPath); statErr == nil {
+		resolved, err = filepath.EvalSymlinks(absPath)
+		return filepath.Clean(resolved), true, err
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return "", false, statErr
+	}
+	parent := absPath
+	var suffix []string
+	for {
+		_, statErr := os.Lstat(parent)
+		if statErr == nil {
+			resolvedParent, evalErr := filepath.EvalSymlinks(parent)
+			if evalErr != nil {
+				return "", false, evalErr
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolvedParent = filepath.Join(resolvedParent, suffix[i])
+			}
+			return filepath.Clean(resolvedParent), false, nil
+		}
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return "", false, statErr
+		}
+		parent, suffix = filepath.Dir(parent), append(suffix, filepath.Base(parent))
+		if parent == filepath.Dir(parent) {
+			return "", false, os.ErrNotExist
+		}
+	}
+}
+
+func validGitRef(value string) bool {
+	if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value || strings.HasPrefix(value, "-") || strings.HasPrefix(value, ".") || strings.ContainsAny(value, "\x00\r\n ~^:?*[\\") || strings.Contains(value, "..") || strings.Contains(value, "@{") || strings.Contains(value, "//") || strings.Contains(value, "/.") || strings.HasSuffix(value, "/") || strings.HasSuffix(value, ".") || strings.HasSuffix(value, ".lock") || strings.HasPrefix(value, "/") {
+		return false
+	}
+	return true
 }
 
 type exitCoder interface {
