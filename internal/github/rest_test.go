@@ -990,15 +990,21 @@ func TestNewEndpointFailuresDoNotExposeProviderBody(t *testing.T) {
 
 func TestSafeDraftPRFailureDoesNotExposeProviderBody(t *testing.T) {
 	secret := "draft-provider-secret"
+	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = io.WriteString(w, `{"message":"`+secret+`"}`)
 	}))
 	defer server.Close()
 	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
-	_, err := client.CreateSafeDraftPR(context.Background(), repo(), DraftPRRequest{Title: "Revert", Body: "body", Head: "revert/184", Base: "main"})
-	if err == nil || strings.Contains(err.Error(), secret) {
+	_, err := client.CreateSafeDraftPR(context.Background(), repo(), DraftPRRequest{Title: "Revert", Body: "body", Head: "revert/184", Base: "main", IssueNumber: 184})
+	var endpointErr *EndpointError
+	if err == nil || !errors.As(err, &endpointErr) || endpointErr.Operation != "create draft pull request" || endpointErr.StatusCode != http.StatusBadGateway || strings.Contains(err.Error(), secret) {
 		t.Fatalf("err=%v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests=%d, want one provider request", requests)
 	}
 }
 
