@@ -190,6 +190,37 @@ func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
 	}
 }
 
+func TestReadEvidenceAcceptsCapturedDisplayWrappedBuilderEnvelope(t *testing.T) {
+	const requestID = "run-1787939711953381828-1:pilot-builder:prompt"
+	const commitSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	output := strings.Join([]string{
+		"      " + EvidenceBeginMarker,
+		"      {\"requestId\":\"" + requestID + "\",\"commitSha\":\"abcdef0123456789abcdef0123456789ab",
+		"      cdef01\",\"verification\":[",
+		`      {"command":"test -f pilot-`,
+		`      result.txt","outcome":"passed","duration":"1ms"}`,
+		"      ]}",
+		"      " + EvidenceEndMarker,
+	}, "\n")
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+
+	got, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if got.RequestID != requestID || got.CommitSHA != commitSHA {
+		t.Fatalf("evidence=%#v, want wrapped request and commit values", got)
+	}
+	if len(got.Verification) != 1 {
+		t.Fatalf("verification=%#v, want one check", got.Verification)
+	}
+	if got.Verification[0].Command != "test -f pilot-result.txt" {
+		t.Fatalf("command=%q, want exact reconstructed command", got.Verification[0].Command)
+	}
+}
+
 func TestReadReviewEvidenceAcceptsStrictBlockEnvelope(t *testing.T) {
 	payload := `{"requestId":"review-1","decision":"block","blockingFindings":[{"id":"F-1","summary":"missing test","paths":["internal/api.go"]}],"riskCategories":["data"]}`
 	r := fixtureRunner(t, map[string]string{
@@ -198,6 +229,33 @@ func TestReadReviewEvidenceAcceptsStrictBlockEnvelope(t *testing.T) {
 	got, err := NewCLI(r, "herdr").ReadReviewEvidence(context.Background(), "reviewer_api", "review-1")
 	if err != nil || got.Decision != "block" || len(got.BlockingFindings) != 1 || got.BlockingFindings[0].Paths[0] != "internal/api.go" {
 		t.Fatalf("evidence=%#v err=%v", got, err)
+	}
+}
+
+func TestReadReviewEvidenceAcceptsCapturedDisplayWrappedReviewerEnvelope(t *testing.T) {
+	const requestID = "run-1787939711953381828-1:pilot-reviewer:prompt"
+	output := strings.Join([]string{
+		"      " + THREADDOCK_REVIEW_BEGIN,
+		"      {\"requestId\":\"" + requestID + "\",\"decision\":\"block\",\"blockingFindings\":[",
+		`      {"id":"F-wrap","summary":"verification output wrapped across the display \`,
+		`      "boundary\"","paths":["internal/herdr/cli.go"]}`,
+		"      ],\"riskCategories\":[\"public_contract\"]}",
+		"      " + THREADDOCK_REVIEW_END,
+	}, "\n")
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00agent\x00read\x00reviewer_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+	})
+
+	got, err := NewCLI(r, "herdr").ReadReviewEvidence(context.Background(), "reviewer_api", requestID)
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if got.RequestID != requestID || got.Decision != "block" || len(got.BlockingFindings) != 1 {
+		t.Fatalf("evidence=%#v, want wrapped reviewer evidence", got)
+	}
+	finding := got.BlockingFindings[0]
+	if finding.Summary != "verification output wrapped across the display \"boundary\"" || len(finding.Paths) != 1 || finding.Paths[0] != "internal/herdr/cli.go" {
+		t.Fatalf("finding=%#v, want exact reconstructed values", finding)
 	}
 }
 

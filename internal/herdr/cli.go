@@ -592,6 +592,7 @@ func extractCompleteEvidenceObject(payload string) (string, error) {
 }
 
 func extractCompleteObject(payload, kind string) (string, error) {
+	payload = joinDisplayWrappedJSON(payload)
 	payload = strings.TrimSpace(payload)
 	if payload == "" || payload[0] != '{' {
 		return "", fmt.Errorf("herdr %s is not structured JSON", kind)
@@ -630,6 +631,62 @@ func extractCompleteObject(payload, kind string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("herdr %s is not structured JSON", kind)
+}
+
+// joinDisplayWrappedJSON repairs physical terminal wraps that occur while a
+// JSON string is being displayed. The indentation before the first payload
+// object is the only display prefix we know to remove from continuation
+// lines. Newlines outside strings remain intact so strict JSON and trailing
+// data checks keep their existing behavior.
+func joinDisplayWrappedJSON(payload string) string {
+	lines := strings.Split(payload, "\n")
+	if len(lines) < 2 {
+		return payload
+	}
+	displayIndent := leadingWhitespace(lines[0])
+	if displayIndent == "" {
+		return payload
+	}
+
+	var joined strings.Builder
+	inString := false
+	escaped := false
+	for i, line := range lines {
+		if i > 0 {
+			if inString {
+				if strings.HasPrefix(line, displayIndent) {
+					line = line[len(displayIndent):]
+				}
+			} else {
+				joined.WriteByte('\n')
+			}
+		}
+		joined.WriteString(line)
+		for j := 0; j < len(line); j++ {
+			char := line[j]
+			if inString {
+				if escaped {
+					escaped = false
+				} else if char == '\\' {
+					escaped = true
+				} else if char == '"' {
+					inString = false
+				}
+			} else if char == '"' {
+				inString = true
+			}
+		}
+	}
+	return joined.String()
+}
+
+func leadingWhitespace(value string) string {
+	for i := 0; i < len(value); i++ {
+		if value[i] != ' ' && value[i] != '\t' {
+			return value[:i]
+		}
+	}
+	return value
 }
 
 func validEvidenceSHA(value string) bool {
