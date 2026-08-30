@@ -54,17 +54,18 @@ const (
 
 // PullRequest is the subset of a pull request used by ThreadDock.
 type PullRequest struct {
-	Number    int    `json:"number"`
-	NodeID    string `json:"node_id"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	HTMLURL   string `json:"html_url"`
-	State     string `json:"state"`
-	Draft     bool   `json:"draft"`
-	Head      string `json:"head"`
-	HeadSHA   string `json:"headSha"`
-	Base      string `json:"base"`
-	Mergeable *bool  `json:"mergeable"`
+	Number         int    `json:"number"`
+	NodeID         string `json:"node_id"`
+	Title          string `json:"title"`
+	Body           string `json:"body"`
+	HTMLURL        string `json:"html_url"`
+	State          string `json:"state"`
+	Draft          bool   `json:"draft"`
+	Head           string `json:"head"`
+	HeadSHA        string `json:"headSha"`
+	Base           string `json:"base"`
+	Mergeable      *bool  `json:"mergeable"`
+	MergeCommitSHA string `json:"mergeCommitSha,omitempty"`
 }
 
 // CheckState is the normalized state returned by the Checks API.

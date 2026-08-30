@@ -50,7 +50,7 @@ func NeedsProductionDependencies(args []string) bool {
 	case "confirm":
 		return len(args) == 3 && strings.TrimSpace(args[1]) != "" && args[2] == "protected-change"
 	case "create-revert":
-		return len(args) == 3 && strings.TrimSpace(args[1]) != "" && args[1] == "--reason" && args[2] != ""
+		return len(args) == 4 && strings.TrimSpace(args[1]) != "" && args[2] == "--reason" && args[3] != ""
 	case "status":
 		_, _, ok := parseStatusArgs(args[1:])
 		return ok

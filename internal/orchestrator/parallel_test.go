@@ -2,11 +2,15 @@ package orchestrator
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"thread-dock/internal/contract"
 	"thread-dock/internal/github"
+	"thread-dock/internal/herdr"
 	"thread-dock/internal/state"
+	"thread-dock/internal/testfixture"
 )
 
 func TestNewParallelUsesParallelStrategy(t *testing.T) {
@@ -61,6 +65,91 @@ func TestParallelStories(t *testing.T) {
 	}
 }
 
+func TestParallelDispatchesIndependentAgentsBeforeEitherCompletes(t *testing.T) {
+	h := newParallelHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 30 && len(h.parallelHD.starts) < 2; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(h.parallelHD.starts) != 2 {
+		t.Fatalf("starts=%d, want two independent agents", len(h.parallelHD.starts))
+	}
+	if h.parallelHD.evidenceReads != 0 {
+		t.Fatalf("evidence read before both agents dispatched: %d", h.parallelHD.evidenceReads)
+	}
+}
+
+func TestRepairsRequireFreshCommitAndReuseOnePR(t *testing.T) {
+	h := newParallelHarness(t)
+	h.reviewFailures = 1
+	h.ciFailures = 1
+	if got := h.runToStable(); got != contract.PhaseCompleted {
+		t.Fatalf("phase=%s", got)
+	}
+	if h.parallelGH.draftCalls != 1 {
+		t.Fatalf("draft PR creates=%d, want one reused PR", h.parallelGH.draftCalls)
+	}
+	snapshot := h.mustLoadRun()
+	for _, task := range snapshot.Tasks {
+		if task.Agent.CommitSHA == task.PreviousCommitSHA && task.PreviousCommitSHA != "" {
+			t.Fatalf("repair reused stale commit %s", task.Agent.CommitSHA)
+		}
+	}
+}
+
+func TestWorkingAgentWaitsThenStaleLiveRequiresOperator(t *testing.T) {
+	h := newParallelHarness(t)
+	h.stallRecoveries = 1
+	h.Deps.WorkingWait = time.Hour
+	h.orchestrator = NewParallel(h.Deps)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 14; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+		snapshot := h.mustLoad(id)
+		if snapshot.Summary == "live Agent progress wait: Builder structured evidence is stale or incomplete" {
+			if snapshot.RecoveryCount != 0 || snapshot.Phase != contract.PhaseBuilding {
+				t.Fatalf("wait snapshot=%+v", snapshot)
+			}
+			h.parallelHD.harness.stallMode = false
+			h.stallRecoveries = 1
+			break
+		}
+	}
+	h.clock.now = h.clock.now.Add(2 * time.Hour)
+	for i := 0; i < 3; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+		if h.mustLoad(id).Phase == contract.PhaseNeedsOperator {
+			return
+		}
+	}
+	t.Fatal("stale live working agent did not require operator")
+}
+
+func TestUnknownMergeabilityIsRereadAndBounded(t *testing.T) {
+	h := newParallelHarness(t)
+	h.parallelGH.mergeableUnknown = 2
+	if got := h.runToStable(); got != contract.PhaseCompleted {
+		t.Fatalf("phase=%s", got)
+	}
+	h = newParallelHarness(t)
+	h.parallelGH.mergeableUnknown = 3
+	if got := h.runToStable(); got != contract.PhaseBlocked {
+		t.Fatalf("unknown mergeability phase=%s", got)
+	}
+}
+
 func TestProtectedConfirmationIsIdempotentAndResumesMerge(t *testing.T) {
 	h := newParallelHarness(t)
 	h.changedFiles = []string{"authentication/policy.go"}
@@ -89,6 +178,31 @@ func TestProtectedConfirmationIsIdempotentAndResumesMerge(t *testing.T) {
 	}
 	if err := h.orchestrator.ConfirmProtectedChange(context.Background(), id); err != nil {
 		t.Fatalf("idempotent terminal confirmation: %v", err)
+	}
+}
+
+func TestProtectedConfirmationDuringMergingIsNoOp(t *testing.T) {
+	h := newParallelHarness(t)
+	h.changedFiles = []string{"authentication/policy.go"}
+	if got := h.runToStable(); got != contract.PhaseNeedsOperator {
+		t.Fatalf("phase=%s", got)
+	}
+	var id contract.RunID
+	for runID := range h.orchestrator.runs {
+		id = runID
+	}
+	if err := h.orchestrator.ConfirmProtectedChange(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.mustLoad(id); got.Phase != contract.PhaseMerging {
+		t.Fatalf("phase after first confirmation=%s", got.Phase)
+	}
+	merges := h.parallelGH.mergeCalls
+	if err := h.orchestrator.ConfirmProtectedChange(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if h.parallelGH.mergeCalls != merges {
+		t.Fatalf("repeat confirmation triggered merge: before=%d after=%d", merges, h.parallelGH.mergeCalls)
 	}
 }
 
@@ -178,5 +292,27 @@ func TestParallelPendingDraftPRReconcilesWithoutDuplicateCreate(t *testing.T) {
 	got := h.mustLoad(id)
 	if got.PendingAction != "" || got.PullRequest != 185 || h.parallelGH.draftCalls != 0 {
 		t.Fatalf("snapshot=%+v draftCalls=%d", got, h.parallelGH.draftCalls)
+	}
+}
+
+func TestParallelReviewerPacketUsesStrictEnvelopeAndAllTaskEvidence(t *testing.T) {
+	snapshot := state.RunSnapshot{
+		RunID: "run-184", IntegrationSHA: validSHA,
+		Integration:    state.WorktreeState{Branch: "agent/parent-integration"},
+		ReviewerPrompt: state.PromptReceipt{RequestID: "run-184:reviewer-prompt"},
+		TaskOrder:      []string{"api", "tests"},
+		Tasks: map[string]state.TaskRunState{
+			"api":   {State: "completed", Agent: state.AgentEvidence{CommitSHA: validSHA, Patch: "api patch", VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./internal/payments", Outcome: "passed", Duration: "1s"}}}},
+			"tests": {State: "completed", Agent: state.AgentEvidence{CommitSHA: validSHA, Patch: "tests patch", VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./tests/payments", Outcome: "passed", Duration: "1s"}}}},
+		},
+		IntegrationVerification: []state.VerificationEvidence{{Command: "go test ./...", Outcome: "passed", Duration: "1s"}},
+	}
+	runtime := &runRuntime{contract: testfixture.ValidContract()}
+	runtime.contract.Parent.AcceptanceCriteria = []string{"parent criterion"}
+	packet := parallelReviewerPacket(runtime.contract, &snapshot)
+	for _, want := range []string{herdr.THREADDOCK_REVIEW_BEGIN, herdr.THREADDOCK_REVIEW_END, "requestId=run-184:reviewer-prompt", "parent criterion", "api patch", "tests patch", "go test ./...", herdr.ReviewEvidenceSchemaExample} {
+		if !strings.Contains(packet, want) {
+			t.Fatalf("review packet missing %q:\n%s", want, packet)
+		}
 	}
 }

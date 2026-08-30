@@ -612,6 +612,41 @@ func (g *Git) CurrentCommit(ctx context.Context, worktreePath string) (string, e
 	return strings.TrimSpace(result.Stdout), nil
 }
 
+// IsAncestor proves that an immutable commit is present in a worktree's
+// current history. It is read-only and is used to reconcile an interrupted
+// merge without repeating the merge mutation.
+func (g *Git) IsAncestor(ctx context.Context, worktreePath, commitSHA string) (bool, error) {
+	if err := g.validateWorktreePath(worktreePath); err != nil || !isCommitSHA(commitSHA) {
+		return false, ErrUnsafeTarget
+	}
+	result, err := g.command(ctx, worktreePath, "merge-base", "--is-ancestor", commitSHA, "HEAD")
+	if err == nil && result.ExitCode == 0 {
+		return true, nil
+	}
+	return false, err
+}
+
+// FetchRemoteHead fetches the named remote/default-branch ref and returns its
+// exact immutable SHA. It intentionally does not inspect a local checkout
+// HEAD, so merge-gate decisions cannot be made against stale local state.
+func (g *Git) FetchRemoteHead(ctx context.Context, repositoryPath, remote, branch string) (string, error) {
+	if g == nil || g.Runner == nil || strings.TrimSpace(repositoryPath) == "" || strings.TrimSpace(repositoryPath) != repositoryPath || !validGitRef(remote) || !validGitRef(branch) {
+		return "", ErrUnsafeTarget
+	}
+	if err := g.run(ctx, repositoryPath, "fetch", "--no-tags", remote, branch); err != nil {
+		return "", err
+	}
+	result, err := g.command(ctx, repositoryPath, "rev-parse", "refs/remotes/"+remote+"/"+branch)
+	if err != nil {
+		return "", err
+	}
+	sha := strings.TrimSpace(result.Stdout)
+	if !isCommitSHA(sha) {
+		return "", errors.New("remote head is not an exact commit SHA")
+	}
+	return sha, nil
+}
+
 func (g *Git) CurrentBranch(ctx context.Context, worktreePath string) (string, error) {
 	if err := g.validateWorktreePath(worktreePath); err != nil {
 		return "", err

@@ -62,10 +62,16 @@ type TaskRunState struct {
 	Worktree            WorktreeState `json:"worktree"`
 	Prompt              PromptReceipt `json:"prompt"`
 	ProgressFingerprint string        `json:"progressFingerprint"`
+	PreviousFingerprint string        `json:"previousFingerprint,omitempty"`
 	LastProgressAt      time.Time     `json:"lastProgressAt"`
 	RecoveryCount       int           `json:"recoveryCount"`
 	NativeResume        bool          `json:"nativeResume,omitempty"`
 	RepairCount         int           `json:"repairCount,omitempty"`
+	RequiresFreshCommit bool          `json:"requiresFreshCommit,omitempty"`
+	PreviousCommitSHA   string        `json:"previousCommitSha,omitempty"`
+	ExpectedPath        string        `json:"expectedPath,omitempty"`
+	ExpectedBranch      string        `json:"expectedBranch,omitempty"`
+	ExpectedLabel       string        `json:"expectedLabel,omitempty"`
 }
 
 // ReviewFinding is the durable, provider-neutral form of one blocking
@@ -125,6 +131,7 @@ type RunSnapshot struct {
 	CIState                  string                 `json:"ciState,omitempty"`
 	MergeabilityKnown        bool                   `json:"mergeabilityKnown,omitempty"`
 	Mergeable                bool                   `json:"mergeable,omitempty"`
+	MergeabilityReads        int                    `json:"mergeabilityReads,omitempty"`
 	MergeSHA                 string                 `json:"mergeSha,omitempty"`
 	UpdatedAt                time.Time              `json:"updatedAt"`
 }

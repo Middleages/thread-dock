@@ -19,11 +19,20 @@ func TestRepositoryDiscoveryOnlyRunsForStart(t *testing.T) {
 	if err != nil || path != "/workspace/repo" || calls != 1 {
 		t.Fatalf("start path=%q err=%v calls=%d", path, err, calls)
 	}
-	for _, command := range []string{"status", "stop", "resume", "cleanup"} {
+	for _, command := range []string{"status", "stop", "cleanup"} {
 		path, err = repositoryPathForCommand(context.Background(), []string{command, "run-184"}, nil, "git", discover)
 		if err != nil || path != "" || calls != 1 {
 			t.Fatalf("%s path=%q err=%v calls=%d", command, path, err, calls)
 		}
+	}
+	for _, command := range []string{"resume", "confirm", "create-revert"} {
+		path, err = repositoryPathForCommand(context.Background(), []string{command, "run-184"}, nil, "git", discover)
+		if err != nil || path != "/workspace/repo" {
+			t.Fatalf("%s path=%q err=%v", command, path, err)
+		}
+	}
+	if calls != 4 {
+		t.Fatalf("discovery calls=%d, want four", calls)
 	}
 }
 

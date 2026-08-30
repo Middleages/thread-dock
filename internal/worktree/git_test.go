@@ -25,6 +25,19 @@ type fakeCall struct {
 	args []string
 }
 
+func TestFetchRemoteHeadUsesExplicitRemoteRef(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	runner := &fakeRunner{results: []runner.Result{{ExitCode: 0}, {ExitCode: 0, Stdout: sha + "\n"}}}
+	git := &Git{Runner: runner, Binary: "git"}
+	got, err := git.FetchRemoteHead(context.Background(), "/repo", "origin", "main")
+	if err != nil || got != sha {
+		t.Fatalf("sha=%q err=%v", got, err)
+	}
+	if len(runner.calls) != 2 || !reflect.DeepEqual(runner.calls[0].args, []string{"fetch", "--no-tags", "origin", "main"}) || !reflect.DeepEqual(runner.calls[1].args, []string{"rev-parse", "refs/remotes/origin/main"}) {
+		t.Fatalf("calls=%v", runner.calls)
+	}
+}
+
 func (f *fakeRunner) Run(_ context.Context, cwd, executable string, args ...string) (runner.Result, error) {
 	f.calls = append(f.calls, fakeCall{cwd: cwd, exec: executable, args: append([]string(nil), args...)})
 	var result runner.Result

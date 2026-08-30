@@ -46,3 +46,12 @@ func TestConfirmProtectedChangeReportsInjectedFailure(t *testing.T) {
 		t.Fatalf("code=%d stderr=%q", code, errOut.String())
 	}
 }
+
+func TestNeedsProductionDependenciesForConfirmAndRevert(t *testing.T) {
+	if !NeedsProductionDependencies([]string{"confirm", "run-184", "protected-change"}) {
+		t.Fatal("confirm should require production dependencies")
+	}
+	if !NeedsProductionDependencies([]string{"create-revert", "run-184", "--reason", "pilot regression"}) {
+		t.Fatal("create-revert should require production dependencies")
+	}
+}

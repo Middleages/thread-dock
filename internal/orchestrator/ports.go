@@ -59,6 +59,14 @@ type CurrentCommitLocator interface {
 	CurrentCommit(context.Context, string) (string, error)
 }
 
+type RemoteHeadLocator interface {
+	FetchRemoteHead(context.Context, string, string, string) (string, error)
+}
+
+type CommitPresenceReader interface {
+	IsAncestor(context.Context, string, string) (bool, error)
+}
+
 type IntegrationWorktreeLocator interface {
 	ReconcileIntegrationWorktree(context.Context, string, string, string) (bool, error)
 }
@@ -105,6 +113,9 @@ type Dependencies struct {
 	// is made unless ProjectAutomationEnabled is true.
 	ProjectAutomationEnabled bool
 	Project                  github.ProjectRef
+	WorkingWait              time.Duration
+	RecoveryLimit            int
+	Remote                   string
 }
 
 // ReviewEvidenceReader is optional on legacy Herdr clients and required by

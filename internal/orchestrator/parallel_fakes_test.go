@@ -10,6 +10,7 @@ import (
 	"thread-dock/internal/contract"
 	"thread-dock/internal/github"
 	"thread-dock/internal/herdr"
+	"thread-dock/internal/state"
 	"thread-dock/internal/worktree"
 )
 
@@ -20,27 +21,44 @@ type parallelHarness struct {
 	changedFiles    []string
 	mergeConflict   bool
 	stallRecoveries int
+	stallMode       bool
 	parallelGH      *parallelGitHub
+	parallelHD      *parallelHerdr
+}
+
+func (h *parallelHarness) mustLoadRun() state.RunSnapshot {
+	h.t.Helper()
+	for id := range h.orchestrator.runs {
+		return h.mustLoad(id)
+	}
+	h.t.Fatal("run missing")
+	return state.RunSnapshot{}
 }
 
 type parallelHerdr struct {
 	*fakeHerdr
-	harness      *parallelHarness
-	reviewerPath string
+	harness         *parallelHarness
+	reviewerPath    string
+	evidenceReads   int
+	promptIDs       map[string]string
+	evidenceByAgent map[string]int
 }
 
 type parallelGit struct {
 	*fakeGit
-	harness *parallelHarness
+	harness   *parallelHarness
+	remoteSHA string
 }
 
 type parallelGitHub struct {
 	*fakeGitHub
-	harness         *parallelHarness
-	pr              github.PullRequest
-	projectStatuses []string
-	draftCalls      int
-	mergeCalls      int
+	harness          *parallelHarness
+	pr               github.PullRequest
+	projectStatuses  []string
+	projectStatus    string
+	draftCalls       int
+	mergeCalls       int
+	mergeableUnknown int
 }
 
 func newParallelHarness(t *testing.T) *parallelHarness {
@@ -56,6 +74,7 @@ func newParallelHarness(t *testing.T) *parallelHarness {
 	gh := &parallelGitHub{fakeGitHub: ph.github, harness: ph}
 	ph.Deps.Herdr, ph.Deps.Worktree, ph.Deps.Git, ph.Deps.GitHub = hd, gg, gg, gh
 	ph.parallelGH = gh
+	ph.parallelHD = hd
 	ph.herdr = hd.fakeHerdr
 	ph.git = gg.fakeGit
 	ph.github = gh.fakeGitHub
@@ -65,6 +84,7 @@ func newParallelHarness(t *testing.T) *parallelHarness {
 
 func (h *parallelHarness) runToStable() contract.RunPhase {
 	h.t.Helper()
+	h.stallMode = h.stallRecoveries > 0
 	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
 	if err != nil {
 		h.t.Fatal(err)
@@ -110,6 +130,12 @@ func (h *parallelHerdr) GetInfo(ctx context.Context, name string) (herdr.AgentIn
 	if strings.HasPrefix(name, "reviewer-") {
 		info.WorkspaceID, info.PaneID, info.Path = "workspace-review-184", "pane-review-184", h.reviewerPath
 	}
+	if h.harness.stallMode {
+		info.State = herdr.AgentStateIdle
+	}
+	if h.evidenceByAgent[name] > 1 {
+		info.State = herdr.AgentStateIdle
+	}
 	return info, nil
 }
 
@@ -119,19 +145,50 @@ func (h *parallelHerdr) OpenWorktree(_ context.Context, request herdr.OpenWorktr
 }
 
 func (h *parallelHerdr) ReadEvidence(ctx context.Context, name string) (herdr.Evidence, error) {
+	h.evidenceReads++
+	if h.evidenceByAgent == nil {
+		h.evidenceByAgent = make(map[string]int)
+	}
+	h.evidenceByAgent[name]++
 	if h.harness.stallRecoveries > 0 {
 		h.harness.stallRecoveries--
 		return herdr.Evidence{}, errors.New("agent made no progress")
 	}
 	evidence := h.fakeHerdr.evidence
+	evidence.CommitSHA = "1111111111111111111111111111111111111111"
+	if strings.Contains(name, "-tests") {
+		evidence.CommitSHA = "2222222222222222222222222222222222222222"
+	}
+	if h.evidenceByAgent[name] == 2 {
+		evidence.CommitSHA = "3333333333333333333333333333333333333333"
+	}
+	if h.evidenceByAgent[name] >= 3 {
+		evidence.CommitSHA = "4444444444444444444444444444444444444444"
+	}
 	if strings.Contains(name, "-tests") {
 		evidence.Verification = []herdr.VerificationCheck{{Command: "go test ./tests/payments", Outcome: "passed", Duration: "1s"}}
 	}
-	evidence.RequestID = h.fakeHerdr.lastPromptRequestID
+	if h.promptIDs != nil {
+		evidence.RequestID = h.promptIDs[name]
+	}
+	if evidence.RequestID == "" {
+		evidence.RequestID = h.fakeHerdr.lastPromptRequestID
+	}
 	if evidence.RequestID == "" {
 		evidence.RequestID = strings.TrimPrefix(name, "builder-") + ":prompt"
 	}
 	return evidence, nil
+}
+
+func (h *parallelHerdr) Prompt(ctx context.Context, name, packet string) error {
+	if h.promptIDs == nil {
+		h.promptIDs = make(map[string]string)
+	}
+	if marker := "Use requestId="; strings.Contains(packet, marker) {
+		value := strings.TrimPrefix(packet[strings.Index(packet, marker):], marker)
+		h.promptIDs[name] = strings.TrimSuffix(strings.Fields(value)[0], ".")
+	}
+	return h.fakeHerdr.Prompt(ctx, name, packet)
 }
 
 func (h *parallelHerdr) ReadReviewEvidence(context.Context, string, string) (herdr.ReviewEvidence, error) {
@@ -178,6 +235,15 @@ func (h *parallelGit) RunChecks(_ context.Context, _ string, commands []string) 
 
 func (h *parallelGit) PushBranch(context.Context, string, string, string) error { return nil }
 
+func (h *parallelGit) FetchRemoteHead(context.Context, string, string, string) (string, error) {
+	if h.remoteSHA == "" {
+		return validSHA, nil
+	}
+	return h.remoteSHA, nil
+}
+
+func (h *parallelGit) IsAncestor(context.Context, string, string) (bool, error) { return true, nil }
+
 func (h *parallelGitHub) CreateDraftPR(_ context.Context, _ github.Repository, request github.DraftPRRequest) (github.PullRequest, error) {
 	h.draftCalls++
 	h.pr = github.PullRequest{Number: 185, HTMLURL: "https://github.example/185", State: "open", Draft: true, Head: request.Head, HeadSHA: validSHA, Base: request.Base}
@@ -186,6 +252,10 @@ func (h *parallelGitHub) CreateDraftPR(_ context.Context, _ github.Repository, r
 
 func (h *parallelGitHub) GetPullRequest(context.Context, github.Repository, int) (github.PullRequest, error) {
 	pr := h.pr
+	if h.mergeableUnknown > 0 {
+		h.mergeableUnknown--
+		return pr, nil
+	}
 	mergeable := true
 	pr.Mergeable = &mergeable
 	return pr, nil
@@ -216,7 +286,15 @@ func (h *parallelGitHub) MergePullRequest(context.Context, github.Repository, in
 	return github.MergePullRequestResult{SHA: fmt.Sprintf("%040x", 2), Merged: true}, nil
 }
 
-func (h *parallelGitHub) SetProjectStatus(context.Context, github.ProjectRef, string, string) error {
+func (h *parallelGitHub) SetProjectStatus(_ context.Context, _ github.ProjectRef, _ string, status string) error {
 	h.projectStatuses = append(h.projectStatuses, "status")
+	h.projectStatus = status
 	return nil
+}
+
+func (h *parallelGitHub) GetProjectStatus(context.Context, github.ProjectRef, string) (string, error) {
+	if len(h.projectStatuses) == 0 {
+		return "", errors.New("project status unavailable")
+	}
+	return h.projectStatus, nil
 }

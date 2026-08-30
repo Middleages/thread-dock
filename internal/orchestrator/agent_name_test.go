@@ -73,6 +73,20 @@ func TestTaskAgentNamesCompareFullExecutionIdentity(t *testing.T) {
 	}
 }
 
+func TestTaskAgentNameAlwaysIncludesCaseSensitiveDigest(t *testing.T) {
+	api := taskAgentName("builder", "run-184", "api")
+	upper := taskAgentName("builder", "run-184", "API")
+	if api == upper {
+		t.Fatalf("case-distinct task IDs collided: %q", api)
+	}
+	if strings.Contains(api, "run-184") || strings.HasSuffix(api, "-api") {
+		t.Fatalf("task name has no collision-resistant digest: %q", api)
+	}
+	if len(api) > maxHerdrAgentNameLength || !validHerdrAgentName(api) {
+		t.Fatalf("invalid task agent name: %q", api)
+	}
+}
+
 func TestPendingStartMigratesLegacyLongAgentNameBeforeRetry(t *testing.T) {
 	longID := contract.RunID("run-1787925632789000929-1")
 	for _, tc := range []struct {

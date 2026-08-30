@@ -75,6 +75,9 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 		WorktreeRoot:             worktreeRoot,
 		ProjectAutomationEnabled: cfg.ProjectAutomationEnabled,
 		Project:                  github.ProjectRef{ID: cfg.ProjectID, StatusFieldID: cfg.ProjectStatusFieldID, StatusOptions: cfg.ProjectStatusOptions},
+		WorkingWait:              cfg.WorkingWait,
+		RecoveryLimit:            cfg.RecoveryLimit,
+		Remote:                   "origin",
 	})
 	service := cli.NewOrchestratorRunService(
 		orch,
@@ -90,7 +93,7 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 type repositoryDiscoverer func(context.Context, runner.Runner, string) (string, error)
 
 func repositoryPathForCommand(ctx context.Context, args []string, process runner.Runner, binary string, discover repositoryDiscoverer) (string, error) {
-	if len(args) == 0 || args[0] != "start" {
+	if len(args) == 0 || (args[0] != "start" && args[0] != "resume" && args[0] != "confirm" && args[0] != "create-revert") {
 		return "", nil
 	}
 	if discover == nil {

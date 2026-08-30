@@ -722,11 +722,12 @@ type pullRequestWire struct {
 	Base struct {
 		Ref string `json:"ref"`
 	} `json:"base"`
-	Mergeable *bool `json:"mergeable"`
+	Mergeable      *bool  `json:"mergeable"`
+	MergeCommitSHA string `json:"merge_commit_sha"`
 }
 
 func (w pullRequestWire) toPullRequest() PullRequest {
-	return PullRequest{Number: w.Number, NodeID: w.NodeID, Title: w.Title, Body: w.Body, HTMLURL: w.HTMLURL, State: w.State, Draft: w.Draft, Head: w.Head.Ref, HeadSHA: w.Head.SHA, Base: w.Base.Ref, Mergeable: w.Mergeable}
+	return PullRequest{Number: w.Number, NodeID: w.NodeID, Title: w.Title, Body: w.Body, HTMLURL: w.HTMLURL, State: w.State, Draft: w.Draft, Head: w.Head.Ref, HeadSHA: w.Head.SHA, Base: w.Base.Ref, Mergeable: w.Mergeable, MergeCommitSHA: w.MergeCommitSHA}
 }
 
 func validRefInput(value string) bool {
