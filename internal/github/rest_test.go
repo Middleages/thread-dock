@@ -651,6 +651,200 @@ func TestReadProjectStatusDistinguishesAbsentItemFromUninitializedItem(t *testin
 	}
 }
 
+func TestReadProjectStatusPaginatesItemsAndFields(t *testing.T) {
+	t.Run("item on second project page prevents add", func(t *testing.T) {
+		var requests int
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			var payload struct {
+				Query     string         `json:"query"`
+				Variables map[string]any `json:"variables"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(payload.Query, "ProjectItemFields") {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"fieldValues": map[string]any{"nodes": []any{}, "pageInfo": map[string]any{"hasNextPage": false}}}}})
+				return
+			}
+			if !strings.Contains(payload.Query, "ProjectItemStatus") {
+				t.Fatalf("unexpected query: %s", payload.Query)
+			}
+			if payload.Variables["cursor"] == nil {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{map[string]any{"id": "OTHER", "content": map[string]string{"id": "OTHER_ISSUE"}}}, "pageInfo": map[string]any{"hasNextPage": true, "endCursor": "cursor-items-1"}}}}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{map[string]any{"id": "ITEM_PAGE_2", "content": map[string]string{"id": "ISSUE_NODE"}}}, "pageInfo": map[string]any{"hasNextPage": false, "endCursor": "cursor-items-2"}}}}})
+		})
+		server := httptest.NewServer(mux)
+		defer server.Close()
+		client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+		got, err := client.ReadProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1"}, "ISSUE_NODE")
+		if err != nil || !got.ItemPresent || got.ItemID != "ITEM_PAGE_2" || got.StatusPresent || requests != 3 {
+			t.Fatalf("status=%+v err=%v requests=%d", got, err, requests)
+		}
+	})
+
+	t.Run("status on second field page is observed", func(t *testing.T) {
+		var requests int
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			var payload struct {
+				Query     string         `json:"query"`
+				Variables map[string]any `json:"variables"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(payload.Query, "ProjectItemFields") {
+				if payload.Variables["cursor"] == nil {
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"fieldValues": map[string]any{"nodes": []any{}, "pageInfo": map[string]any{"hasNextPage": true, "endCursor": "cursor-fields-1"}}}}})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"fieldValues": map[string]any{"nodes": []any{map[string]string{"name": "Review", "optionId": "O_REVIEW", "fieldId": "F1"}}, "pageInfo": map[string]any{"hasNextPage": false, "endCursor": "cursor-fields-2"}}}}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{map[string]any{"id": "ITEM_FIELDS", "content": map[string]string{"id": "ISSUE_NODE"}}}, "pageInfo": map[string]any{"hasNextPage": false, "endCursor": "cursor-items-1"}}}}})
+		})
+		server := httptest.NewServer(mux)
+		defer server.Close()
+		client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+		got, err := client.ReadProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1", StatusOptions: map[string]string{"Review": "O_REVIEW"}}, "ISSUE_NODE")
+		if err != nil || !got.ItemPresent || !got.StatusPresent || got.Status != "Review" || requests != 3 {
+			t.Fatalf("status=%+v err=%v requests=%d", got, err, requests)
+		}
+	})
+}
+
+func TestReadProjectStatusFailsClosedOnPaginationCursorProblems(t *testing.T) {
+	tests := []struct {
+		name     string
+		pageInfo map[string]any
+		requests int
+	}{
+		{name: "empty cursor", pageInfo: map[string]any{"hasNextPage": true, "endCursor": ""}, requests: 1},
+		{name: "repeated cursor", pageInfo: map[string]any{"hasNextPage": true, "endCursor": "cursor-1"}, requests: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := 0
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{}, "pageInfo": tc.pageInfo}}}})
+			})
+			server := httptest.NewServer(mux)
+			defer server.Close()
+			client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+			_, err := client.ReadProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1"}, "ISSUE_NODE")
+			if err == nil || requests != tc.requests {
+				t.Fatalf("err=%v requests=%d", err, requests)
+			}
+		})
+	}
+}
+
+func TestReadProjectStatusRejectsDuplicateMatchingItemsAcrossPages(t *testing.T) {
+	requests := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var payload struct {
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Variables["cursor"] == nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{map[string]any{"id": "ITEM_1", "content": map[string]string{"id": "ISSUE_NODE"}}}, "pageInfo": map[string]any{"hasNextPage": true, "endCursor": "cursor-1"}}}}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{map[string]any{"id": "ITEM_2", "content": map[string]string{"id": "ISSUE_NODE"}}}, "pageInfo": map[string]any{"hasNextPage": false, "endCursor": "cursor-2"}}}}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	_, err := client.ReadProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1"}, "ISSUE_NODE")
+	if err == nil || requests != 2 {
+		t.Fatalf("err=%v requests=%d", err, requests)
+	}
+}
+
+func TestReadProjectStatusRejectsDuplicateMatchingStatusFieldsAcrossPages(t *testing.T) {
+	requests := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var payload struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(payload.Query, "ProjectItemFields") {
+			if payload.Variables["cursor"] == nil {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"fieldValues": map[string]any{"nodes": []any{map[string]string{"name": "Review", "optionId": "O_REVIEW", "fieldId": "F1"}}, "pageInfo": map[string]any{"hasNextPage": true, "endCursor": "field-cursor-1"}}}}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"fieldValues": map[string]any{"nodes": []any{map[string]string{"name": "Review", "optionId": "O_REVIEW", "fieldId": "F1"}}, "pageInfo": map[string]any{"hasNextPage": false}}}}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{map[string]any{"id": "ITEM_FIELDS", "content": map[string]string{"id": "ISSUE_NODE"}}}, "pageInfo": map[string]any{"hasNextPage": false}}}}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	_, err := client.ReadProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1", StatusOptions: map[string]string{"Review": "O_REVIEW"}}, "ISSUE_NODE")
+	if err == nil || requests != 3 {
+		t.Fatalf("err=%v requests=%d", err, requests)
+	}
+}
+
+func TestReadProjectStatusRejectsPaginationWithoutProgressAfterBound(t *testing.T) {
+	requests := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{}, "pageInfo": map[string]any{"hasNextPage": true, "endCursor": fmt.Sprintf("cursor-%d", requests)}}}}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	_, err := client.ReadProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1"}, "ISSUE_NODE")
+	if err == nil || requests > 101 {
+		t.Fatalf("err=%v requests=%d", err, requests)
+	}
+}
+
+func TestReadProjectStatusFailsClosedOnFieldEmptyCursor(t *testing.T) {
+	requests := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var payload struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(payload.Query, "ProjectItemFields") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"fieldValues": map[string]any{"nodes": []any{}, "pageInfo": map[string]any{"hasNextPage": true, "endCursor": ""}}}}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{map[string]any{"id": "ITEM_FIELDS", "content": map[string]string{"id": "ISSUE_NODE"}}}, "pageInfo": map[string]any{"hasNextPage": false}}}}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	_, err := client.ReadProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1"}, "ISSUE_NODE")
+	if err == nil || requests != 2 {
+		t.Fatalf("err=%v requests=%d", err, requests)
+	}
+}
+
 func TestProjectStatusOptionsAreUsedForEveryPhase(t *testing.T) {
 	statuses := []struct{ name, option string }{{"Backlog", "O_BACKLOG"}, {"Ready", "O_READY"}, {"In Progress", "O_PROGRESS"}, {"Review", "O_REVIEW"}, {"Done", "O_DONE"}}
 	var updates []struct{ item, option string }

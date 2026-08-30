@@ -729,7 +729,7 @@ func (o *Orchestrator) parallelRecoveryPromptTask(ctx context.Context, snapshot 
 }
 
 func (o *Orchestrator) parallelResumeTask(ctx context.Context, snapshot *state.RunSnapshot, id string, taskState state.TaskRunState) error {
-	if !taskState.NativeResume {
+	if !taskState.NativeResume || isTerminalIdentity(taskState.Agent.SessionID) {
 		return o.parallelOperatorBlock(ctx, snapshot, id, "terminal-only Agent cannot be natively resumed")
 	}
 	action := parallelTaskAction("parallel_resume_agent_", id)

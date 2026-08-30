@@ -808,19 +808,37 @@ func (c *RESTClient) UpdateProjectStatus(ctx context.Context, project ProjectRef
 	return response.graphQLError(c.token)
 }
 
-// ReadProjectStatus reads the exact ProjectV2 item for an Issue and returns
-// presence independently for the item and its configured single-select field.
-// An absent or uninitialized item is a normal observation (nil error), while
-// ambiguous or malformed provider evidence still fails closed.
+const maxProjectStatusPages = 100
+
+// ReadProjectStatus reads every ProjectV2 item page before deciding that an
+// Issue is absent, then reads every field-value page for the exact matching
+// item. An absent or uninitialized item is a normal nil-error observation;
+// malformed pagination and ambiguous matches fail closed.
 func (c *RESTClient) ReadProjectStatus(ctx context.Context, project ProjectRef, issueNodeID string) (ProjectStatus, error) {
 	if project.ID == "" || project.StatusFieldID == "" || issueNodeID == "" {
 		return ProjectStatus{}, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status read requires project, field, and issue IDs"}
 	}
-	const query = `query ProjectItemStatus($projectId: ID!) {
+	itemID, inlineFields, inlinePageInfo, err := c.readProjectItemPages(ctx, project.ID, issueNodeID)
+	if err != nil {
+		return ProjectStatus{}, err
+	}
+	if itemID == "" {
+		return ProjectStatus{Found: false, ItemPresent: false, ItemFound: false, StatusPresent: false, StatusFound: false}, nil
+	}
+	status, statusPresent, err := c.readProjectFieldPages(ctx, project, itemID, inlineFields, inlinePageInfo)
+	if err != nil {
+		return ProjectStatus{}, err
+	}
+	return ProjectStatus{Found: statusPresent, ItemPresent: true, ItemFound: true, StatusPresent: statusPresent, StatusFound: statusPresent, ItemID: itemID, Status: status}, nil
+}
+
+func (c *RESTClient) readProjectItemPages(ctx context.Context, projectID, issueNodeID string) (string, []projectStatusFieldValue, *graphQLPageInfo, error) {
+	const query = `query ProjectItemStatus($projectId: ID!, $cursor: String) {
   node(id: $projectId) {
     ... on ProjectV2 {
-      items(first: 100) {
+      items(first: 100, after: $cursor) {
         nodes {
+          id
           content { ... on Issue { id } }
           fieldValues(first: 100) {
             nodes {
@@ -830,56 +848,138 @@ func (c *RESTClient) ReadProjectStatus(ctx context.Context, project ProjectRef, 
                 field { ... on ProjectV2SingleSelectField { id } }
               }
             }
+            pageInfo { hasNextPage endCursor }
           }
         }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
 }`
-	payload := struct {
-		Query     string `json:"query"`
-		Variables struct {
-			ProjectID string `json:"projectId"`
-		} `json:"variables"`
-	}{Query: query}
-	payload.Variables.ProjectID = project.ID
-	var response graphQLProjectStatusResponse
-	if err := c.doJSON(ctx, http.MethodPost, c.graphqlPath, payload, &response); err != nil {
-		return ProjectStatus{}, err
-	}
-	if err := response.graphQLError(c.token); err != nil {
-		return ProjectStatus{}, err
-	}
-	var itemID, status string
-	itemPresent := false
-	for _, item := range response.Data.Node.Items.Nodes {
-		if item.Content.ID != issueNodeID {
-			continue
+	var itemID string
+	var inlineFields []projectStatusFieldValue
+	var inlinePageInfo *graphQLPageInfo
+	var cursor *string
+	seenCursors := make(map[string]struct{})
+	for page := 0; page < maxProjectStatusPages; page++ {
+		payload := struct {
+			Query     string `json:"query"`
+			Variables struct {
+				ProjectID string  `json:"projectId"`
+				Cursor    *string `json:"cursor"`
+			} `json:"variables"`
+		}{Query: query}
+		payload.Variables.ProjectID = projectID
+		payload.Variables.Cursor = cursor
+		var response graphQLProjectItemsPageResponse
+		if err := c.doJSON(ctx, http.MethodPost, c.graphqlPath, payload, &response); err != nil {
+			return "", nil, nil, err
 		}
-		if itemID != "" && itemID != item.ID {
-			return ProjectStatus{}, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status item was ambiguous"}
+		if err := response.graphQLError(c.token); err != nil {
+			return "", nil, nil, err
 		}
-		itemID = item.ID
-		itemPresent = true
-		for _, value := range item.FieldValues.Nodes {
-			fieldID := value.Field.ID
-			if fieldID == "" {
-				fieldID = value.FieldID
-			}
-			if fieldID != project.StatusFieldID || strings.TrimSpace(value.Name) == "" {
+		for _, item := range response.Data.Node.Items.Nodes {
+			if item.Content.ID != issueNodeID {
 				continue
 			}
-			if expectedOption := project.StatusOptions[value.Name]; expectedOption != "" && value.OptionID != "" && value.OptionID != expectedOption {
-				return ProjectStatus{}, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status option did not match configured field"}
+			if itemID != "" {
+				return "", nil, nil, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status item was ambiguous"}
 			}
-			if status != "" && status != value.Name {
-				return ProjectStatus{}, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status read was ambiguous"}
+			if strings.TrimSpace(item.ID) == "" {
+				return "", nil, nil, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status item identity was missing"}
 			}
-			status = value.Name
+			itemID = item.ID
+			inlineFields = item.FieldValues.Nodes
+			inlinePageInfo = item.FieldValues.PageInfo
 		}
+		next, done, err := nextProjectStatusCursor(page, maxProjectStatusPages, response.Data.Node.Items.PageInfo, seenCursors)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		if done {
+			return itemID, inlineFields, inlinePageInfo, nil
+		}
+		cursor = &next
 	}
-	statusPresent := status != ""
-	return ProjectStatus{Found: itemPresent && statusPresent, ItemPresent: itemPresent, ItemFound: itemPresent, StatusPresent: statusPresent, StatusFound: statusPresent, ItemID: itemID, Status: status}, nil
+	return "", nil, nil, projectStatusPaginationError("maximum item pages exceeded")
+}
+
+func (c *RESTClient) readProjectFieldPages(ctx context.Context, project ProjectRef, itemID string, inlineFields []projectStatusFieldValue, inlinePageInfo *graphQLPageInfo) (string, bool, error) {
+	const query = `query ProjectItemFields($itemId: ID!, $cursor: String) {
+  node(id: $itemId) {
+    ... on ProjectV2Item {
+      fieldValues(first: 100, after: $cursor) {
+        nodes {
+          ... on ProjectV2ItemFieldSingleSelectValue {
+            name
+            optionId
+            field { ... on ProjectV2SingleSelectField { id } }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`
+	status := ""
+	statusPresent := false
+	if err := collectProjectStatusField(project, inlineFields, &status, &statusPresent); err != nil {
+		return "", false, err
+	}
+	// Older providers/tests omit the nested fieldValues key entirely. In that
+	// compatibility case, issue one exact-item query; an explicit empty nodes
+	// array is already a complete uninitialized field observation.
+	needFollowUp := inlineFields == nil || inlinePageInfo == nil || inlinePageInfo.HasNextPage
+	if !needFollowUp {
+		return status, statusPresent, nil
+	}
+	var cursor *string
+	if inlinePageInfo != nil && inlinePageInfo.HasNextPage {
+		next, err := checkedProjectStatusCursor(inlinePageInfo.EndCursor, map[string]struct{}{})
+		if err != nil {
+			return "", false, err
+		}
+		cursor = &next
+	}
+	seenCursors := make(map[string]struct{})
+	if cursor != nil {
+		seenCursors[*cursor] = struct{}{}
+	}
+	page := 0
+	if inlinePageInfo != nil && inlinePageInfo.HasNextPage {
+		// The nested fieldValues response was already the first page.
+		page = 1
+	}
+	for ; page < maxProjectStatusPages; page++ {
+		payload := struct {
+			Query     string `json:"query"`
+			Variables struct {
+				ItemID string  `json:"itemId"`
+				Cursor *string `json:"cursor"`
+			} `json:"variables"`
+		}{Query: query}
+		payload.Variables.ItemID = itemID
+		payload.Variables.Cursor = cursor
+		var response graphQLProjectItemFieldsPageResponse
+		if err := c.doJSON(ctx, http.MethodPost, c.graphqlPath, payload, &response); err != nil {
+			return "", false, err
+		}
+		if err := response.graphQLError(c.token); err != nil {
+			return "", false, err
+		}
+		if err := collectProjectStatusField(project, response.Data.Node.FieldValues.Nodes, &status, &statusPresent); err != nil {
+			return "", false, err
+		}
+		next, done, err := nextProjectStatusCursor(page, maxProjectStatusPages, response.Data.Node.FieldValues.PageInfo, seenCursors)
+		if err != nil {
+			return "", false, err
+		}
+		if done {
+			return status, statusPresent, nil
+		}
+		cursor = &next
+	}
+	return "", false, projectStatusPaginationError("maximum field pages exceeded")
 }
 
 func (c *RESTClient) GetProjectStatus(ctx context.Context, project ProjectRef, issueNodeID string) (string, error) {
@@ -906,7 +1006,21 @@ type graphQLAddResponse struct {
 	Errors []graphQLErrorItem `json:"errors"`
 }
 
-type graphQLProjectStatusResponse struct {
+type graphQLPageInfo struct {
+	HasNextPage bool   `json:"hasNextPage"`
+	EndCursor   string `json:"endCursor"`
+}
+
+type projectStatusFieldValue struct {
+	Name     string `json:"name"`
+	OptionID string `json:"optionId"`
+	Field    struct {
+		ID string `json:"id"`
+	} `json:"field"`
+	FieldID string `json:"fieldId"`
+}
+
+type graphQLProjectItemsPageResponse struct {
 	Data struct {
 		Node struct {
 			Items struct {
@@ -916,25 +1030,90 @@ type graphQLProjectStatusResponse struct {
 						ID string `json:"id"`
 					} `json:"content"`
 					FieldValues struct {
-						Nodes []struct {
-							Name     string `json:"name"`
-							OptionID string `json:"optionId"`
-							Field    struct {
-								ID string `json:"id"`
-							} `json:"field"`
-							FieldID string `json:"fieldId"`
-						} `json:"nodes"`
+						Nodes    []projectStatusFieldValue `json:"nodes"`
+						PageInfo *graphQLPageInfo          `json:"pageInfo"`
 					} `json:"fieldValues"`
 				} `json:"nodes"`
+				PageInfo graphQLPageInfo `json:"pageInfo"`
 			} `json:"items"`
 		} `json:"node"`
 	} `json:"data"`
 	Errors []graphQLErrorItem `json:"errors"`
 }
 
-func (r graphQLProjectStatusResponse) graphQLError(token string) error {
+type graphQLProjectItemFieldsPageResponse struct {
+	Data struct {
+		Node struct {
+			FieldValues struct {
+				Nodes    []projectStatusFieldValue `json:"nodes"`
+				PageInfo graphQLPageInfo           `json:"pageInfo"`
+			} `json:"fieldValues"`
+		} `json:"node"`
+	} `json:"data"`
+	Errors []graphQLErrorItem `json:"errors"`
+}
+
+func (r graphQLProjectItemsPageResponse) graphQLError(token string) error {
 	if len(r.Errors) > 0 {
 		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: sanitize(r.Errors[0].Message, token)}
+	}
+	return nil
+}
+
+func (r graphQLProjectItemFieldsPageResponse) graphQLError(token string) error {
+	if len(r.Errors) > 0 {
+		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: sanitize(r.Errors[0].Message, token)}
+	}
+	return nil
+}
+
+func projectStatusPaginationError(message string) error {
+	return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status pagination is invalid: " + message}
+}
+
+func checkedProjectStatusCursor(cursor string, seen map[string]struct{}) (string, error) {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" {
+		return "", projectStatusPaginationError("empty cursor")
+	}
+	if _, exists := seen[cursor]; exists {
+		return "", projectStatusPaginationError("cursor did not advance")
+	}
+	return cursor, nil
+}
+
+func nextProjectStatusCursor(page, maxPages int, pageInfo graphQLPageInfo, seen map[string]struct{}) (string, bool, error) {
+	if !pageInfo.HasNextPage {
+		return "", true, nil
+	}
+	if page+1 >= maxPages {
+		return "", false, projectStatusPaginationError("maximum pages exceeded")
+	}
+	cursor, err := checkedProjectStatusCursor(pageInfo.EndCursor, seen)
+	if err != nil {
+		return "", false, err
+	}
+	seen[cursor] = struct{}{}
+	return cursor, false, nil
+}
+
+func collectProjectStatusField(project ProjectRef, values []projectStatusFieldValue, status *string, statusPresent *bool) error {
+	for _, value := range values {
+		fieldID := value.Field.ID
+		if fieldID == "" {
+			fieldID = value.FieldID
+		}
+		if fieldID != project.StatusFieldID || strings.TrimSpace(value.Name) == "" {
+			continue
+		}
+		if expectedOption := project.StatusOptions[value.Name]; expectedOption != "" && value.OptionID != "" && value.OptionID != expectedOption {
+			return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status option did not match configured field"}
+		}
+		if *statusPresent {
+			return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status read was ambiguous"}
+		}
+		*status = value.Name
+		*statusPresent = true
 	}
 	return nil
 }

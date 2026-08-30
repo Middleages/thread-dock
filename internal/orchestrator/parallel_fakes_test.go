@@ -69,6 +69,7 @@ type parallelGitHub struct {
 	projectUpdateCalls        int
 	projectAddResponseLost    bool
 	projectUpdateResponseLost bool
+	projectObservation        *github.ProjectStatus
 }
 
 func newParallelHarness(t *testing.T) *parallelHarness {
@@ -318,6 +319,9 @@ func (h *parallelGitHub) SetProjectStatus(_ context.Context, _ github.ProjectRef
 
 func (h *parallelGitHub) ReadProjectStatus(context.Context, github.ProjectRef, string) (github.ProjectStatus, error) {
 	h.projectObserveCalls++
+	if h.projectObservation != nil {
+		return *h.projectObservation, nil
+	}
 	if h.projectItemID == "" {
 		return github.ProjectStatus{Found: false, ItemPresent: false, StatusPresent: false}, nil
 	}
