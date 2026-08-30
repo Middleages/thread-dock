@@ -94,6 +94,9 @@ func TestRepairsRequireFreshCommitAndReuseOnePR(t *testing.T) {
 	if h.parallelGH.draftCalls != 1 {
 		t.Fatalf("draft PR creates=%d, want one reused PR", h.parallelGH.draftCalls)
 	}
+	if h.parallelGH.readyCalls != 1 {
+		t.Fatalf("ready mutations=%d, want one (reused ready PR is skipped)", h.parallelGH.readyCalls)
+	}
 	snapshot := h.mustLoadRun()
 	for _, task := range snapshot.Tasks {
 		if task.Agent.CommitSHA == task.PreviousCommitSHA && task.PreviousCommitSHA != "" {
@@ -122,6 +125,7 @@ func TestWorkingAgentWaitsThenStaleLiveRequiresOperator(t *testing.T) {
 			}
 			h.parallelHD.harness.stallMode = false
 			h.stallRecoveries = 1
+			h.parallelHD.forceWorking = true
 			break
 		}
 	}
@@ -292,6 +296,32 @@ func TestParallelPendingDraftPRReconcilesWithoutDuplicateCreate(t *testing.T) {
 	got := h.mustLoad(id)
 	if got.PendingAction != "" || got.PullRequest != 185 || h.parallelGH.draftCalls != 0 {
 		t.Fatalf("snapshot=%+v draftCalls=%d", got, h.parallelGH.draftCalls)
+	}
+}
+
+func TestMainMergeResponseLossReconcilesMergedFlagAndSHA(t *testing.T) {
+	h := newParallelHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	snapshot.Phase, snapshot.ProjectStatus, snapshot.PendingAction = contract.PhaseMerging, "Review", "parallel_merge_main"
+	snapshot.PullRequest, snapshot.PullRequestHeadSHA, snapshot.FinalSHA = 185, validSHA, validSHA
+	mergeSHA := "2222222222222222222222222222222222222222"
+	h.parallelGH.pr = github.PullRequest{Number: 185, State: "closed", Merged: true, Head: "agent/parent-integration", HeadSHA: validSHA, Base: "main", MergeCommitSHA: mergeSHA}
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewParallel(h.Deps).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	got := h.mustLoad(id)
+	if got.Phase != contract.PhaseCompleted || got.MergeSHA != mergeSHA || !got.PullRequestMerged {
+		t.Fatalf("reconciled snapshot=%+v", got)
+	}
+	if h.parallelGH.mergeCalls != 0 {
+		t.Fatalf("merge duplicated after response loss: %d", h.parallelGH.mergeCalls)
 	}
 }
 

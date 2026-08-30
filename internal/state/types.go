@@ -100,6 +100,7 @@ type RunSnapshot struct {
 	Registration     RegistrationState       `json:"registration"`
 	ActionCursor     int                     `json:"actionCursor"`
 	PendingAction    string                  `json:"pendingAction"`
+	PendingTaskID    string                  `json:"pendingTaskId,omitempty"`
 	Summary          string                  `json:"summary"`
 	PreviousPhase    contract.RunPhase       `json:"previousPhase,omitempty"`
 	BuilderPrompt    PromptReceipt           `json:"builderPrompt"`
@@ -110,11 +111,16 @@ type RunSnapshot struct {
 	Strategy                 string                 `json:"strategy,omitempty"`
 	CurrentTask              string                 `json:"currentTask,omitempty"`
 	TaskOrder                []string               `json:"taskOrder,omitempty"`
+	ReviewerExpectedPath     string                 `json:"reviewerExpectedPath,omitempty"`
+	ReviewerExpectedBranch   string                 `json:"reviewerExpectedBranch,omitempty"`
+	ReviewerExpectedLabel    string                 `json:"reviewerExpectedLabel,omitempty"`
 	IntegrationSHA           string                 `json:"integrationSha,omitempty"`
+	RepairBaseSHA            string                 `json:"repairBaseSha,omitempty"`
 	IntegrationVerification  []VerificationEvidence `json:"integrationVerification,omitempty"`
 	PullRequest              int                    `json:"pullRequest,omitempty"`
 	PullRequestURL           string                 `json:"pullRequestUrl,omitempty"`
 	PullRequestHeadSHA       string                 `json:"pullRequestHeadSha,omitempty"`
+	ExpectedMergeHeadSHA     string                 `json:"expectedMergeHeadSha,omitempty"`
 	PullRequestDraft         bool                   `json:"pullRequestDraft,omitempty"`
 	PullRequestMerged        bool                   `json:"pullRequestMerged,omitempty"`
 	FinalSHA                 string                 `json:"finalSha,omitempty"`
@@ -132,6 +138,7 @@ type RunSnapshot struct {
 	MergeabilityKnown        bool                   `json:"mergeabilityKnown,omitempty"`
 	Mergeable                bool                   `json:"mergeable,omitempty"`
 	MergeabilityReads        int                    `json:"mergeabilityReads,omitempty"`
+	MergePreflightReady      bool                   `json:"mergePreflightReady,omitempty"`
 	MergeSHA                 string                 `json:"mergeSha,omitempty"`
 	UpdatedAt                time.Time              `json:"updatedAt"`
 }

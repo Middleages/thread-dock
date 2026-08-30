@@ -60,6 +60,7 @@ type PullRequest struct {
 	Body           string `json:"body"`
 	HTMLURL        string `json:"html_url"`
 	State          string `json:"state"`
+	Merged         bool   `json:"merged,omitempty"`
 	Draft          bool   `json:"draft"`
 	Head           string `json:"head"`
 	HeadSHA        string `json:"headSha"`
@@ -110,6 +111,12 @@ type ProjectRef struct {
 	ID            string
 	StatusFieldID string
 	StatusOptions map[string]string
+}
+
+// ProjectStatusReader reads one exact ProjectV2 item/field for reconciliation
+// after a status mutation intent survives a crash.
+type ProjectStatusReader interface {
+	GetProjectStatus(context.Context, ProjectRef, string) (string, error)
 }
 
 // Client is the narrow GHES interface used by the orchestrator.

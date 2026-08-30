@@ -66,6 +66,22 @@ func normalizeAgentPart(value string) string {
 	return b.String()
 }
 
+func parallelTaskAction(prefix, taskID string) string {
+	digest := sha256.Sum256([]byte(taskID))
+	return prefix + normalizeAgentPart(taskID) + "-" + hex.EncodeToString(digest[:])[:8]
+}
+
+func pendingParallelTaskID(snapshot *state.RunSnapshot, action, prefix string) string {
+	if snapshot.PendingTaskID != "" {
+		return snapshot.PendingTaskID
+	}
+	value := strings.TrimPrefix(action, prefix)
+	if index := strings.LastIndex(value, "-"); index > 0 && len(value)-index-1 == 8 {
+		value = value[:index]
+	}
+	return value
+}
+
 // Auto chooses the parallel strategy for contracts with multiple tasks and
 // retains the historical Single-run strategy for one-task contracts. The
 // choice is persisted in each snapshot, so a fresh process can route an
@@ -208,9 +224,7 @@ var _ interface {
 
 // ProjectStatusReader is an optional read port used to reconcile a status
 // mutation that may have succeeded immediately before a process crash.
-type ProjectStatusReader interface {
-	GetProjectStatus(context.Context, github.ProjectRef, string) (string, error)
-}
+type ProjectStatusReader = github.ProjectStatusReader
 
 // FingerprintReader returns Git's managed fingerprint without exposing raw
 // process output. It is optional so legacy adapters remain usable by the
@@ -308,8 +322,14 @@ func (o *Orchestrator) parallelPrepare(ctx context.Context, snapshot *state.RunS
 	return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: message, Data: data})
 }
 
+func (o *Orchestrator) parallelPrepareTask(ctx context.Context, snapshot *state.RunSnapshot, taskID, action, message string, data map[string]any) error {
+	snapshot.PendingTaskID = taskID
+	return o.parallelPrepare(ctx, snapshot, action, message, data)
+}
+
 func (o *Orchestrator) parallelFinish(ctx context.Context, snapshot *state.RunSnapshot, message string) error {
 	snapshot.PendingAction = ""
+	snapshot.PendingTaskID = ""
 	snapshot.ActionCursor++
 	snapshot.Summary = message
 	snapshot.UpdatedAt = o.now()
@@ -331,6 +351,7 @@ func (o *Orchestrator) parallelFinishPreserveCursor(ctx context.Context, snapsho
 
 func (o *Orchestrator) parallelBlock(ctx context.Context, snapshot *state.RunSnapshot, message string) error {
 	snapshot.PendingAction = ""
+	snapshot.PendingTaskID = ""
 	snapshot.Phase = contract.PhaseBlocked
 	snapshot.Summary = message
 	snapshot.UpdatedAt = o.now()
@@ -498,8 +519,8 @@ func (o *Orchestrator) createParallelTaskWorktree(ctx context.Context, snapshot 
 	stateBeforeCreate.ExpectedLabel = expectedLabel
 	stateBeforeCreate.State = "pending"
 	snapshot.Tasks[id] = stateBeforeCreate
-	action := "parallel_create_worktree_" + normalizeAgentPart(id)
-	if err := o.parallelPrepare(ctx, snapshot, action, "Builder Worktree 생성", map[string]any{"taskId": id, "branch": task.Branch, "expectedPath": stateBeforeCreate.ExpectedPath, "label": expectedLabel}); err != nil {
+	action := parallelTaskAction("parallel_create_worktree_", id)
+	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "Builder Worktree 생성", map[string]any{"taskId": id, "branch": task.Branch, "expectedPath": stateBeforeCreate.ExpectedPath, "label": expectedLabel}); err != nil {
 		return err
 	}
 	created, err := o.deps.Herdr.CreateWorktree(ctx, herdr.CreateWorktreeRequest{Cwd: snapshot.RepositoryPath, Branch: task.Branch, Base: runtime.contract.BaseCommit, Label: expectedLabel})
@@ -533,8 +554,16 @@ func (o *Orchestrator) advanceParallelTask(ctx context.Context, snapshot *state.
 		return o.parallelBaselineTask(ctx, snapshot, id, taskState)
 	case "prompt", "repair_prompt":
 		return o.parallelPromptTask(ctx, snapshot, runtime, id, task, taskState)
+	case "recovery_prompt":
+		return o.parallelRecoveryPromptTask(ctx, snapshot, id, taskState)
+	case "resume":
+		return o.parallelResumeTask(ctx, snapshot, id, taskState)
 	case "evidence", "repair_evidence":
 		return o.parallelCollectTaskEvidence(ctx, snapshot, runtime, id, task, taskState)
+	case "fingerprint", "repair_fingerprint":
+		return o.parallelFingerprintTask(ctx, snapshot, id, taskState)
+	case "recovery_observe":
+		return o.parallelObserveRecovery(ctx, snapshot, id, taskState)
 	case "inspect", "repair_inspect":
 		return o.parallelInspectTask(ctx, snapshot, runtime, id, task, taskState)
 	default:
@@ -543,8 +572,12 @@ func (o *Orchestrator) advanceParallelTask(ctx context.Context, snapshot *state.
 }
 
 func (o *Orchestrator) parallelStartTask(ctx context.Context, snapshot *state.RunSnapshot, id string, taskState state.TaskRunState) error {
-	action := "parallel_start_agent_" + normalizeAgentPart(id)
-	if err := o.parallelPrepare(ctx, snapshot, action, "Builder Agent 시작", map[string]any{"taskId": id, "agent": taskState.Agent.Name}); err != nil {
+	if taskState.Agent.Name == "" {
+		return errors.New("parallel Builder Agent name is required before start")
+	}
+	action := parallelTaskAction("parallel_start_agent_", id)
+	snapshot.Tasks[id] = taskState
+	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "Builder Agent 시작", map[string]any{"taskId": id, "agent": taskState.Agent.Name}); err != nil {
 		return err
 	}
 	if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: taskState.Agent.Name, PaneID: taskState.Worktree.PaneID}); err != nil {
@@ -562,16 +595,22 @@ func (o *Orchestrator) parallelBaselineTask(ctx context.Context, snapshot *state
 	if !ok {
 		return errors.New("parallel Builder identity lookup is required")
 	}
-	action := "parallel_baseline_" + normalizeAgentPart(id)
-	if err := o.parallelPrepare(ctx, snapshot, action, "Builder prompt baseline 조회", map[string]any{"taskId": id}); err != nil {
+	action := parallelTaskAction("parallel_baseline_", id)
+	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "Builder prompt baseline 조회", map[string]any{"taskId": id}); err != nil {
 		return err
 	}
 	info, err := locator.GetInfo(ctx, taskState.Agent.Name)
-	if errors.Is(err, herdr.ErrAgentNotFound) || info.State == herdr.AgentStateBlocked || info.State == herdr.AgentStateUnknown {
+	if errors.Is(err, herdr.ErrAgentNotFound) {
+		return o.parallelScheduleRecovery(ctx, snapshot, id, taskState, "Builder Agent is absent during identity observation")
+	}
+	if err != nil {
+		return o.parallelScheduleRecovery(ctx, snapshot, id, taskState, "Builder Agent state observation failed")
+	}
+	if info.State == herdr.AgentStateBlocked || info.State == herdr.AgentStateUnknown {
 		return o.parallelOperatorBlock(ctx, snapshot, id, "live Agent identity is stale, blocked, unknown, or absent")
 	}
-	if err != nil || !matchesParallelAgentIdentity(info, taskState.Agent.Name, taskState.Worktree) {
-		return o.parallelRecoveryFailure(ctx, snapshot, id, taskState, "Builder identity reconciliation failed")
+	if !matchesParallelAgentIdentity(info, taskState.Agent.Name, taskState.Worktree) {
+		return o.parallelOperatorBlock(ctx, snapshot, id, "Builder identity reconciliation failed")
 	}
 	taskState.Agent.SessionID = strings.TrimSpace(info.SessionID)
 	if isTerminalIdentity(info.SessionID) {
@@ -590,6 +629,7 @@ func (o *Orchestrator) parallelBaselineTask(ctx context.Context, snapshot *state
 
 func (o *Orchestrator) parallelOperatorBlock(ctx context.Context, snapshot *state.RunSnapshot, id, message string) error {
 	snapshot.PendingAction = ""
+	snapshot.PendingTaskID = ""
 	snapshot.Phase = contract.PhaseNeedsOperator
 	snapshot.CurrentTask = id
 	snapshot.Summary = message
@@ -611,8 +651,8 @@ func (o *Orchestrator) parallelPromptTask(ctx context.Context, snapshot *state.R
 	if taskState.Prompt.RequestID == "" {
 		return errors.New("parallel Builder prompt receipt is missing")
 	}
-	action := "parallel_prompt_" + normalizeAgentPart(id)
-	if err := o.parallelPrepare(ctx, snapshot, action, "Builder packet 전송", map[string]any{"taskId": id, "agent": taskState.Agent.Name, "requestId": taskState.Prompt.RequestID}); err != nil {
+	action := parallelTaskAction("parallel_prompt_", id)
+	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "Builder packet 전송", map[string]any{"taskId": id, "agent": taskState.Agent.Name, "requestId": taskState.Prompt.RequestID}); err != nil {
 		return err
 	}
 	packet := builderPacket(runtime.contract, task, taskState.Prompt.RequestID)
@@ -622,7 +662,11 @@ func (o *Orchestrator) parallelPromptTask(ctx context.Context, snapshot *state.R
 			findings = append(findings, review.Finding{ID: finding.ID, Summary: finding.Summary, Paths: append([]string(nil), finding.Paths...)})
 		}
 		var err error
-		packet, err = review.BuildRepairPacket(review.RepairPacketInput{AcceptanceCriteria: append(append([]string(nil), runtime.contract.Parent.AcceptanceCriteria...), task.AcceptanceCriteria...), IntegrationSHA: snapshot.IntegrationSHA, BlockingFindings: findings, AllowedPaths: task.AllowedPaths, RemainingBudget: 2 - snapshot.RepairCount})
+		baseSHA := snapshot.RepairBaseSHA
+		if baseSHA == "" {
+			baseSHA = snapshot.IntegrationSHA
+		}
+		packet, err = review.BuildRepairPacket(review.RepairPacketInput{AcceptanceCriteria: append(append([]string(nil), runtime.contract.Parent.AcceptanceCriteria...), task.AcceptanceCriteria...), IntegrationSHA: baseSHA, BlockingFindings: findings, AllowedPaths: task.AllowedPaths, RemainingBudget: 2 - snapshot.RepairCount})
 		if err != nil {
 			return o.parallelBlock(ctx, snapshot, "Repair packet를 생성할 수 없습니다")
 		}
@@ -631,17 +675,42 @@ func (o *Orchestrator) parallelPromptTask(ctx context.Context, snapshot *state.R
 	if err := o.deps.Herdr.Prompt(ctx, taskState.Agent.Name, packet); err != nil {
 		return err
 	}
-	if taskState.Stage == "repair_prompt" {
-		// The prior evidence/merge/check observations are stale as soon as a
-		// repair packet is accepted; the fresh commit is required below.
-		snapshot.IntegrationSHA = ""
-		snapshot.IntegrationVerification = nil
-		snapshot.FinalSHA, snapshot.FinalChecksSHA, snapshot.FinalChecks = "", "", nil
-	}
 	taskState.Stage = "evidence"
 	taskState.LastProgressAt = o.now()
 	snapshot.Tasks[id] = taskState
 	return o.parallelFinish(ctx, snapshot, "Builder packet 전송 완료")
+}
+
+func (o *Orchestrator) parallelRecoveryPromptTask(ctx context.Context, snapshot *state.RunSnapshot, id string, taskState state.TaskRunState) error {
+	action := parallelTaskAction("parallel_recovery_prompt_", id)
+	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "recovery continuation prompt", map[string]any{"requestId": taskState.Prompt.RequestID}); err != nil {
+		return err
+	}
+	packet := recovery.ContinuationInstruction + "\nUse requestId=" + taskState.Prompt.RequestID + "."
+	if err := o.deps.Herdr.Prompt(ctx, taskState.Agent.Name, packet); err != nil {
+		return err
+	}
+	taskState.Stage = "evidence"
+	taskState.LastProgressAt = o.now()
+	snapshot.Tasks[id] = taskState
+	return o.parallelFinish(ctx, snapshot, "recovery continuation prompt sent")
+}
+
+func (o *Orchestrator) parallelResumeTask(ctx context.Context, snapshot *state.RunSnapshot, id string, taskState state.TaskRunState) error {
+	if !taskState.NativeResume {
+		return o.parallelOperatorBlock(ctx, snapshot, id, "terminal-only Agent cannot be natively resumed")
+	}
+	action := parallelTaskAction("parallel_resume_agent_", id)
+	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "provider Agent session resume", nil); err != nil {
+		return err
+	}
+	if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: taskState.Agent.Name, PaneID: taskState.Worktree.PaneID}); err != nil {
+		return err
+	}
+	taskState.Stage = "baseline"
+	taskState.LastProgressAt = o.now()
+	snapshot.Tasks[id] = taskState
+	return o.parallelFinish(ctx, snapshot, "provider Agent resume requested")
 }
 
 func (o *Orchestrator) parallelCollectTaskEvidence(ctx context.Context, snapshot *state.RunSnapshot, runtime *runRuntime, id string, task contract.Task, taskState state.TaskRunState) error {
@@ -650,14 +719,14 @@ func (o *Orchestrator) parallelCollectTaskEvidence(ctx context.Context, snapshot
 	if !ok {
 		return o.parallelRecoveryFailure(ctx, snapshot, id, taskState, "Builder evidence reader is unavailable")
 	}
-	action := "parallel_collect_evidence_" + normalizeAgentPart(id)
-	if err := o.parallelPrepare(ctx, snapshot, action, "Builder structured evidence 수집", map[string]any{"taskId": id}); err != nil {
+	action := parallelTaskAction("parallel_collect_evidence_", id)
+	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "Builder structured evidence 수집", map[string]any{"taskId": id}); err != nil {
 		return err
 	}
 	evidence, err := reader.ReadEvidence(ctx, taskState.Agent.Name)
 	commitSHA := strings.ToLower(evidence.CommitSHA)
 	if err != nil || evidence.RequestID != taskState.Prompt.RequestID || !validCommitSHA(commitSHA) || !parallelVerificationValid(evidence.Verification, task.Verification) {
-		return o.parallelRecoveryFailure(ctx, snapshot, id, taskState, "Builder structured evidence is stale or incomplete")
+		return o.parallelScheduleRecovery(ctx, snapshot, id, taskState, "Builder structured evidence is stale or incomplete")
 	}
 	taskState.Agent.RequestID = evidence.RequestID
 	taskState.Agent.CommitSHA = commitSHA
@@ -665,28 +734,38 @@ func (o *Orchestrator) parallelCollectTaskEvidence(ctx context.Context, snapshot
 	for _, check := range evidence.Verification {
 		taskState.Agent.VerificationEvidence = append(taskState.Agent.VerificationEvidence, state.VerificationEvidence{Command: strings.TrimSpace(check.Command), Outcome: "passed", Duration: strings.TrimSpace(check.Duration)})
 	}
-	taskState.RecoveryCount = 0
-	snapshot.RecoveryCount = 0
 	wasFreshRequired := taskState.RequiresFreshCommit
-	previousFingerprint := taskState.PreviousFingerprint
 	previousCommitSHA := taskState.PreviousCommitSHA
 	taskState.PreviousCommitSHA = previousCommit
 	taskState.PreviousFingerprint = taskState.ProgressFingerprint
-	managedFingerprint := ""
-	if reader, ok := o.deps.Worktree.(FingerprintReader); ok {
-		if fingerprint, fingerprintErr := reader.Fingerprint(ctx, snapshot.Integration.Path); fingerprintErr == nil {
-			managedFingerprint = strings.TrimSpace(fingerprint)
-		}
-	}
-	progressFingerprint := RecoveryFingerprint(taskState.Agent.CommitSHA, managedFingerprint, completedTaskIDs(snapshot), taskState.Agent.VerificationEvidence)
-	if wasFreshRequired && commitSHA == previousCommitSHA && (managedFingerprint == "" || progressFingerprint == previousFingerprint) {
+	if wasFreshRequired && commitSHA == previousCommitSHA {
 		return o.parallelRecoveryFailure(ctx, snapshot, id, taskState, "Builder repair did not produce a fresh commit or fingerprint")
 	}
+	taskState.RecoveryCount = 0
 	taskState.RequiresFreshCommit = false
-	taskState.ProgressFingerprint = progressFingerprint
-	taskState.Stage = "inspect"
+	taskState.Stage = "fingerprint"
 	snapshot.Tasks[id] = taskState
 	return o.parallelFinish(ctx, snapshot, "Builder structured evidence 확인")
+}
+
+func (o *Orchestrator) parallelFingerprintTask(ctx context.Context, snapshot *state.RunSnapshot, id string, taskState state.TaskRunState) error {
+	action := parallelTaskAction("parallel_fingerprint_", id)
+	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "managed Git fingerprint 확인", nil); err != nil {
+		return err
+	}
+	managedFingerprint := ""
+	if reader, ok := o.deps.Worktree.(FingerprintReader); ok {
+		fingerprint, err := reader.Fingerprint(ctx, snapshot.Integration.Path)
+		if err != nil {
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		managedFingerprint = strings.TrimSpace(fingerprint)
+	}
+	taskState.ProgressFingerprint = RecoveryFingerprint(taskState.Agent.CommitSHA, managedFingerprint, completedTaskIDs(snapshot), taskState.Agent.VerificationEvidence)
+	taskState.LastProgressAt = o.now()
+	taskState.Stage = "inspect"
+	snapshot.Tasks[id] = taskState
+	return o.parallelFinish(ctx, snapshot, "managed Git fingerprint 저장")
 }
 
 func parallelVerificationValid(got []herdr.VerificationCheck, required []string) bool {
@@ -728,8 +807,8 @@ func (o *Orchestrator) parallelInspectTask(ctx context.Context, snapshot *state.
 	if !ok {
 		return o.parallelBlock(ctx, snapshot, "Git inspection port is unavailable")
 	}
-	action := "parallel_inspect_commit_" + normalizeAgentPart(id)
-	if err := o.parallelPrepare(ctx, snapshot, action, "Git에서 immutable Builder commit 확인", map[string]any{"taskId": id, "commitSha": taskState.Agent.CommitSHA}); err != nil {
+	action := parallelTaskAction("parallel_inspect_commit_", id)
+	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "Git에서 immutable Builder commit 확인", map[string]any{"taskId": id, "commitSha": taskState.Agent.CommitSHA}); err != nil {
 		return err
 	}
 	inspection, err := inspector.InspectCommit(ctx, taskState.Worktree.Path, runtime.contract.BaseCommit, task.Branch, taskState.Agent.CommitSHA)
@@ -751,17 +830,46 @@ func (o *Orchestrator) parallelInspectTask(ctx context.Context, snapshot *state.
 }
 
 func (o *Orchestrator) parallelRecoveryFailure(ctx context.Context, snapshot *state.RunSnapshot, id string, taskState state.TaskRunState, message string) error {
-	// The failed observation itself did not produce a new progress fingerprint;
-	// acknowledge the last durable fingerprint before applying the recovery
-	// policy so a prior successful step does not mask repeated no-progress.
-	taskState.PreviousFingerprint = taskState.ProgressFingerprint
 	locator, hasLocator := o.deps.Herdr.(AgentLocator)
 	info, infoErr := herdr.AgentInfo{}, error(nil)
 	if hasLocator {
 		info, infoErr = locator.GetInfo(ctx, taskState.Agent.Name)
 	}
+	return o.parallelApplyRecovery(ctx, snapshot, id, taskState, info, infoErr, message)
+}
+
+func (o *Orchestrator) parallelScheduleRecovery(ctx context.Context, snapshot *state.RunSnapshot, id string, taskState state.TaskRunState, message string) error {
+	taskState.Stage = "recovery_observe"
+	snapshot.Tasks[id] = taskState
+	snapshot.PendingAction = ""
+	snapshot.PendingTaskID = ""
+	snapshot.Summary = message
+	snapshot.UpdatedAt = o.now()
+	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
+		return err
+	}
+	return o.append(ctx, snapshot.RunID, state.Event{Type: "recovery_observation_required", Phase: snapshot.Phase, Message: message, Data: map[string]any{"taskId": id}})
+}
+
+func (o *Orchestrator) parallelObserveRecovery(ctx context.Context, snapshot *state.RunSnapshot, id string, taskState state.TaskRunState) error {
+	locator, ok := o.deps.Herdr.(AgentLocator)
+	if !ok {
+		return o.pendingUncertain(ctx, snapshot)
+	}
+	info, err := locator.GetInfo(ctx, taskState.Agent.Name)
+	return o.parallelApplyRecovery(ctx, snapshot, id, taskState, info, err, "Builder structured evidence is stale or incomplete")
+}
+
+func (o *Orchestrator) parallelApplyRecovery(ctx context.Context, snapshot *state.RunSnapshot, id string, taskState state.TaskRunState, info herdr.AgentInfo, infoErr error, message string) error {
+	// The failed observation itself did not produce a new progress fingerprint;
+	// acknowledge the last durable fingerprint before applying the recovery
+	// policy so a prior successful step does not mask repeated no-progress.
+	taskState.PreviousFingerprint = taskState.ProgressFingerprint
 	if infoErr == nil && info.Name != "" && !matchesParallelAgentIdentity(info, taskState.Agent.Name, taskState.Worktree) {
 		return o.parallelOperatorBlock(ctx, snapshot, id, "Agent identity changed during recovery")
+	}
+	if infoErr == nil && info.Name == "" {
+		return o.parallelOperatorBlock(ctx, snapshot, id, "Agent state identity is unavailable")
 	}
 	if errors.Is(infoErr, herdr.ErrAgentNotFound) && !taskState.NativeResume {
 		return o.parallelOperatorBlock(ctx, snapshot, id, "terminal-only Agent is absent; operator action is required")
@@ -778,15 +886,16 @@ func (o *Orchestrator) parallelRecoveryFailure(ctx context.Context, snapshot *st
 	if stateName == "" {
 		stateName = "idle"
 	}
-	alive := infoErr == nil
+	alive := infoErr == nil && info.Name != ""
 	decision := recovery.Decide(o.now(), recovery.Policy{WorkingWait: workingWait, Limit: limit}, recovery.AgentSnapshot{
 		State: stateName, Alive: alive, LastProgress: taskState.LastProgressAt,
 		ProgressFingerprint: taskState.ProgressFingerprint, PreviousFingerprint: taskState.PreviousFingerprint,
-		RecoveryCount: snapshot.RecoveryCount, CanNativeResume: taskState.NativeResume,
+		RecoveryCount: taskState.RecoveryCount, CanNativeResume: taskState.NativeResume,
 	})
 	switch decision.Kind {
 	case recovery.Wait:
 		snapshot.PendingAction = ""
+		snapshot.PendingTaskID = ""
 		snapshot.Summary = "live Agent progress wait: " + message
 		snapshot.UpdatedAt = o.now()
 		if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
@@ -801,10 +910,17 @@ func (o *Orchestrator) parallelRecoveryFailure(ctx context.Context, snapshot *st
 		if decision.NextCount >= limit {
 			return o.parallelBlock(ctx, snapshot, "recovery limit exhausted")
 		}
-		snapshot.RecoveryCount = decision.NextCount
 		taskState.RecoveryCount = decision.NextCount
+		if decision.Kind == recovery.ResumeSession {
+			taskState.Stage = "resume"
+		} else {
+			taskState.Stage = "recovery_prompt"
+		}
+		taskState.Prompt.RequestID = parallelPromptRequestID(snapshot.RunID, id, taskState.RecoveryCount)
+		taskState.LastProgressAt = o.now()
 		snapshot.Tasks[id] = taskState
 		snapshot.PendingAction = ""
+		snapshot.PendingTaskID = ""
 		snapshot.Summary = message
 		snapshot.UpdatedAt = o.now()
 		if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
@@ -832,8 +948,8 @@ func (o *Orchestrator) advanceParallelIntegrating(ctx context.Context, snapshot 
 			if !legacyOK {
 				return o.parallelBlock(ctx, snapshot, "immutable integration port is unavailable")
 			}
-			action := "parallel_merge_task_" + normalizeAgentPart(id)
-			if err := o.parallelPrepare(ctx, snapshot, action, "immutable Task commit 병합", map[string]any{"taskId": id, "commitSha": taskState.Agent.CommitSHA}); err != nil {
+			action := parallelTaskAction("parallel_merge_task_", id)
+			if err := o.parallelPrepareTask(ctx, snapshot, id, action, "immutable Task commit 병합", map[string]any{"taskId": id, "commitSha": taskState.Agent.CommitSHA}); err != nil {
 				return err
 			}
 			if err := legacy.MergeCommit(ctx, snapshot.Integration.Path, taskState.Agent.CommitSHA); err != nil {
@@ -844,8 +960,8 @@ func (o *Orchestrator) advanceParallelIntegrating(ctx context.Context, snapshot 
 			snapshot.Tasks[id] = taskState
 			return o.parallelFinish(ctx, snapshot, "Task immutable merge 완료")
 		}
-		action := "parallel_merge_task_" + normalizeAgentPart(id)
-		if err := o.parallelPrepare(ctx, snapshot, action, "immutable Task commit 병합", map[string]any{"taskId": id, "commitSha": taskState.Agent.CommitSHA}); err != nil {
+		action := parallelTaskAction("parallel_merge_task_", id)
+		if err := o.parallelPrepareTask(ctx, snapshot, id, action, "immutable Task commit 병합", map[string]any{"taskId": id, "commitSha": taskState.Agent.CommitSHA}); err != nil {
 			return err
 		}
 		if err := merger.MergeCommitNoFF(ctx, snapshot.Integration.Path, taskState.Agent.CommitSHA); err != nil {
@@ -940,11 +1056,16 @@ func (o *Orchestrator) advanceParallelReview(ctx context.Context, snapshot *stat
 	name := agentName("reviewer", snapshot.RunID)
 	switch snapshot.ActionCursor {
 	case 0:
+		snapshot.Reviewer.Name = name
+		snapshot.ReviewerExpectedPath = snapshot.IntegrationPath
+		snapshot.ReviewerExpectedBranch = snapshot.Integration.Branch
+		snapshot.ReviewerExpectedLabel = "threaddock-review-" + string(snapshot.RunID)
 		opener, ok := o.deps.Herdr.(WorktreeOpener)
 		if !ok {
 			return errors.New("parallel Reviewer Worktree opener is required")
 		}
-		if err := o.parallelPrepare(ctx, snapshot, "parallel_open_reviewer_worktree", "Reviewer Worktree 연결", map[string]any{"path": snapshot.IntegrationPath}); err != nil {
+		snapshot.ReviewerWorktree = state.WorktreeState{Path: snapshot.ReviewerExpectedPath, Branch: snapshot.ReviewerExpectedBranch}
+		if err := o.parallelPrepare(ctx, snapshot, "parallel_open_reviewer_worktree", "Reviewer Worktree 연결", map[string]any{"path": snapshot.ReviewerExpectedPath, "branch": snapshot.ReviewerExpectedBranch, "label": snapshot.ReviewerExpectedLabel}); err != nil {
 			return err
 		}
 		opened, err := opener.OpenWorktree(ctx, herdr.OpenWorktreeRequest{Cwd: snapshot.RepositoryPath, Path: snapshot.IntegrationPath, Label: "threaddock-review-" + string(snapshot.RunID)})
@@ -954,10 +1075,10 @@ func (o *Orchestrator) advanceParallelReview(ctx context.Context, snapshot *stat
 		snapshot.ReviewerWorktree = state.WorktreeState{Path: opened.Path, WorkspaceID: opened.WorkspaceID, PaneID: opened.PaneID, Branch: snapshot.Integration.Branch}
 		return o.parallelFinish(ctx, snapshot, "Reviewer Worktree 준비 완료")
 	case 1:
-		if err := o.parallelPrepare(ctx, snapshot, "parallel_start_reviewer", "Reviewer Agent 시작", map[string]any{"agent": name}); err != nil {
+		if err := o.parallelPrepare(ctx, snapshot, "parallel_start_reviewer", "Reviewer Agent 시작", map[string]any{"agent": snapshot.Reviewer.Name}); err != nil {
 			return err
 		}
-		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: name, PaneID: snapshot.ReviewerWorktree.PaneID}); err != nil {
+		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: snapshot.Reviewer.Name, PaneID: snapshot.ReviewerWorktree.PaneID}); err != nil {
 			return err
 		}
 		snapshot.Reviewer = state.AgentEvidence{Name: name, IdentitySource: "provider"}
@@ -1037,7 +1158,11 @@ func (o *Orchestrator) advanceParallelReview(ctx context.Context, snapshot *stat
 			taskState.Prompt = state.PromptReceipt{RequestID: parallelPromptRequestID(snapshot.RunID, taskID, taskState.RepairCount)}
 			snapshot.Tasks[taskID] = taskState
 			snapshot.CurrentTask = taskID
+			snapshot.RepairBaseSHA = snapshot.IntegrationSHA
+			snapshot.IntegrationSHA, snapshot.IntegrationVerification = "", nil
+			snapshot.FinalSHA, snapshot.FinalChecksSHA, snapshot.FinalChecks = "", "", nil
 			snapshot.PendingAction = ""
+			snapshot.PendingTaskID = ""
 			return o.parallelTransition(ctx, snapshot, contract.PhaseBuilding, "Reviewer findings에 대한 bounded repair 시작")
 		default:
 			return o.parallelBlock(ctx, snapshot, "Reviewer repair budget exhausted")
@@ -1276,13 +1401,17 @@ func (o *Orchestrator) advanceParallelCI(ctx context.Context, snapshot *state.Ru
 		}
 		return o.parallelFinish(ctx, snapshot, "final SHA push 완료")
 	case 5:
+		if err := o.parallelPrepare(ctx, snapshot, "parallel_mark_pr_ready", "Draft PR ready 상태 확인", nil); err != nil {
+			return err
+		}
+		if !snapshot.PullRequestDraft {
+			return o.parallelFinish(ctx, snapshot, "PR already ready; ready mutation skipped")
+		}
 		readier, ok := o.deps.GitHub.(github.PullRequestReadier)
 		if !ok {
 			return o.parallelBlock(ctx, snapshot, "pull request ready port is unavailable")
 		}
-		if err := o.parallelPrepare(ctx, snapshot, "parallel_mark_pr_ready", "Draft PR를 ready로 전환", nil); err != nil {
-			return err
-		}
+		snapshot.Summary = "Draft PR를 ready로 전환"
 		pr, err := readier.MarkReadyForReview(ctx, repo, snapshot.PullRequest)
 		if err != nil || pr.Number != snapshot.PullRequest || pr.Draft || pr.HeadSHA != snapshot.FinalSHA {
 			return o.parallelBlock(ctx, snapshot, "ready PR response does not match final SHA")
@@ -1337,6 +1466,7 @@ func (o *Orchestrator) advanceParallelCI(ctx context.Context, snapshot *state.Ru
 		}
 		if len(checks) == 0 {
 			snapshot.PendingAction = ""
+			snapshot.PendingTaskID = ""
 			snapshot.Summary = "final SHA checks 대기 중"
 			snapshot.UpdatedAt = o.now()
 			if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
@@ -1347,6 +1477,7 @@ func (o *Orchestrator) advanceParallelCI(ctx context.Context, snapshot *state.Ru
 		for _, check := range checks {
 			if check.State == "pending" {
 				snapshot.PendingAction = ""
+				snapshot.PendingTaskID = ""
 				snapshot.Summary = "final SHA checks 대기 중"
 				snapshot.UpdatedAt = o.now()
 				if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
@@ -1520,7 +1651,11 @@ func (o *Orchestrator) parallelCIRepairOrBlock(ctx context.Context, snapshot *st
 		taskState.Agent.Patch = ""
 		snapshot.ReviewFindings = []state.ReviewFinding{{ID: "ci", Summary: message, Paths: []string{repairPath}}}
 		snapshot.Tasks[taskID] = taskState
+		snapshot.RepairBaseSHA = snapshot.IntegrationSHA
+		snapshot.IntegrationSHA, snapshot.IntegrationVerification = "", nil
+		snapshot.FinalSHA, snapshot.FinalChecksSHA, snapshot.FinalChecks = "", "", nil
 		snapshot.PendingAction = ""
+		snapshot.PendingTaskID = ""
 		return o.parallelTransition(ctx, snapshot, contract.PhaseBuilding, "CI findings에 대한 bounded repair 시작")
 	default:
 		return o.parallelBlock(ctx, snapshot, message)
@@ -1535,14 +1670,22 @@ func (o *Orchestrator) advanceParallelMerge(ctx context.Context, snapshot *state
 	if snapshot.PullRequest <= 0 || !validCommitSHA(snapshot.FinalSHA) || snapshot.PullRequestHeadSHA != snapshot.FinalSHA {
 		return o.parallelBlock(ctx, snapshot, "merge requires PR head equal to final SHA")
 	}
-	currentPR, err := o.deps.GitHub.GetPullRequest(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.PullRequest)
-	if err != nil || currentPR.Number != snapshot.PullRequest || currentPR.State != "open" || currentPR.HeadSHA != snapshot.FinalSHA || currentPR.Base != runtime.contract.Repository.DefaultBranch || currentPR.Mergeable == nil || !*currentPR.Mergeable {
-		return o.parallelBlock(ctx, snapshot, "merge preflight PR evidence is stale or unmergeable")
+	if !snapshot.MergePreflightReady {
+		if err := o.parallelPrepare(ctx, snapshot, "parallel_merge_preflight", "main merge preflight PR evidence", map[string]any{"pullRequest": snapshot.PullRequest, "sha": snapshot.FinalSHA}); err != nil {
+			return err
+		}
+		currentPR, err := o.deps.GitHub.GetPullRequest(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.PullRequest)
+		if err != nil || currentPR.Number != snapshot.PullRequest || currentPR.State != "open" || currentPR.HeadSHA != snapshot.FinalSHA || currentPR.Base != runtime.contract.Repository.DefaultBranch || currentPR.Mergeable == nil || !*currentPR.Mergeable {
+			return o.parallelBlock(ctx, snapshot, "merge preflight PR evidence is stale or unmergeable")
+		}
+		snapshot.ExpectedMergeHeadSHA = snapshot.FinalSHA
+		snapshot.MergePreflightReady = true
+		return o.parallelFinish(ctx, snapshot, "main merge preflight ready")
 	}
-	if err := o.parallelPrepare(ctx, snapshot, "parallel_merge_main", "main에 PR merge", map[string]any{"pullRequest": snapshot.PullRequest, "sha": snapshot.FinalSHA}); err != nil {
+	if err := o.parallelPrepare(ctx, snapshot, "parallel_merge_main", "main에 PR merge", map[string]any{"pullRequest": snapshot.PullRequest, "sha": snapshot.ExpectedMergeHeadSHA}); err != nil {
 		return err
 	}
-	result, err := merger.MergePullRequest(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.PullRequest, snapshot.FinalSHA, "merge")
+	result, err := merger.MergePullRequest(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.PullRequest, snapshot.ExpectedMergeHeadSHA, "merge")
 	if err != nil {
 		return err
 	}
@@ -1550,6 +1693,7 @@ func (o *Orchestrator) advanceParallelMerge(ctx context.Context, snapshot *state
 		return errors.New("GitHub merge response is incomplete")
 	}
 	snapshot.MergeSHA = result.SHA
+	snapshot.MergePreflightReady = false
 	snapshot.PullRequestMerged = true
 	if snapshot.ProjectAutomationEnabled {
 		// Keep the Done ProjectV2 mutation in its own Advance so the main merge
@@ -1569,6 +1713,7 @@ func (o *Orchestrator) advanceParallelMerge(ctx context.Context, snapshot *state
 	snapshot.Phase = contract.PhaseCompleted
 	snapshot.Summary = "병렬 실행과 감독형 자동 병합 완료"
 	snapshot.PendingAction = ""
+	snapshot.PendingTaskID = ""
 	snapshot.UpdatedAt = o.now()
 	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
 		return err
@@ -1594,7 +1739,7 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 		if strings.HasSuffix(action, "_done") && snapshot.ProjectAutomationEnabled {
 			reader, ok := o.deps.GitHub.(ProjectStatusReader)
 			if !ok || snapshot.Registration.NodeID == "" {
-				return ErrPendingReconcile
+				return o.pendingUncertain(ctx, snapshot)
 			}
 			observed, err := reader.GetProjectStatus(ctx, o.deps.Project, snapshot.Registration.NodeID)
 			if err != nil {
@@ -1627,46 +1772,76 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 		return o.parallelFinishPreserveCursor(ctx, snapshot, "Project status intent reconciled")
 	}
 	if strings.HasPrefix(action, "parallel_create_worktree_") {
-		id := strings.TrimPrefix(action, "parallel_create_worktree_")
+		id := pendingParallelTaskID(snapshot, action, "parallel_create_worktree_")
 		return o.reconcileParallelTaskWorktree(ctx, snapshot, id)
 	}
 	if strings.HasPrefix(action, "parallel_start_agent_") {
-		id := strings.TrimPrefix(action, "parallel_start_agent_")
+		id := pendingParallelTaskID(snapshot, action, "parallel_start_agent_")
+		return o.reconcileParallelTaskAgent(ctx, snapshot, id)
+	}
+	if strings.HasPrefix(action, "parallel_resume_agent_") {
+		id := pendingParallelTaskID(snapshot, action, "parallel_resume_agent_")
 		return o.reconcileParallelTaskAgent(ctx, snapshot, id)
 	}
 	if strings.HasPrefix(action, "parallel_baseline_") {
-		id := strings.TrimPrefix(action, "parallel_baseline_")
+		id := pendingParallelTaskID(snapshot, action, "parallel_baseline_")
 		if id == "reviewer" {
 			return o.reconcileParallelReviewerBaseline(ctx, snapshot)
 		}
 		return o.reconcileParallelTaskBaseline(ctx, snapshot, id)
 	}
 	if strings.HasPrefix(action, "parallel_prompt_") {
-		id := strings.TrimPrefix(action, "parallel_prompt_")
+		id := pendingParallelTaskID(snapshot, action, "parallel_prompt_")
 		if id == "reviewer" {
 			return o.reconcileParallelPromptReceipt(ctx, snapshot, snapshot.Reviewer.Name, snapshot.ReviewerPrompt, func() { snapshot.Reviewer.Verification = []string{"review schema sent"} })
 		}
 		return o.reconcileParallelTaskPrompt(ctx, snapshot, id)
 	}
+	if strings.HasPrefix(action, "parallel_recovery_prompt_") {
+		id := pendingParallelTaskID(snapshot, action, "parallel_recovery_prompt_")
+		return o.reconcileParallelTaskPrompt(ctx, snapshot, id)
+	}
 	if strings.HasPrefix(action, "parallel_collect_evidence_") {
-		return o.reconcileParallelTaskEvidence(ctx, snapshot, runtime, strings.TrimPrefix(action, "parallel_collect_evidence_"))
+		return o.reconcileParallelTaskEvidence(ctx, snapshot, runtime, pendingParallelTaskID(snapshot, action, "parallel_collect_evidence_"))
+	}
+	if strings.HasPrefix(action, "parallel_fingerprint_") {
+		id := pendingParallelTaskID(snapshot, action, "parallel_fingerprint_")
+		taskState, exists := snapshot.Tasks[id]
+		if !exists {
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		managedFingerprint := ""
+		if reader, ok := o.deps.Worktree.(FingerprintReader); ok {
+			fingerprint, err := reader.Fingerprint(ctx, snapshot.Integration.Path)
+			if err != nil {
+				return o.pendingUncertain(ctx, snapshot)
+			}
+			managedFingerprint = strings.TrimSpace(fingerprint)
+		}
+		taskState.ProgressFingerprint = RecoveryFingerprint(taskState.Agent.CommitSHA, managedFingerprint, completedTaskIDs(snapshot), taskState.Agent.VerificationEvidence)
+		taskState.Stage = "inspect"
+		snapshot.Tasks[id] = taskState
+		return o.parallelFinish(ctx, snapshot, "managed Git fingerprint intent reconciled")
 	}
 	if strings.HasPrefix(action, "parallel_inspect_commit_") {
-		return o.reconcileParallelTaskInspection(ctx, snapshot, runtime, strings.TrimPrefix(action, "parallel_inspect_commit_"))
+		return o.reconcileParallelTaskInspection(ctx, snapshot, runtime, pendingParallelTaskID(snapshot, action, "parallel_inspect_commit_"))
 	}
 	if strings.HasPrefix(action, "parallel_merge_task_") {
-		id := strings.TrimPrefix(action, "parallel_merge_task_")
+		id := pendingParallelTaskID(snapshot, action, "parallel_merge_task_")
 		presence, ok := o.deps.Worktree.(CommitPresenceReader)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		taskState, exists := snapshot.Tasks[id]
 		if !exists {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		present, err := presence.IsAncestor(ctx, snapshot.Integration.Path, taskState.Agent.CommitSHA)
-		if err != nil || !present {
-			return ErrPendingReconcile
+		if err != nil {
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		if !present {
+			return o.clearParallelPending(ctx, snapshot, "Task commit is not present; immutable merge may be retried")
 		}
 		taskState.State, taskState.Stage = "completed", "merged"
 		snapshot.Tasks[id] = taskState
@@ -1680,22 +1855,22 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 	case "parallel_read_final_sha":
 		locator, ok := o.deps.Worktree.(CurrentCommitLocator)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		sha, err := locator.CurrentCommit(ctx, snapshot.Integration.Path)
 		if err != nil || !validCommitSHA(sha) {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		snapshot.FinalSHA, snapshot.FinalChecksSHA = strings.TrimSpace(sha), ""
 		return o.parallelFinish(ctx, snapshot, "final SHA intent reconciled")
 	case "parallel_reread_latest_main":
 		locator, ok := o.deps.Worktree.(RemoteHeadLocator)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		sha, err := locator.FetchRemoteHead(ctx, snapshot.RepositoryPath, o.remote(), runtime.contract.Repository.DefaultBranch)
 		if err != nil || !validCommitSHA(sha) {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		if strings.TrimSpace(sha) != snapshot.MainSHA {
 			snapshot.MainSHA, snapshot.FinalSHA, snapshot.FinalChecksSHA, snapshot.FinalChecks, snapshot.ActionCursor = strings.TrimSpace(sha), "", "", nil, 0
@@ -1704,22 +1879,29 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 	case "parallel_open_reviewer_worktree":
 		locator, ok := o.deps.Herdr.(WorktreeLocator)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
-		found, exists, err := locator.FindWorktree(ctx, snapshot.RepositoryPath, snapshot.IntegrationPath, "threaddock-review-"+string(snapshot.RunID))
-		if err != nil || !exists || !canonicalPathEqual(found.Path, snapshot.IntegrationPath) || found.WorkspaceID == "" || found.PaneID == "" {
-			return ErrPendingReconcile
+		path, label := snapshot.ReviewerExpectedPath, snapshot.ReviewerExpectedLabel
+		if path == "" {
+			path = snapshot.IntegrationPath
+		}
+		if label == "" {
+			label = "threaddock-review-" + string(snapshot.RunID)
+		}
+		found, exists, err := locator.FindWorktree(ctx, snapshot.RepositoryPath, path, label)
+		if err != nil || !exists || !canonicalPathEqual(found.Path, path) || found.WorkspaceID == "" || found.PaneID == "" {
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		snapshot.ReviewerWorktree = state.WorktreeState{Path: found.Path, WorkspaceID: found.WorkspaceID, PaneID: found.PaneID, Branch: snapshot.Integration.Branch}
 		return o.parallelFinish(ctx, snapshot, "Reviewer Worktree intent reconciled")
 	case "parallel_start_reviewer":
 		locator, ok := o.deps.Herdr.(AgentLocator)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		info, err := locator.GetInfo(ctx, snapshot.Reviewer.Name)
 		if err != nil || !matchesParallelAgentIdentity(info, snapshot.Reviewer.Name, snapshot.ReviewerWorktree) {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		snapshot.Reviewer.SessionID = info.SessionID
 		return o.parallelFinish(ctx, snapshot, "Reviewer Agent intent reconciled")
@@ -1728,88 +1910,102 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 	case "parallel_collect_review":
 		reader, ok := o.deps.Herdr.(ReviewEvidenceReader)
 		if !ok {
-			return o.parallelBlock(ctx, snapshot, "Reviewer evidence is uncertain after restart")
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		evidence, err := reader.ReadReviewEvidence(ctx, snapshot.Reviewer.Name, snapshot.ReviewerPrompt.RequestID)
-		if err != nil || evidence.Decision != "accept" {
-			return o.parallelBlock(ctx, snapshot, "Reviewer evidence is uncertain after restart")
+		if err != nil {
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		snapshot.ReviewRiskCategories = append([]string(nil), evidence.RiskCategories...)
+		snapshot.ReviewFindings = make([]state.ReviewFinding, 0, len(evidence.BlockingFindings))
+		for _, finding := range evidence.BlockingFindings {
+			snapshot.ReviewFindings = append(snapshot.ReviewFindings, state.ReviewFinding{ID: finding.ID, Summary: finding.Summary, Paths: append([]string(nil), finding.Paths...)})
+		}
+		if evidence.Decision != "accept" || len(snapshot.ReviewFindings) != 0 {
+			return o.parallelBlock(ctx, snapshot, "Reviewer blocking evidence requires a fresh repair decision")
 		}
 		snapshot.ReviewDecision = "accept"
 		return o.parallelFinish(ctx, snapshot, "Reviewer evidence intent reconciled")
 	case "parallel_read_latest_main":
 		locator, ok := o.deps.Worktree.(RemoteHeadLocator)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		sha, err := locator.FetchRemoteHead(ctx, snapshot.RepositoryPath, o.remote(), runtime.contract.Repository.DefaultBranch)
 		if err != nil || !validCommitSHA(sha) {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		snapshot.MainSHA = strings.TrimSpace(sha)
 		return o.parallelFinish(ctx, snapshot, "latest remote main intent reconciled")
 	case "parallel_merge_latest_main":
 		presence, ok := o.deps.Worktree.(CommitPresenceReader)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		present, err := presence.IsAncestor(ctx, snapshot.Integration.Path, snapshot.MainSHA)
-		if err != nil || !present {
-			return ErrPendingReconcile
+		if err != nil {
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		if !present {
+			return o.clearParallelPending(ctx, snapshot, "latest main SHA is not present; merge may be retried")
 		}
 		return o.parallelFinish(ctx, snapshot, "latest-main merge intent reconciled")
 	case "parallel_locate_integration_sha":
 		locator, ok := o.deps.Worktree.(CurrentCommitLocator)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		sha, err := locator.CurrentCommit(ctx, snapshot.Integration.Path)
 		if err != nil || !validCommitSHA(sha) {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		snapshot.IntegrationSHA = strings.TrimSpace(sha)
 		return o.parallelFinish(ctx, snapshot, "integration SHA intent reconciled")
 	case "parallel_push_integration", "parallel_push_final_sha":
 		locator, ok := o.deps.Worktree.(RemoteHeadLocator)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		expected := snapshot.IntegrationSHA
 		if action == "parallel_push_final_sha" {
 			expected = snapshot.FinalSHA
 		}
 		if !validCommitSHA(expected) {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		remoteSHA, err := locator.FetchRemoteHead(ctx, snapshot.RepositoryPath, o.remote(), snapshot.Integration.Branch)
-		if err != nil || strings.TrimSpace(remoteSHA) != expected {
-			return ErrPendingReconcile
+		if err != nil {
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		if strings.TrimSpace(remoteSHA) != expected {
+			return o.clearParallelPending(ctx, snapshot, "remote branch does not contain expected SHA; push may be retried safely")
 		}
 		return o.parallelFinish(ctx, snapshot, "branch push intent reconciled")
 	case "parallel_create_draft_pr":
 		finder, ok := o.deps.GitHub.(github.PullRequestFinder)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		pr, found, err := finder.FindOpenPullRequest(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.Integration.Branch, runtime.contract.Repository.DefaultBranch)
 		if err != nil {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		if !found {
 			return o.clearParallelPending(ctx, snapshot, "Draft PR not found; next Advance may create it")
 		}
 		if pr.Number <= 0 || pr.Head != snapshot.Integration.Branch || pr.Base != runtime.contract.Repository.DefaultBranch || pr.HeadSHA != snapshot.IntegrationSHA {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		snapshot.PullRequest, snapshot.PullRequestURL, snapshot.PullRequestHeadSHA, snapshot.PullRequestDraft = pr.Number, pr.HTMLURL, pr.HeadSHA, pr.Draft
 		return o.parallelFinish(ctx, snapshot, "Draft PR intent reconciled")
 	case "parallel_read_checks":
 		reader, ok := o.deps.GitHub.(github.CheckReader)
 		if !ok {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		checks, err := reader.GetChecks(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.FinalSHA)
 		if err != nil || !parallelGitHubChecksValid(checks) {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		if len(checks) == 0 {
 			return o.clearParallelPending(ctx, snapshot, "final SHA checks still pending")
@@ -1827,15 +2023,18 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 		return o.parallelFinish(ctx, snapshot, "final SHA checks intent reconciled")
 	case "parallel_mark_pr_ready":
 		pr, err := o.deps.GitHub.GetPullRequest(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.PullRequest)
-		if err != nil || pr.Number != snapshot.PullRequest || pr.Draft || pr.HeadSHA != snapshot.FinalSHA {
-			return ErrPendingReconcile
+		if err != nil || pr.Number != snapshot.PullRequest || pr.HeadSHA != snapshot.FinalSHA {
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		if pr.Draft {
+			return o.clearParallelPending(ctx, snapshot, "PR remains draft; ready mutation may be retried")
 		}
 		snapshot.PullRequestDraft = false
 		return o.parallelFinish(ctx, snapshot, "PR ready intent reconciled")
 	case "parallel_read_pr":
 		pr, err := o.deps.GitHub.GetPullRequest(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.PullRequest)
 		if err != nil || pr.Number != snapshot.PullRequest {
-			return ErrPendingReconcile
+			return o.pendingUncertain(ctx, snapshot)
 		}
 		if pr.HeadSHA != snapshot.FinalSHA {
 			snapshot.FinalSHA, snapshot.FinalChecksSHA = pr.HeadSHA, ""
@@ -1859,19 +2058,42 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 		return o.parallelFinish(ctx, snapshot, "PR read intent reconciled")
 	case "parallel_merge_main":
 		pr, err := o.deps.GitHub.GetPullRequest(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.PullRequest)
-		if err != nil || pr.State != "closed" || pr.HeadSHA != snapshot.FinalSHA || snapshot.MergeSHA == "" || pr.MergeCommitSHA != snapshot.MergeSHA {
-			return ErrPendingReconcile
+		expectedHead := snapshot.ExpectedMergeHeadSHA
+		if expectedHead == "" {
+			expectedHead = snapshot.FinalSHA
 		}
+		if err != nil || pr.Number != snapshot.PullRequest || pr.HeadSHA != expectedHead || pr.Base != runtime.contract.Repository.DefaultBranch {
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		if !pr.Merged {
+			if pr.State == "open" {
+				return o.clearParallelPending(ctx, snapshot, "main merge not observed; exact merge may be retried")
+			}
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		if pr.State != "closed" || !validCommitSHA(pr.MergeCommitSHA) || snapshot.MergeSHA != "" && pr.MergeCommitSHA != snapshot.MergeSHA {
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		snapshot.MergeSHA = pr.MergeCommitSHA
 		snapshot.PullRequestMerged = true
 		snapshot.Phase = contract.PhaseCompleted
 		return o.parallelFinish(ctx, snapshot, "main merge intent reconciled")
+	case "parallel_merge_preflight":
+		pr, err := o.deps.GitHub.GetPullRequest(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.PullRequest)
+		if err != nil || pr.Number != snapshot.PullRequest || pr.State != "open" || pr.HeadSHA != snapshot.FinalSHA || pr.Base != runtime.contract.Repository.DefaultBranch || pr.Mergeable == nil || !*pr.Mergeable {
+			return o.pendingUncertain(ctx, snapshot)
+		}
+		snapshot.ExpectedMergeHeadSHA = snapshot.FinalSHA
+		snapshot.MergePreflightReady = true
+		return o.parallelFinish(ctx, snapshot, "main merge preflight intent reconciled")
 	default:
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 }
 
 func (o *Orchestrator) clearParallelPending(ctx context.Context, snapshot *state.RunSnapshot, message string) error {
 	snapshot.PendingAction = ""
+	snapshot.PendingTaskID = ""
 	snapshot.Summary = message
 	snapshot.UpdatedAt = o.now()
 	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
@@ -1880,21 +2102,25 @@ func (o *Orchestrator) clearParallelPending(ctx context.Context, snapshot *state
 	return o.append(ctx, snapshot.RunID, state.Event{Type: "reconcile_not_executed", Phase: snapshot.Phase, Message: message})
 }
 
+func (o *Orchestrator) pendingUncertain(ctx context.Context, snapshot *state.RunSnapshot) error {
+	return o.parallelBlock(ctx, snapshot, "pending action reconciliation is uncertain")
+}
+
 func (o *Orchestrator) reconcileParallelTaskWorktree(ctx context.Context, snapshot *state.RunSnapshot, id string) error {
 	locator, ok := o.deps.Herdr.(WorktreeLocator)
 	if !ok {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	taskState, exists := snapshot.Tasks[id]
 	if !exists {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	label := taskState.ExpectedLabel
 	if label == "" {
 		label = "threaddock-" + string(snapshot.RunID) + "-" + id
 	}
 	if taskState.ExpectedBranch != "" && taskState.Worktree.Branch != taskState.ExpectedBranch {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	path := taskState.Worktree.Path
 	if path == "" {
@@ -1905,7 +2131,7 @@ func (o *Orchestrator) reconcileParallelTaskWorktree(ctx context.Context, snapsh
 		return o.clearParallelPending(ctx, snapshot, "Builder Worktree not found; next Advance may create it")
 	}
 	if found.Path != taskState.Worktree.Path || found.WorkspaceID == "" || found.PaneID == "" {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	taskState.Worktree.WorkspaceID, taskState.Worktree.PaneID = found.WorkspaceID, found.PaneID
 	taskState.State, taskState.Stage = "running", "start"
@@ -1916,18 +2142,18 @@ func (o *Orchestrator) reconcileParallelTaskWorktree(ctx context.Context, snapsh
 func (o *Orchestrator) reconcileParallelTaskAgent(ctx context.Context, snapshot *state.RunSnapshot, id string) error {
 	locator, ok := o.deps.Herdr.(AgentLocator)
 	if !ok {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	taskState, exists := snapshot.Tasks[id]
 	if !exists {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	info, err := locator.GetInfo(ctx, taskState.Agent.Name)
 	if errors.Is(err, herdr.ErrAgentNotFound) {
 		return o.clearParallelPending(ctx, snapshot, "Builder Agent not found; next Advance may start it")
 	}
 	if err != nil || !matchesParallelAgentIdentity(info, taskState.Agent.Name, taskState.Worktree) {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	taskState.Agent.SessionID = info.SessionID
 	taskState.Agent.IdentitySource = "provider"
@@ -1944,11 +2170,11 @@ func (o *Orchestrator) reconcileParallelTaskAgent(ctx context.Context, snapshot 
 func (o *Orchestrator) reconcileParallelReviewerBaseline(ctx context.Context, snapshot *state.RunSnapshot) error {
 	locator, ok := o.deps.Herdr.(AgentLocator)
 	if !ok {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	info, err := locator.GetInfo(ctx, snapshot.Reviewer.Name)
 	if err != nil || !matchesParallelAgentIdentity(info, snapshot.Reviewer.Name, snapshot.ReviewerWorktree) {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	snapshot.Reviewer.SessionID, snapshot.ReviewerPrompt = info.SessionID, state.PromptReceipt{RequestID: string(snapshot.RunID) + ":reviewer-prompt", BaselineSeq: info.StateChangeSeq}
 	return o.parallelFinish(ctx, snapshot, "Reviewer baseline intent reconciled")
@@ -1957,15 +2183,15 @@ func (o *Orchestrator) reconcileParallelReviewerBaseline(ctx context.Context, sn
 func (o *Orchestrator) reconcileParallelTaskBaseline(ctx context.Context, snapshot *state.RunSnapshot, id string) error {
 	locator, ok := o.deps.Herdr.(AgentLocator)
 	if !ok {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	taskState, exists := snapshot.Tasks[id]
 	if !exists {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	info, err := locator.GetInfo(ctx, taskState.Agent.Name)
 	if err != nil || !matchesParallelAgentIdentity(info, taskState.Agent.Name, taskState.Worktree) {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	taskState.Agent.SessionID = info.SessionID
 	taskState.Prompt = state.PromptReceipt{RequestID: parallelPromptRequestID(snapshot.RunID, id, taskState.RepairCount), BaselineSeq: info.StateChangeSeq}
@@ -1977,7 +2203,7 @@ func (o *Orchestrator) reconcileParallelTaskBaseline(ctx context.Context, snapsh
 func (o *Orchestrator) reconcileParallelTaskPrompt(ctx context.Context, snapshot *state.RunSnapshot, id string) error {
 	taskState, exists := snapshot.Tasks[id]
 	if !exists {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	return o.reconcileParallelPromptReceipt(ctx, snapshot, taskState.Agent.Name, taskState.Prompt, func() { taskState.Stage = "evidence"; snapshot.Tasks[id] = taskState })
 }
@@ -1985,11 +2211,11 @@ func (o *Orchestrator) reconcileParallelTaskPrompt(ctx context.Context, snapshot
 func (o *Orchestrator) reconcileParallelPromptReceipt(ctx context.Context, snapshot *state.RunSnapshot, name string, receipt state.PromptReceipt, onObserved func()) error {
 	reader, ok := o.deps.Herdr.(PromptReceiptReader)
 	if !ok {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	info, observed, err := reader.ReadPromptReceipt(ctx, name, receipt.RequestID)
-	if err != nil || strings.TrimSpace(info.Name) != "" && info.Name != name || info.StateChangeSeq <= 0 {
-		return ErrPendingReconcile
+	if err != nil || info.Name != name || info.StateChangeSeq <= 0 {
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	if observed {
 		onObserved()
@@ -1998,35 +2224,37 @@ func (o *Orchestrator) reconcileParallelPromptReceipt(ctx context.Context, snaps
 	if info.StateChangeSeq == receipt.BaselineSeq {
 		return o.clearParallelPending(ctx, snapshot, "prompt not observed; next Advance may resend")
 	}
-	return ErrPendingReconcile
+	return o.pendingUncertain(ctx, snapshot)
 }
 
 func (o *Orchestrator) reconcileParallelTaskEvidence(ctx context.Context, snapshot *state.RunSnapshot, runtime *runRuntime, id string) error {
 	taskState, exists := snapshot.Tasks[id]
 	if !exists {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	reader, ok := o.deps.Herdr.(EvidenceReader)
 	if !ok {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	task, ok := parallelTask(runtime.contract, id)
 	if !ok {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	previousCommit := taskState.Agent.CommitSHA
 	evidence, err := reader.ReadEvidence(ctx, taskState.Agent.Name)
 	commitSHA := strings.ToLower(evidence.CommitSHA)
 	if err != nil || evidence.RequestID != taskState.Prompt.RequestID || !validCommitSHA(commitSHA) || !parallelVerificationValid(evidence.Verification, task.Verification) || taskState.RequiresFreshCommit && commitSHA == taskState.PreviousCommitSHA {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	taskState.Agent.CommitSHA = commitSHA
 	taskState.Agent.RequestID = evidence.RequestID
 	taskState.Agent.VerificationEvidence = parallelEvidence(evidence.Verification)
 	taskState.Stage = "inspect"
-	snapshot.RecoveryCount = 0
 	taskState.RequiresFreshCommit = false
 	taskState.PreviousCommitSHA = previousCommit
+	taskState.RecoveryCount = 0
+	taskState.PreviousFingerprint = taskState.ProgressFingerprint
+	taskState.ProgressFingerprint = RecoveryFingerprint(commitSHA, "", completedTaskIDs(snapshot), taskState.Agent.VerificationEvidence)
 	snapshot.Tasks[id] = taskState
 	return o.parallelFinish(ctx, snapshot, "Builder evidence intent reconciled")
 }
@@ -2042,19 +2270,19 @@ func parallelEvidence(checks []herdr.VerificationCheck) []state.VerificationEvid
 func (o *Orchestrator) reconcileParallelTaskInspection(ctx context.Context, snapshot *state.RunSnapshot, runtime *runRuntime, id string) error {
 	taskState, exists := snapshot.Tasks[id]
 	if !exists {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	task, ok := parallelTask(runtime.contract, id)
 	if !ok {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	inspector, ok := o.deps.Worktree.(WorktreeInspector)
 	if !ok {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	inspection, err := inspector.InspectCommit(ctx, taskState.Worktree.Path, runtime.contract.BaseCommit, task.Branch, taskState.Agent.CommitSHA)
 	if err != nil || validateInspection(inspection, taskState.Agent.CommitSHA, task.Branch, task.AllowedPaths) != nil || containsCredential(inspection.Patch) {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	taskState.Agent.Branch, taskState.Agent.ChangedFiles, taskState.Agent.Patch = inspection.Branch, append([]string(nil), inspection.ChangedFiles...), inspection.Patch
 	taskState.Stage = "inspected"
@@ -2067,14 +2295,14 @@ func (o *Orchestrator) reconcileParallelChecks(ctx context.Context, snapshot *st
 		RunChecks(context.Context, string, []string) ([]worktree.VerificationCheck, error)
 	})
 	if !ok {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	if commands == nil {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	checks, err := reader.RunChecks(ctx, snapshot.Integration.Path, commands)
 	if err != nil || !parallelGitChecksValid(checks, commands) {
-		return ErrPendingReconcile
+		return o.pendingUncertain(ctx, snapshot)
 	}
 	if wave {
 		snapshot.IntegrationVerification = parallelVerificationEvidence(checks)

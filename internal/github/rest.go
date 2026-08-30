@@ -707,14 +707,16 @@ func (c *RESTClient) MergePullRequest(ctx context.Context, repo Repository, numb
 }
 
 type pullRequestWire struct {
-	Number  int    `json:"number"`
-	NodeID  string `json:"node_id"`
-	Title   string `json:"title"`
-	Body    string `json:"body"`
-	HTMLURL string `json:"html_url"`
-	State   string `json:"state"`
-	Draft   bool   `json:"draft"`
-	Head    struct {
+	Number   int        `json:"number"`
+	NodeID   string     `json:"node_id"`
+	Title    string     `json:"title"`
+	Body     string     `json:"body"`
+	HTMLURL  string     `json:"html_url"`
+	State    string     `json:"state"`
+	Draft    bool       `json:"draft"`
+	Merged   bool       `json:"merged"`
+	MergedAt *time.Time `json:"merged_at"`
+	Head     struct {
 		Ref   string `json:"ref"`
 		SHA   string `json:"sha"`
 		Label string `json:"label"`
@@ -727,7 +729,7 @@ type pullRequestWire struct {
 }
 
 func (w pullRequestWire) toPullRequest() PullRequest {
-	return PullRequest{Number: w.Number, NodeID: w.NodeID, Title: w.Title, Body: w.Body, HTMLURL: w.HTMLURL, State: w.State, Draft: w.Draft, Head: w.Head.Ref, HeadSHA: w.Head.SHA, Base: w.Base.Ref, Mergeable: w.Mergeable, MergeCommitSHA: w.MergeCommitSHA}
+	return PullRequest{Number: w.Number, NodeID: w.NodeID, Title: w.Title, Body: w.Body, HTMLURL: w.HTMLURL, State: w.State, Draft: w.Draft, Merged: w.Merged || w.MergedAt != nil, Head: w.Head.Ref, HeadSHA: w.Head.SHA, Base: w.Base.Ref, Mergeable: w.Mergeable, MergeCommitSHA: w.MergeCommitSHA}
 }
 
 func validRefInput(value string) bool {
@@ -791,6 +793,76 @@ func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, i
 	return response.graphQLError(c.token)
 }
 
+// GetProjectStatus reads the exact ProjectV2 item for an Issue and returns the
+// configured single-select field's current status. It fails closed when the
+// item, field, or status is absent/ambiguous so callers never treat a
+// placeholder Project ID as reconciliation evidence.
+func (c *RESTClient) GetProjectStatus(ctx context.Context, project ProjectRef, issueNodeID string) (string, error) {
+	if project.ID == "" || project.StatusFieldID == "" || issueNodeID == "" {
+		return "", &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status read requires project, field, and issue IDs"}
+	}
+	const query = `query ProjectItemStatus($projectId: ID!) {
+  node(id: $projectId) {
+    ... on ProjectV2 {
+      items(first: 100) {
+        nodes {
+          content { ... on Issue { id } }
+          fieldValues(first: 100) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name
+                optionId
+                field { ... on ProjectV2SingleSelectField { id } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`
+	payload := struct {
+		Query     string `json:"query"`
+		Variables struct {
+			ProjectID string `json:"projectId"`
+		} `json:"variables"`
+	}{Query: query}
+	payload.Variables.ProjectID = project.ID
+	var response graphQLProjectStatusResponse
+	if err := c.doJSON(ctx, http.MethodPost, c.graphqlPath, payload, &response); err != nil {
+		return "", err
+	}
+	if err := response.graphQLError(c.token); err != nil {
+		return "", err
+	}
+	var status string
+	for _, item := range response.Data.Node.Items.Nodes {
+		if item.Content.ID != issueNodeID {
+			continue
+		}
+		for _, value := range item.FieldValues.Nodes {
+			fieldID := value.Field.ID
+			if fieldID == "" {
+				fieldID = value.FieldID
+			}
+			if fieldID != project.StatusFieldID || strings.TrimSpace(value.Name) == "" {
+				continue
+			}
+			if expectedOption := project.StatusOptions[value.Name]; expectedOption != "" && value.OptionID != "" && value.OptionID != expectedOption {
+				return "", &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status option did not match configured field"}
+			}
+			if status != "" && status != value.Name {
+				return "", &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status read was ambiguous"}
+			}
+			status = value.Name
+		}
+	}
+	if status == "" {
+		return "", &NotFoundError{StatusCode: http.StatusNotFound, Message: "project status item or field was not found"}
+	}
+	return status, nil
+}
+
 type graphQLErrorItem struct {
 	Message string `json:"message"`
 }
@@ -808,6 +880,38 @@ type graphQLAddResponse struct {
 		} `json:"addProjectV2ItemById"`
 	} `json:"data"`
 	Errors []graphQLErrorItem `json:"errors"`
+}
+
+type graphQLProjectStatusResponse struct {
+	Data struct {
+		Node struct {
+			Items struct {
+				Nodes []struct {
+					Content struct {
+						ID string `json:"id"`
+					} `json:"content"`
+					FieldValues struct {
+						Nodes []struct {
+							Name     string `json:"name"`
+							OptionID string `json:"optionId"`
+							Field    struct {
+								ID string `json:"id"`
+							} `json:"field"`
+							FieldID string `json:"fieldId"`
+						} `json:"nodes"`
+					} `json:"fieldValues"`
+				} `json:"nodes"`
+			} `json:"items"`
+		} `json:"node"`
+	} `json:"data"`
+	Errors []graphQLErrorItem `json:"errors"`
+}
+
+func (r graphQLProjectStatusResponse) graphQLError(token string) error {
+	if len(r.Errors) > 0 {
+		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: sanitize(r.Errors[0].Message, token)}
+	}
+	return nil
 }
 
 func (r graphQLResponse) graphQLError(token string) error {

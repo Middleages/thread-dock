@@ -42,6 +42,7 @@ type parallelHerdr struct {
 	evidenceReads   int
 	promptIDs       map[string]string
 	evidenceByAgent map[string]int
+	forceWorking    bool
 }
 
 type parallelGit struct {
@@ -58,6 +59,7 @@ type parallelGitHub struct {
 	projectStatus    string
 	draftCalls       int
 	mergeCalls       int
+	readyCalls       int
 	mergeableUnknown int
 }
 
@@ -136,6 +138,9 @@ func (h *parallelHerdr) GetInfo(ctx context.Context, name string) (herdr.AgentIn
 	if h.evidenceByAgent[name] > 1 {
 		info.State = herdr.AgentStateIdle
 	}
+	if h.forceWorking {
+		info.State = herdr.AgentStateWorking
+	}
 	return info, nil
 }
 
@@ -150,7 +155,7 @@ func (h *parallelHerdr) ReadEvidence(ctx context.Context, name string) (herdr.Ev
 		h.evidenceByAgent = make(map[string]int)
 	}
 	h.evidenceByAgent[name]++
-	if h.harness.stallRecoveries > 0 {
+	if h.harness.stallRecoveries > 0 && strings.Contains(name, "-api") {
 		h.harness.stallRecoveries--
 		return herdr.Evidence{}, errors.New("agent made no progress")
 	}
@@ -269,6 +274,7 @@ func (h *parallelGitHub) FindOpenPullRequest(context.Context, github.Repository,
 }
 
 func (h *parallelGitHub) MarkReadyForReview(context.Context, github.Repository, int) (github.PullRequest, error) {
+	h.readyCalls++
 	h.pr.Draft = false
 	return h.pr, nil
 }
@@ -283,7 +289,9 @@ func (h *parallelGitHub) GetChecks(context.Context, github.Repository, string) (
 
 func (h *parallelGitHub) MergePullRequest(context.Context, github.Repository, int, string, string) (github.MergePullRequestResult, error) {
 	h.mergeCalls++
-	return github.MergePullRequestResult{SHA: fmt.Sprintf("%040x", 2), Merged: true}, nil
+	sha := fmt.Sprintf("%040x", 2)
+	h.pr.Merged, h.pr.State, h.pr.MergeCommitSHA = true, "closed", sha
+	return github.MergePullRequestResult{SHA: sha, Merged: true}, nil
 }
 
 func (h *parallelGitHub) SetProjectStatus(_ context.Context, _ github.ProjectRef, _ string, status string) error {
