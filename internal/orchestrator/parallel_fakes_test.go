@@ -24,10 +24,12 @@ type parallelHarness struct {
 	mergeConflict           bool
 	stallRecoveries         int
 	stallMode               bool
+	stallAll                bool
 	protectedRiskCategories []string
 	parallelGH              *parallelGitHub
 	parallelHD              *parallelHerdr
 	parallelGit             *parallelGit
+	parallelFingerprintGit  *fingerprintParallelGit
 }
 
 func (h *parallelHarness) mustLoadRun() state.RunSnapshot {
@@ -96,11 +98,13 @@ func newParallelHarness(t *testing.T) *parallelHarness {
 	ph.Deps = base.Deps
 	hd := &parallelHerdr{fakeHerdr: ph.herdr, harness: ph}
 	gg := &parallelGit{fakeGit: ph.git, harness: ph}
+	fg := &fingerprintParallelGit{parallelGit: gg, fingerprintBaseline: "baseline"}
 	gh := &parallelGitHub{fakeGitHub: ph.github, harness: ph}
-	ph.Deps.Herdr, ph.Deps.Worktree, ph.Deps.Git, ph.Deps.GitHub = hd, gg, gg, gh
+	ph.Deps.Herdr, ph.Deps.Worktree, ph.Deps.Git, ph.Deps.GitHub = hd, fg, fg, gh
 	ph.parallelGH = gh
 	ph.parallelHD = hd
 	ph.parallelGit = gg
+	ph.parallelFingerprintGit = fg
 	ph.herdr = hd.fakeHerdr
 	ph.git = gg.fakeGit
 	ph.github = gh.fakeGitHub
@@ -210,6 +214,9 @@ func (h *parallelHerdr) ReadEvidence(ctx context.Context, name string) (herdr.Ev
 		h.evidenceByAgent = make(map[string]int)
 	}
 	h.evidenceByAgent[name]++
+	if h.harness.stallAll {
+		return herdr.Evidence{}, errors.New("agent made no progress")
+	}
 	if h.harness.stallRecoveries > 0 && strings.Contains(name, "-api") {
 		h.harness.stallRecoveries--
 		return herdr.Evidence{}, errors.New("agent made no progress")

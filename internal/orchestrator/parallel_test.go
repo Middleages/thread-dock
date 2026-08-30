@@ -50,7 +50,7 @@ func TestParallelStories(t *testing.T) {
 		{name: "third repair blocks", configure: func(h *parallelHarness) { h.reviewFailures = 1; h.ciFailures = 2 }, want: contract.PhaseBlocked},
 		{name: "protected waits", configure: func(h *parallelHarness) { h.protectedRiskCategories = []string{"authentication"} }, want: contract.PhaseNeedsOperator},
 		{name: "git conflict blocks", configure: func(h *parallelHarness) { h.mergeConflict = true }, want: contract.PhaseBlocked},
-		{name: "three recoveries block", configure: func(h *parallelHarness) { h.stallRecoveries = 4 }, want: contract.PhaseBlocked},
+		{name: "three recoveries block", configure: func(h *parallelHarness) { h.stallRecoveries = 4; h.stallAll = true }, want: contract.PhaseBlocked},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,6 +117,9 @@ func TestRepairsRequireFreshCommitAndReuseOnePR(t *testing.T) {
 func TestWorkingAgentWaitsThenStaleLiveRequiresOperator(t *testing.T) {
 	h := newParallelHarness(t)
 	h.stallRecoveries = 1
+	// This story exercises live-agent expiry; use the baseline Git fake so its
+	// recovery budget is not affected by the independent fingerprint story.
+	h.Deps.Worktree, h.Deps.Git = h.parallelGit, h.parallelGit
 	h.Deps.WorkingWait = time.Hour
 	h.orchestrator = NewParallel(h.Deps)
 	id, err := h.orchestrator.Start(context.Background(), h.contractPath)

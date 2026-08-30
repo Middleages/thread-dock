@@ -311,6 +311,42 @@ func TestCompleteStoryFingerprintChangeResetsRecoveryBudget(t *testing.T) {
 	}
 }
 
+func TestHardThreeRecoveryPolicyRunsThroughAdvanceWithStatefulFingerprint(t *testing.T) {
+	h := newParallelHarness(t)
+	h.stallRecoveries = 4
+	h.stallAll = true
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 120; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+		if h.mustLoad(id).Phase == contract.PhaseBlocked {
+			break
+		}
+	}
+	if got := h.mustLoad(id); got.Phase != contract.PhaseBlocked {
+		t.Fatalf("phase=%s, want blocked", got.Phase)
+	}
+	counts := make([]int, 0, 3)
+	for _, event := range h.events(id) {
+		if event.Type != "recovery_requested" || event.Data == nil || event.Data["taskId"] != "api" {
+			continue
+		}
+		if count, ok := event.Data["count"].(float64); ok {
+			counts = append(counts, int(count))
+		}
+	}
+	if len(counts) != 3 || counts[0] != 1 || counts[1] != 2 || counts[2] != 3 {
+		t.Fatalf("recovery counts=%v, want [1 2 3]", counts)
+	}
+	if h.parallelFingerprintGit.fingerprintReads < 3 {
+		t.Fatalf("fingerprint reads=%d, want recovery observations through Advance", h.parallelFingerprintGit.fingerprintReads)
+	}
+}
+
 func TestProtectedConfirmationInvalidatesEvidenceBeforeResume(t *testing.T) {
 	h := newParallelHarness(t)
 	id, err := h.orchestrator.Start(context.Background(), h.contractPath)

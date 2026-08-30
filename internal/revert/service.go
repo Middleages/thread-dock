@@ -155,6 +155,13 @@ func (s *Service) Create(ctx context.Context, request Request) (github.PullReque
 			}
 			return github.PullRequest{}, ErrUnsafeTarget
 		}
+		mergeInBase, ancestryErr := s.git.IsAncestorOf(ctx, normalized.repositoryPath, normalized.mergeSHA, inspection.BaseCommit)
+		if ancestryErr != nil || !mergeInBase {
+			if ancestryErr != nil {
+				return github.PullRequest{}, ancestryErr
+			}
+			return github.PullRequest{}, ErrUnsafeTarget
+		}
 	}
 	if inspection.Stage == "ready" {
 		if err := s.git.RevertMergeCommit(ctx, normalized.worktreePath, normalized.mergeSHA); err != nil {

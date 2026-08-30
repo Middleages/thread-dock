@@ -446,7 +446,7 @@ func TestCreateRevertRetrySkipsCompletedRevertStages(t *testing.T) {
 	if err != nil || got.Number != 202 {
 		t.Fatalf("second pr=%+v err=%v", got, err)
 	}
-	if git.reconcileCalls != 2 || len(git.calls) != 9 || strings.Count(strings.Join(git.calls, "\n"), "create|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "revert|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "push|") != 2 {
+	if git.reconcileCalls != 2 || len(git.calls) != 10 || strings.Count(strings.Join(git.calls, "\n"), "create|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "revert|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "push|") != 2 {
 		t.Fatalf("reconcile=%d calls=%v", git.reconcileCalls, git.calls)
 	}
 }
@@ -532,6 +532,45 @@ func TestCreateRevertExistingWorktreeUsesRecordedBaseAfterRemoteAdvances(t *test
 	}
 	if len(git.calls) < 3 || !strings.HasPrefix(git.calls[0], "fetch|") || !strings.Contains(git.calls[1], "|"+request.MergeSHA+"|"+remoteB) || !strings.Contains(git.calls[2], "|"+baseA+"|"+remoteB) {
 		t.Fatalf("calls=%v", git.calls)
+	}
+}
+
+func TestCreateRevertRejectsReadyTargetWhenMergeIsNotAncestorOfRecordedBase(t *testing.T) {
+	managed, _, _, request := validRequest(t)
+	target := filepath.Join(managed, ".revert-worktrees", "revert-184-0123456789ab")
+	if err := os.MkdirAll(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := &fakeGit{
+		inspections:     []worktree.RevertWorktreeInspection{{Exists: true, Stage: "ready", HeadCommit: request.BaseCommit, BaseCommit: request.BaseCommit}},
+		ancestorResults: []bool{true, true, false},
+	}
+	gh := &fakeGitHub{}
+	if _, err := New(git, gh).Create(context.Background(), request); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("err=%v, want unsafe target", err)
+	}
+	if strings.Contains(strings.Join(git.calls, "\n"), "revert|") || strings.Contains(strings.Join(git.calls, "\n"), "push|") || gh.lookupCalls != 0 || gh.createCalls != 0 {
+		t.Fatalf("unsafe target caused mutation: git=%v lookup=%d create=%d", git.calls, gh.lookupCalls, gh.createCalls)
+	}
+}
+
+func TestCreateRevertRejectsRevertedTargetWhenMergeIsNotAncestorOfRecordedBase(t *testing.T) {
+	managed, _, _, request := validRequest(t)
+	target := filepath.Join(managed, ".revert-worktrees", "revert-184-0123456789ab")
+	if err := os.MkdirAll(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	base := request.BaseCommit
+	git := &fakeGit{
+		inspections:     []worktree.RevertWorktreeInspection{{Exists: true, Stage: "reverted", HeadCommit: request.MergeSHA, BaseCommit: base, ParentCommit: base}},
+		ancestorResults: []bool{true, true, false},
+	}
+	gh := &fakeGitHub{}
+	if _, err := New(git, gh).Create(context.Background(), request); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("err=%v, want unsafe target", err)
+	}
+	if strings.Contains(strings.Join(git.calls, "\n"), "revert|") || strings.Contains(strings.Join(git.calls, "\n"), "push|") || gh.lookupCalls != 0 || gh.createCalls != 0 {
+		t.Fatalf("unsafe target caused mutation: git=%v lookup=%d create=%d", git.calls, gh.lookupCalls, gh.createCalls)
 	}
 }
 
