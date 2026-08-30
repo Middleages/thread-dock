@@ -36,7 +36,9 @@ func Validate(c TaskContract) []Violation {
 	}
 
 	validateTasks(&violations, c)
-	validateProtectedPaths(&violations, c.Protected)
+	taskPaths := normalizeTaskPaths(&violations, c.Tasks)
+	protectedPaths := validateProtectedPaths(&violations, c.Protected)
+	validatePathOwnership(&violations, c.Tasks, taskPaths, protectedPaths)
 	requireStrings(&violations, "verification", c.Verification)
 	validateRiskCategories(&violations, c.RiskCategories)
 
@@ -134,7 +136,6 @@ func validateTasks(violations *[]Violation, c TaskContract) {
 		}
 	}
 
-	validatePathOwnership(violations, c.Tasks, c.Protected)
 }
 
 func requireString(violations *[]Violation, field, value string) {
@@ -157,14 +158,45 @@ func requiredViolation(field string) Violation {
 	return Violation{Code: "required", Field: field, Message: "필수 항목입니다"}
 }
 
-func validateProtectedPaths(violations *[]Violation, paths []string) {
+type indexedPath struct {
+	raw        string
+	normalized string
+}
+
+func normalizeTaskPaths(violations *[]Violation, tasks []Task) [][]indexedPath {
+	normalized := make([][]indexedPath, len(tasks))
+	for i, task := range tasks {
+		for pathIndex, rawPath := range task.AllowedPaths {
+			path, err := pathscope.Normalize(rawPath)
+			if err != nil {
+				appendInvalidPathViolation(violations, fmt.Sprintf("tasks[%d].allowedPaths[%d]", i, pathIndex), rawPath)
+				continue
+			}
+			normalized[i] = append(normalized[i], indexedPath{raw: rawPath, normalized: path})
+		}
+	}
+	return normalized
+}
+
+func validateProtectedPaths(violations *[]Violation, paths []string) []indexedPath {
 	requireStrings(violations, "protectedPaths", paths)
+	valid := make([]indexedPath, 0, len(paths))
 	present := make(map[string]struct{}, len(paths))
-	for _, path := range paths {
+	for i, rawPath := range paths {
+		path, err := pathscope.Normalize(rawPath)
+		if err != nil {
+			appendInvalidPathViolation(violations, fmt.Sprintf("protectedPaths[%d]", i), rawPath)
+			continue
+		}
+		valid = append(valid, indexedPath{raw: rawPath, normalized: path})
 		present[path] = struct{}{}
 	}
 	for _, requiredPath := range defaultProtectedPaths {
-		if _, ok := present[requiredPath]; !ok {
+		normalizedRequired, err := pathscope.Normalize(requiredPath)
+		if err != nil {
+			continue
+		}
+		if _, ok := present[normalizedRequired]; !ok {
 			*violations = append(*violations, Violation{
 				Code:    "required",
 				Field:   "protectedPaths",
@@ -172,6 +204,7 @@ func validateProtectedPaths(violations *[]Violation, paths []string) {
 			})
 		}
 	}
+	return valid
 }
 
 func isLowerHexCommit(value string) bool {
@@ -186,34 +219,30 @@ func isLowerHexCommit(value string) bool {
 	return true
 }
 
-func validatePathOwnership(violations *[]Violation, tasks []Task, protectedPaths []string) {
+func validatePathOwnership(violations *[]Violation, tasks []Task, taskPaths [][]indexedPath, protectedPaths []indexedPath) {
 	for i, left := range tasks {
 		for j := i + 1; j < len(tasks); j++ {
-			for _, leftPath := range left.AllowedPaths {
-				for _, rightPath := range tasks[j].AllowedPaths {
-					overlaps, err := pathscope.Overlaps(leftPath, rightPath)
-					if err != nil {
-						appendInvalidPathViolation(violations, fmt.Sprintf("tasks[%d].allowedPaths", j), rightPath)
-					} else if overlaps {
+			for _, leftPath := range taskPaths[i] {
+				for _, rightPath := range taskPaths[j] {
+					overlaps, err := pathscope.Overlaps(leftPath.normalized, rightPath.normalized)
+					if err == nil && overlaps {
 						*violations = append(*violations, Violation{
 							Code:    "path_overlap",
 							Field:   fmt.Sprintf("tasks[%d].allowedPaths", j),
-							Message: fmt.Sprintf("경로 %q가 Task %q의 경로 %q와 겹칩니다", rightPath, left.ID, leftPath),
+							Message: fmt.Sprintf("경로 %q가 Task %q의 경로 %q와 겹칩니다", rightPath.raw, left.ID, leftPath.raw),
 						})
 					}
 				}
 			}
 		}
-		for _, allowedPath := range left.AllowedPaths {
+		for _, allowedPath := range taskPaths[i] {
 			for _, protectedPath := range protectedPaths {
-				overlaps, err := pathscope.Overlaps(allowedPath, protectedPath)
-				if err != nil {
-					appendInvalidPathViolation(violations, fmt.Sprintf("tasks[%d].allowedPaths", i), allowedPath)
-				} else if overlaps {
+				overlaps, err := pathscope.Overlaps(allowedPath.normalized, protectedPath.normalized)
+				if err == nil && overlaps {
 					*violations = append(*violations, Violation{
 						Code:    "path_overlap",
 						Field:   fmt.Sprintf("tasks[%d].allowedPaths", i),
-						Message: fmt.Sprintf("허용 경로 %q가 보호 경로 %q와 겹칩니다", allowedPath, protectedPath),
+						Message: fmt.Sprintf("허용 경로 %q가 보호 경로 %q와 겹칩니다", allowedPath.raw, protectedPath.raw),
 					})
 				}
 			}

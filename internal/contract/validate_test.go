@@ -1,6 +1,9 @@
 package contract
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateValidContract(t *testing.T) {
 	got := Validate(validContract())
@@ -132,6 +135,56 @@ func TestValidateRejectsPathTraversal(t *testing.T) {
 
 	if got := Validate(c); !hasCode(got, "path_overlap") {
 		t.Fatalf("violations = %#v", got)
+	}
+}
+
+func TestValidateAttributesMalformedLeftAllowedPathOnce(t *testing.T) {
+	c := validContract()
+	c.Tasks[0].AllowedPaths = []string{"src/../broken/**"}
+
+	got := pathOverlapViolations(Validate(c))
+	if len(got) != 1 {
+		t.Fatalf("path overlap violations = %#v", got)
+	}
+	if got[0].Field != "tasks[0].allowedPaths[0]" || !strings.Contains(got[0].Message, "src/../broken/**") {
+		t.Fatalf("violation = %#v", got[0])
+	}
+}
+
+func TestValidateAttributesMalformedRightAllowedPathOnce(t *testing.T) {
+	c := validContract()
+	c.Tasks[1].AllowedPaths = []string{"tests/../broken/**"}
+
+	got := pathOverlapViolations(Validate(c))
+	if len(got) != 1 {
+		t.Fatalf("path overlap violations = %#v", got)
+	}
+	if got[0].Field != "tasks[1].allowedPaths[0]" || !strings.Contains(got[0].Message, "tests/../broken/**") {
+		t.Fatalf("violation = %#v", got[0])
+	}
+}
+
+func TestValidateAttributesMalformedProtectedPathOnce(t *testing.T) {
+	c := validContract()
+	c.Protected = append(c.Protected, "protected/../broken/**")
+
+	got := pathOverlapViolations(Validate(c))
+	if len(got) != 1 {
+		t.Fatalf("path overlap violations = %#v", got)
+	}
+	if got[0].Field != "protectedPaths[4]" || !strings.Contains(got[0].Message, "protected/../broken/**") {
+		t.Fatalf("violation = %#v", got[0])
+	}
+}
+
+func TestValidateRecognizesNormalizedMandatoryProtectedPaths(t *testing.T) {
+	c := validContract()
+	c.Protected = []string{`./migrations/**`, `authentication\**`, `.github/./workflows/**`, "deployment/**"}
+
+	for _, violation := range Validate(c) {
+		if violation.Code == "required" && violation.Field == "protectedPaths" {
+			t.Fatalf("normalized protected paths were reported missing: %#v", violation)
+		}
 	}
 }
 
@@ -292,6 +345,16 @@ func hasCode(v []Violation, code string) bool {
 		}
 	}
 	return false
+}
+
+func pathOverlapViolations(v []Violation) []Violation {
+	var got []Violation
+	for _, violation := range v {
+		if violation.Code == "path_overlap" {
+			got = append(got, violation)
+		}
+	}
+	return got
 }
 
 func hasViolation(v []Violation, code, field string) bool {
