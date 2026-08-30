@@ -67,7 +67,7 @@ func ValidateResult(task contract.Task, evidence state.AgentEvidence, inspection
 	if !isCommitSHA(evidence.CommitSHA) || !isCommitSHA(inspection.CommitSHA) || evidence.CommitSHA != inspection.CommitSHA {
 		return fmt.Errorf("%w: commit SHA mismatch", ErrInvalidResult)
 	}
-	if task.Branch == "" || inspection.Branch == "" || inspection.Branch != task.Branch {
+	if task.Branch == "" || strings.TrimSpace(task.Branch) != task.Branch || inspection.Branch == "" || strings.TrimSpace(inspection.Branch) != inspection.Branch || inspection.Branch != task.Branch {
 		return fmt.Errorf("%w: Builder branch mismatch", ErrInvalidResult)
 	}
 	if len(inspection.ChangedFiles) == 0 || strings.TrimSpace(inspection.Patch) == "" {

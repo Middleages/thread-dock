@@ -83,12 +83,30 @@ func TestValidateResultRejectsNonCanonicalBranchEvidenceAndDurations(t *testing.
 		inspect  worktree.CommitInspection
 		evidence state.AgentEvidence
 	}{
-		{name: "task branch leading whitespace", task: func() contract.Task { task := baseTask; task.Branch = " agent/api"; return task }(), inspect: baseInspection, evidence: validEvidence(apiSHA)},
+		{name: "task branch leading whitespace", task: func() contract.Task { task := baseTask; task.Branch = " agent/api"; return task }(), inspect: baseInspection, evidence: validSingleEvidence(apiSHA)},
 		{name: "inspection branch trailing whitespace", task: baseTask, inspect: func() worktree.CommitInspection {
 			inspection := baseInspection
 			inspection.Branch = "agent/api "
 			return inspection
-		}(), evidence: validEvidence(apiSHA)},
+		}(), evidence: validSingleEvidence(apiSHA)},
+		{name: "both branches same surrounding whitespace", task: func() contract.Task {
+			task := baseTask
+			task.Branch = " agent/api "
+			return task
+		}(), inspect: func() worktree.CommitInspection {
+			inspection := baseInspection
+			inspection.Branch = " agent/api "
+			return inspection
+		}(), evidence: validSingleEvidence(apiSHA)},
+		{name: "both branches whitespace only", task: func() contract.Task {
+			task := baseTask
+			task.Branch = "   "
+			return task
+		}(), inspect: func() worktree.CommitInspection {
+			inspection := baseInspection
+			inspection.Branch = "   "
+			return inspection
+		}(), evidence: validSingleEvidence(apiSHA)},
 		{name: "evidence command leading whitespace", task: baseTask, inspect: baseInspection, evidence: state.AgentEvidence{CommitSHA: apiSHA, VerificationEvidence: []state.VerificationEvidence{{Command: " go test ./...", Outcome: "passed", Duration: "1s"}}}},
 		{name: "outcome whitespace", task: baseTask, inspect: baseInspection, evidence: state.AgentEvidence{CommitSHA: apiSHA, VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./...", Outcome: " passed", Duration: "1s"}}}},
 		{name: "outcome case", task: baseTask, inspect: baseInspection, evidence: state.AgentEvidence{CommitSHA: apiSHA, VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./...", Outcome: "PASSED", Duration: "1s"}}}},
@@ -182,6 +200,10 @@ func TestMergeResultsReturnsCheckInfrastructureError(t *testing.T) {
 
 func validEvidence(sha string) state.AgentEvidence {
 	return state.AgentEvidence{CommitSHA: sha, VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./...", Outcome: "passed", Duration: "1s"}, {Command: "go vet ./...", Outcome: "passed", Duration: "1s"}}}
+}
+
+func validSingleEvidence(sha string) state.AgentEvidence {
+	return state.AgentEvidence{CommitSHA: sha, VerificationEvidence: []state.VerificationEvidence{{Command: "go test ./...", Outcome: "passed", Duration: "1s"}}}
 }
 
 type fakeGit struct {
