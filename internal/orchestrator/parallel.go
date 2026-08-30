@@ -394,7 +394,7 @@ func (o *Orchestrator) reconcileParallelProject(ctx context.Context, snapshot *s
 	if err != nil {
 		return o.parallelBlock(ctx, snapshot, "Project status read is uncertain")
 	}
-	if !observed.Found {
+	if !projectItemPresent(observed) {
 		snapshot.PendingAction = "parallel_project_add_" + strings.ToLower(strings.ReplaceAll(want, " ", "_"))
 		snapshot.PendingTaskID = ""
 		snapshot.UpdatedAt = o.now()
@@ -403,8 +403,11 @@ func (o *Orchestrator) reconcileParallelProject(ctx context.Context, snapshot *s
 		}
 		return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: "Project item 추가", Data: map[string]any{"action": snapshot.PendingAction, "status": want}})
 	}
+	if strings.TrimSpace(observed.ItemID) == "" {
+		return o.parallelBlock(ctx, snapshot, "Project item identity is unavailable")
+	}
 	snapshot.ProjectItemID = observed.ItemID
-	if observed.Status == want {
+	if projectStatusPresent(observed) && observed.Status == want {
 		snapshot.ProjectStatus = want
 		return o.parallelFinishPreserveCursor(ctx, snapshot, "Project status 관찰 완료")
 	}
@@ -545,6 +548,7 @@ func (o *Orchestrator) createParallelTaskWorktree(ctx context.Context, snapshot 
 	stateBeforeCreate.ExpectedBranch = task.Branch
 	stateBeforeCreate.ExpectedLabel = expectedLabel
 	stateBeforeCreate.ExpectedBaseCommit = runtime.contract.BaseCommit
+	stateBeforeCreate.Worktree.Branch = task.Branch
 	stateBeforeCreate.State = "pending"
 	snapshot.Tasks[id] = stateBeforeCreate
 	action := parallelTaskAction("parallel_create_worktree_", id)
@@ -771,7 +775,10 @@ func (o *Orchestrator) parallelCollectTaskEvidence(ctx context.Context, snapshot
 	taskState.PreviousCommitSHA = previousCommit
 	taskState.PreviousFingerprint = taskState.ProgressFingerprint
 	if wasFreshRequired && commitSHA == previousCommitSHA {
-		return o.parallelRecoveryFailure(ctx, snapshot, id, taskState, "Builder repair did not produce a fresh commit or fingerprint")
+		// The stale-SHA check is an observation result. Defer the recovery
+		// policy's Agent lookup to the next Advance so this Advance performs
+		// only the evidence read and never compounds it with GetInfo.
+		return o.parallelScheduleRecovery(ctx, snapshot, id, taskState, "Builder repair did not produce a fresh commit or fingerprint")
 	}
 	taskState.RecoveryCount = 0
 	taskState.RequiresFreshCommit = false
@@ -1684,10 +1691,19 @@ func (o *Orchestrator) advanceParallelMerge(ctx context.Context, snapshot *state
 	snapshot.MergeSHA = result.SHA
 	snapshot.MergePreflightReady = false
 	snapshot.PullRequestMerged = true
+	return o.finishParallelMainMerge(ctx, snapshot)
+}
+
+// finishParallelMainMerge makes the Project Done observation part of the
+// durable merge result. This is shared by the normal merge response and the
+// pending-merge reconciliation path, so a lost merge response cannot bypass
+// enabled Project automation or mark the run complete too early.
+func (o *Orchestrator) finishParallelMainMerge(ctx context.Context, snapshot *state.RunSnapshot) error {
 	if snapshot.ProjectAutomationEnabled {
-		// Keep the Done ProjectV2 mutation in its own Advance so the main merge
-		// remains the sole external side effect of this Advance.
+		// Keep Done ProjectV2 work in later Advances; this Advance has already
+		// performed the single main merge side effect.
 		snapshot.PendingAction = "parallel_project_observe_done"
+		snapshot.PendingTaskID = ""
 		snapshot.Phase = contract.PhaseMerging
 		snapshot.Summary = "main merge 완료; Project Done 상태 대기 중"
 		snapshot.UpdatedAt = o.now()
@@ -1697,7 +1713,7 @@ func (o *Orchestrator) advanceParallelMerge(ctx context.Context, snapshot *state
 		if err := o.append(ctx, snapshot.RunID, state.Event{Type: "action_succeeded", Phase: snapshot.Phase, Message: "main merge 완료"}); err != nil {
 			return err
 		}
-		return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: "Project Done 상태 업데이트", Data: map[string]any{"action": snapshot.PendingAction}})
+		return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: "Project Done 상태 관찰", Data: map[string]any{"action": snapshot.PendingAction}})
 	}
 	snapshot.Phase = contract.PhaseCompleted
 	snapshot.Summary = "병렬 실행과 감독형 자동 병합 완료"
@@ -1707,15 +1723,10 @@ func (o *Orchestrator) advanceParallelMerge(ctx context.Context, snapshot *state
 	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
 		return err
 	}
-	if !snapshot.ProjectAutomationEnabled {
-		if err := o.append(ctx, snapshot.RunID, state.Event{Type: "project_automation_skipped", Phase: snapshot.Phase, Message: "Project automation disabled; placeholder IDs are not evidence", Data: map[string]any{"status": "Done"}}); err != nil {
-			return err
-		}
-	}
-	if err := o.append(ctx, snapshot.RunID, state.Event{Type: "completed", Phase: contract.PhaseCompleted, Message: snapshot.Summary}); err != nil {
+	if err := o.append(ctx, snapshot.RunID, state.Event{Type: "project_automation_skipped", Phase: snapshot.Phase, Message: "Project automation disabled; placeholder IDs are not evidence", Data: map[string]any{"status": "Done"}}); err != nil {
 		return err
 	}
-	return nil
+	return o.append(ctx, snapshot.RunID, state.Event{Type: "completed", Phase: contract.PhaseCompleted, Message: snapshot.Summary})
 }
 
 func (o *Orchestrator) reconcileProjectObservation(ctx context.Context, snapshot *state.RunSnapshot, runtime *runRuntime, status string) error {
@@ -1727,10 +1738,10 @@ func (o *Orchestrator) reconcileProjectObservation(ctx context.Context, snapshot
 	if err != nil {
 		return o.parallelBlock(ctx, snapshot, "Project status is uncertain after restart")
 	}
-	if observed.Found && observed.ItemID != "" {
+	if projectItemPresent(observed) && observed.ItemID != "" {
 		snapshot.ProjectItemID = observed.ItemID
 	}
-	if !observed.Found || observed.ItemID == "" {
+	if !projectItemPresent(observed) {
 		snapshot.PendingAction = "parallel_project_add_" + strings.ToLower(strings.ReplaceAll(status, " ", "_"))
 		snapshot.UpdatedAt = o.now()
 		if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
@@ -1738,10 +1749,17 @@ func (o *Orchestrator) reconcileProjectObservation(ctx context.Context, snapshot
 		}
 		return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: "Project item add", Data: map[string]any{"action": snapshot.PendingAction}})
 	}
-	if observed.Status == status {
+	if strings.TrimSpace(observed.ItemID) == "" {
+		return o.pendingUncertain(ctx, snapshot)
+	}
+	if projectStatusPresent(observed) && observed.Status == status {
 		snapshot.ProjectStatus = status
 		if status == "Done" && snapshot.PullRequestMerged {
 			snapshot.Phase = contract.PhaseCompleted
+			if err := o.parallelFinishPreserveCursor(ctx, snapshot, "Project status reconciled"); err != nil {
+				return err
+			}
+			return o.append(ctx, snapshot.RunID, state.Event{Type: "completed", Phase: contract.PhaseCompleted, Message: "병렬 실행과 감독형 자동 병합 완료"})
 		}
 		return o.parallelFinishPreserveCursor(ctx, snapshot, "Project status reconciled")
 	}
@@ -1751,6 +1769,35 @@ func (o *Orchestrator) reconcileProjectObservation(ctx context.Context, snapshot
 		return err
 	}
 	return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: "Project status update", Data: map[string]any{"action": snapshot.PendingAction, "itemId": snapshot.ProjectItemID}})
+}
+
+func projectItemPresent(observed github.ProjectStatus) bool {
+	// Found/ItemID preserve compatibility with older reader implementations
+	// that predate the explicit presence bits.
+	return observed.ItemPresent || observed.ItemFound || observed.Found || strings.TrimSpace(observed.ItemID) != ""
+}
+
+func projectStatusPresent(observed github.ProjectStatus) bool {
+	return observed.StatusPresent || observed.StatusFound || observed.Found || strings.TrimSpace(observed.Status) != ""
+}
+
+func projectObserveAction(status string) string {
+	return "parallel_project_observe_" + strings.ToLower(strings.ReplaceAll(status, " ", "_"))
+}
+
+// prepareProjectMutationObservation records the observation that must follow
+// a Project mutation before the mutation is attempted. If the process dies
+// after the provider accepts the write but before its response is persisted,
+// restart therefore performs a read first and cannot blindly repeat it.
+func (o *Orchestrator) prepareProjectMutationObservation(ctx context.Context, snapshot *state.RunSnapshot, status string) error {
+	action := projectObserveAction(status)
+	snapshot.PendingAction = action
+	snapshot.PendingTaskID = ""
+	snapshot.UpdatedAt = o.now()
+	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
+		return err
+	}
+	return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: "Project status observe after mutation", Data: map[string]any{"action": action, "status": status}})
 }
 
 func projectStatusFromAction(action, prefix string) string {
@@ -1825,12 +1872,19 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 		if adder == nil || snapshot.Registration.NodeID == "" {
 			return o.pendingUncertain(ctx, snapshot)
 		}
+		if err := o.prepareProjectMutationObservation(ctx, snapshot, status); err != nil {
+			return err
+		}
 		itemID, err := adder.AddProjectItem(ctx, o.deps.Project, snapshot.Registration.NodeID)
-		if err != nil || itemID == "" {
-			return o.pendingUncertain(ctx, snapshot)
+		if err != nil {
+			// The observation intent was durably recorded before the call; leave
+			// it in place even when the provider response is lost.
+			return err
+		}
+		if itemID == "" {
+			return errors.New("Project item add response is incomplete")
 		}
 		snapshot.ProjectItemID = itemID
-		snapshot.PendingAction = "parallel_project_observe_" + strings.ToLower(strings.ReplaceAll(status, " ", "_"))
 		snapshot.UpdatedAt = o.now()
 		if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
 			return err
@@ -1843,10 +1897,13 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 		if updater == nil || snapshot.ProjectItemID == "" {
 			return o.pendingUncertain(ctx, snapshot)
 		}
+		if err := o.prepareProjectMutationObservation(ctx, snapshot, status); err != nil {
+			return err
+		}
 		if err := updater.UpdateProjectStatus(ctx, o.deps.Project, snapshot.ProjectItemID, status); err != nil {
 			return err
 		}
-		snapshot.PendingAction = "parallel_project_observe_" + strings.ToLower(strings.ReplaceAll(status, " ", "_"))
+		snapshot.ProjectStatus = status
 		snapshot.UpdatedAt = o.now()
 		if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
 			return err
@@ -1854,51 +1911,27 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 		return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: "Project status observe after update", Data: map[string]any{"action": snapshot.PendingAction, "itemId": snapshot.ProjectItemID}})
 	}
 	if strings.HasPrefix(action, "parallel_project_status_") {
-		status := parallelProjectStatus(snapshot.Phase)
-		if strings.HasSuffix(action, "_done") && snapshot.ProjectAutomationEnabled {
-			reader, ok := o.deps.GitHub.(ProjectStatusReader)
-			if !ok || snapshot.Registration.NodeID == "" {
-				return o.pendingUncertain(ctx, snapshot)
-			}
-			observed, err := reader.ReadProjectStatus(ctx, o.deps.Project, snapshot.Registration.NodeID)
-			if err != nil {
-				return o.parallelBlock(ctx, snapshot, "Project Done status is uncertain after restart")
-			}
-			if observed.Status != "Done" {
-				_, updater := projectMutationPorts(o.deps.GitHub)
-				if updater == nil || observed.ItemID == "" {
-					return o.pendingUncertain(ctx, snapshot)
-				}
-				if err := updater.UpdateProjectStatus(ctx, o.deps.Project, observed.ItemID, "Done"); err != nil {
-					return err
-				}
-			}
-			snapshot.ProjectItemID = observed.ItemID
-			snapshot.ProjectStatus = "Done"
-			snapshot.Phase = contract.PhaseCompleted
-			snapshot.PullRequestMerged = true
-			return o.parallelFinish(ctx, snapshot, "Project Done status and main merge reconciled")
+		// Older snapshots used one compound status action. Convert it to the
+		// new observe action and stop here; the next Advance performs the read,
+		// and a later Advance performs at most one add/update mutation.
+		status := projectStatusFromAction(action, "parallel_project_status_")
+		if status == "" {
+			status = parallelProjectStatus(snapshot.Phase)
 		}
-		reader, ok := o.deps.GitHub.(ProjectStatusReader)
-		if !ok || snapshot.Registration.NodeID == "" {
-			return o.parallelBlock(ctx, snapshot, "Project status is uncertain after restart")
-		}
-		observed, err := reader.ReadProjectStatus(ctx, o.deps.Project, snapshot.Registration.NodeID)
-		if err != nil {
-			return o.parallelBlock(ctx, snapshot, "Project status is uncertain after restart")
-		}
-		if observed.Status != status {
-			_, updater := projectMutationPorts(o.deps.GitHub)
-			if updater == nil || observed.ItemID == "" {
-				return o.pendingUncertain(ctx, snapshot)
+		if !snapshot.ProjectAutomationEnabled {
+			if status == "Done" && snapshot.PullRequestMerged {
+				return o.finishParallelMainMerge(ctx, snapshot)
 			}
-			if err := updater.UpdateProjectStatus(ctx, o.deps.Project, observed.ItemID, status); err != nil {
+			snapshot.ProjectStatus = status
+			snapshot.PendingAction = ""
+			snapshot.PendingTaskID = ""
+			snapshot.UpdatedAt = o.now()
+			if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
 				return err
 			}
+			return o.append(ctx, snapshot.RunID, state.Event{Type: "project_automation_skipped", Phase: snapshot.Phase, Message: "Project automation disabled; placeholder IDs are not evidence", Data: map[string]any{"status": status}})
 		}
-		snapshot.ProjectItemID = observed.ItemID
-		snapshot.ProjectStatus = status
-		return o.parallelFinishPreserveCursor(ctx, snapshot, "Project status intent reconciled")
+		return o.prepareProjectMutationObservation(ctx, snapshot, status)
 	}
 	if strings.HasPrefix(action, "parallel_create_worktree_") {
 		id := pendingParallelTaskID(snapshot, action, "parallel_create_worktree_")
@@ -2196,8 +2229,7 @@ func (o *Orchestrator) reconcileParallelPending(ctx context.Context, snapshot *s
 		}
 		snapshot.MergeSHA = pr.MergeCommitSHA
 		snapshot.PullRequestMerged = true
-		snapshot.Phase = contract.PhaseCompleted
-		return o.parallelFinish(ctx, snapshot, "main merge intent reconciled")
+		return o.finishParallelMainMerge(ctx, snapshot)
 	case "parallel_merge_preflight":
 		pr, err := o.deps.GitHub.GetPullRequest(ctx, github.Repository{Owner: runtime.contract.Repository.Owner, Name: runtime.contract.Repository.Name}, snapshot.PullRequest)
 		if err != nil || pr.Number != snapshot.PullRequest || pr.State != "open" || pr.HeadSHA != snapshot.FinalSHA || pr.Base != runtime.contract.Repository.DefaultBranch || pr.Mergeable == nil || !*pr.Mergeable {
@@ -2234,36 +2266,59 @@ func (o *Orchestrator) reconcileParallelTaskWorktree(ctx context.Context, snapsh
 	if taskState.ExpectedBaseCommit != "" && taskState.ExpectedBaseCommit != runtime.contract.BaseCommit {
 		return o.pendingUncertain(ctx, snapshot)
 	}
+	expectedBranch := strings.TrimSpace(taskState.ExpectedBranch)
+	if expectedBranch == "" {
+		expectedBranch = strings.TrimSpace(taskState.Worktree.Branch)
+	}
+	if expectedBranch == "" {
+		if task, ok := parallelTask(runtime.contract, id); ok {
+			expectedBranch = strings.TrimSpace(task.Branch)
+		}
+	}
 	label := taskState.ExpectedLabel
 	if label == "" {
 		label = "threaddock-" + string(snapshot.RunID) + "-" + id
 	}
-	if taskState.ExpectedBranch != "" && taskState.Worktree.Branch != taskState.ExpectedBranch {
+	if expectedBranch == "" {
+		return o.pendingUncertain(ctx, snapshot)
+	}
+	if taskState.ExpectedBranch != "" && taskState.Worktree.Branch != "" && taskState.Worktree.Branch != taskState.ExpectedBranch {
 		return o.pendingUncertain(ctx, snapshot)
 	}
 	var found herdr.Worktree
 	var foundExists bool
 	var err error
 	if branchLocator, branchOK := o.deps.Herdr.(BranchWorktreeLocator); branchOK {
-		found, foundExists, err = branchLocator.FindWorktreeByBranch(ctx, snapshot.RepositoryPath, taskState.ExpectedBranch, label)
+		found, foundExists, err = branchLocator.FindWorktreeByBranch(ctx, snapshot.RepositoryPath, expectedBranch, label)
 	} else {
 		locator, locatorOK := o.deps.Herdr.(WorktreeLocator)
 		if !locatorOK {
 			return o.pendingUncertain(ctx, snapshot)
 		}
-		path := taskState.Worktree.Path
-		if path == "" {
-			path = taskState.ExpectedPath
-		}
-		found, foundExists, err = locator.FindWorktree(ctx, snapshot.RepositoryPath, path, label)
+		// The parallel create intent is keyed by branch and label. A path is
+		// not available in the pre-effect snapshot after a crash, so pass the
+		// expected branch to the legacy locator and let the Herdr adapter use
+		// its branch-aware lookup. Persisted paths are only an exact-match
+		// constraint after a candidate has been found.
+		found, foundExists, err = locator.FindWorktree(ctx, snapshot.RepositoryPath, expectedBranch, label)
 	}
 	if err != nil || !foundExists {
 		return o.clearParallelPending(ctx, snapshot, "Builder Worktree not found; next Advance may create it")
 	}
-	if found.Path != taskState.Worktree.Path || found.WorkspaceID == "" || found.PaneID == "" {
+	if strings.TrimSpace(found.Path) == "" || found.WorkspaceID == "" || found.PaneID == "" {
 		return o.pendingUncertain(ctx, snapshot)
 	}
+	expectedPath := strings.TrimSpace(taskState.Worktree.Path)
+	if expectedPath == "" {
+		expectedPath = strings.TrimSpace(taskState.ExpectedPath)
+	}
+	if expectedPath != "" && found.Path != expectedPath {
+		return o.pendingUncertain(ctx, snapshot)
+	}
+	taskState.Worktree.Path = found.Path
 	taskState.Worktree.WorkspaceID, taskState.Worktree.PaneID = found.WorkspaceID, found.PaneID
+	taskState.Worktree.Branch = expectedBranch
+	taskState.ExpectedBranch = expectedBranch
 	taskState.State, taskState.Stage = "running", "start"
 	snapshot.Tasks[id] = taskState
 	return o.parallelFinish(ctx, snapshot, "Builder Worktree intent reconciled")
@@ -2377,7 +2432,11 @@ func (o *Orchestrator) reconcileParallelTaskEvidence(ctx context.Context, snapsh
 	evidence, err := reader.ReadEvidence(ctx, taskState.Agent.Name)
 	commitSHA := strings.ToLower(evidence.CommitSHA)
 	if err != nil || evidence.RequestID != taskState.Prompt.RequestID || !validCommitSHA(commitSHA) || !parallelVerificationValid(evidence.Verification, task.Verification) || taskState.RequiresFreshCommit && commitSHA == taskState.PreviousCommitSHA {
-		return o.pendingUncertain(ctx, snapshot)
+		// Reconciliation already performed the evidence observation. Defer the
+		// recovery policy lookup to a distinct next Advance, including for a
+		// stale repair SHA, so this path never reads Agent state in the same
+		// Advance as the evidence observation.
+		return o.parallelScheduleRecovery(ctx, snapshot, id, taskState, "Builder structured evidence is stale or incomplete")
 	}
 	taskState.Agent.CommitSHA = commitSHA
 	taskState.Agent.RequestID = evidence.RequestID

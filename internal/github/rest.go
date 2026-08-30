@@ -808,10 +808,10 @@ func (c *RESTClient) UpdateProjectStatus(ctx context.Context, project ProjectRef
 	return response.graphQLError(c.token)
 }
 
-// GetProjectStatus reads the exact ProjectV2 item for an Issue and returns the
-// configured single-select field's current status. It fails closed when the
-// item, field, or status is absent/ambiguous so callers never treat a
-// placeholder Project ID as reconciliation evidence.
+// ReadProjectStatus reads the exact ProjectV2 item for an Issue and returns
+// presence independently for the item and its configured single-select field.
+// An absent or uninitialized item is a normal observation (nil error), while
+// ambiguous or malformed provider evidence still fails closed.
 func (c *RESTClient) ReadProjectStatus(ctx context.Context, project ProjectRef, issueNodeID string) (ProjectStatus, error) {
 	if project.ID == "" || project.StatusFieldID == "" || issueNodeID == "" {
 		return ProjectStatus{}, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status read requires project, field, and issue IDs"}
@@ -851,6 +851,7 @@ func (c *RESTClient) ReadProjectStatus(ctx context.Context, project ProjectRef, 
 		return ProjectStatus{}, err
 	}
 	var itemID, status string
+	itemPresent := false
 	for _, item := range response.Data.Node.Items.Nodes {
 		if item.Content.ID != issueNodeID {
 			continue
@@ -859,6 +860,7 @@ func (c *RESTClient) ReadProjectStatus(ctx context.Context, project ProjectRef, 
 			return ProjectStatus{}, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status item was ambiguous"}
 		}
 		itemID = item.ID
+		itemPresent = true
 		for _, value := range item.FieldValues.Nodes {
 			fieldID := value.Field.ID
 			if fieldID == "" {
@@ -876,10 +878,8 @@ func (c *RESTClient) ReadProjectStatus(ctx context.Context, project ProjectRef, 
 			status = value.Name
 		}
 	}
-	if status == "" {
-		return ProjectStatus{}, &NotFoundError{StatusCode: http.StatusNotFound, Message: "project status item or field was not found"}
-	}
-	return ProjectStatus{Found: true, ItemID: itemID, Status: status}, nil
+	statusPresent := status != ""
+	return ProjectStatus{Found: itemPresent && statusPresent, ItemPresent: itemPresent, ItemFound: itemPresent, StatusPresent: statusPresent, StatusFound: statusPresent, ItemID: itemID, Status: status}, nil
 }
 
 func (c *RESTClient) GetProjectStatus(ctx context.Context, project ProjectRef, issueNodeID string) (string, error) {

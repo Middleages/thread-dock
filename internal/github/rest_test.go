@@ -619,6 +619,38 @@ func TestGetProjectStatusReadsExactIssueAndField(t *testing.T) {
 	}
 }
 
+func TestReadProjectStatusDistinguishesAbsentItemFromUninitializedItem(t *testing.T) {
+	tests := []struct {
+		name       string
+		items      []any
+		wantFound  bool
+		wantItem   bool
+		wantStatus bool
+	}{
+		{name: "absent", items: []any{}, wantFound: false, wantItem: false, wantStatus: false},
+		{name: "item without configured status", items: []any{map[string]any{"id": "ITEM_UNINITIALIZED", "content": map[string]string{"id": "ISSUE_NODE"}, "fieldValues": map[string]any{"nodes": []any{}}}}, wantFound: false, wantItem: true, wantStatus: false},
+		{name: "item with configured status", items: []any{map[string]any{"id": "ITEM_READY", "content": map[string]string{"id": "ISSUE_NODE"}, "fieldValues": map[string]any{"nodes": []any{map[string]string{"name": "Ready", "optionId": "O_READY", "fieldId": "F1"}}}}}, wantFound: true, wantItem: true, wantStatus: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": tc.items}}}})
+			})
+			server := httptest.NewServer(mux)
+			defer server.Close()
+			client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+			got, err := client.ReadProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1", StatusOptions: map[string]string{"Ready": "O_READY"}}, "ISSUE_NODE")
+			if err != nil {
+				t.Fatalf("ReadProjectStatus error = %v", err)
+			}
+			if got.Found != tc.wantFound || got.ItemPresent != tc.wantItem || got.StatusPresent != tc.wantStatus {
+				t.Fatalf("status = %+v, want found=%t item=%t status=%t", got, tc.wantFound, tc.wantItem, tc.wantStatus)
+			}
+		})
+	}
+}
+
 func TestProjectStatusOptionsAreUsedForEveryPhase(t *testing.T) {
 	statuses := []struct{ name, option string }{{"Backlog", "O_BACKLOG"}, {"Ready", "O_READY"}, {"In Progress", "O_PROGRESS"}, {"Review", "O_REVIEW"}, {"Done", "O_DONE"}}
 	var updates []struct{ item, option string }

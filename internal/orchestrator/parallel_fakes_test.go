@@ -43,6 +43,7 @@ type parallelHerdr struct {
 	promptIDs       map[string]string
 	evidenceByAgent map[string]int
 	forceWorking    bool
+	createErr       error
 	resumes         []herdr.ResumeAgentRequest
 }
 
@@ -54,15 +55,20 @@ type parallelGit struct {
 
 type parallelGitHub struct {
 	*fakeGitHub
-	harness          *parallelHarness
-	pr               github.PullRequest
-	projectStatuses  []string
-	projectStatus    string
-	projectItemID    string
-	draftCalls       int
-	mergeCalls       int
-	readyCalls       int
-	mergeableUnknown int
+	harness                   *parallelHarness
+	pr                        github.PullRequest
+	projectStatuses           []string
+	projectStatus             string
+	projectItemID             string
+	draftCalls                int
+	mergeCalls                int
+	readyCalls                int
+	mergeableUnknown          int
+	projectObserveCalls       int
+	projectAddCalls           int
+	projectUpdateCalls        int
+	projectAddResponseLost    bool
+	projectUpdateResponseLost bool
 }
 
 func newParallelHarness(t *testing.T) *parallelHarness {
@@ -115,6 +121,9 @@ func (h *parallelHarness) runToStable() contract.RunPhase {
 
 func (h *parallelHerdr) CreateWorktree(ctx context.Context, request herdr.CreateWorktreeRequest) (herdr.Worktree, error) {
 	h.fakeHerdr.worktrees++
+	if h.createErr != nil {
+		return herdr.Worktree{}, h.createErr
+	}
 	branch := strings.ReplaceAll(request.Branch, "/", "-")
 	return herdr.Worktree{WorkspaceID: "workspace-" + branch, PaneID: "pane-" + branch, Path: "/tmp/" + branch}, nil
 }
@@ -308,22 +317,34 @@ func (h *parallelGitHub) SetProjectStatus(_ context.Context, _ github.ProjectRef
 }
 
 func (h *parallelGitHub) ReadProjectStatus(context.Context, github.ProjectRef, string) (github.ProjectStatus, error) {
+	h.projectObserveCalls++
 	if h.projectItemID == "" {
-		return github.ProjectStatus{Found: false}, nil
+		return github.ProjectStatus{Found: false, ItemPresent: false, StatusPresent: false}, nil
 	}
-	return github.ProjectStatus{Found: true, ItemID: h.projectItemID, Status: h.projectStatus}, nil
+	if h.projectStatus == "" {
+		return github.ProjectStatus{Found: false, ItemPresent: true, StatusPresent: false, ItemID: h.projectItemID}, nil
+	}
+	return github.ProjectStatus{Found: true, ItemPresent: true, StatusPresent: true, ItemID: h.projectItemID, Status: h.projectStatus}, nil
 }
 
 func (h *parallelGitHub) AddProjectItem(context.Context, github.ProjectRef, string) (string, error) {
+	h.projectAddCalls++
 	h.projectItemID = "ITEM_PROJECT"
+	if h.projectAddResponseLost {
+		return "", errors.New("project add response lost")
+	}
 	return h.projectItemID, nil
 }
 
 func (h *parallelGitHub) UpdateProjectStatus(_ context.Context, _ github.ProjectRef, itemID, status string) error {
+	h.projectUpdateCalls++
 	if itemID == "" {
 		return errors.New("missing project item")
 	}
 	h.projectItemID, h.projectStatus = itemID, status
+	if h.projectUpdateResponseLost {
+		return errors.New("project update response lost")
+	}
 	return nil
 }
 

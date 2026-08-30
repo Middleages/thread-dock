@@ -114,9 +114,23 @@ type ProjectRef struct {
 }
 
 type ProjectStatus struct {
-	Found  bool
-	ItemID string
-	Status string
+	// Found is retained for callers of the original reader and means that an
+	// item and its configured status value were both observed.
+	Found bool
+	// ItemPresent distinguishes an absent ProjectV2 item from an item that has
+	// not yet been assigned the configured status field.
+	ItemPresent bool
+	// ItemFound is a descriptive alias for ItemPresent for callers that model
+	// the reader result as found/not-found observations.
+	ItemFound bool
+	// StatusPresent is true only when the configured status field was observed
+	// on ItemID. It is intentionally independent from Found for uninitialized
+	// items.
+	StatusPresent bool
+	// StatusFound is a descriptive alias for StatusPresent.
+	StatusFound bool
+	ItemID      string
+	Status      string
 }
 
 // ProjectStatusReader reads one exact ProjectV2 item/field for reconciliation

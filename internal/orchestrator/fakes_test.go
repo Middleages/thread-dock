@@ -159,23 +159,26 @@ func (f *fakeGitHub) GetPullRequest(context.Context, github.Repository, int) (gi
 }
 
 type fakeHerdr struct {
-	worktrees           int
-	starts              []herdr.StartAgentRequest
-	prompts             []string
-	recent              string
-	evidence            herdr.Evidence
-	startEntered        chan struct{}
-	releaseStart        chan struct{}
-	startCount          int
-	findWorktreeCalls   int
-	findWorktreeCWD     string
-	agentSeq            int64
-	agentInfoErr        error
-	agentInfoOverride   *herdr.AgentInfo
-	useTerminalIdentity bool
-	findWorktreeExists  bool
-	promptReceiptReads  int
-	lastPromptRequestID string
+	worktrees            int
+	starts               []herdr.StartAgentRequest
+	prompts              []string
+	recent               string
+	evidence             herdr.Evidence
+	startEntered         chan struct{}
+	releaseStart         chan struct{}
+	startCount           int
+	findWorktreeCalls    int
+	findWorktreeCWD      string
+	findWorktreeSelector string
+	findWorktreeLabel    string
+	agentSeq             int64
+	getInfoCalls         int
+	agentInfoErr         error
+	agentInfoOverride    *herdr.AgentInfo
+	useTerminalIdentity  bool
+	findWorktreeExists   bool
+	promptReceiptReads   int
+	lastPromptRequestID  string
 }
 
 func (f *fakeHerdr) CreateWorktree(context.Context, herdr.CreateWorktreeRequest) (herdr.Worktree, error) {
@@ -229,9 +232,11 @@ func (f *fakeHerdr) OpenWorktree(_ context.Context, request herdr.OpenWorktreeRe
 	return herdr.Worktree{WorkspaceID: "workspace-review-184", PaneID: "pane-review-184", Path: request.Path}, nil
 }
 
-func (f *fakeHerdr) FindWorktree(_ context.Context, cwd, _, _ string) (herdr.Worktree, bool, error) {
+func (f *fakeHerdr) FindWorktree(_ context.Context, cwd, selector, label string) (herdr.Worktree, bool, error) {
 	f.findWorktreeCalls++
 	f.findWorktreeCWD = cwd
+	f.findWorktreeSelector = selector
+	f.findWorktreeLabel = label
 	if !f.findWorktreeExists {
 		return herdr.Worktree{}, false, nil
 	}
@@ -239,6 +244,7 @@ func (f *fakeHerdr) FindWorktree(_ context.Context, cwd, _, _ string) (herdr.Wor
 }
 
 func (f *fakeHerdr) GetInfo(_ context.Context, name string) (herdr.AgentInfo, error) {
+	f.getInfoCalls++
 	if f.agentInfoErr != nil {
 		return herdr.AgentInfo{}, f.agentInfoErr
 	}
