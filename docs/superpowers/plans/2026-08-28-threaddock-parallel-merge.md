@@ -219,7 +219,7 @@ func TestValidateResultRejectsChangedPathOutsideOwnership(t *testing.T) {
 func TestMergeResultsStopsOnConflict(t *testing.T) {
     integrator := New(fakeGit{mergeErr: worktree.ErrConflict})
     results := []Result{{TaskID:"api",CommitSHA:"0123456789abcdef0123456789abcdef01234567"},{TaskID:"tests",CommitSHA:"89abcdef0123456789abcdef0123456789abcdef"}}
-    _, err := integrator.MergeResults(context.Background(), "/work/integration", results)
+    _, err := integrator.MergeResults(context.Background(), "/work/integration", results, nil)
     if !errors.Is(err, ErrBlockedConflict) { t.Fatalf("err=%v", err) }
 }
 
@@ -479,7 +479,7 @@ git commit -m "feat: 보호 변경을 포함한 병합 게이트 추가"
 - Consumes: all previous Tasks in this plan
 - Produces: full phases through `completed` or `blocked`
 - Produces: `taskAgentName(role string, runID contract.RunID, taskID string) string`, stable and Herdr-compatible within 32 characters
-- Adds: explicit `projectAutomationEnabled` config, default `false`; ProjectV2 mutations occur only when enabled with validated real IDs.
+- Adds: explicit `projectAutomationEnabled` config, default `false`; existing Project ID fields remain structurally required for config compatibility, but ProjectV2 mutations occur only when the flag is enabled.
 - Produces CLI: `agentctl confirm RUN protected-change`
 - Produces CLI: `agentctl create-revert RUN --reason TEXT`
 
