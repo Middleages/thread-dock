@@ -7,10 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"thread-dock/internal/github"
 	"thread-dock/internal/worktree"
@@ -21,6 +22,10 @@ var (
 	ErrConflict     = worktree.ErrConflict
 	ErrBlocked      = errors.New("revert blocked")
 )
+
+// MaxRevertReasonBytes is the conservative limit for one operator-provided
+// explanation embedded in a draft revert PR.
+const MaxRevertReasonBytes = 8 * 1024
 
 // BlockedError identifies a confirmed revert conflict. Cause includes an
 // abort failure when aborting the conflict itself was unsuccessful.
@@ -46,6 +51,7 @@ func (e *BlockedError) Is(target error) bool { return target == ErrBlocked }
 
 // Git is the narrow set of explicit Worktree operations needed for a revert.
 type Git interface {
+	ReconcileRevertWorktree(context.Context, string, string, string, string, string) (worktree.RevertWorktreeStatus, error)
 	CreateManagedWorktree(context.Context, string, string, string, string) error
 	RevertMergeCommit(context.Context, string, string) error
 	AbortRevert(context.Context, string) error
@@ -55,46 +61,30 @@ type Git interface {
 // GitHub is deliberately narrower than github.Client so the REST adapter
 // cannot acquire a local Git responsibility.
 type GitHub interface {
-	CreateDraftPR(context.Context, github.Repository, github.DraftPRRequest) (github.PullRequest, error)
+	FindOpenPullRequest(context.Context, github.Repository, string, string) (github.PullRequest, bool, error)
+	CreateSafeDraftPR(context.Context, github.Repository, github.DraftPRRequest) (github.PullRequest, error)
 }
 
 // Request describes one immutable merge commit to revert.
 type Request struct {
-	Repository           github.Repository
-	RepositoryRef        github.Repository
-	Repo                 github.Repository
-	RepositoryPath       string
-	RepoPath             string
-	ManagedRoot          string
-	WorktreePath         string
-	Parent               github.Issue
-	ParentIssue          int
-	ParentIssueNumber    int
-	DefaultBranch        string
-	CurrentDefaultBranch string
-	BaseBranch           string
-	Base                 string
-	BaseCommit           string
-	BaseSHA              string
-	MergeSHA             string
-	MergeCommitSHA       string
-	Remote               string
-	Reason               string
+	Repository     github.Repository
+	RepositoryPath string
+	ManagedRoot    string
+	Parent         github.Issue
+	DefaultBranch  string
+	BaseCommit     string
+	MergeSHA       string
+	Remote         string
+	Reason         string
 }
 
 // Service creates a managed revert branch and its draft PR.
 type Service struct {
-	Git    Git
-	GitHub GitHub
 	git    Git
 	github GitHub
 }
 
-func New(git Git, gh GitHub) *Service { return &Service{Git: git, GitHub: gh, git: git, github: gh} }
-
-// NewService is an explicit constructor alias for callers that prefer the
-// service-oriented name.
-func NewService(git Git, gh GitHub) *Service { return New(git, gh) }
+func New(git Git, gh GitHub) *Service { return &Service{git: git, github: gh} }
 
 // Create validates every target before invoking Git, then creates a draft PR
 // only after the revert commit has been pushed to its explicit branch.
@@ -102,38 +92,52 @@ func (s *Service) Create(ctx context.Context, request Request) (github.PullReque
 	if s == nil {
 		return github.PullRequest{}, errors.New("revert Git and GitHub ports are required")
 	}
-	git := s.git
-	if git == nil {
-		git = s.Git
-	}
-	gh := s.github
-	if gh == nil {
-		gh = s.GitHub
-	}
-	if git == nil || gh == nil {
+	if s.git == nil || s.github == nil {
 		return github.PullRequest{}, errors.New("revert Git and GitHub ports are required")
 	}
 	normalized, err := validateRequest(request)
 	if err != nil {
 		return github.PullRequest{}, err
 	}
-	if err := git.CreateManagedWorktree(ctx, normalized.repositoryPath, normalized.worktreePath, normalized.branch, normalized.baseCommit); err != nil {
+	if err := ensureGeneratedParent(normalized.createParent, normalized.managedRoot); err != nil {
 		return github.PullRequest{}, err
 	}
-	if err := git.RevertMergeCommit(ctx, normalized.worktreePath, normalized.mergeSHA); err != nil {
-		if !errors.Is(err, ErrConflict) {
+	status, err := s.git.ReconcileRevertWorktree(ctx, normalized.repositoryPath, normalized.worktreePath, normalized.branch, normalized.baseCommit, normalized.mergeSHA)
+	if err != nil {
+		return github.PullRequest{}, err
+	}
+	if !status.Exists {
+		if err := s.git.CreateManagedWorktree(ctx, normalized.repositoryPath, normalized.worktreePath, normalized.branch, normalized.baseCommit); err != nil {
 			return github.PullRequest{}, err
 		}
-		abortErr := git.AbortRevert(ctx, normalized.worktreePath)
-		if abortErr != nil {
-			return github.PullRequest{}, &BlockedError{Cause: errors.Join(err, fmt.Errorf("abort revert: %w", abortErr))}
-		}
-		return github.PullRequest{}, &BlockedError{Cause: err}
+		status = worktree.RevertWorktreeStatus{Exists: true, Ready: true}
 	}
-	if err := git.PushBranch(ctx, normalized.worktreePath, normalized.remote, normalized.branch); err != nil {
+	if !status.Reverted && !status.Ready {
+		return github.PullRequest{}, ErrUnsafeTarget
+	}
+	if status.Ready {
+		if err := s.git.RevertMergeCommit(ctx, normalized.worktreePath, normalized.mergeSHA); err != nil {
+			if !errors.Is(err, ErrConflict) {
+				return github.PullRequest{}, err
+			}
+			abortErr := s.git.AbortRevert(ctx, normalized.worktreePath)
+			if abortErr != nil {
+				return github.PullRequest{}, &BlockedError{Cause: errors.Join(err, fmt.Errorf("abort revert: %w", abortErr))}
+			}
+			return github.PullRequest{}, &BlockedError{Cause: err}
+		}
+	}
+	if err := s.git.PushBranch(ctx, normalized.worktreePath, normalized.remote, normalized.branch); err != nil {
 		return github.PullRequest{}, err
 	}
-	pr, err := gh.CreateDraftPR(ctx, normalized.repository, github.DraftPRRequest{
+	existing, found, err := s.github.FindOpenPullRequest(ctx, normalized.repository, normalized.branch, normalized.defaultBranch)
+	if err != nil {
+		return github.PullRequest{}, err
+	}
+	if found {
+		return existing, nil
+	}
+	pr, err := s.github.CreateSafeDraftPR(ctx, normalized.repository, github.DraftPRRequest{
 		Title:       "Revert merge " + normalized.mergeSHA[:12],
 		Body:        normalized.body,
 		Head:        normalized.branch,
@@ -157,29 +161,22 @@ type validatedRequest struct {
 	remote         string
 	parentIssue    int
 	body           string
+	createParent   string
+	managedRoot    string
 }
 
 func validateRequest(request Request) (validatedRequest, error) {
 	repository := request.Repository
-	if repository.Owner == "" && repository.Name == "" {
-		repository = request.RepositoryRef
-	}
-	if repository.Owner == "" && repository.Name == "" {
-		repository = request.Repo
-	}
-	if strings.TrimSpace(repository.Owner) == "" || strings.TrimSpace(repository.Name) == "" || strings.TrimSpace(repository.Owner) != repository.Owner || strings.TrimSpace(repository.Name) != repository.Name || strings.ContainsAny(repository.Owner+repository.Name, "/\\\x00\r\n") {
+	if strings.TrimSpace(repository.Owner) == "" || strings.TrimSpace(repository.Name) == "" || strings.TrimSpace(repository.Owner) != repository.Owner || strings.TrimSpace(repository.Name) != repository.Name || repository.Owner == "." || repository.Owner == ".." || repository.Name == "." || repository.Name == ".." || strings.ContainsAny(repository.Owner+repository.Name, "/\\\x00\r\n") {
 		return validatedRequest{}, errors.New("revert repository is invalid")
 	}
 	repositoryPathInput := request.RepositoryPath
-	if repositoryPathInput == "" {
-		repositoryPathInput = request.RepoPath
-	}
 	repositoryPath, err := resolveExistingDirectory(repositoryPathInput)
 	if err != nil || isFilesystemRoot(repositoryPath) {
 		return validatedRequest{}, ErrUnsafeTarget
 	}
 	managedRoot, err := resolveExistingDirectory(request.ManagedRoot)
-	if err != nil || isFilesystemRoot(managedRoot) {
+	if err != nil || isFilesystemRoot(managedRoot) || worktree.ValidateTrustedManagedRoot(managedRoot) != nil {
 		return validatedRequest{}, ErrUnsafeTarget
 	}
 	home, err := os.UserHomeDir()
@@ -191,43 +188,12 @@ func validateRequest(request Request) (validatedRequest, error) {
 		return validatedRequest{}, ErrUnsafeTarget
 	}
 	baseBranch := request.DefaultBranch
-	if baseBranch == "" {
-		baseBranch = request.CurrentDefaultBranch
-	}
-	if baseBranch == "" {
-		baseBranch = request.BaseBranch
-	} else if request.BaseBranch != "" && request.BaseBranch != baseBranch {
-		return validatedRequest{}, errors.New("revert default and base branches differ")
-	}
-	if baseBranch == "" {
-		baseBranch = repository.DefaultBranch
-	}
-	if baseBranch == "" {
-		baseBranch = request.Base
-	} else if request.Base != "" && request.Base != baseBranch {
-		return validatedRequest{}, errors.New("revert default and base branches differ")
-	}
 	baseCommit := request.BaseCommit
-	if baseCommit == "" {
-		baseCommit = request.BaseSHA
-	}
 	mergeSHA := request.MergeSHA
-	if mergeSHA == "" {
-		mergeSHA = request.MergeCommitSHA
-	}
 	if !validRef(baseBranch) || !isSHA(baseCommit) || !isSHA(mergeSHA) {
 		return validatedRequest{}, errors.New("revert requires valid branches and exact lowercase SHAs")
 	}
-	parentIssue := request.ParentIssue
-	if parentIssue == 0 {
-		parentIssue = request.ParentIssueNumber
-	}
-	if request.Parent.Number > 0 {
-		if parentIssue != 0 && parentIssue != request.Parent.Number {
-			return validatedRequest{}, errors.New("revert parent issue numbers differ")
-		}
-		parentIssue = request.Parent.Number
-	}
+	parentIssue := request.Parent.Number
 	if parentIssue <= 0 {
 		return validatedRequest{}, errors.New("revert parent issue number must be positive")
 	}
@@ -235,7 +201,8 @@ func validateRequest(request Request) (validatedRequest, error) {
 	if !validRef(branch) {
 		return validatedRequest{}, errors.New("revert branch is invalid")
 	}
-	worktreePath, err := resolveCreateTarget(request.WorktreePath, managedRoot, branch)
+	createParent := filepath.Join(managedRoot, ".revert-worktrees")
+	worktreePath, err := resolveCreateTarget(managedRoot, branch)
 	if err != nil {
 		return validatedRequest{}, err
 	}
@@ -246,12 +213,24 @@ func validateRequest(request Request) (validatedRequest, error) {
 	if !validRef(remote) {
 		return validatedRequest{}, errors.New("revert remote is invalid")
 	}
-	reason := strings.TrimSpace(request.Reason)
-	if reason == "" || reason != request.Reason || strings.ContainsRune(reason, '\x00') {
+	reason := request.Reason
+	if len(reason) == 0 || len(reason) > MaxRevertReasonBytes || !safeReason(reason) {
 		return validatedRequest{}, errors.New("revert reason must be a canonical non-empty string")
 	}
-	body := fmt.Sprintf("Reverts merge commit `%s`.\n\nParent issue: #%d\n\nReason: %s", mergeSHA, parentIssue, strconv.Quote(reason))
-	return validatedRequest{repository: repository, repositoryPath: repositoryPath, worktreePath: worktreePath, branch: branch, defaultBranch: baseBranch, baseCommit: baseCommit, mergeSHA: mergeSHA, remote: remote, parentIssue: parentIssue, body: body}, nil
+	body := fmt.Sprintf("Reverts merge commit `%s`.\n\nParent issue: #%d\n\nReason:\n<pre>%s</pre>", mergeSHA, parentIssue, html.EscapeString(reason))
+	return validatedRequest{repository: repository, repositoryPath: repositoryPath, worktreePath: worktreePath, branch: branch, defaultBranch: baseBranch, baseCommit: baseCommit, mergeSHA: mergeSHA, remote: remote, parentIssue: parentIssue, body: body, createParent: createParent, managedRoot: managedRoot}, nil
+}
+
+func safeReason(reason string) bool {
+	if !utf8.ValidString(reason) {
+		return false
+	}
+	for _, character := range reason {
+		if character == '\x00' || character == '\x7f' || character < ' ' && character != '\n' && character != '\r' && character != '\t' {
+			return false
+		}
+	}
+	return strings.TrimSpace(reason) != "" && strings.TrimSpace(reason) == reason
 }
 
 func resolveExistingDirectory(path string) (string, error) {
@@ -273,10 +252,8 @@ func resolveExistingDirectory(path string) (string, error) {
 	return filepath.Clean(resolved), nil
 }
 
-func resolveCreateTarget(raw, managedRoot, branch string) (string, error) {
-	if raw == "" {
-		raw = filepath.Join(managedRoot, branch)
-	}
+func resolveCreateTarget(managedRoot, branch string) (string, error) {
+	raw := filepath.Join(managedRoot, ".revert-worktrees", strings.ReplaceAll(branch, "/", "-"))
 	if strings.TrimSpace(raw) != raw {
 		return "", ErrUnsafeTarget
 	}
@@ -285,8 +262,10 @@ func resolveCreateTarget(raw, managedRoot, branch string) (string, error) {
 		return "", ErrUnsafeTarget
 	}
 	absPath = filepath.Clean(absPath)
-	if _, err := os.Lstat(absPath); err == nil {
-		return "", ErrUnsafeTarget
+	if info, err := os.Lstat(absPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return "", ErrUnsafeTarget
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", ErrUnsafeTarget
 	}
@@ -316,6 +295,27 @@ func resolveCreateTarget(raw, managedRoot, branch string) (string, error) {
 		}
 		parent = next
 	}
+}
+
+func ensureGeneratedParent(parent, managedRoot string) error {
+	if info, err := os.Lstat(parent); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return ErrUnsafeTarget
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return ErrUnsafeTarget
+	}
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return ErrUnsafeTarget
+	}
+	resolved, err := filepath.EvalSymlinks(parent)
+	if err != nil || !samePath(resolved, parent) || !strictlyContained(managedRoot, resolved) {
+		return ErrUnsafeTarget
+	}
+	if err := os.Chmod(resolved, 0o700); err != nil || worktree.ValidateTrustedManagedRoot(resolved) != nil {
+		return ErrUnsafeTarget
+	}
+	return nil
 }
 
 func strictlyContained(root, target string) bool {

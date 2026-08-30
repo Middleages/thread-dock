@@ -870,7 +870,177 @@ func TestGitHubPortsValidateArgumentsAndMergedFalse(t *testing.T) {
 	}
 	result, err := client.MergePullRequest(context.Background(), repo(), 17, sha, "merge")
 	var mergeErr *MergeError
-	if !errors.As(err, &mergeErr) || result.Merged {
+	if !errors.As(err, &mergeErr) || result.Merged || result.Message != "" || strings.Contains(err.Error(), "not merged") == false {
 		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func TestGetChecksContinuesByTotalCountWithoutLinkAndSorts(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	var requests []string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests = append(requests, r.URL.RequestURI())
+		switch r.URL.Query().Get("page") {
+		case "":
+			return jsonResponse(http.StatusOK, `{"total_count":2,"check_runs":[{"name":"z","status":"in_progress","conclusion":null}]}`), nil
+		case "2":
+			return jsonResponse(http.StatusOK, `{"total_count":2,"check_runs":[{"name":"a","status":"completed","conclusion":"success"}]}`), nil
+		default:
+			return jsonResponse(http.StatusInternalServerError, `{"message":"unexpected page"}`), nil
+		}
+	})
+	client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: transport})
+	checks, err := client.GetChecks(context.Background(), repo(), sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(checks, []CheckState{{Name: "a", State: "success"}, {Name: "z", State: "pending"}}) {
+		t.Fatalf("checks=%#v", checks)
+	}
+	if !reflect.DeepEqual(requests, []string{"/repos/platform/payments-api/commits/" + sha + "/check-runs?per_page=100", "/repos/platform/payments-api/commits/" + sha + "/check-runs?page=2&per_page=100"}) {
+		t.Fatalf("requests=%v", requests)
+	}
+}
+
+func TestGetChecksRejectsInconsistentOrOverCountedPages(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "inconsistent total", body: `{"total_count":2,"check_runs":[{"name":"ci","status":"completed","conclusion":"success"}]}`},
+		{name: "over count", body: `{"total_count":1,"check_runs":[{"name":"ci","status":"completed","conclusion":"success"},{"name":"other","status":"completed","conclusion":"success"}]}`},
+		{name: "empty no progress", body: `{"total_count":1,"check_runs":[]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if tt.name == "inconsistent total" && calls == 2 {
+					return jsonResponse(http.StatusOK, `{"total_count":3,"check_runs":[{"name":"other","status":"completed","conclusion":"success"}]}`), nil
+				}
+				return jsonResponse(http.StatusOK, tt.body), nil
+			})
+			client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: transport})
+			if _, err := client.GetChecks(context.Background(), repo(), sha); err == nil {
+				t.Fatalf("accepted malformed pagination after %d calls", calls)
+			}
+		})
+	}
+}
+
+func TestGetChecksMapsOnlyAllowlistedStatuses(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"total_count":7,"check_runs":[{"name":"queued","status":"queued"},{"name":"progress","status":"in_progress"},{"name":"pending","status":"pending"},{"name":"requested","status":"requested"},{"name":"waiting","status":"waiting"},{"name":"done","status":"completed","conclusion":"neutral"},{"name":"unknown","status":"mystery","conclusion":"success"}]}`), nil
+	})
+	client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: transport})
+	checks, err := client.GetChecks(context.Background(), repo(), sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range checks {
+		if check.Name == "done" || check.Name == "unknown" {
+			if check.State != "failure" {
+				t.Fatalf("check=%+v", check)
+			}
+		} else if check.State != "pending" {
+			t.Fatalf("check=%+v", check)
+		}
+	}
+}
+
+func TestMarkReadyForReviewRejectsMismatchedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"number":18,"draft":true,"head":{"ref":"feature","sha":"0123456789abcdef0123456789abcdef01234567"}}`)
+	}))
+	defer server.Close()
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	if _, err := client.MarkReadyForReview(context.Background(), repo(), 17); err == nil {
+		t.Fatal("accepted mismatched ready response")
+	}
+}
+
+func TestNewEndpointFailuresDoNotExposeProviderBody(t *testing.T) {
+	secret := "provider-secret-that-must-not-leak"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"message":"`+secret+`"}`)
+	}))
+	defer server.Close()
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	checksErr := func() error { _, err := client.GetChecks(context.Background(), repo(), sha); return err }
+	commentErr := func() error { return client.CreateIssueComment(context.Background(), repo(), 17, "body") }
+	readyErr := func() error { _, err := client.MarkReadyForReview(context.Background(), repo(), 17); return err }
+	mergeErr := func() error {
+		_, err := client.MergePullRequest(context.Background(), repo(), 17, sha, "merge")
+		return err
+	}
+	for name, operation := range map[string]func() error{"checks": checksErr, "comment": commentErr, "ready": readyErr, "merge": mergeErr} {
+		t.Run(name, func(t *testing.T) {
+			err := operation()
+			if err == nil || strings.Contains(err.Error(), secret) {
+				t.Fatalf("err=%v", err)
+			}
+		})
+	}
+}
+
+func TestSafeDraftPRFailureDoesNotExposeProviderBody(t *testing.T) {
+	secret := "draft-provider-secret"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"message":"`+secret+`"}`)
+	}))
+	defer server.Close()
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	_, err := client.CreateSafeDraftPR(context.Background(), repo(), DraftPRRequest{Title: "Revert", Body: "body", Head: "revert/184", Base: "main"})
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCreateIssueCommentRejectsOversizedAndControlBody(t *testing.T) {
+	client := NewRESTClient("https://api.github.com", "token", "2022-11-28", &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatal("invalid comment made an HTTP request")
+		return nil, nil
+	})})
+	for _, body := range []string{strings.Repeat("x", MaxIssueCommentBytes+1), "bad\x01body", "\x00"} {
+		if err := client.CreateIssueComment(context.Background(), repo(), 17, body); err == nil {
+			t.Fatalf("body=%q accepted", body)
+		}
+	}
+}
+
+func TestFindOpenPullRequestMatchesExactHeadAndBase(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") != "open" || r.URL.Query().Get("head") != "platform:revert/184-0123456789ab" || r.URL.Query().Get("base") != "main" || r.URL.Query().Get("per_page") != "100" {
+			t.Fatalf("query=%v", r.URL.Query())
+		}
+		_, _ = io.WriteString(w, `[{"number":1,"state":"open","draft":false,"head":{"ref":"other"},"base":{"ref":"main"}},{"number":2,"state":"open","draft":true,"head":{"ref":"revert/184-0123456789ab"},"base":{"ref":"develop"}},{"number":3,"state":"open","draft":true,"head":{"ref":"revert/184-0123456789ab","label":"platform:revert/184-0123456789ab"},"base":{"ref":"main"}}]`)
+	}))
+	defer server.Close()
+	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+	got, found, err := client.FindOpenPullRequest(context.Background(), repo(), "revert/184-0123456789ab", "main")
+	if err != nil || !found || got.Number != 3 {
+		t.Fatalf("pr=%+v found=%v err=%v", got, found, err)
+	}
+}
+
+func TestFindOpenPullRequestRejectsMissingExactIdentity(t *testing.T) {
+	for name, body := range map[string]string{
+		"missing label":  `[{"number":3,"state":"open","draft":true,"head":{"ref":"revert/184-0123456789ab"},"base":{"ref":"main"}}]`,
+		"missing number": `[{"number":0,"state":"open","draft":true,"head":{"ref":"revert/184-0123456789ab","label":"platform:revert/184-0123456789ab"},"base":{"ref":"main"}}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
+			defer server.Close()
+			client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
+			if _, found, err := client.FindOpenPullRequest(context.Background(), repo(), "revert/184-0123456789ab", "main"); err == nil || found {
+				t.Fatalf("found=%v err=%v", found, err)
+			}
+		})
 	}
 }

@@ -54,6 +54,18 @@ type CommitInspection struct {
 	Patch        string
 }
 
+// RevertWorktreeStatus is the read-only reconciliation result for a
+// deterministic revert worktree.
+type RevertWorktreeStatus struct {
+	Exists   bool
+	Ready    bool
+	Reverted bool
+}
+
+// ValidateTrustedManagedRoot enforces the ownership and non-writable-mode
+// invariant used before creating managed worktrees.
+func ValidateTrustedManagedRoot(path string) error { return validateTrustedManagedRoot(path) }
+
 const maxReviewerPatchBytes = 512 * 1024
 
 // New constructs a Git adapter. The optional binary defaults to git. An
@@ -103,6 +115,106 @@ func (g *Git) CreateManagedWorktree(ctx context.Context, repositoryPath, worktre
 		return ErrUnsafeTarget
 	}
 	return g.run(ctx, repositoryPath, "worktree", "add", "-b", branch, target, base)
+}
+
+// ReconcileRevertWorktree verifies that an existing deterministic revert
+// worktree belongs to the configured repository, is on the expected branch,
+// is clean, and is either at the exact base commit or contains the exact
+// default revert commit for mergeSHA. A missing target is safe to create.
+func (g *Git) ReconcileRevertWorktree(ctx context.Context, repositoryPath, worktreePath, branch, baseCommit, mergeSHA string) (RevertWorktreeStatus, error) {
+	if g == nil || g.Runner == nil || strings.TrimSpace(repositoryPath) == "" || strings.TrimSpace(repositoryPath) != repositoryPath || !validGitRef(branch) || !isCommitSHA(baseCommit) || !isCommitSHA(mergeSHA) {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	managedRoot, err := resolvePath(g.ManagedRoot)
+	if err != nil || validateTrustedManagedRoot(managedRoot) != nil {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	configuredRepository, err := resolvePath(g.RepositoryRoot)
+	if err != nil {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	suppliedRepository, err := resolvePath(repositoryPath)
+	if err != nil || !samePath(configuredRepository, suppliedRepository) {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	_, targetExists, err := resolveCreatePath(worktreePath)
+	if err != nil {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	if !targetExists {
+		return RevertWorktreeStatus{}, nil
+	}
+	managedRoot, repositoryRoot, target, home, err := g.resolveRemovalPaths(worktreePath)
+	if err != nil || !strictlyContained(managedRoot, target) || samePath(target, repositoryRoot) || samePath(target, home) || isFilesystemRoot(target) {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	if info, statErr := os.Stat(target); statErr != nil || !info.IsDir() {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	commonDirResult, err := g.command(ctx, target, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return RevertWorktreeStatus{}, err
+	}
+	commonDir := strings.TrimSpace(commonDirResult.Stdout)
+	if commonDir == "" {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(target, commonDir)
+	}
+	commonDir, err = resolvePath(commonDir)
+	if err != nil {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	configuredCommonDir, err := resolvePath(filepath.Join(repositoryRoot, ".git"))
+	if err != nil || !samePath(commonDir, configuredCommonDir) {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	branchResult, err := g.command(ctx, target, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil || strings.TrimSpace(branchResult.Stdout) != branch {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	statusResult, err := g.command(ctx, target, "status", "--porcelain=v1")
+	if err != nil {
+		return RevertWorktreeStatus{}, err
+	}
+	if strings.TrimSpace(statusResult.Stdout) != "" {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	headResult, err := g.command(ctx, target, "rev-parse", "HEAD")
+	if err != nil {
+		return RevertWorktreeStatus{}, err
+	}
+	head := strings.TrimSpace(headResult.Stdout)
+	if !isCommitSHA(head) {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	if head == baseCommit {
+		return RevertWorktreeStatus{Exists: true, Ready: true}, nil
+	}
+	parentsResult, err := g.command(ctx, target, "rev-list", "--parents", "-n", "1", "HEAD")
+	if err != nil {
+		return RevertWorktreeStatus{}, err
+	}
+	parents := strings.Fields(parentsResult.Stdout)
+	if len(parents) != 2 || parents[0] != head || parents[1] != baseCommit {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	messageResult, err := g.command(ctx, target, "log", "-1", "--format=%B", "HEAD")
+	if err != nil {
+		return RevertWorktreeStatus{}, err
+	}
+	if !strings.Contains(messageResult.Stdout, "This reverts commit "+mergeSHA+".") && !strings.Contains(messageResult.Stdout, "This reverts commit "+mergeSHA+",") {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	diffResult, err := g.command(ctx, target, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")
+	if err != nil {
+		return RevertWorktreeStatus{}, err
+	}
+	if strings.TrimSpace(diffResult.Stdout) == "" {
+		return RevertWorktreeStatus{}, ErrUnsafeTarget
+	}
+	return RevertWorktreeStatus{Exists: true, Reverted: true}, nil
 }
 
 // RevertMergeCommit reverts an ordinary merge commit using its first parent.
@@ -642,11 +754,15 @@ func (g *Git) validateManagedCreateTarget(repositoryPath, worktreePath, branch, 
 		return ErrUnsafeTarget
 	}
 	managedRoot, err := resolvePath(g.ManagedRoot)
+	if err != nil || validateTrustedManagedRoot(managedRoot) != nil {
+		return ErrUnsafeTarget
+	}
+	configuredRepository, err := resolvePath(g.RepositoryRoot)
 	if err != nil {
 		return ErrUnsafeTarget
 	}
 	repositoryRoot, err := resolvePath(repositoryPath)
-	if err != nil {
+	if err != nil || !samePath(configuredRepository, repositoryRoot) {
 		return ErrUnsafeTarget
 	}
 	homePath, err := os.UserHomeDir()

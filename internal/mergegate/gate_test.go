@@ -47,6 +47,47 @@ func TestGateFailsClosedForEmptyAndDuplicateChecks(t *testing.T) {
 	}
 }
 
+func TestGateRequiresRawCanonicalCheckNames(t *testing.T) {
+	in := Input{AcceptanceMet: true, BuildersComplete: true, ReviewerApproved: true, Checks: []CheckState{{Name: " ci ", State: "success"}}, LatestMainTested: true, MergeabilityKnown: true, Mergeable: true}
+	if got := Evaluate(in); got.Kind != Block {
+		t.Fatalf("got=%v want=%v", got.Kind, Block)
+	}
+}
+
+func TestGateFailureBeatsPendingRegardlessOfCheckOrder(t *testing.T) {
+	in := Input{AcceptanceMet: true, BuildersComplete: true, ReviewerApproved: true, LatestMainTested: true, MergeabilityKnown: true, Mergeable: true}
+	for _, checks := range [][]CheckState{
+		{{Name: "pending", State: "pending"}, {Name: "failed", State: "failure"}},
+		{{Name: "failed", State: "failure"}, {Name: "pending", State: "pending"}},
+	} {
+		in.Checks = checks
+		if got := Evaluate(in); got.Kind != Block {
+			t.Fatalf("checks=%#v got=%v want=%v", checks, got.Kind, Block)
+		}
+	}
+}
+
+func TestGateKnownUnmergeableBeatsStaleMainWait(t *testing.T) {
+	in := Input{AcceptanceMet: true, BuildersComplete: true, ReviewerApproved: true, Checks: []CheckState{{Name: "ci", State: "success"}}, MergeabilityKnown: true, Mergeable: false}
+	if got := Evaluate(in); got.Kind != Block {
+		t.Fatalf("got=%v want=%v", got.Kind, Block)
+	}
+}
+
+func TestGateKnownUnmergeableBeatsAbsentChecksWait(t *testing.T) {
+	in := Input{AcceptanceMet: true, BuildersComplete: true, ReviewerApproved: true, MergeabilityKnown: true, Mergeable: false}
+	if got := Evaluate(in); got.Kind != Block {
+		t.Fatalf("got=%v want=%v", got.Kind, Block)
+	}
+}
+
+func TestGateBuilderWaitIsTheOnlyEarlyWaitBeforeEvidence(t *testing.T) {
+	in := Input{BuildersComplete: false, AcceptanceMet: false, ReviewerApproved: false, Checks: []CheckState{{Name: " ci ", State: "failure"}}, MergeabilityKnown: true, Mergeable: false}
+	if got := Evaluate(in); got.Kind != Wait {
+		t.Fatalf("got=%v want=%v", got.Kind, Wait)
+	}
+}
+
 func TestProtectedReasonsClassifiesPathsAndValidRiskCategories(t *testing.T) {
 	got := ProtectedReasons(
 		[]string{"src/main.go", "authentication/policy.go", "migrations/001.sql", ".github/workflows/test.yml", "deployment/app.yaml", "authentication/policy.go"},

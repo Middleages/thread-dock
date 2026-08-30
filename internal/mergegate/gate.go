@@ -45,8 +45,12 @@ type Decision struct {
 	Reasons []string
 }
 
-// Evaluate applies the fail-closed Merge Gate precedence. A confirmation is
-// meaningful only when at least one protected reason is present.
+// Evaluate applies the fail-closed Merge Gate precedence: incomplete Builders
+// wait first; acceptance/reviewer rejection blocks; malformed or failed check
+// evidence blocks before pending waits; known unmergeability blocks before
+// stale-main waits; then absent/pending/unknown evidence waits; protected
+// reasons finally require operator confirmation. A confirmation is meaningful
+// only when at least one protected reason is present.
 func Evaluate(input Input) Decision {
 	reasons := canonicalReasons(input.ProtectedReasons)
 	decision := func(kind Kind) Decision { return Decision{Kind: kind, Reasons: append([]string(nil), reasons...)} }
@@ -57,13 +61,18 @@ func Evaluate(input Input) Decision {
 	if !input.AcceptanceMet || !input.ReviewerApproved {
 		return decision(Block)
 	}
+	if input.MergeabilityKnown && !input.Mergeable {
+		return decision(Block)
+	}
 	if len(input.Checks) == 0 {
 		return decision(Wait)
 	}
 	seen := make(map[string]struct{}, len(input.Checks))
+	hasPending := false
+	hasFailure := false
 	for _, check := range input.Checks {
 		name := strings.TrimSpace(check.Name)
-		if name == "" {
+		if name == "" || name != check.Name {
 			return decision(Block)
 		}
 		if _, exists := seen[name]; exists {
@@ -74,11 +83,17 @@ func Evaluate(input Input) Decision {
 	for _, check := range input.Checks {
 		switch check.State {
 		case "pending":
-			return decision(Wait)
+			hasPending = true
 		case "success":
 		default:
-			return decision(Block)
+			hasFailure = true
 		}
+	}
+	if hasFailure {
+		return decision(Block)
+	}
+	if hasPending {
+		return decision(Wait)
 	}
 	if !input.LatestMainTested || !input.MergeabilityKnown {
 		return decision(Wait)

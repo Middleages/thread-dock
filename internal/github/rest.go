@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"thread-dock/internal/contract"
 )
@@ -362,6 +363,30 @@ func (c *RESTClient) CreateDraftPR(ctx context.Context, repo Repository, req Dra
 	return wire.toPullRequest(), nil
 }
 
+// CreateSafeDraftPR is the narrow draft-PR port used by retryable workflows.
+// Unlike legacy CreateDraftPR, all endpoint errors discard provider bodies.
+func (c *RESTClient) CreateSafeDraftPR(ctx context.Context, repo Repository, req DraftPRRequest) (PullRequest, error) {
+	if err := validateRepository(repo); err != nil {
+		return PullRequest{}, err
+	}
+	if !validRefInput(req.Head) || !validRefInput(req.Base) || strings.TrimSpace(req.Title) == "" || !safeUserText(req.Title) || len(req.Body) > MaxIssueCommentBytes || !safeUserText(req.Body) {
+		return PullRequest{}, errors.New("github draft pull request request is invalid")
+	}
+	path := fmt.Sprintf("%s/repos/%s/%s/pulls", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	payload := struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		Head  string `json:"head"`
+		Base  string `json:"base"`
+		Draft bool   `json:"draft"`
+	}{Title: req.Title, Body: req.Body, Head: req.Head, Base: req.Base, Draft: true}
+	var wire pullRequestWire
+	if err := c.doSafeJSON(ctx, "create draft pull request", http.MethodPost, path, payload, &wire); err != nil {
+		return PullRequest{}, err
+	}
+	return wire.toPullRequest(), nil
+}
+
 func (c *RESTClient) UpdateIssueState(ctx context.Context, repo Repository, number int, state string) error {
 	path := fmt.Sprintf("%s/repos/%s/%s/issues/%d", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
 	return c.doJSON(ctx, http.MethodPatch, path, struct {
@@ -379,7 +404,8 @@ func (c *RESTClient) GetPullRequest(ctx context.Context, repo Repository, number
 }
 
 type checkRunsWire struct {
-	CheckRuns []checkRunWire `json:"check_runs"`
+	TotalCount *int           `json:"total_count"`
+	CheckRuns  []checkRunWire `json:"check_runs"`
 }
 
 type checkRunWire struct {
@@ -402,15 +428,27 @@ func (c *RESTClient) GetChecks(ctx context.Context, repo Repository, sha string)
 	var checks []CheckState
 	seenPages := make(map[string]struct{})
 	seenNames := make(map[string]struct{})
+	totalCount := -1
 	for page := 0; page < 1000; page++ {
 		if _, seen := seenPages[path]; seen {
 			return nil, errors.New("github check pagination repeated a page")
 		}
 		seenPages[path] = struct{}{}
 		var wire checkRunsWire
-		link, err := c.doJSONWithLink(ctx, http.MethodGet, path, nil, &wire)
+		link, err := c.doSafeJSONWithLink(ctx, "read checks", http.MethodGet, path, nil, &wire)
 		if err != nil {
 			return nil, err
+		}
+		if wire.TotalCount == nil || *wire.TotalCount < 0 {
+			return nil, errors.New("github checks response requires total_count")
+		}
+		if totalCount < 0 {
+			totalCount = *wire.TotalCount
+		} else if totalCount != *wire.TotalCount {
+			return nil, errors.New("github checks response changed total_count")
+		}
+		if len(checks)+len(wire.CheckRuns) > totalCount {
+			return nil, errors.New("github checks response exceeded total_count")
 		}
 		for _, run := range wire.CheckRuns {
 			name := strings.TrimSpace(run.Name)
@@ -418,7 +456,7 @@ func (c *RESTClient) GetChecks(ctx context.Context, repo Repository, sha string)
 				return nil, errors.New("github check run name is required")
 			}
 			if _, exists := seenNames[name]; exists {
-				return nil, fmt.Errorf("github check run %q is duplicated", name)
+				return nil, errors.New("github check run names must be unique")
 			}
 			seenNames[name] = struct{}{}
 			checks = append(checks, CheckState{Name: name, State: normalizeCheckState(run.Status, run.Conclusion)})
@@ -426,8 +464,14 @@ func (c *RESTClient) GetChecks(ctx context.Context, repo Repository, sha string)
 		if page == 999 {
 			return nil, errors.New("github check pagination exceeded the safety limit")
 		}
+		if len(checks) == totalCount {
+			break
+		}
 		next := nextIssueLink(link)
-		if next == "" && len(wire.CheckRuns) == 100 {
+		if len(wire.CheckRuns) == 0 {
+			return nil, errors.New("github checks pagination made no progress")
+		}
+		if next == "" {
 			u, parseErr := url.Parse(path)
 			if parseErr != nil {
 				return nil, errors.New("github check pagination is malformed")
@@ -454,13 +498,17 @@ func (c *RESTClient) GetChecks(ctx context.Context, repo Repository, sha string)
 }
 
 func normalizeCheckState(status string, conclusion *string) string {
-	if status != "completed" {
+	switch status {
+	case "queued", "in_progress", "pending", "requested", "waiting":
 		return "pending"
+	case "completed":
+		if conclusion != nil && *conclusion == "success" {
+			return "success"
+		}
+		return "failure"
+	default:
+		return "failure"
 	}
-	if conclusion != nil && *conclusion == "success" {
-		return "success"
-	}
-	return "failure"
 }
 
 func (c *RESTClient) validateChecksPageURL(raw, rootPath string) (string, error) {
@@ -497,13 +545,25 @@ func (c *RESTClient) CreateIssueComment(ctx context.Context, repo Repository, nu
 	if number <= 0 {
 		return errors.New("github issue number must be positive")
 	}
-	if strings.TrimSpace(body) == "" {
+	if strings.TrimSpace(body) == "" || len(body) > MaxIssueCommentBytes || !safeUserText(body) {
 		return errors.New("github issue comment body is required")
 	}
 	path := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
-	return c.doJSON(ctx, http.MethodPost, path, struct {
+	return c.doSafeJSON(ctx, "create issue comment", http.MethodPost, path, struct {
 		Body string `json:"body"`
 	}{Body: body}, nil)
+}
+
+func safeUserText(value string) bool {
+	if !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character == '\x00' || character == '\x7f' || character < ' ' && character != '\n' && character != '\r' && character != '\t' {
+			return false
+		}
+	}
+	return true
 }
 
 // MarkReadyForReview transitions a pull request from draft to ready and
@@ -517,10 +577,102 @@ func (c *RESTClient) MarkReadyForReview(ctx context.Context, repo Repository, nu
 	}
 	path := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/ready_for_review", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
 	var wire pullRequestWire
-	if err := c.doJSON(ctx, http.MethodPost, path, nil, &wire); err != nil {
+	if err := c.doSafeJSON(ctx, "mark pull request ready", http.MethodPost, path, nil, &wire); err != nil {
 		return PullRequest{}, err
 	}
-	return wire.toPullRequest(), nil
+	pr := wire.toPullRequest()
+	if pr.Number != number || pr.Draft {
+		return PullRequest{}, errors.New("github ready response did not identify a non-draft requested pull request")
+	}
+	return pr, nil
+}
+
+// FindOpenPullRequest finds a draft or ready open PR whose head and base refs
+// exactly match the requested pair. Pagination is bounded and provider text is
+// discarded on endpoint failure.
+func (c *RESTClient) FindOpenPullRequest(ctx context.Context, repo Repository, head, base string) (PullRequest, bool, error) {
+	if err := validateRepository(repo); err != nil {
+		return PullRequest{}, false, err
+	}
+	if !validRefInput(head) || !validRefInput(base) {
+		return PullRequest{}, false, errors.New("github pull request lookup requires valid head and base refs")
+	}
+	rootPath := fmt.Sprintf("%s/repos/%s/%s/pulls", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	query := url.Values{"base": []string{base}, "head": []string{repo.Owner + ":" + head}, "per_page": []string{"100"}, "state": []string{"open"}}
+	path := rootPath + "?" + query.Encode()
+	seenPages := make(map[string]struct{})
+	for page := 0; page < 100; page++ {
+		if _, seen := seenPages[path]; seen {
+			return PullRequest{}, false, errors.New("github pull request pagination repeated a page")
+		}
+		seenPages[path] = struct{}{}
+		var wires []pullRequestWire
+		link, err := c.doSafeJSONWithLink(ctx, "find pull request", http.MethodGet, path, nil, &wires)
+		if err != nil {
+			return PullRequest{}, false, err
+		}
+		for _, wire := range wires {
+			pr := wire.toPullRequest()
+			if pr.State == "open" && pr.Head == head && pr.Base == base {
+				if pr.Number <= 0 || wire.Head.Label != repo.Owner+":"+head {
+					return PullRequest{}, false, errors.New("github pull request lookup returned an unsafe identity")
+				}
+				return pr, true, nil
+			}
+		}
+		if len(wires) == 0 {
+			return PullRequest{}, false, nil
+		}
+		next := nextIssueLink(link)
+		if next == "" && len(wires) == 100 {
+			u, parseErr := url.Parse(path)
+			if parseErr != nil {
+				return PullRequest{}, false, errors.New("github pull request pagination is malformed")
+			}
+			pageNumber, parseErr := strconv.Atoi(u.Query().Get("page"))
+			if parseErr != nil || pageNumber < 1 {
+				pageNumber = 1
+			}
+			q := u.Query()
+			q.Set("page", strconv.Itoa(pageNumber+1))
+			u.RawQuery = q.Encode()
+			next = u.RequestURI()
+		}
+		if next == "" {
+			return PullRequest{}, false, nil
+		}
+		path, err = c.validatePullRequestPageURL(next, rootPath)
+		if err != nil {
+			return PullRequest{}, false, err
+		}
+	}
+	return PullRequest{}, false, errors.New("github pull request pagination exceeded the safety limit")
+}
+
+func (c *RESTClient) validatePullRequestPageURL(raw, rootPath string) (string, error) {
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", errors.New("github pull request pagination base is malformed")
+	}
+	next, err := url.Parse(raw)
+	if err != nil || next.User != nil {
+		return "", errors.New("github pull request pagination link is malformed")
+	}
+	if !next.IsAbs() {
+		next = base.ResolveReference(next)
+	}
+	if !sameOrigin(next, base) || next.Path != rootPath || next.Fragment != "" {
+		return "", errors.New("github pull request pagination link is outside the configured GitHub API base")
+	}
+	for key, values := range next.Query() {
+		if key != "base" && key != "head" && key != "page" && key != "per_page" && key != "state" {
+			return "", errors.New("github pull request pagination link contains unsupported query data")
+		}
+		if len(values) != 1 || strings.TrimSpace(values[0]) == "" {
+			return "", errors.New("github pull request pagination link contains an invalid query")
+		}
+	}
+	return next.RequestURI(), nil
 }
 
 // MergePullRequest merges only with the exact requested commit SHA and the
@@ -540,13 +692,14 @@ func (c *RESTClient) MergePullRequest(ctx context.Context, repo Repository, numb
 	}
 	path := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/merge", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
 	var result MergePullRequestResult
-	if err := c.doJSON(ctx, http.MethodPut, path, struct {
+	if err := c.doSafeJSON(ctx, "merge pull request", http.MethodPut, path, struct {
 		SHA         string `json:"sha"`
 		MergeMethod string `json:"merge_method"`
 	}{SHA: exactSHA, MergeMethod: method}, &result); err != nil {
 		return MergePullRequestResult{}, err
 	}
 	if !result.Merged {
+		result.Message = ""
 		return result, &MergeError{Result: result}
 	}
 	return result, nil
@@ -561,8 +714,9 @@ type pullRequestWire struct {
 	State   string `json:"state"`
 	Draft   bool   `json:"draft"`
 	Head    struct {
-		Ref string `json:"ref"`
-		SHA string `json:"sha"`
+		Ref   string `json:"ref"`
+		SHA   string `json:"sha"`
+		Label string `json:"label"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
@@ -572,6 +726,10 @@ type pullRequestWire struct {
 
 func (w pullRequestWire) toPullRequest() PullRequest {
 	return PullRequest{Number: w.Number, NodeID: w.NodeID, Title: w.Title, Body: w.Body, HTMLURL: w.HTMLURL, State: w.State, Draft: w.Draft, Head: w.Head.Ref, HeadSHA: w.Head.SHA, Base: w.Base.Ref, Mergeable: w.Mergeable}
+}
+
+func validRefInput(value string) bool {
+	return strings.TrimSpace(value) == value && value != "" && value != "." && value != ".." && !strings.HasPrefix(value, ".") && !strings.ContainsAny(value, "\x00\r\n ~^:?*[\\") && !strings.Contains(value, "..") && !strings.Contains(value, "@{") && !strings.Contains(value, "//") && !strings.Contains(value, "/.") && !strings.HasPrefix(value, "/") && !strings.HasSuffix(value, "/") && !strings.HasSuffix(value, ".") && !strings.HasSuffix(value, ".lock")
 }
 
 func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, issueNodeID, status string) error {
@@ -714,6 +872,43 @@ func (c *RESTClient) doJSON(ctx context.Context, method, path string, body any, 
 	return err
 }
 
+func (c *RESTClient) doSafeJSON(ctx context.Context, operation, method, path string, body any, out any) error {
+	_, err := c.doSafeJSONWithLink(ctx, operation, method, path, body, out)
+	return err
+}
+
+func (c *RESTClient) doSafeJSONWithLink(ctx context.Context, operation, method, path string, body any, out any) (string, error) {
+	link, err := c.doJSONWithLink(ctx, method, path, body, out)
+	if err != nil {
+		return "", &EndpointError{Operation: operation, StatusCode: apiErrorStatus(err)}
+	}
+	return link, nil
+}
+
+func apiErrorStatus(err error) int {
+	var authErr *AuthError
+	if errors.As(err, &authErr) {
+		return authErr.StatusCode
+	}
+	var notFoundErr *NotFoundError
+	if errors.As(err, &notFoundErr) {
+		return notFoundErr.StatusCode
+	}
+	var conflictErr *ConflictError
+	if errors.As(err, &conflictErr) {
+		return conflictErr.StatusCode
+	}
+	var temporaryErr *TemporaryError
+	if errors.As(err, &temporaryErr) {
+		return temporaryErr.StatusCode
+	}
+	var apiErr *apiError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode
+	}
+	return 0
+}
+
 func validateRepository(repo Repository) error {
 	for field, value := range map[string]string{"owner": repo.Owner, "name": repo.Name} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value || strings.ContainsAny(value, "/\\\x00\r\n") || value == "." || value == ".." {
@@ -832,4 +1027,6 @@ var _ Client = (*RESTClient)(nil)
 var _ CheckReader = (*RESTClient)(nil)
 var _ IssueCommenter = (*RESTClient)(nil)
 var _ PullRequestReadier = (*RESTClient)(nil)
+var _ PullRequestFinder = (*RESTClient)(nil)
+var _ SafeDraftPRCreator = (*RESTClient)(nil)
 var _ PullRequestMerger = (*RESTClient)(nil)

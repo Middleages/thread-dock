@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -283,6 +284,111 @@ func TestCreateManagedWorktreeUsesExplicitBaseAndValidatesTarget(t *testing.T) {
 	want := fakeCall{cwd: repo, exec: "git", args: []string{"worktree", "add", "-b", "revert/184-0123456789ab", target, "0123456789abcdef0123456789abcdef01234567"}}
 	if !reflect.DeepEqual(r.calls, []fakeCall{want}) {
 		t.Fatalf("calls=%#v want=%#v", r.calls, []fakeCall{want})
+	}
+}
+
+func TestCreateManagedWorktreeRejectsConfiguredRepositoryMismatchBeforeCommand(t *testing.T) {
+	r := &fakeRunner{}
+	git, _, _ := configuredGit(t, r)
+	other := filepath.Join(t.TempDir(), "other-repo")
+	if err := os.Mkdir(other, 0700); err != nil {
+		t.Fatal(err)
+	}
+	err := git.CreateManagedWorktree(context.Background(), other, filepath.Join(git.ManagedRoot, "new"), "revert/184", "0123456789abcdef0123456789abcdef01234567")
+	if !errors.Is(err, ErrUnsafeTarget) || len(r.calls) != 0 {
+		t.Fatalf("calls=%#v err=%v", r.calls, err)
+	}
+}
+
+func TestCreateManagedWorktreeRejectsUntrustedManagedRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix ownership and mode invariant")
+	}
+	r := &fakeRunner{}
+	git, repo, _ := configuredGit(t, r)
+	if err := os.Chmod(git.ManagedRoot, 0770); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(git.ManagedRoot, 0700) }()
+	err := git.CreateManagedWorktree(context.Background(), repo, filepath.Join(git.ManagedRoot, "new"), "revert/184", "0123456789abcdef0123456789abcdef01234567")
+	if !errors.Is(err, ErrUnsafeTarget) || len(r.calls) != 0 {
+		t.Fatalf("calls=%#v err=%v", r.calls, err)
+	}
+}
+
+func TestValidateTrustedManagedRootIsPlatformSafe(t *testing.T) {
+	managed := t.TempDir()
+	err := ValidateTrustedManagedRoot(managed)
+	if runtime.GOOS == "windows" {
+		if !errors.Is(err, ErrUnsafeTarget) {
+			t.Fatalf("windows err=%v want unsupported rejection", err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("unix err=%v", err)
+	}
+}
+
+func TestReconcileRevertWorktreeReportsReadyAtExactBase(t *testing.T) {
+	base := "0123456789abcdef0123456789abcdef01234567"
+	git, repo, target := configuredGit(t, &fakeRunner{})
+	commonDir := filepath.Join(repo, ".git")
+	if err := os.Mkdir(commonDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	r := &fakeRunner{results: []runner.Result{{Stdout: commonDir + "\n"}, {Stdout: "revert/184-0123456789ab\n"}, {Stdout: ""}, {Stdout: base + "\n"}}}
+	git.Runner = r
+	status, err := git.ReconcileRevertWorktree(context.Background(), repo, target, "revert/184-0123456789ab", base, "89abcdef0123456789abcdef0123456789abcdef")
+	if err != nil || !status.Exists || !status.Ready || status.Reverted {
+		t.Fatalf("status=%+v err=%v", status, err)
+	}
+	if len(r.calls) != 4 || !reflect.DeepEqual(r.calls[0].args, []string{"rev-parse", "--git-common-dir"}) || !reflect.DeepEqual(r.calls[1].args, []string{"rev-parse", "--abbrev-ref", "HEAD"}) || !reflect.DeepEqual(r.calls[2].args, []string{"status", "--porcelain=v1"}) || !reflect.DeepEqual(r.calls[3].args, []string{"rev-parse", "HEAD"}) {
+		t.Fatalf("calls=%#v", r.calls)
+	}
+}
+
+func TestReconcileRevertWorktreeReportsExactRevertCommit(t *testing.T) {
+	base := "0123456789abcdef0123456789abcdef01234567"
+	merge := "89abcdef0123456789abcdef0123456789abcdef"
+	git, repo, target := configuredGit(t, &fakeRunner{})
+	commonDir := filepath.Join(repo, ".git")
+	if err := os.Mkdir(commonDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	head := "abcdef0123456789abcdef0123456789abcdef01"
+	r := &fakeRunner{results: []runner.Result{{Stdout: commonDir + "\n"}, {Stdout: "revert/184-0123456789ab\n"}, {Stdout: ""}, {Stdout: head + "\n"}, {Stdout: head + " " + base + "\n"}, {Stdout: "Revert change\n\nThis reverts commit " + merge + ",\n"}, {Stdout: "src/file.go\n"}}}
+	git.Runner = r
+	status, err := git.ReconcileRevertWorktree(context.Background(), repo, target, "revert/184-0123456789ab", base, merge)
+	if err != nil || !status.Exists || status.Ready || !status.Reverted {
+		t.Fatalf("status=%+v err=%v", status, err)
+	}
+}
+
+func TestReconcileRevertWorktreeRejectsWrongParentOrEmptyDiff(t *testing.T) {
+	base := "0123456789abcdef0123456789abcdef01234567"
+	merge := "89abcdef0123456789abcdef0123456789abcdef"
+	git, repo, target := configuredGit(t, &fakeRunner{})
+	commonDir := filepath.Join(repo, ".git")
+	if err := os.Mkdir(commonDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	head := "abcdef0123456789abcdef0123456789abcdef01"
+	for name, parents := range map[string]string{"wrong parent": head + " 1111111111111111111111111111111111111111\n", "multiple parents": head + " " + base + " 1111111111111111111111111111111111111111\n"} {
+		t.Run(name, func(t *testing.T) {
+			r := &fakeRunner{results: []runner.Result{{Stdout: commonDir + "\n"}, {Stdout: "revert/184-0123456789ab\n"}, {Stdout: ""}, {Stdout: head + "\n"}, {Stdout: parents}, {Stdout: "This reverts commit " + merge + ".\n"}, {Stdout: "src/file.go\n"}}}
+			git.Runner = r
+			status, err := git.ReconcileRevertWorktree(context.Background(), repo, target, "revert/184-0123456789ab", base, merge)
+			if !errors.Is(err, ErrUnsafeTarget) || status.Exists {
+				t.Fatalf("status=%+v err=%v", status, err)
+			}
+		})
+	}
+	r := &fakeRunner{results: []runner.Result{{Stdout: commonDir + "\n"}, {Stdout: "revert/184-0123456789ab\n"}, {Stdout: ""}, {Stdout: head + "\n"}, {Stdout: head + " " + base + "\n"}, {Stdout: "This reverts commit " + merge + ".\n"}, {Stdout: "\n"}}}
+	git.Runner = r
+	status, err := git.ReconcileRevertWorktree(context.Background(), repo, target, "revert/184-0123456789ab", base, merge)
+	if !errors.Is(err, ErrUnsafeTarget) || status.Exists {
+		t.Fatalf("empty diff status=%+v err=%v", status, err)
 	}
 }
 

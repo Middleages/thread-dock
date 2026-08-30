@@ -4,15 +4,15 @@ package github
 
 import (
 	"context"
+	"fmt"
 
 	"thread-dock/internal/contract"
 )
 
 // Repository identifies a repository on a GHES installation.
 type Repository struct {
-	Owner         string
-	Name          string
-	DefaultBranch string
+	Owner string
+	Name  string
 }
 
 // Issue is the subset of an issue returned by GHES that the orchestrator needs.
@@ -39,6 +39,10 @@ type DraftPRRequest struct {
 	IssueNumber int    `json:"-"`
 }
 
+// MaxIssueCommentBytes is the conservative limit applied before posting an
+// operator or audit comment.
+const MaxIssueCommentBytes = 16 * 1024
+
 // PullRequest is the subset of a pull request used by ThreadDock.
 type PullRequest struct {
 	Number    int    `json:"number"`
@@ -60,10 +64,6 @@ type CheckState struct {
 	State string
 }
 
-// Check is retained as a readable alias for callers that prefer the shorter
-// name at the optional port boundary.
-type Check = CheckState
-
 // MergePullRequestResult is the typed GitHub merge response.
 type MergePullRequestResult struct {
 	SHA     string `json:"sha"`
@@ -71,34 +71,28 @@ type MergePullRequestResult struct {
 	Message string `json:"message"`
 }
 
-// MergeResult is a compatibility alias for MergePullRequestResult.
-type MergeResult = MergePullRequestResult
-
-// PullRequestMergeResult is a descriptive compatibility alias.
-type PullRequestMergeResult = MergePullRequestResult
-
-// MergeResponse is a compatibility alias for MergePullRequestResult.
-type MergeResponse = MergePullRequestResult
-
 // MergeError reports a successful HTTP response that did not merge the PR.
 type MergeError struct {
 	Result MergePullRequestResult
 }
 
-// PullRequestMergeError is a descriptive compatibility alias.
-type PullRequestMergeError = MergeError
+func (e *MergeError) Error() string { return "github pull request was not merged" }
 
-// MergeFailure is a compatibility alias for MergeError.
-type MergeFailure = MergeError
+// EndpointError is a safe error for the newer optional REST ports. Provider
+// response bodies are intentionally discarded rather than exposed.
+type EndpointError struct {
+	Operation  string
+	StatusCode int
+}
 
-func (e *MergeError) Error() string {
+func (e *EndpointError) Error() string {
 	if e == nil {
-		return "github pull request was not merged"
+		return "github endpoint failed"
 	}
-	if e.Result.Message != "" {
-		return "github pull request was not merged: " + e.Result.Message
+	if e.StatusCode > 0 {
+		return fmt.Sprintf("github %s failed (%d)", e.Operation, e.StatusCode)
 	}
-	return "github pull request was not merged"
+	return fmt.Sprintf("github %s failed", e.Operation)
 }
 
 // ProjectRef identifies an Organization Project status field and its options.
@@ -131,6 +125,17 @@ type IssueCommenter interface {
 // PullRequestReadier transitions a draft PR to ready for review.
 type PullRequestReadier interface {
 	MarkReadyForReview(context.Context, Repository, int) (PullRequest, error)
+}
+
+// PullRequestFinder finds an existing open PR for an exact head/base pair.
+type PullRequestFinder interface {
+	FindOpenPullRequest(context.Context, Repository, string, string) (PullRequest, bool, error)
+}
+
+// SafeDraftPRCreator creates a draft PR while suppressing provider response
+// bodies in endpoint errors. It is intentionally separate from legacy Client.
+type SafeDraftPRCreator interface {
+	CreateSafeDraftPR(context.Context, Repository, DraftPRRequest) (PullRequest, error)
 }
 
 // PullRequestMerger merges a PR only at an exact commit SHA.
