@@ -4,6 +4,7 @@ package review
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"thread-dock/internal/pathscope"
@@ -140,20 +141,25 @@ func BuildRepairPacket(input RepairPacketInput) (string, error) {
 	var b strings.Builder
 	b.WriteString("Repair task packet\n\nAcceptance criteria:\n")
 	for _, criterion := range criteria {
-		fmt.Fprintf(&b, "- %s\n", criterion)
+		fmt.Fprintf(&b, "- %s\n", strconv.Quote(criterion))
 	}
 	b.WriteString("\nIntegration SHA: ")
-	b.WriteString(sha)
+	b.WriteString(strconv.Quote(sha))
 	b.WriteString("\n\nBlocking findings:\n")
 	for i, finding := range input.BlockingFindings {
-		fmt.Fprintf(&b, "%d. %s: %s\n", i+1, finding.ID, finding.Summary)
+		fmt.Fprintf(&b, "%d. %s: %s\n", i+1, strconv.Quote(finding.ID), strconv.Quote(finding.Summary))
 		b.WriteString("   Paths: ")
-		b.WriteString(strings.Join(finding.Paths, ", "))
+		for pathIndex, path := range finding.Paths {
+			if pathIndex > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(strconv.Quote(path))
+		}
 		b.WriteByte('\n')
 	}
 	b.WriteString("\nAllowed paths:\n")
 	for _, path := range input.AllowedPaths {
-		fmt.Fprintf(&b, "- %s\n", path)
+		fmt.Fprintf(&b, "- %s\n", strconv.Quote(path))
 	}
 	fmt.Fprintf(&b, "\nRemaining repair budget: %d\n", input.RemainingBudget)
 	return b.String(), nil

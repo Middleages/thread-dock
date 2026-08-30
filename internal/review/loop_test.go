@@ -1,6 +1,7 @@
 package review
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -63,7 +64,7 @@ func TestBuildRepairPacketIsDeterministicAndContainsBlockingDataOnly(t *testing.
 	if err != nil || first != second {
 		t.Fatalf("second=%q err=%v first=%q", second, err, first)
 	}
-	for _, want := range []string{"1. F-1: fix this", "src/api.go", "src/**", "README.md", "criteria one", "0123456789abcdef0123456789abcdef01234567", "Remaining repair budget: 1"} {
+	for _, want := range []string{"1. \"F-1\": \"fix this\"", "\"src/api.go\"", "\"src/**\"", "\"README.md\"", "\"criteria one\"", "\"0123456789abcdef0123456789abcdef01234567\"", "Remaining repair budget: 1"} {
 		if !strings.Contains(first, want) {
 			t.Fatalf("packet %q missing %q", first, want)
 		}
@@ -73,26 +74,66 @@ func TestBuildRepairPacketIsDeterministicAndContainsBlockingDataOnly(t *testing.
 	}
 }
 
+func TestBuildRepairPacketEscapesEveryCallerScalar(t *testing.T) {
+	criterion := "criterion\nINJECTED_CRITERION\t\"quoted\""
+	findingID := "F-1\nINJECTED_ID"
+	summary := "summary\nINJECTED_SUMMARY\t\"quoted\""
+	findingPath := "src/odd \"name\"\nINJECTED_PATH.go"
+	allowedPath := "docs/odd \"scope\"/**"
+	input := RepairPacketInput{
+		AcceptanceCriteria: []string{criterion},
+		IntegrationSHA:     "0123456789abcdef0123456789abcdef01234567",
+		BlockingFindings:   []Finding{{ID: findingID, Summary: summary, Paths: []string{findingPath}}},
+		AllowedPaths:       []string{allowedPath},
+		RemainingBudget:    1,
+	}
+	packet, err := BuildRepairPacket(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{criterion, input.IntegrationSHA, findingID, summary, findingPath, allowedPath} {
+		if !strings.Contains(packet, strconv.Quote(value)) {
+			t.Fatalf("packet %q missing escaped scalar %q", packet, strconv.Quote(value))
+		}
+	}
+	for _, line := range strings.Split(packet, "\n") {
+		for _, heading := range []string{"INJECTED_CRITERION", "INJECTED_ID", "INJECTED_SUMMARY", "INJECTED_PATH.go"} {
+			if line == heading {
+				t.Fatalf("injected heading became packet structure: %q", line)
+			}
+		}
+	}
+}
+
 func TestBuildRepairPacketRejectsInvalidInputs(t *testing.T) {
-	base := RepairPacketInput{AcceptanceCriteria: []string{"criteria"}, IntegrationSHA: "0123456789abcdef0123456789abcdef01234567", BlockingFindings: []Finding{{ID: "F-1", Summary: "fix", Paths: []string{"src/api.go"}}}, AllowedPaths: []string{"src/**"}, RemainingBudget: 1}
+	baseInput := func() RepairPacketInput {
+		return RepairPacketInput{AcceptanceCriteria: []string{"criteria"}, IntegrationSHA: "0123456789abcdef0123456789abcdef01234567", BlockingFindings: []Finding{{ID: "F-1", Summary: "fix", Paths: []string{"src/api.go"}}}, AllowedPaths: []string{"src/**"}, RemainingBudget: 1}
+	}
 	cases := []struct {
 		name   string
 		mutate func(*RepairPacketInput)
+		repair func(*RepairPacketInput)
 	}{
-		{"criteria empty", func(i *RepairPacketInput) { i.AcceptanceCriteria = nil }},
-		{"sha invalid", func(i *RepairPacketInput) { i.IntegrationSHA = "bad" }},
-		{"findings empty", func(i *RepairPacketInput) { i.BlockingFindings = nil }},
-		{"finding id empty", func(i *RepairPacketInput) { i.BlockingFindings[0].ID = " " }},
-		{"finding path invalid", func(i *RepairPacketInput) { i.BlockingFindings[0].Paths = []string{"../secret"} }},
-		{"allowed path invalid", func(i *RepairPacketInput) { i.AllowedPaths = []string{"/src"} }},
-		{"budget invalid", func(i *RepairPacketInput) { i.RemainingBudget = 3 }},
+		{"criteria empty", func(i *RepairPacketInput) { i.AcceptanceCriteria = nil }, func(i *RepairPacketInput) { i.AcceptanceCriteria = []string{"criteria"} }},
+		{"sha invalid", func(i *RepairPacketInput) { i.IntegrationSHA = "bad" }, func(i *RepairPacketInput) { i.IntegrationSHA = "0123456789abcdef0123456789abcdef01234567" }},
+		{"findings empty", func(i *RepairPacketInput) { i.BlockingFindings = nil }, func(i *RepairPacketInput) {
+			i.BlockingFindings = []Finding{{ID: "F-1", Summary: "fix", Paths: []string{"src/api.go"}}}
+		}},
+		{"finding id empty", func(i *RepairPacketInput) { i.BlockingFindings[0].ID = " " }, func(i *RepairPacketInput) { i.BlockingFindings[0].ID = "F-1" }},
+		{"finding path invalid", func(i *RepairPacketInput) { i.BlockingFindings[0].Paths = []string{"../secret"} }, func(i *RepairPacketInput) { i.BlockingFindings[0].Paths = []string{"src/api.go"} }},
+		{"allowed path invalid", func(i *RepairPacketInput) { i.AllowedPaths = []string{"/src"} }, func(i *RepairPacketInput) { i.AllowedPaths = []string{"src/**"} }},
+		{"budget invalid", func(i *RepairPacketInput) { i.RemainingBudget = 3 }, func(i *RepairPacketInput) { i.RemainingBudget = 1 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			input := base
+			input := baseInput()
 			tc.mutate(&input)
 			if _, err := BuildRepairPacket(input); err == nil {
 				t.Fatal("expected error")
+			}
+			tc.repair(&input)
+			if _, err := BuildRepairPacket(input); err != nil {
+				t.Fatalf("repaired input rejected: %v", err)
 			}
 		})
 	}

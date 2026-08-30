@@ -206,7 +206,7 @@ func TestReadReviewEvidenceAcceptsStrictAcceptEnvelope(t *testing.T) {
 
 func TestReadReviewEvidenceRejectsAcceptWithFindingsAndStaleRequest(t *testing.T) {
 	for name, payload := range map[string]string{
-		"accept findings": `{"requestId":"review-1","decision":"accept","blockingFindings":[{"id":"F-1","summary":"x","paths":["src/api.go"]}]}`,
+		"accept findings": `{"requestId":"review-1","decision":"accept","blockingFindings":[{"id":"F-1","summary":"x","paths":["src/api.go"]}],"riskCategories":[]}`,
 		"stale request":   `{"requestId":"review-old","decision":"accept","blockingFindings":[]}`,
 		"raw only":        "review accepted",
 	} {
