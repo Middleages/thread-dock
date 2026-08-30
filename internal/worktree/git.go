@@ -3,11 +3,14 @@ package worktree
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"thread-dock/internal/runner"
 )
@@ -15,7 +18,23 @@ import (
 var (
 	ErrDirtyWorktree = errors.New("worktree is dirty")
 	ErrUnsafeTarget  = errors.New("unsafe worktree target")
+	ErrConflict      = errors.New("git merge has unmerged paths")
 )
+
+// Clock supplies the time source used to measure verification commands.
+// Production callers may leave it nil to use time.Now.
+type Clock interface {
+	Now() time.Time
+}
+
+// VerificationCheck is the intentionally minimal result returned by Git
+// checks. Process output is deliberately not retained at this boundary.
+type VerificationCheck struct {
+	Command  string
+	Outcome  string
+	Duration string
+	ExitCode int
+}
 
 // Git is an adapter for the small set of Git commands ThreadDock needs.
 type Git struct {
@@ -23,6 +42,7 @@ type Git struct {
 	Binary         string
 	ManagedRoot    string
 	RepositoryRoot string
+	Clock          Clock
 }
 
 // CommitInspection is derived from Git, not from Agent prose. Patch is the
@@ -153,6 +173,224 @@ func (g *Git) MergeCommit(ctx context.Context, worktreePath, sha string) error {
 		return errors.New("merge requires a 40-character commit SHA")
 	}
 	return g.run(ctx, worktreePath, "merge", "--ff-only", sha)
+}
+
+// MergeCommitNoFF merges one immutable commit and never follows a movable
+// branch. A merge failure is classified as a conflict only after Git reports
+// an actual unmerged path in the target Worktree.
+func (g *Git) MergeCommitNoFF(ctx context.Context, worktreePath, sha string) error {
+	if err := g.validateWorktreePath(worktreePath); err != nil {
+		return err
+	}
+	if !isCommitSHA(sha) {
+		return errors.New("merge requires a 40-character commit SHA")
+	}
+	result, err := g.command(ctx, worktreePath, "merge", "--no-ff", "--no-edit", sha)
+	if err == nil && result.ExitCode <= 0 {
+		return nil
+	}
+	if err == nil {
+		err = fmt.Errorf("git merge exited with status %d", result.ExitCode)
+	}
+	status, statusErr := g.command(ctx, worktreePath, "status", "--porcelain=v1")
+	if statusErr == nil && hasUnmergedPaths(status.Stdout) {
+		return fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	return err
+}
+
+// AbortMerge delegates recovery to Git and never resets or resolves files.
+func (g *Git) AbortMerge(ctx context.Context, worktreePath string) error {
+	if err := g.validateWorktreePath(worktreePath); err != nil {
+		return err
+	}
+	return g.run(ctx, worktreePath, "merge", "--abort")
+}
+
+// RunChecks executes each approved command through an explicit bash -lc
+// boundary. A non-zero process exit is a failed check; runner/context errors
+// that do not represent a process exit remain infrastructure errors.
+func (g *Git) RunChecks(ctx context.Context, worktreePath string, commands []string) ([]VerificationCheck, error) {
+	if err := g.validateWorktreePath(worktreePath); err != nil {
+		return nil, err
+	}
+	if g == nil || g.Runner == nil {
+		return nil, errors.New("runner is required")
+	}
+	checks := make([]VerificationCheck, 0, len(commands))
+	for _, raw := range commands {
+		command := strings.TrimSpace(raw)
+		if command == "" {
+			return nil, errors.New("verification command is required")
+		}
+		start := g.now()
+		result, err := g.Runner.Run(ctx, worktreePath, "bash", "-lc", command)
+		end := g.now()
+		if end.Before(start) {
+			end = start
+		}
+		duration := end.Sub(start).String()
+		if err != nil && result.ExitCode <= 0 {
+			return nil, fmt.Errorf("run verification %q: %w", command, err)
+		}
+		if err == nil && result.ExitCode < 0 {
+			return nil, fmt.Errorf("run verification %q: invalid exit code %d", command, result.ExitCode)
+		}
+		outcome := "passed"
+		if result.ExitCode > 0 {
+			outcome = "failed"
+		}
+		checks = append(checks, VerificationCheck{Command: command, Outcome: outcome, Duration: duration, ExitCode: result.ExitCode})
+	}
+	return checks, nil
+}
+
+func (g *Git) now() time.Time {
+	if g != nil && g.Clock != nil {
+		return g.Clock.Now()
+	}
+	return time.Now()
+}
+
+// Fingerprint returns a deterministic digest of the current commit and all
+// changed repository-relative paths. Each path includes its porcelain status,
+// index object IDs, and current worktree object ID (or a deletion marker).
+// Raw Git output is used only while calculating the digest and is not stored.
+func (g *Git) Fingerprint(ctx context.Context, worktreePath string) (string, error) {
+	if err := g.validateWorktreePath(worktreePath); err != nil {
+		return "", err
+	}
+	commit, err := g.CurrentCommit(ctx, worktreePath)
+	if err != nil {
+		return "", err
+	}
+	status, err := g.command(ctx, worktreePath, "status", "--porcelain=v1", "-uall", "--no-renames")
+	if err != nil {
+		return "", err
+	}
+	entries := parseStatusEntries(status.Stdout)
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].path == entries[j].path {
+			return entries[i].status < entries[j].status
+		}
+		return entries[i].path < entries[j].path
+	})
+	var material strings.Builder
+	material.WriteString("commit\t")
+	material.WriteString(strings.TrimSpace(commit))
+	material.WriteByte('\n')
+	for _, entry := range entries {
+		material.WriteString("status\t")
+		material.WriteString(entry.status)
+		material.WriteByte('\t')
+		material.WriteString(entry.path)
+		material.WriteByte('\n')
+		indexIDs, err := g.indexObjectIDs(ctx, worktreePath, entry.path)
+		if err != nil {
+			return "", err
+		}
+		for _, id := range indexIDs {
+			material.WriteString("index\t")
+			material.WriteString(id)
+			material.WriteByte('\n')
+		}
+		worktreeID, exists, err := g.worktreeObjectID(ctx, worktreePath, entry.path)
+		if err != nil {
+			return "", err
+		}
+		material.WriteString("worktree\t")
+		if exists {
+			material.WriteString(worktreeID)
+		} else {
+			material.WriteString("<deleted>")
+		}
+		material.WriteByte('\n')
+	}
+	digest := sha256.Sum256([]byte(material.String()))
+	return fmt.Sprintf("%x", digest[:]), nil
+}
+
+type statusEntry struct {
+	status string
+	path   string
+}
+
+func parseStatusEntries(output string) []statusEntry {
+	var entries []statusEntry
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) < 3 || strings.TrimSpace(line) == "" {
+			continue
+		}
+		status := line[:2]
+		path := strings.TrimSpace(line[3:])
+		if path == "" {
+			continue
+		}
+		entries = append(entries, statusEntry{status: status, path: path})
+	}
+	return entries
+}
+
+func (g *Git) indexObjectIDs(ctx context.Context, worktreePath, path string) ([]string, error) {
+	result, err := g.command(ctx, worktreePath, "ls-files", "--stage", "--", path)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, line := range splitLines(result.Stdout) {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && isObjectID(fields[1]) {
+			ids = append(ids, fields[1])
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (g *Git) worktreeObjectID(ctx context.Context, worktreePath, path string) (string, bool, error) {
+	fullPath := filepath.Join(worktreePath, filepath.FromSlash(path))
+	if _, err := os.Lstat(fullPath); errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	} else if err != nil {
+		return "", false, err
+	}
+	result, err := g.command(ctx, worktreePath, "hash-object", "--", path)
+	if err != nil {
+		return "", false, err
+	}
+	id := strings.TrimSpace(result.Stdout)
+	if !isObjectID(id) {
+		return "", false, errors.New("git returned an invalid worktree object ID")
+	}
+	return id, true, nil
+}
+
+func isObjectID(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func hasUnmergedPaths(output string) bool {
+	for _, entry := range parseStatusEntries(output) {
+		if isUnmergedStatus(entry.status) {
+			return true
+		}
+	}
+	return false
+}
+
+func isUnmergedStatus(status string) bool {
+	if len(status) != 2 {
+		return false
+	}
+	return status == "DD" || status == "AU" || status == "UD" || status == "UA" || status == "DU" || status == "AA" || status == "UU"
 }
 
 func (g *Git) CurrentCommit(ctx context.Context, worktreePath string) (string, error) {
