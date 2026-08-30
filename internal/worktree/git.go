@@ -62,6 +62,19 @@ type RevertWorktreeStatus struct {
 	Reverted bool
 }
 
+// RevertWorktreeInspection is the identity of an existing deterministic
+// revert worktree. BaseCommit is the exact commit from which the branch was
+// created (the revert commit's parent when Stage is reverted). ParentCommit is
+// retained explicitly so callers never have to infer identity from a moving
+// remote ref.
+type RevertWorktreeInspection struct {
+	Exists       bool
+	Stage        string
+	HeadCommit   string
+	BaseCommit   string
+	ParentCommit string
+}
+
 // ValidateTrustedManagedRoot enforces the ownership and non-writable-mode
 // invariant used before creating managed worktrees.
 func ValidateTrustedManagedRoot(path string) error { return validateTrustedManagedRoot(path) }
@@ -204,6 +217,97 @@ func (g *Git) ReconcileRevertWorktree(ctx context.Context, repositoryPath, workt
 		return RevertWorktreeStatus{}, ErrUnsafeTarget
 	}
 	return RevertWorktreeStatus{Exists: true, Reverted: true}, nil
+}
+
+// InspectRevertWorktree performs the same ownership, repository, branch and
+// cleanliness checks as ReconcileRevertWorktree, but does not take a caller's
+// (possibly stale) base as truth. It reports the exact existing base so a
+// retry can safely validate it against the current remote head.
+func (g *Git) InspectRevertWorktree(ctx context.Context, repositoryPath, worktreePath, branch, mergeSHA string) (RevertWorktreeInspection, error) {
+	if g == nil || g.Runner == nil || strings.TrimSpace(repositoryPath) == "" || strings.TrimSpace(repositoryPath) != repositoryPath || !validGitRef(branch) || !isCommitSHA(mergeSHA) {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	managedRoot, err := resolvePath(g.ManagedRoot)
+	if err != nil || validateTrustedManagedRoot(managedRoot) != nil {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	configuredRepository, err := resolvePath(g.RepositoryRoot)
+	if err != nil {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	suppliedRepository, err := resolvePath(repositoryPath)
+	if err != nil || !samePath(configuredRepository, suppliedRepository) {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	_, targetExists, err := resolveCreatePath(worktreePath)
+	if err != nil {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	if !targetExists {
+		return RevertWorktreeInspection{}, nil
+	}
+	managedRoot, repositoryRoot, target, home, err := g.resolveRemovalPaths(worktreePath)
+	if err != nil || !strictlyContained(managedRoot, target) || samePath(target, repositoryRoot) || samePath(target, home) || isFilesystemRoot(target) {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	if info, statErr := os.Stat(target); statErr != nil || !info.IsDir() {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	targetCommonDir, err := g.gitCommonDir(ctx, target)
+	if err != nil {
+		return RevertWorktreeInspection{}, err
+	}
+	configuredCommonDir, err := g.gitCommonDir(ctx, repositoryRoot)
+	if err != nil || !samePath(targetCommonDir, configuredCommonDir) {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	branchResult, err := g.command(ctx, target, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil || strings.TrimSpace(branchResult.Stdout) != branch {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	statusResult, err := g.command(ctx, target, "status", "--porcelain=v1")
+	if err != nil {
+		return RevertWorktreeInspection{}, err
+	}
+	if strings.TrimSpace(statusResult.Stdout) != "" {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	headResult, err := g.command(ctx, target, "rev-parse", "HEAD")
+	if err != nil {
+		return RevertWorktreeInspection{}, err
+	}
+	head := strings.TrimSpace(headResult.Stdout)
+	if !isCommitSHA(head) {
+		return RevertWorktreeInspection{}, ErrUnsafeTarget
+	}
+	parentsResult, err := g.command(ctx, target, "rev-list", "--parents", "-n", "1", "HEAD")
+	if err != nil {
+		return RevertWorktreeInspection{}, err
+	}
+	parents := strings.Fields(parentsResult.Stdout)
+	if len(parents) == 2 && parents[0] == head && isCommitSHA(parents[1]) {
+		messageResult, messageErr := g.command(ctx, target, "log", "-1", "--format=%B", "HEAD")
+		if messageErr != nil {
+			return RevertWorktreeInspection{}, messageErr
+		}
+		marker := "This reverts commit "
+		if strings.Contains(messageResult.Stdout, marker) && !(strings.Contains(messageResult.Stdout, marker+mergeSHA+".") || strings.Contains(messageResult.Stdout, marker+mergeSHA+",")) {
+			return RevertWorktreeInspection{}, ErrUnsafeTarget
+		}
+		if strings.Contains(messageResult.Stdout, marker+mergeSHA+".") || strings.Contains(messageResult.Stdout, marker+mergeSHA+",") {
+			diffResult, diffErr := g.command(ctx, target, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")
+			if diffErr != nil {
+				return RevertWorktreeInspection{}, diffErr
+			}
+			if strings.TrimSpace(diffResult.Stdout) == "" {
+				return RevertWorktreeInspection{}, ErrUnsafeTarget
+			}
+			return RevertWorktreeInspection{Exists: true, Stage: "reverted", HeadCommit: head, BaseCommit: parents[1], ParentCommit: parents[1]}, nil
+		}
+	}
+	// A clean, owned branch with no exact revert marker is the ready stage.
+	// Its HEAD is the immutable base recorded for a later retry.
+	return RevertWorktreeInspection{Exists: true, Stage: "ready", HeadCommit: head, BaseCommit: head}, nil
 }
 
 func (g *Git) gitCommonDir(ctx context.Context, cwd string) (string, error) {

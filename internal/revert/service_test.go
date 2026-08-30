@@ -16,19 +16,21 @@ import (
 )
 
 type fakeGit struct {
-	calls          []string
-	statuses       []worktree.RevertWorktreeStatus
-	reconcileCalls int
-	reconcileErr   error
-	fetchSHA       string
-	fetchErr       error
-	ancestor       bool
-	ancestorSet    bool
-	ancestorErr    error
-	revertErr      error
-	abortErr       error
-	createErr      error
-	pushErr        error
+	calls           []string
+	statuses        []worktree.RevertWorktreeStatus
+	reconcileCalls  int
+	reconcileErr    error
+	fetchSHA        string
+	fetchErr        error
+	ancestor        bool
+	ancestorSet     bool
+	ancestorErr     error
+	revertErr       error
+	abortErr        error
+	createErr       error
+	pushErr         error
+	inspections     []worktree.RevertWorktreeInspection
+	ancestorResults []bool
 }
 
 func (f *fakeGit) FetchRemoteHead(_ context.Context, repositoryPath, remote, branch string) (string, error) {
@@ -47,10 +49,38 @@ func (f *fakeGit) IsAncestorOf(_ context.Context, repositoryPath, ancestor, desc
 	if f.ancestorErr != nil {
 		return false, f.ancestorErr
 	}
+	if len(f.ancestorResults) > 0 {
+		result := f.ancestorResults[0]
+		f.ancestorResults = f.ancestorResults[1:]
+		return result, nil
+	}
 	if !f.ancestorSet {
 		return true, nil
 	}
 	return f.ancestor, nil
+}
+
+func (f *fakeGit) InspectRevertWorktree(_ context.Context, _, _, _, _ string) (worktree.RevertWorktreeInspection, error) {
+	f.reconcileCalls++
+	if len(f.inspections) > 0 {
+		inspection := f.inspections[0]
+		f.inspections = f.inspections[1:]
+		return inspection, nil
+	}
+	if len(f.statuses) > 0 {
+		status := f.statuses[0]
+		f.statuses = f.statuses[1:]
+		if !status.Exists {
+			return worktree.RevertWorktreeInspection{}, nil
+		}
+		stage := "ready"
+		if status.Reverted {
+			stage = "reverted"
+		}
+		base := "89abcdef0123456789abcdef0123456789abcdef"
+		return worktree.RevertWorktreeInspection{Exists: true, Stage: stage, HeadCommit: "0123456789abcdef0123456789abcdef01234567", BaseCommit: base, ParentCommit: base}, nil
+	}
+	return worktree.RevertWorktreeInspection{}, nil
 }
 
 func (f *fakeGit) ReconcileRevertWorktree(_ context.Context, _, _, _, _, _ string) (worktree.RevertWorktreeStatus, error) {
@@ -416,7 +446,7 @@ func TestCreateRevertRetrySkipsCompletedRevertStages(t *testing.T) {
 	if err != nil || got.Number != 202 {
 		t.Fatalf("second pr=%+v err=%v", got, err)
 	}
-	if git.reconcileCalls != 2 || len(git.calls) != 8 || strings.Count(strings.Join(git.calls, "\n"), "create|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "revert|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "push|") != 2 {
+	if git.reconcileCalls != 2 || len(git.calls) != 9 || strings.Count(strings.Join(git.calls, "\n"), "create|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "revert|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "push|") != 2 {
 		t.Fatalf("reconcile=%d calls=%v", git.reconcileCalls, git.calls)
 	}
 }
@@ -476,6 +506,32 @@ func TestCreateRevertReconcilesExistingDeterministicTarget(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(git.calls, "\n"), "create|") || strings.Contains(strings.Join(git.calls, "\n"), "revert|") {
 		t.Fatalf("existing target was recreated: %v", git.calls)
+	}
+}
+
+func TestCreateRevertExistingWorktreeUsesRecordedBaseAfterRemoteAdvances(t *testing.T) {
+	managed, _, _, request := validRequest(t)
+	baseA := "89abcdef0123456789abcdef0123456789abcdef"
+	remoteB := "fedcba9876543210fedcba9876543210fedcba98"
+	request.BaseCommit = baseA
+	target := filepath.Join(managed, ".revert-worktrees", "revert-184-0123456789ab")
+	if err := os.MkdirAll(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := &fakeGit{
+		fetchSHA:        remoteB,
+		inspections:     []worktree.RevertWorktreeInspection{{Exists: true, Stage: "reverted", HeadCommit: "0123456789abcdef0123456789abcdef01234567", BaseCommit: baseA, ParentCommit: baseA}},
+		ancestorResults: []bool{true, true},
+	}
+	gh := &fakeGitHub{existing: github.PullRequest{Number: 209}, found: true}
+	if _, err := New(git, gh).Create(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(git.calls, "\n"), "create|") || strings.Contains(strings.Join(git.calls, "\n"), "revert|") {
+		t.Fatalf("existing revert was repeated: %v", git.calls)
+	}
+	if len(git.calls) < 3 || !strings.HasPrefix(git.calls[0], "fetch|") || !strings.Contains(git.calls[1], "|"+request.MergeSHA+"|"+remoteB) || !strings.Contains(git.calls[2], "|"+baseA+"|"+remoteB) {
+		t.Fatalf("calls=%v", git.calls)
 	}
 }
 

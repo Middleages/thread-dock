@@ -53,7 +53,7 @@ func (e *BlockedError) Is(target error) bool { return target == ErrBlocked }
 type Git interface {
 	FetchRemoteHead(context.Context, string, string, string) (string, error)
 	IsAncestorOf(context.Context, string, string, string) (bool, error)
-	ReconcileRevertWorktree(context.Context, string, string, string, string, string) (worktree.RevertWorktreeStatus, error)
+	InspectRevertWorktree(context.Context, string, string, string, string) (worktree.RevertWorktreeInspection, error)
 	CreateManagedWorktree(context.Context, string, string, string, string) error
 	RevertMergeCommit(context.Context, string, string) error
 	AbortRevert(context.Context, string) error
@@ -114,39 +114,49 @@ func (s *Service) Create(ctx context.Context, request Request) (github.PullReque
 	if err := ensureGeneratedParent(normalized.createParent, normalized.managedRoot); err != nil {
 		return github.PullRequest{}, err
 	}
-	remoteHead, err := s.git.FetchRemoteHead(ctx, normalized.repositoryPath, normalized.remote, normalized.defaultBranch)
-	if err != nil || !isSHA(strings.TrimSpace(remoteHead)) {
-		if err != nil {
-			return github.PullRequest{}, err
+	inspection, err := s.git.InspectRevertWorktree(ctx, normalized.repositoryPath, normalized.worktreePath, normalized.branch, normalized.mergeSHA)
+	if err != nil {
+		return github.PullRequest{}, err
+	}
+	remoteHead := ""
+	targetExists := inspection.Exists
+	if !inspection.Exists {
+		var fetchErr error
+		remoteHead, fetchErr = s.fetchAndValidateRemote(ctx, normalized)
+		if fetchErr != nil {
+			return github.PullRequest{}, fetchErr
 		}
-		return github.PullRequest{}, errors.New("revert remote head is not an exact commit SHA")
-	}
-	remoteHead = strings.TrimSpace(remoteHead)
-	present, err := s.git.IsAncestorOf(ctx, normalized.repositoryPath, normalized.mergeSHA, remoteHead)
-	if err != nil {
-		return github.PullRequest{}, err
-	}
-	if !present {
-		return github.PullRequest{}, ErrUnsafeTarget
-	}
-	// The request's BaseCommit identifies the immutable merge record. The
-	// worktree itself must start at the exact remote default-branch head just
-	// fetched, never at a stale/local or otherwise unknown object.
-	normalized.baseCommit = remoteHead
-	status, err := s.git.ReconcileRevertWorktree(ctx, normalized.repositoryPath, normalized.worktreePath, normalized.branch, normalized.baseCommit, normalized.mergeSHA)
-	if err != nil {
-		return github.PullRequest{}, err
-	}
-	if !status.Exists {
+		normalized.baseCommit = remoteHead
 		if err := s.git.CreateManagedWorktree(ctx, normalized.repositoryPath, normalized.worktreePath, normalized.branch, normalized.baseCommit); err != nil {
 			return github.PullRequest{}, err
 		}
-		status = worktree.RevertWorktreeStatus{Exists: true, Ready: true}
+		inspection = worktree.RevertWorktreeInspection{Exists: true, Stage: "ready", HeadCommit: normalized.baseCommit, BaseCommit: normalized.baseCommit}
 	}
-	if !status.Reverted && !status.Ready {
+	if inspection.Stage != "ready" && inspection.Stage != "reverted" {
 		return github.PullRequest{}, ErrUnsafeTarget
 	}
-	if status.Ready {
+	if !isSHA(inspection.HeadCommit) || !isSHA(inspection.BaseCommit) || inspection.Stage == "reverted" && inspection.ParentCommit != inspection.BaseCommit {
+		return github.PullRequest{}, ErrUnsafeTarget
+	}
+	if remoteHead == "" {
+		remoteHead, err = s.fetchAndValidateRemote(ctx, normalized)
+		if err != nil {
+			return github.PullRequest{}, err
+		}
+	}
+	if targetExists {
+		if inspection.BaseCommit == "" {
+			return github.PullRequest{}, ErrUnsafeTarget
+		}
+		basePresent, ancestryErr := s.git.IsAncestorOf(ctx, normalized.repositoryPath, inspection.BaseCommit, remoteHead)
+		if ancestryErr != nil || !basePresent {
+			if ancestryErr != nil {
+				return github.PullRequest{}, ancestryErr
+			}
+			return github.PullRequest{}, ErrUnsafeTarget
+		}
+	}
+	if inspection.Stage == "ready" {
 		if err := s.git.RevertMergeCommit(ctx, normalized.worktreePath, normalized.mergeSHA); err != nil {
 			if !errors.Is(err, ErrConflict) {
 				return github.PullRequest{}, err
@@ -173,6 +183,25 @@ func (s *Service) Create(ctx context.Context, request Request) (github.PullReque
 		return github.PullRequest{}, err
 	}
 	return pr, nil
+}
+
+func (s *Service) fetchAndValidateRemote(ctx context.Context, request validatedRequest) (string, error) {
+	remoteHead, err := s.git.FetchRemoteHead(ctx, request.repositoryPath, request.remote, request.defaultBranch)
+	if err != nil || !isSHA(strings.TrimSpace(remoteHead)) {
+		if err != nil {
+			return "", err
+		}
+		return "", errors.New("revert remote head is not an exact commit SHA")
+	}
+	remoteHead = strings.TrimSpace(remoteHead)
+	present, err := s.git.IsAncestorOf(ctx, request.repositoryPath, request.mergeSHA, remoteHead)
+	if err != nil {
+		return "", err
+	}
+	if !present {
+		return "", ErrUnsafeTarget
+	}
+	return remoteHead, nil
 }
 
 type validatedRequest struct {

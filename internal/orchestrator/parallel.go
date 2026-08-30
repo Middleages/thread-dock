@@ -364,13 +364,17 @@ func (o *Orchestrator) parallelFinish(ctx context.Context, snapshot *state.RunSn
 }
 
 func (o *Orchestrator) parallelFinishPreserveCursor(ctx context.Context, snapshot *state.RunSnapshot, message string) error {
-	cursor := snapshot.ActionCursor
-	if err := o.parallelFinish(ctx, snapshot, message); err != nil {
+	// Preserve the current cursor in the same durable snapshot that clears the
+	// intent. If the audit append is lost, replay sees a safe, retryable cursor;
+	// it must never observe the incremented cursor from parallelFinish.
+	snapshot.PendingAction = ""
+	snapshot.PendingTaskID = ""
+	snapshot.UpdatedAt = o.now()
+	snapshot.Summary = message
+	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
 		return err
 	}
-	snapshot.ActionCursor = cursor
-	snapshot.UpdatedAt = o.now()
-	return o.deps.Store.Save(ctx, *snapshot)
+	return o.append(ctx, snapshot.RunID, state.Event{Type: "action_succeeded", Phase: snapshot.Phase, Message: message})
 }
 
 func (o *Orchestrator) parallelBlock(ctx context.Context, snapshot *state.RunSnapshot, message string) error {

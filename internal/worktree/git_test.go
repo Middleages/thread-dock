@@ -378,6 +378,32 @@ func TestReconcileRevertWorktreeReportsExactRevertCommit(t *testing.T) {
 	}
 }
 
+func TestInspectRevertWorktreeReturnsExistingBaseAndStageWithoutRequestedBase(t *testing.T) {
+	base := "0123456789abcdef0123456789abcdef01234567"
+	merge := "89abcdef0123456789abcdef0123456789abcdef"
+	head := "abcdef0123456789abcdef0123456789abcdef01"
+	git, repo, target := configuredGit(t, &fakeRunner{})
+	commonDir := filepath.Join(repo, ".git")
+	if err := os.Mkdir(commonDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	r := &fakeRunner{results: []runner.Result{
+		{Stdout: commonDir + "\n"}, {Stdout: commonDir + "\n"},
+		{Stdout: "revert/184-0123456789ab\n"}, {Stdout: ""},
+		{Stdout: head + "\n"}, {Stdout: head + " " + base + "\n"},
+		{Stdout: "Revert change\n\nThis reverts commit " + merge + ".\n"},
+		{Stdout: "src/file.go\n"},
+	}}
+	git.Runner = r
+	got, err := git.InspectRevertWorktree(context.Background(), repo, target, "revert/184-0123456789ab", merge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Exists || got.Stage != "reverted" || got.HeadCommit != head || got.BaseCommit != base || got.ParentCommit != base {
+		t.Fatalf("inspection=%+v", got)
+	}
+}
+
 func TestReconcileRevertWorktreeRejectsWrongParentOrEmptyDiff(t *testing.T) {
 	base := "0123456789abcdef0123456789abcdef01234567"
 	merge := "89abcdef0123456789abcdef0123456789abcdef"

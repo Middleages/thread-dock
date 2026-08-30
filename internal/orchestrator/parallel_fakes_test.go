@@ -58,6 +58,13 @@ type parallelGit struct {
 	abortMerges int
 }
 
+type fingerprintParallelGit struct {
+	*parallelGit
+	fingerprintBaseline string
+	fingerprintChange   string
+	fingerprintReads    int
+}
+
 type parallelGitHub struct {
 	*fakeGitHub
 	harness                   *parallelHarness
@@ -99,6 +106,17 @@ func newParallelHarness(t *testing.T) *parallelHarness {
 	ph.github = gh.fakeGitHub
 	ph.orchestrator = NewParallel(ph.Deps)
 	return ph
+}
+
+// FingerprintWorktree gives complete-story recovery tests a deterministic
+// read-only signal. Tests may set fingerprintChange to prove that a changed
+// Worktree resets the hard-three no-progress policy.
+func (g *fingerprintParallelGit) FingerprintWorktree(context.Context, string) (string, error) {
+	g.fingerprintReads++
+	if g.fingerprintChange != "" && g.fingerprintReads > 1 {
+		return g.fingerprintChange, nil
+	}
+	return g.fingerprintBaseline, nil
 }
 
 func (h *parallelHarness) runToStable() contract.RunPhase {

@@ -280,6 +280,37 @@ func TestRecoveryFingerprintProgressAcknowledgesCurrentValueAndReturnsToEvidence
 	}
 }
 
+func TestCompleteStoryFingerprintChangeResetsRecoveryBudget(t *testing.T) {
+	h := newParallelHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	task := snapshot.Tasks["api"]
+	task.State, task.Stage = "running", "recovery_observe"
+	task.Agent.CommitSHA = validSHA
+	task.Agent.VerificationEvidence = []state.VerificationEvidence{{Command: "go test ./internal/payments", Outcome: "passed", Duration: "1s"}}
+	task.Worktree.Path = "/herdr/api"
+	oldFingerprint := RecoveryFingerprint(validSHA, "baseline", nil, task.Agent.VerificationEvidence)
+	task.ProgressFingerprint = oldFingerprint
+	task.PreviousFingerprint = task.ProgressFingerprint
+	task.RecoveryCount = 3
+	snapshot.Tasks["api"] = task
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	fingerprintGit := &fingerprintParallelGit{parallelGit: h.parallelGit, fingerprintBaseline: "baseline", fingerprintReads: 1, fingerprintChange: "changed"}
+	h.orchestrator.deps.Worktree = fingerprintGit
+	if err := h.orchestrator.parallelRecoveryFingerprint(context.Background(), &snapshot, "api", task); err != nil {
+		t.Fatal(err)
+	}
+	got := h.mustLoad(id).Tasks["api"]
+	if got.RecoveryCount != 0 || got.Stage != "evidence" || got.ProgressFingerprint == oldFingerprint || got.PreviousFingerprint != got.ProgressFingerprint {
+		t.Fatalf("changed fingerprint did not reset recovery budget: %+v", got)
+	}
+}
+
 func TestProtectedConfirmationInvalidatesEvidenceBeforeResume(t *testing.T) {
 	h := newParallelHarness(t)
 	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
