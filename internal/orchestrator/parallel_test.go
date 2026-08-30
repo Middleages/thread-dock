@@ -267,7 +267,7 @@ func TestProjectAutomationEnabledUsesProjectPort(t *testing.T) {
 	if got := h.runToStable(); got != contract.PhaseCompleted {
 		t.Fatalf("phase=%s", got)
 	}
-	if len(h.parallelGH.projectStatuses) == 0 {
+	if h.parallelGH.projectItemID == "" || h.parallelGH.projectStatus != "Done" {
 		t.Fatal("project automation did not call project port")
 	}
 }

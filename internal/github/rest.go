@@ -737,10 +737,17 @@ func validRefInput(value string) bool {
 }
 
 func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, issueNodeID, status string) error {
+	itemID, err := c.AddProjectItem(ctx, project, issueNodeID)
+	if err != nil {
+		return err
+	}
+	return c.UpdateProjectStatus(ctx, project, itemID, status)
+}
+
+func (c *RESTClient) AddProjectItem(ctx context.Context, project ProjectRef, issueNodeID string) (string, error) {
 	projectID := project.ID
-	optionID := project.StatusOptions[status]
-	if projectID == "" || project.StatusFieldID == "" || optionID == "" || issueNodeID == "" {
-		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status requires project, field, option, and item IDs"}
+	if projectID == "" || issueNodeID == "" {
+		return "", &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project item requires project and issue IDs"}
 	}
 	const addMutation = `mutation AddProjectItem($projectId: ID!, $contentId: ID!) {
   addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) { item { id } }
@@ -756,16 +763,24 @@ func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, i
 	addPayload.Variables.ContentID = issueNodeID
 	var addResponse graphQLAddResponse
 	if err := c.doJSON(ctx, http.MethodPost, c.graphqlPath, addPayload, &addResponse); err != nil {
-		return err
+		return "", err
 	}
 	if err := addResponse.graphQLError(c.token); err != nil {
-		return err
+		return "", err
 	}
 	itemID := addResponse.Data.Add.Item.ID
 	if itemID == "" {
-		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project item was not returned"}
+		return "", &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project item was not returned"}
 	}
+	return itemID, nil
+}
 
+func (c *RESTClient) UpdateProjectStatus(ctx context.Context, project ProjectRef, itemID, status string) error {
+	projectID := project.ID
+	optionID := project.StatusOptions[status]
+	if projectID == "" || project.StatusFieldID == "" || optionID == "" || itemID == "" {
+		return &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status requires project, field, option, and item IDs"}
+	}
 	const mutation = `mutation UpdateProjectStatus($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) {
   updateProjectV2ItemFieldValue(input: {projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: $value}) {
     projectV2Item { id }
@@ -797,9 +812,9 @@ func (c *RESTClient) SetProjectStatus(ctx context.Context, project ProjectRef, i
 // configured single-select field's current status. It fails closed when the
 // item, field, or status is absent/ambiguous so callers never treat a
 // placeholder Project ID as reconciliation evidence.
-func (c *RESTClient) GetProjectStatus(ctx context.Context, project ProjectRef, issueNodeID string) (string, error) {
+func (c *RESTClient) ReadProjectStatus(ctx context.Context, project ProjectRef, issueNodeID string) (ProjectStatus, error) {
 	if project.ID == "" || project.StatusFieldID == "" || issueNodeID == "" {
-		return "", &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status read requires project, field, and issue IDs"}
+		return ProjectStatus{}, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status read requires project, field, and issue IDs"}
 	}
 	const query = `query ProjectItemStatus($projectId: ID!) {
   node(id: $projectId) {
@@ -830,16 +845,20 @@ func (c *RESTClient) GetProjectStatus(ctx context.Context, project ProjectRef, i
 	payload.Variables.ProjectID = project.ID
 	var response graphQLProjectStatusResponse
 	if err := c.doJSON(ctx, http.MethodPost, c.graphqlPath, payload, &response); err != nil {
-		return "", err
+		return ProjectStatus{}, err
 	}
 	if err := response.graphQLError(c.token); err != nil {
-		return "", err
+		return ProjectStatus{}, err
 	}
-	var status string
+	var itemID, status string
 	for _, item := range response.Data.Node.Items.Nodes {
 		if item.Content.ID != issueNodeID {
 			continue
 		}
+		if itemID != "" && itemID != item.ID {
+			return ProjectStatus{}, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status item was ambiguous"}
+		}
+		itemID = item.ID
 		for _, value := range item.FieldValues.Nodes {
 			fieldID := value.Field.ID
 			if fieldID == "" {
@@ -849,18 +868,23 @@ func (c *RESTClient) GetProjectStatus(ctx context.Context, project ProjectRef, i
 				continue
 			}
 			if expectedOption := project.StatusOptions[value.Name]; expectedOption != "" && value.OptionID != "" && value.OptionID != expectedOption {
-				return "", &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status option did not match configured field"}
+				return ProjectStatus{}, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status option did not match configured field"}
 			}
 			if status != "" && status != value.Name {
-				return "", &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status read was ambiguous"}
+				return ProjectStatus{}, &ConflictError{StatusCode: http.StatusUnprocessableEntity, Message: "project status read was ambiguous"}
 			}
 			status = value.Name
 		}
 	}
 	if status == "" {
-		return "", &NotFoundError{StatusCode: http.StatusNotFound, Message: "project status item or field was not found"}
+		return ProjectStatus{}, &NotFoundError{StatusCode: http.StatusNotFound, Message: "project status item or field was not found"}
 	}
-	return status, nil
+	return ProjectStatus{Found: true, ItemID: itemID, Status: status}, nil
+}
+
+func (c *RESTClient) GetProjectStatus(ctx context.Context, project ProjectRef, issueNodeID string) (string, error) {
+	status, err := c.ReadProjectStatus(ctx, project, issueNodeID)
+	return status.Status, err
 }
 
 type graphQLErrorItem struct {
@@ -887,6 +911,7 @@ type graphQLProjectStatusResponse struct {
 		Node struct {
 			Items struct {
 				Nodes []struct {
+					ID      string `json:"id"`
 					Content struct {
 						ID string `json:"id"`
 					} `json:"content"`

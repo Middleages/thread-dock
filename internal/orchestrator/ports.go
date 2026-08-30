@@ -75,6 +75,10 @@ type WorktreeLocator interface {
 	FindWorktree(context.Context, string, string, string) (herdr.Worktree, bool, error)
 }
 
+type BranchWorktreeLocator interface {
+	FindWorktreeByBranch(context.Context, string, string, string) (herdr.Worktree, bool, error)
+}
+
 type AgentLocator interface {
 	GetInfo(context.Context, string) (herdr.AgentInfo, error)
 }

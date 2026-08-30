@@ -43,6 +43,7 @@ type parallelHerdr struct {
 	promptIDs       map[string]string
 	evidenceByAgent map[string]int
 	forceWorking    bool
+	resumes         []herdr.ResumeAgentRequest
 }
 
 type parallelGit struct {
@@ -57,6 +58,7 @@ type parallelGitHub struct {
 	pr               github.PullRequest
 	projectStatuses  []string
 	projectStatus    string
+	projectItemID    string
 	draftCalls       int
 	mergeCalls       int
 	readyCalls       int
@@ -147,6 +149,11 @@ func (h *parallelHerdr) GetInfo(ctx context.Context, name string) (herdr.AgentIn
 func (h *parallelHerdr) OpenWorktree(_ context.Context, request herdr.OpenWorktreeRequest) (herdr.Worktree, error) {
 	h.reviewerPath = request.Path
 	return herdr.Worktree{WorkspaceID: "workspace-review-184", PaneID: "pane-review-184", Path: request.Path}, nil
+}
+
+func (h *parallelHerdr) ResumeAgent(ctx context.Context, request herdr.ResumeAgentRequest) error {
+	h.resumes = append(h.resumes, request)
+	return h.fakeHerdr.StartAgent(ctx, herdr.StartAgentRequest{Name: request.Name, PaneID: request.PaneID})
 }
 
 func (h *parallelHerdr) ReadEvidence(ctx context.Context, name string) (herdr.Evidence, error) {
@@ -297,6 +304,26 @@ func (h *parallelGitHub) MergePullRequest(context.Context, github.Repository, in
 func (h *parallelGitHub) SetProjectStatus(_ context.Context, _ github.ProjectRef, _ string, status string) error {
 	h.projectStatuses = append(h.projectStatuses, "status")
 	h.projectStatus = status
+	return nil
+}
+
+func (h *parallelGitHub) ReadProjectStatus(context.Context, github.ProjectRef, string) (github.ProjectStatus, error) {
+	if h.projectItemID == "" {
+		return github.ProjectStatus{Found: false}, nil
+	}
+	return github.ProjectStatus{Found: true, ItemID: h.projectItemID, Status: h.projectStatus}, nil
+}
+
+func (h *parallelGitHub) AddProjectItem(context.Context, github.ProjectRef, string) (string, error) {
+	h.projectItemID = "ITEM_PROJECT"
+	return h.projectItemID, nil
+}
+
+func (h *parallelGitHub) UpdateProjectStatus(_ context.Context, _ github.ProjectRef, itemID, status string) error {
+	if itemID == "" {
+		return errors.New("missing project item")
+	}
+	h.projectItemID, h.projectStatus = itemID, status
 	return nil
 }
 

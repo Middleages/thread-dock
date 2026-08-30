@@ -605,14 +605,14 @@ func TestGetProjectStatusReadsExactIssueAndField(t *testing.T) {
 			t.Fatal(err)
 		}
 		query = payload.Query
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{map[string]any{"content": map[string]string{"id": "ISSUE_NODE"}, "fieldValues": map[string]any{"nodes": []any{map[string]string{"name": "Review", "optionId": "O_REVIEW", "fieldId": "F1"}}}}}}}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"node": map[string]any{"items": map[string]any{"nodes": []any{map[string]any{"id": "ITEM_REVIEW", "content": map[string]string{"id": "ISSUE_NODE"}, "fieldValues": map[string]any{"nodes": []any{map[string]string{"name": "Review", "optionId": "O_REVIEW", "fieldId": "F1"}}}}}}}}})
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	client := NewRESTClient(server.URL, "token", "2022-11-28", server.Client())
-	got, err := client.GetProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1"}, "ISSUE_NODE")
-	if err != nil || got != "Review" {
-		t.Fatalf("status=%q err=%v", got, err)
+	got, err := client.ReadProjectStatus(context.Background(), ProjectRef{ID: "P1", StatusFieldID: "F1"}, "ISSUE_NODE")
+	if err != nil || got.Status != "Review" || got.ItemID != "ITEM_REVIEW" || !got.Found {
+		t.Fatalf("status=%+v err=%v", got, err)
 	}
 	if !strings.Contains(query, "fieldValues") || !strings.Contains(query, "ProjectV2") {
 		t.Fatalf("query did not request project field values: %s", query)

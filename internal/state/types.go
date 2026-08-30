@@ -72,6 +72,7 @@ type TaskRunState struct {
 	ExpectedPath        string        `json:"expectedPath,omitempty"`
 	ExpectedBranch      string        `json:"expectedBranch,omitempty"`
 	ExpectedLabel       string        `json:"expectedLabel,omitempty"`
+	ExpectedBaseCommit  string        `json:"expectedBaseCommit,omitempty"`
 }
 
 // ReviewFinding is the durable, provider-neutral form of one blocking
@@ -131,6 +132,7 @@ type RunSnapshot struct {
 	ProtectedConfirmed       bool                   `json:"protectedConfirmed,omitempty"`
 	ProjectAutomationEnabled bool                   `json:"projectAutomationEnabled,omitempty"`
 	ProjectStatus            string                 `json:"projectStatus,omitempty"`
+	ProjectItemID            string                 `json:"projectItemId,omitempty"`
 	ReviewDecision           string                 `json:"reviewDecision,omitempty"`
 	ReviewFindings           []ReviewFinding        `json:"reviewFindings,omitempty"`
 	ReviewRiskCategories     []string               `json:"reviewRiskCategories,omitempty"`

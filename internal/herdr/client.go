@@ -20,6 +20,10 @@ type Client interface {
 	ReadRecent(context.Context, string) (string, error)
 }
 
+type SessionResumer interface {
+	ResumeAgent(context.Context, ResumeAgentRequest) error
+}
+
 type CreateWorktreeRequest struct {
 	Cwd    string
 	Repo   string // Deprecated: use Cwd; retained for the plan's request shape.
@@ -181,6 +185,12 @@ type AgentInfo struct {
 type StartAgentRequest struct {
 	Name   string
 	PaneID string
+}
+
+type ResumeAgentRequest struct {
+	Name      string
+	PaneID    string
+	SessionID string
 }
 
 type AgentState string

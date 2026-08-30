@@ -113,10 +113,24 @@ type ProjectRef struct {
 	StatusOptions map[string]string
 }
 
+type ProjectStatus struct {
+	Found  bool
+	ItemID string
+	Status string
+}
+
 // ProjectStatusReader reads one exact ProjectV2 item/field for reconciliation
 // after a status mutation intent survives a crash.
 type ProjectStatusReader interface {
-	GetProjectStatus(context.Context, ProjectRef, string) (string, error)
+	ReadProjectStatus(context.Context, ProjectRef, string) (ProjectStatus, error)
+}
+
+type ProjectItemAdder interface {
+	AddProjectItem(context.Context, ProjectRef, string) (string, error)
+}
+
+type ProjectStatusUpdater interface {
+	UpdateProjectStatus(context.Context, ProjectRef, string, string) error
 }
 
 // Client is the narrow GHES interface used by the orchestrator.

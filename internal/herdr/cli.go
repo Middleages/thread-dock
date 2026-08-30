@@ -21,6 +21,7 @@ const promptTimeout = "3600000"
 const maxRecentEvidenceBytes = 64 * 1024
 
 var evidenceCredentialPattern = regexp.MustCompile(`(?im)(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|(?:AKIA|ASIA)[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:^|[^A-Za-z0-9])["']?(?:token|secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)|[A-Za-z_][A-Za-z0-9_.-]*(?:token|secret|password|authorization|api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)))["']?[ \t]*[:=][ \t]*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:Bearer[ \t]+)?[^\s,;}\]]+))`)
+var providerSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
 
 type CLI struct {
 	runner     runner.Runner
@@ -118,6 +119,14 @@ func (c *CLI) decodeWorktree(ctx context.Context, operation, output string, exit
 // creating a second workspace. Herdr's list payload has changed shape across
 // minor releases, so only the stable IDs and path fields are inspected.
 func (c *CLI) FindWorktree(ctx context.Context, cwd, path, label string) (Worktree, bool, error) {
+	return c.findWorktree(ctx, cwd, "", path, label)
+}
+
+func (c *CLI) FindWorktreeByBranch(ctx context.Context, cwd, branch, label string) (Worktree, bool, error) {
+	return c.findWorktree(ctx, cwd, branch, "", label)
+}
+
+func (c *CLI) findWorktree(ctx context.Context, cwd, branch, path, label string) (Worktree, bool, error) {
 	if strings.TrimSpace(cwd) == "" {
 		return Worktree{}, false, errors.New("Herdr worktree lookup requires repository cwd")
 	}
@@ -139,7 +148,7 @@ func (c *CLI) FindWorktree(ctx context.Context, cwd, path, label string) (Worktr
 		return Worktree{}, false, safeError("worktree list", result.ExitCode)
 	}
 	for _, candidate := range response.Result.Worktrees {
-		if (path == "" || candidate.Path == path) && (label == "" || candidate.Label == label || path != "") && candidate.Path != "" {
+		if (branch == "" || candidate.Branch == branch) && (path == "" || candidate.Path == path) && (label == "" || candidate.Label == label || path != "") && candidate.Path != "" {
 			workspaceID := candidate.OpenWorkspaceID
 			if workspaceID == "" {
 				return Worktree{}, false, ErrClosedWorkspace
@@ -188,6 +197,26 @@ func (c *CLI) firstPane(ctx context.Context, workspaceID string) (string, error)
 func (c *CLI) StartAgent(ctx context.Context, req StartAgentRequest) error {
 	_, err := c.run(ctx, "agent start", "agent", "start", req.Name, "--kind", "opencode", "--pane", req.PaneID)
 	return err
+}
+
+func (c *CLI) ResumeAgent(ctx context.Context, req ResumeAgentRequest) error {
+	if strings.TrimSpace(req.Name) == "" || len(req.Name) > 32 || !validHerdrName(req.Name) || strings.TrimSpace(req.PaneID) == "" || strings.TrimSpace(req.SessionID) == "" || req.SessionID != strings.TrimSpace(req.SessionID) || strings.HasPrefix(strings.ToLower(req.SessionID), "herdr-terminal:") || !providerSessionIDPattern.MatchString(req.SessionID) {
+		return errors.New("Herdr provider session identity is invalid")
+	}
+	_, err := c.run(ctx, "agent resume", "agent", "start", req.Name, "--kind", "opencode", "--pane", req.PaneID, "--", "--session", req.SessionID)
+	return err
+}
+
+func validHerdrName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *CLI) Prompt(ctx context.Context, name, packet string) error {

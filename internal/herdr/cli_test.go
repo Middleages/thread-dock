@@ -108,6 +108,14 @@ func TestCreateWorktreeReturnsActualIDsAndUsesExplicitArguments(t *testing.T) {
 	}
 }
 
+func TestResumeAgentUsesExactProviderSessionArguments(t *testing.T) {
+	r := &recordingRunner{responses: map[string]string{"herdr\x00agent\x00start\x00builder-api\x00--kind\x00opencode\x00--pane\x00pane-1\x00--\x00--session\x00session-1": "{}"}}
+	cli := NewCLI(r, "herdr")
+	if err := cli.ResumeAgent(context.Background(), ResumeAgentRequest{Name: "builder-api", PaneID: "pane-1", SessionID: "session-1"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAgentLifecycleCommandsUseStructuredArguments(t *testing.T) {
 	r := fixtureRunner(t, map[string]string{
 		"herdr\x00agent\x00start\x00builder_api\x00--kind\x00opencode\x00--pane\x00pane-redacted":                           `{}`,
