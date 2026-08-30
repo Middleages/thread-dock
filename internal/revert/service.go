@@ -51,6 +51,8 @@ func (e *BlockedError) Is(target error) bool { return target == ErrBlocked }
 
 // Git is the narrow set of explicit Worktree operations needed for a revert.
 type Git interface {
+	FetchRemoteHead(context.Context, string, string, string) (string, error)
+	IsAncestorOf(context.Context, string, string, string) (bool, error)
 	ReconcileRevertWorktree(context.Context, string, string, string, string, string) (worktree.RevertWorktreeStatus, error)
 	CreateManagedWorktree(context.Context, string, string, string, string) error
 	RevertMergeCommit(context.Context, string, string) error
@@ -112,6 +114,25 @@ func (s *Service) Create(ctx context.Context, request Request) (github.PullReque
 	if err := ensureGeneratedParent(normalized.createParent, normalized.managedRoot); err != nil {
 		return github.PullRequest{}, err
 	}
+	remoteHead, err := s.git.FetchRemoteHead(ctx, normalized.repositoryPath, normalized.remote, normalized.defaultBranch)
+	if err != nil || !isSHA(strings.TrimSpace(remoteHead)) {
+		if err != nil {
+			return github.PullRequest{}, err
+		}
+		return github.PullRequest{}, errors.New("revert remote head is not an exact commit SHA")
+	}
+	remoteHead = strings.TrimSpace(remoteHead)
+	present, err := s.git.IsAncestorOf(ctx, normalized.repositoryPath, normalized.mergeSHA, remoteHead)
+	if err != nil {
+		return github.PullRequest{}, err
+	}
+	if !present {
+		return github.PullRequest{}, ErrUnsafeTarget
+	}
+	// The request's BaseCommit identifies the immutable merge record. The
+	// worktree itself must start at the exact remote default-branch head just
+	// fetched, never at a stale/local or otherwise unknown object.
+	normalized.baseCommit = remoteHead
 	status, err := s.git.ReconcileRevertWorktree(ctx, normalized.repositoryPath, normalized.worktreePath, normalized.branch, normalized.baseCommit, normalized.mergeSHA)
 	if err != nil {
 		return github.PullRequest{}, err

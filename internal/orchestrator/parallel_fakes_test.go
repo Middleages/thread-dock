@@ -72,6 +72,7 @@ type parallelGitHub struct {
 	projectObserveCalls       int
 	projectAddCalls           int
 	projectUpdateCalls        int
+	checkCalls                int
 	projectAddResponseLost    bool
 	projectUpdateResponseLost bool
 	projectObservation        *github.ProjectStatus
@@ -333,6 +334,7 @@ func (h *parallelGitHub) FindIssueComment(_ context.Context, _ github.Repository
 }
 
 func (h *parallelGitHub) GetChecks(context.Context, github.Repository, string) ([]github.CheckState, error) {
+	h.checkCalls++
 	if h.harness.ciFailures > 0 {
 		h.harness.ciFailures--
 		return []github.CheckState{{Name: "go test ./internal/payments", State: "failure"}}, nil

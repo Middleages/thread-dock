@@ -168,6 +168,62 @@ func TestFingerprintPreservesNULSafeUnusualPathAndContentIdentity(t *testing.T) 
 	}
 }
 
+func TestFingerprintWorktreeAllowsLinkedHerdrWorktreeOutsideManagedRoot(t *testing.T) {
+	root := t.TempDir()
+	bare := filepath.Join(root, "origin.git")
+	repository := filepath.Join(root, "repo")
+	if err := os.Mkdir(bare, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runSetupGit(t, "", "init", "--bare", bare)
+	runSetupGit(t, "", "clone", bare, repository)
+	runSetupGit(t, repository, "config", "user.email", "test@example.com")
+	runSetupGit(t, repository, "config", "user.name", "ThreadDock Test")
+	writeTestFile(t, filepath.Join(repository, "README.md"), "base\n")
+	runSetupGit(t, repository, "add", "README.md")
+	runSetupGit(t, repository, "commit", "-m", "base")
+	linked := filepath.Join(root, "herdr-worktree")
+	runSetupGit(t, repository, "worktree", "add", "--detach", linked, "HEAD")
+	managed := filepath.Join(root, "managed")
+	if err := os.Mkdir(managed, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	git := New(runner.OSRunner{}, "git", managed, repository)
+	got, err := git.FingerprintWorktree(context.Background(), linked)
+	if err != nil || len(got) != 64 {
+		t.Fatalf("fingerprint=%q err=%v", got, err)
+	}
+	if strings.Contains(got, "README") || strings.Contains(got, "git diff") {
+		t.Fatalf("fingerprint exposed raw output: %q", got)
+	}
+	if _, err := git.FingerprintWorktree(context.Background(), repository); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("canonical repository fingerprint err=%v, want ErrUnsafeTarget", err)
+	}
+}
+
+func TestFingerprintWorktreeRejectsForeignRepository(t *testing.T) {
+	root := t.TempDir()
+	configured := filepath.Join(root, "configured")
+	foreign := filepath.Join(root, "foreign")
+	for _, path := range []string{configured, foreign} {
+		runSetupGit(t, "", "init", path)
+		runSetupGit(t, path, "config", "user.email", "test@example.com")
+		runSetupGit(t, path, "config", "user.name", "ThreadDock Test")
+		writeTestFile(t, filepath.Join(path, "README.md"), path+"\n")
+		runSetupGit(t, path, "add", "README.md")
+		runSetupGit(t, path, "commit", "-m", "base")
+	}
+	managed := filepath.Join(root, "managed")
+	if err := os.Mkdir(managed, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := New(runner.OSRunner{}, "git", managed, configured)
+	if _, err := git.FingerprintWorktree(context.Background(), foreign); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("foreign repository fingerprint err=%v, want ErrUnsafeTarget", err)
+	}
+}
+
 func TestNewOperationsRejectUnmanagedTargetsWithoutCommands(t *testing.T) {
 	git, repo, target := configuredGit(t, &fakeRunner{})
 	outside := filepath.Join(t.TempDir(), "outside")
@@ -249,6 +305,22 @@ func TestMergeCommitNoFFRejectsNegativeExit(t *testing.T) {
 	git, _, target := configuredGit(t, &fakeRunner{results: []runner.Result{{ExitCode: -1}}, errors: []error{nil}})
 	if err := git.MergeCommitNoFF(context.Background(), target, "0123456789abcdef0123456789abcdef01234567"); err == nil {
 		t.Fatal("expected negative merge exit failure")
+	}
+}
+
+func runSetupGit(t *testing.T, cwd string, args ...string) string {
+	t.Helper()
+	result, err := (runner.OSRunner{}).Run(context.Background(), cwd, "git", args...)
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("git %v cwd=%q exit=%d err=%v stderr=%q", args, cwd, result.ExitCode, err, result.Stderr)
+	}
+	return result.Stdout
+}
+
+func writeTestFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
 	}
 }
 

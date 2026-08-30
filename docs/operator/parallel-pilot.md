@@ -70,15 +70,17 @@ snapshot and append-only event log, then record:
    conflict. Verify the run is `blocked`, conflict evidence is recorded, and
    there is no reset, automatic conflict resolution, push, or main merge.
 5. **Three recoveries.** Stall an eligible agent with no changed durable
-   fingerprint. Verify the durable fingerprint includes commit SHA, managed
-   Git fingerprint, sorted completed task IDs, and verification evidence. The
-   third recovery blocks; live stale/blocked/unknown and absent terminal-only
-   identities are operator-owned, and terminal fallback never enables native
-   resume.
+   fingerprint. Verify the durable fingerprint includes commit SHA, the
+   Builder Worktree Git fingerprint, sorted completed task IDs, and
+   verification evidence. Three recovery actions may complete; the fourth
+   unchanged evaluation blocks. Live stale/blocked/unknown and absent
+   terminal-only identities are operator-owned, and terminal fallback never
+   enables native resume.
 6. **Revert the ordinary merge.** On the completed ordinary run, execute
    `agentctl create-revert RUN --reason "pilot regression"`. Verify the command
    uses the immutable owner/name/default branch and exact persisted merge SHA
-   captured in the run snapshot (not a reread contract), creates a
+   captured in the run snapshot (not a reread contract). It fetches the exact
+   default-branch head, verifies the merge SHA is its ancestor, creates a
    deterministic managed revert branch and Draft Revert PR, and leaves main
    unchanged. Record the Revert PR link/number, branch, merge SHA, reason, and
    secret-scan result.

@@ -20,10 +20,37 @@ type fakeGit struct {
 	statuses       []worktree.RevertWorktreeStatus
 	reconcileCalls int
 	reconcileErr   error
+	fetchSHA       string
+	fetchErr       error
+	ancestor       bool
+	ancestorSet    bool
+	ancestorErr    error
 	revertErr      error
 	abortErr       error
 	createErr      error
 	pushErr        error
+}
+
+func (f *fakeGit) FetchRemoteHead(_ context.Context, repositoryPath, remote, branch string) (string, error) {
+	f.calls = append(f.calls, "fetch|"+repositoryPath+"|"+remote+"|"+branch)
+	if f.fetchErr != nil {
+		return "", f.fetchErr
+	}
+	if f.fetchSHA != "" {
+		return f.fetchSHA, nil
+	}
+	return "0123456789abcdef0123456789abcdef01234567", nil
+}
+
+func (f *fakeGit) IsAncestorOf(_ context.Context, repositoryPath, ancestor, descendant string) (bool, error) {
+	f.calls = append(f.calls, "ancestor|"+repositoryPath+"|"+ancestor+"|"+descendant)
+	if f.ancestorErr != nil {
+		return false, f.ancestorErr
+	}
+	if !f.ancestorSet {
+		return true, nil
+	}
+	return f.ancestor, nil
 }
 
 func (f *fakeGit) ReconcileRevertWorktree(_ context.Context, _, _, _, _, _ string) (worktree.RevertWorktreeStatus, error) {
@@ -155,6 +182,65 @@ func TestCreateRevertRetriesAgainstRealGitLinkedWorktree(t *testing.T) {
 	}
 }
 
+func TestCreateRevertFetchesMergeOnlyAvailableOnRemote(t *testing.T) {
+	root := t.TempDir()
+	bare := filepath.Join(root, "origin.git")
+	repository := filepath.Join(root, "repo")
+	contributor := filepath.Join(root, "contributor")
+	if err := os.Mkdir(bare, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runSetupGit(t, "", "init", "--bare", bare)
+	runSetupGit(t, "", "clone", bare, repository)
+	runSetupGit(t, repository, "config", "user.email", "test@example.com")
+	runSetupGit(t, repository, "config", "user.name", "ThreadDock Test")
+	writeTestFile(t, filepath.Join(repository, "README.md"), "base\n")
+	runSetupGit(t, repository, "add", "README.md")
+	runSetupGit(t, repository, "commit", "-m", "base")
+	runSetupGit(t, repository, "branch", "-M", "main")
+	runSetupGit(t, repository, "push", "origin", "main")
+	runSetupGit(t, "", "clone", "--branch", "main", bare, contributor)
+	runSetupGit(t, contributor, "config", "user.email", "test@example.com")
+	runSetupGit(t, contributor, "config", "user.name", "ThreadDock Test")
+	runSetupGit(t, contributor, "checkout", "-b", "feature")
+	writeTestFile(t, filepath.Join(contributor, "change.txt"), "feature\n")
+	runSetupGit(t, contributor, "add", "change.txt")
+	runSetupGit(t, contributor, "commit", "-m", "feature")
+	runSetupGit(t, contributor, "checkout", "main")
+	runSetupGit(t, contributor, "merge", "--no-ff", "--no-edit", "feature")
+	mergeSHA := strings.TrimSpace(runSetupGit(t, contributor, "rev-parse", "HEAD"))
+	runSetupGit(t, contributor, "push", "origin", "main")
+	remoteHead := mergeSHA
+	missing, err := (runner.OSRunner{}).Run(context.Background(), repository, "git", "cat-file", "-e", mergeSHA+"^{commit}")
+	if err == nil && missing.ExitCode == 0 {
+		t.Fatalf("merge commit unexpectedly existed before service fetch")
+	}
+	managed := filepath.Join(root, "managed")
+	if err := os.Mkdir(managed, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := worktree.New(runner.OSRunner{}, "git", managed, repository)
+	gh := &fakeGitHub{result: github.PullRequest{Number: 208}}
+	request := Request{
+		Repository:     github.Repository{Owner: "platform", Name: "payments-api"},
+		RepositoryPath: repository,
+		ManagedRoot:    managed,
+		Parent:         github.Issue{Number: 184},
+		DefaultBranch:  "main",
+		BaseCommit:     mergeSHA,
+		MergeSHA:       mergeSHA,
+		Reason:         "remote-only merge",
+	}
+	if _, err := New(git, gh).Create(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	worktreePath := filepath.Join(managed, ".revert-worktrees", "revert-184-"+mergeSHA[:12])
+	parent := strings.TrimSpace(runSetupGit(t, worktreePath, "rev-parse", "HEAD^"))
+	if parent != remoteHead {
+		t.Fatalf("revert parent=%s, want fetched remote head=%s", parent, remoteHead)
+	}
+}
+
 func runSetupGit(t *testing.T, cwd string, args ...string) string {
 	t.Helper()
 	result, err := (runner.OSRunner{}).Run(context.Background(), cwd, "git", args...)
@@ -195,7 +281,9 @@ func TestCreateRevertUsesManagedWorktreeAndExplicitPush(t *testing.T) {
 	wantBranch := "revert/184-0123456789ab"
 	worktreePath := filepath.Join(managed, ".revert-worktrees", "revert-184-0123456789ab")
 	wantCalls := []string{
-		"create|" + repoPath + "|" + worktreePath + "|" + wantBranch + "|89abcdef0123456789abcdef0123456789abcdef",
+		"fetch|" + repoPath + "|origin|main",
+		"ancestor|" + repoPath + "|" + mergeSHA + "|0123456789abcdef0123456789abcdef01234567",
+		"create|" + repoPath + "|" + worktreePath + "|" + wantBranch + "|0123456789abcdef0123456789abcdef01234567",
 		"revert|" + worktreePath + "|" + mergeSHA,
 		"push|" + worktreePath + "|origin|" + wantBranch,
 	}
@@ -210,12 +298,58 @@ func TestCreateRevertUsesManagedWorktreeAndExplicitPush(t *testing.T) {
 	}
 }
 
+func TestCreateRevertFetchesRemoteHeadAndCreatesFromFetchedHead(t *testing.T) {
+	managed := t.TempDir()
+	repoPath := t.TempDir()
+	mergeSHA := "0123456789abcdef0123456789abcdef01234567"
+	remoteHead := "fedcba9876543210fedcba9876543210fedcba98"
+	git := &fakeGit{fetchSHA: remoteHead, ancestor: true}
+	request := Request{
+		Repository:     github.Repository{Owner: "platform", Name: "payments-api"},
+		RepositoryPath: repoPath,
+		ManagedRoot:    managed,
+		Parent:         github.Issue{Number: 184},
+		DefaultBranch:  "main",
+		BaseCommit:     mergeSHA,
+		MergeSHA:       mergeSHA,
+		Reason:         "remote-only merge",
+	}
+	if _, err := New(git, &fakeGitHub{result: github.PullRequest{Number: 201}}).Create(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(git.calls) < 4 || git.calls[0] != "fetch|"+repoPath+"|origin|main" || git.calls[1] != "ancestor|"+repoPath+"|"+mergeSHA+"|"+remoteHead {
+		t.Fatalf("calls=%v, want remote fetch and ancestry before worktree", git.calls)
+	}
+	if !strings.Contains(git.calls[2], "|"+remoteHead) {
+		t.Fatalf("create did not use fetched remote head: %v", git.calls)
+	}
+}
+
+func TestCreateRevertRejectsMergeNotReachableFromFetchedHead(t *testing.T) {
+	managed := t.TempDir()
+	repoPath := t.TempDir()
+	request := Request{
+		Repository:     github.Repository{Owner: "platform", Name: "payments-api"},
+		RepositoryPath: repoPath,
+		ManagedRoot:    managed,
+		Parent:         github.Issue{Number: 184},
+		DefaultBranch:  "main",
+		BaseCommit:     "0123456789abcdef0123456789abcdef01234567",
+		MergeSHA:       "0123456789abcdef0123456789abcdef01234567",
+		Reason:         "foreign merge",
+	}
+	git := &fakeGit{fetchSHA: "fedcba9876543210fedcba9876543210fedcba98", ancestorSet: true, ancestor: false}
+	if _, err := New(git, &fakeGitHub{}).Create(context.Background(), request); err == nil || len(git.calls) != 2 {
+		t.Fatalf("calls=%v err=%v, want fetch+ancestry rejection", git.calls, err)
+	}
+}
+
 func TestCreateRevertConflictAbortsAndBlocks(t *testing.T) {
 	_, _, _, request := validRequest(t)
 	git := &fakeGit{revertErr: ErrConflict}
 	service := New(git, &fakeGitHub{})
 	_, err := service.Create(context.Background(), request)
-	if !errors.Is(err, ErrBlocked) || len(git.calls) != 3 || !strings.HasPrefix(git.calls[2], "abort|") {
+	if !errors.Is(err, ErrBlocked) || len(git.calls) != 5 || !strings.HasPrefix(git.calls[4], "abort|") {
 		t.Fatalf("calls=%v err=%v", git.calls, err)
 	}
 }
@@ -282,7 +416,7 @@ func TestCreateRevertRetrySkipsCompletedRevertStages(t *testing.T) {
 	if err != nil || got.Number != 202 {
 		t.Fatalf("second pr=%+v err=%v", got, err)
 	}
-	if git.reconcileCalls != 2 || len(git.calls) != 4 || strings.Count(strings.Join(git.calls, "\n"), "create|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "revert|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "push|") != 2 {
+	if git.reconcileCalls != 2 || len(git.calls) != 8 || strings.Count(strings.Join(git.calls, "\n"), "create|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "revert|") != 1 || strings.Count(strings.Join(git.calls, "\n"), "push|") != 2 {
 		t.Fatalf("reconcile=%d calls=%v", git.reconcileCalls, git.calls)
 	}
 }
@@ -361,7 +495,7 @@ func TestCreateRevertCreatesPrivateParentForGeneratedTarget(t *testing.T) {
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0700 {
 		t.Fatalf("mode=%o want 0700", info.Mode().Perm())
 	}
-	if len(git.calls) == 0 || !strings.Contains(git.calls[0], parent) {
+	if len(git.calls) == 0 || !strings.Contains(strings.Join(git.calls, "\n"), parent) {
 		t.Fatalf("calls=%v", git.calls)
 	}
 }

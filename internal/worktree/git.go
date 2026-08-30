@@ -451,6 +451,21 @@ func (g *Git) Fingerprint(ctx context.Context, worktreePath string) (string, err
 	if err := g.validateManagedWorktreePath(worktreePath); err != nil {
 		return "", err
 	}
+	return g.fingerprint(ctx, worktreePath)
+}
+
+// FingerprintWorktree returns the same deterministic content digest for an
+// existing Herdr-created Worktree. Unlike Fingerprint, this read-only port
+// does not require the target to be inside ManagedRoot: it proves the target
+// is a linked Worktree of the configured RepositoryRoot before reading it.
+func (g *Git) FingerprintWorktree(ctx context.Context, worktreePath string) (string, error) {
+	if err := g.validateReadOnlyWorktreePath(ctx, worktreePath); err != nil {
+		return "", err
+	}
+	return g.fingerprint(ctx, worktreePath)
+}
+
+func (g *Git) fingerprint(ctx context.Context, worktreePath string) (string, error) {
 	commit, err := g.CurrentCommit(ctx, worktreePath)
 	if err != nil {
 		return "", err
@@ -494,6 +509,41 @@ func (g *Git) Fingerprint(ctx context.Context, worktreePath string) (string, err
 	}
 	digest := sha256.Sum256([]byte(material.String()))
 	return fmt.Sprintf("%x", digest[:]), nil
+}
+
+func (g *Git) validateReadOnlyWorktreePath(ctx context.Context, worktreePath string) error {
+	if g == nil || g.Runner == nil || strings.TrimSpace(worktreePath) == "" || strings.TrimSpace(worktreePath) != worktreePath || strings.TrimSpace(g.RepositoryRoot) == "" {
+		return ErrUnsafeTarget
+	}
+	target, err := resolvePath(worktreePath)
+	if err != nil || isFilesystemRoot(target) {
+		return ErrUnsafeTarget
+	}
+	repositoryRoot, err := resolvePath(g.RepositoryRoot)
+	if err != nil || samePath(target, repositoryRoot) {
+		return ErrUnsafeTarget
+	}
+	inside, err := g.command(ctx, target, "rev-parse", "--is-inside-work-tree")
+	if err != nil || strings.TrimSpace(inside.Stdout) != "true" {
+		return ErrUnsafeTarget
+	}
+	topResult, err := g.command(ctx, target, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return ErrUnsafeTarget
+	}
+	top, err := resolvePath(strings.TrimSpace(topResult.Stdout))
+	if err != nil || samePath(top, repositoryRoot) || !samePath(top, target) {
+		return ErrUnsafeTarget
+	}
+	targetCommonDir, err := g.gitCommonDir(ctx, target)
+	if err != nil {
+		return err
+	}
+	configuredCommonDir, err := g.gitCommonDir(ctx, repositoryRoot)
+	if err != nil || !samePath(targetCommonDir, configuredCommonDir) {
+		return ErrUnsafeTarget
+	}
+	return nil
 }
 
 type statusEntry struct {
@@ -622,6 +672,26 @@ func (g *Git) IsAncestor(ctx context.Context, worktreePath, commitSHA string) (b
 	result, err := g.command(ctx, worktreePath, "merge-base", "--is-ancestor", commitSHA, "HEAD")
 	if err == nil && result.ExitCode == 0 {
 		return true, nil
+	}
+	return false, err
+}
+
+// IsAncestorOf proves that an immutable commit is reachable from an exact
+// descendant SHA. It is read-only and is used by revert validation after the
+// remote default branch has been fetched.
+func (g *Git) IsAncestorOf(ctx context.Context, repositoryPath, ancestorSHA, descendantSHA string) (bool, error) {
+	if err := g.validateWorktreePath(repositoryPath); err != nil || !isCommitSHA(ancestorSHA) || !isCommitSHA(descendantSHA) {
+		return false, ErrUnsafeTarget
+	}
+	result, err := g.command(ctx, repositoryPath, "merge-base", "--is-ancestor", ancestorSHA, descendantSHA)
+	if err == nil && result.ExitCode == 0 {
+		return true, nil
+	}
+	if result.ExitCode == 1 {
+		return false, nil
+	}
+	if err == nil {
+		return false, fmt.Errorf("git merge-base exited with status %d", result.ExitCode)
 	}
 	return false, err
 }

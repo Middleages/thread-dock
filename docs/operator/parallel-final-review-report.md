@@ -11,13 +11,15 @@ parallel run.
   the latest-main refresh. A unique, secret-free PR comment marker is
   paginated/reconciled before `needs_operator` is persisted.
 - Run snapshots capture immutable repository owner/name/default branch values.
-  Revert composition uses those values and the persisted main merge SHA as
-  both the revert base and target merge identity.
+  Revert composition uses those values, the persisted main merge SHA as the
+  target identity, and the exact fetched default-branch head as its worktree
+  base after an ancestry check.
 - Confirmed task/latest-main conflicts attempt `AbortMerge`; abort failures
   remain in the audit stream and blocked summary.
 - Recovery recomputes the Builder Worktree fingerprint in a separate action,
-  preserves the prior fingerprint for policy comparison, and allows recovery
-  actions at counts 1, 2, and 3 before a no-progress policy block.
+  acknowledges a changed fingerprint before returning to evidence observation,
+  and permits three completed recovery actions. A fourth unchanged evaluation
+  blocks the run; progress resets the count.
 - CI repair preserves check name/state and consumes repair budget only when a
   check name uniquely matches one Task verification command. Repair packets
   use the failing final SHA as `RepairBaseSHA`.

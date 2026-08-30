@@ -1089,18 +1089,24 @@ func (o *Orchestrator) reconcilePending(ctx context.Context, snapshot *state.Run
 }
 
 func (o *Orchestrator) runtimeFor(ctx context.Context, snapshot state.RunSnapshot) (*runRuntime, error) {
+	if strings.TrimSpace(snapshot.ContractPath) == "" {
+		return nil, errors.New("contract path is missing")
+	}
+	// Always reread the mutable contract identity, even when this process has
+	// cached runtime metadata. A restart or an in-process contract edit must
+	// never retarget a persisted run before the next provider call.
+	c, err := readContract(snapshot.ContractPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSnapshotRepository(snapshot, c); err != nil {
+		return nil, err
+	}
 	o.mu.Lock()
 	runtime := o.runs[snapshot.RunID]
 	o.mu.Unlock()
 	if runtime != nil {
 		return runtime, nil
-	}
-	if strings.TrimSpace(snapshot.ContractPath) == "" {
-		return nil, errors.New("contract path is missing")
-	}
-	c, err := readContract(snapshot.ContractPath)
-	if err != nil {
-		return nil, err
 	}
 	builder := firstBuilder(c)
 	integrationBranch := snapshot.Integration.Branch
@@ -1112,6 +1118,21 @@ func (o *Orchestrator) runtimeFor(ctx context.Context, snapshot state.RunSnapsho
 	o.runs[snapshot.RunID] = runtime
 	o.mu.Unlock()
 	return runtime, nil
+}
+
+func validateSnapshotRepository(snapshot state.RunSnapshot, current contract.TaskContract) error {
+	stored := snapshot.Repository
+	if snapshot.Strategy == "parallel" && (strings.TrimSpace(stored.Owner) == "" || strings.TrimSpace(stored.Name) == "" || strings.TrimSpace(stored.DefaultBranch) == "") {
+		return errors.New("parallel run is missing immutable repository identity")
+	}
+	if strings.TrimSpace(stored.Owner) == "" && strings.TrimSpace(stored.Name) == "" && strings.TrimSpace(stored.DefaultBranch) == "" {
+		// Legacy Single-run snapshots predate the immutable repository fields.
+		return nil
+	}
+	if stored.Owner != current.Repository.Owner || stored.Name != current.Repository.Name || stored.DefaultBranch != current.Repository.DefaultBranch {
+		return errors.New("contract repository identity differs from immutable run snapshot")
+	}
+	return nil
 }
 
 func stageFromSnapshot(snapshot state.RunSnapshot) int {

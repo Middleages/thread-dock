@@ -364,11 +364,11 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement progress and exclusion rules**
 
-Orchestration constructs the progress fingerprint from the immutable commit SHA, the Builder Task's `worktree.Fingerprint` (never the integration checkout), sorted completed Task IDs, and normalized verification evidence. Recovery observation recomputes that managed fingerprint as its own durable action and compares it before invoking policy; it does not overwrite the previous fingerprint to manufacture no-progress. A changed non-empty fingerprint resets `RecoveryCount` to zero. Incomplete `idle/done` returns `Continue` for counts 1, 2, and 3; only a policy `Block` at count 3/no progress stops the run. A live `working` Agent waits for `WorkingWait`; after that it returns `AskOperator` because Herdr v0.8.2 exposes no safe foreground-command or duplicate-process exclusion signal.
+Orchestration constructs the progress fingerprint from the immutable commit SHA, the Builder Task's read-only Worktree Git fingerprint (never the integration checkout), sorted completed Task IDs, and normalized verification evidence. Recovery observation recomputes that fingerprint as its own durable action and acknowledges a changed non-empty value by persisting `PreviousFingerprint=current`, resetting `RecoveryCount`, and returning to evidence/lifecycle observation; it does not overwrite the prior value to manufacture no-progress. Three recovery actions may complete without progress; the fourth unchanged evaluation returns policy `Block`. A live `working` Agent waits for `WorkingWait`; after that it returns `AskOperator` because Herdr v0.8.2 exposes no safe foreground-command or duplicate-process exclusion signal.
 
 - [ ] **Step 4: Cap recovery and preserve evidence**
 
-When the Agent is absent, return `ResumeSession` only if orchestration proved a provider session identity; `herdr-terminal:*` sets `CanNativeResume=false` and returns `AskOperator`. After three consecutive `Continue` or `ResumeSession` decisions without fingerprint progress, return `Block`. Never stop the Herdr server, delete a pane, replace a live process, or remove a Worktree. The continuation text is exactly `Task packet과 현재 변경을 다시 확인하고, 완료되지 않은 수용 조건부터 계속 진행하세요. 이미 완료한 작업은 반복하지 마세요.`
+When the Agent is absent, return `ResumeSession` only if orchestration proved a provider session identity; `herdr-terminal:*` sets `CanNativeResume=false` and returns `AskOperator`. After three completed `Continue` or `ResumeSession` recovery actions, a fourth unchanged evaluation returns `Block`; a changed fingerprint resets the count and resumes evidence/lifecycle observation. Never stop the Herdr server, delete a pane, replace a live process, or remove a Worktree. The continuation text is exactly `Task packet과 현재 변경을 다시 확인하고, 완료되지 않은 수용 조건부터 계속 진행하세요. 이미 완료한 작업은 반복하지 마세요.`
 
 Run: `go test ./internal/recovery -v`
 
@@ -494,7 +494,7 @@ func TestParallelStories(t *testing.T) {
         {"third repair blocks", func(h *parallelHarness){ h.reviewFailures=1; h.ciFailures=2 }, contract.PhaseBlocked},
         {"protected waits", func(h *parallelHarness){ h.protectedRiskCategories=[]string{"authentication"} }, contract.PhaseNeedsOperator},
         {"git conflict blocks", func(h *parallelHarness){ h.mergeConflict=true }, contract.PhaseBlocked},
-        {"three recoveries block", func(h *parallelHarness){ h.stallRecoveries=3 }, contract.PhaseBlocked},
+        {"three recoveries then fourth unchanged evaluation blocks", func(h *parallelHarness){ h.stallRecoveries=4 }, contract.PhaseBlocked},
     }
     for _, tc := range cases { t.Run(tc.name, func(t *testing.T) { h:=newParallelHarness(t); tc.configure(h); got:=h.runToStable(); if got!=tc.want { t.Fatalf("phase=%s",got) } }) }
 }
