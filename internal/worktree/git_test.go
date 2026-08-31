@@ -468,3 +468,170 @@ func TestAbortRevertAndPushBranchNeverForce(t *testing.T) {
 		t.Fatalf("force push: %#v", r.calls[1].args)
 	}
 }
+
+func TestRemoveRetiredRequiresExactRegisteredCleanWorktree(t *testing.T) {
+	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
+	proof, err := git.InspectRetirementTarget(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.Path != target || proof.Branch != "agent/task" || proof.HeadSHA != sha {
+		t.Fatalf("proof=%+v", proof)
+	}
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("target remains: %v", err)
+	}
+	if strings.TrimSpace(runSetupGit(t, repo, "branch", "--list", "agent/task")) == "" {
+		t.Fatal("retirement removed the branch")
+	}
+}
+
+func TestInspectRetirementTargetRejectsDirtyWorktree(t *testing.T) {
+	git, repo, _, target, sha := realRetirementRepo(t)
+	writeTestFile(t, filepath.Join(target, "dirty.txt"), "dirty\n")
+	if _, err := git.InspectRetirementTarget(context.Background(), repo, target, "agent/task", sha); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("err=%v, want ErrUnsafeTarget", err)
+	}
+}
+
+func TestRemoveRetiredRejectsMovedHeadBeforeMutation(t *testing.T) {
+	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
+	writeTestFile(t, filepath.Join(target, "new.txt"), "new\n")
+	runSetupGit(t, target, "add", "new.txt")
+	runSetupGit(t, target, "commit", "-m", "new commit")
+	proof := RetirementProof{RepositoryCommonDir: filepath.Join(repo, ".git"), Path: target, Branch: "agent/task", HeadSHA: sha}
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("err=%v, want ErrUnsafeTarget", err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("target was removed after moved HEAD: %v", err)
+	}
+}
+
+func TestRemoveRetiredAllowsResponseLossOnlyWhenTargetAndRegistrationAreGone(t *testing.T) {
+	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
+	proof, err := git.InspectRetirementTarget(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); err != nil {
+		t.Fatal(err)
+	}
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); err != nil {
+		t.Fatalf("second removal should be idempotent after response loss: %v", err)
+	}
+}
+
+func TestRemoveRetiredRejectsContradictoryStaleRegistration(t *testing.T) {
+	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
+	proof, err := git.InspectRetirementTarget(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(target); err != nil {
+		t.Fatal(err)
+	}
+	// Recreate an administrative registration at the original path without a
+	// checkout. RemoveRetired must not mistake a stale registration for a
+	// completed response.
+	gitDir := filepath.Join(repo, ".git", "worktrees", "stale")
+	if err := os.MkdirAll(gitDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(gitDir, "gitdir"), filepath.Join(target, ".git")+"\n")
+	writeTestFile(t, filepath.Join(gitDir, "HEAD"), sha+"\n")
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("err=%v, want ErrUnsafeTarget", err)
+	}
+}
+
+func TestInspectRetirementTargetRejectsUnregisteredCheckoutAndSiblingEscape(t *testing.T) {
+	git, repo, herdrRoot, _, sha := realRetirementRepo(t)
+	foreign := filepath.Join(filepath.Dir(herdrRoot), filepath.Base(herdrRoot)+"-sibling")
+	runSetupGit(t, repo, "worktree", "add", "--detach", foreign, sha)
+	if _, err := git.InspectRetirementTarget(context.Background(), repo, foreign, "agent/task", sha); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("sibling target err=%v, want ErrUnsafeTarget", err)
+	}
+}
+
+func TestRetirementSupportsConfiguredRepositoryAsLinkedWorktree(t *testing.T) {
+	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
+	configured := filepath.Join(t.TempDir(), "configured repository")
+	runSetupGit(t, repo, "worktree", "add", "--detach", configured, sha)
+	proof, err := git.InspectRetirementTarget(context.Background(), configured, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.RepositoryCommonDir != filepath.Join(repo, ".git") {
+		t.Fatalf("common dir=%q, want %q", proof.RepositoryCommonDir, filepath.Join(repo, ".git"))
+	}
+	if err := git.RemoveRetired(context.Background(), configured, herdrRoot, proof); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInspectRetirementTargetRejectsDetachedAndForeignWorktrees(t *testing.T) {
+	git, repo, herdrRoot, _, sha := realRetirementRepo(t)
+	detached := filepath.Join(herdrRoot, "detached")
+	runSetupGit(t, repo, "worktree", "add", "--detach", detached, sha)
+	if _, err := git.InspectRetirementTarget(context.Background(), repo, detached, "agent/task", sha); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("detached target err=%v, want ErrUnsafeTarget", err)
+	}
+	foreign := filepath.Join(herdrRoot, "foreign")
+	runSetupGit(t, "", "init", foreign)
+	runSetupGit(t, foreign, "config", "user.email", "test@example.com")
+	runSetupGit(t, foreign, "config", "user.name", "ThreadDock Test")
+	writeTestFile(t, filepath.Join(foreign, "README.md"), "foreign\n")
+	runSetupGit(t, foreign, "add", "README.md")
+	runSetupGit(t, foreign, "commit", "-m", "foreign")
+	if _, err := git.InspectRetirementTarget(context.Background(), repo, foreign, "master", sha); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("foreign target err=%v, want ErrUnsafeTarget", err)
+	}
+}
+
+func TestInspectRetirementTargetRejectsRootsAndMissingConfiguration(t *testing.T) {
+	git, repo, herdrRoot, _, sha := realRetirementRepo(t)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{herdrRoot, repo, home, "/"} {
+		if _, err := git.InspectRetirementTarget(context.Background(), repo, path, "agent/task", sha); !errors.Is(err, ErrUnsafeTarget) {
+			t.Errorf("target %q err=%v, want ErrUnsafeTarget", path, err)
+		}
+	}
+	git.ManagedRoot = filepath.Join(herdrRoot, "missing")
+	if _, err := git.InspectRetirementTarget(context.Background(), repo, filepath.Join(herdrRoot, "target"), "agent/task", sha); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("missing Herdr root err=%v, want ErrUnsafeTarget", err)
+	}
+	git.ManagedRoot = herdrRoot
+	git.RepositoryRoot = filepath.Join(repo, "missing")
+	if _, err := git.InspectRetirementTarget(context.Background(), repo, filepath.Join(herdrRoot, "target"), "agent/task", sha); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("missing repository root err=%v, want ErrUnsafeTarget", err)
+	}
+}
+
+func realRetirementRepo(t *testing.T) (*Git, string, string, string, string) {
+	t.Helper()
+	root := t.TempDir()
+	bare := filepath.Join(root, "origin.git")
+	repo := filepath.Join(root, "repo")
+	herdrRoot := filepath.Join(root, "herdr", "worktrees")
+	if err := os.MkdirAll(herdrRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runSetupGit(t, "", "init", "--bare", bare)
+	runSetupGit(t, "", "clone", bare, repo)
+	runSetupGit(t, repo, "config", "user.email", "test@example.com")
+	runSetupGit(t, repo, "config", "user.name", "ThreadDock Test")
+	writeTestFile(t, filepath.Join(repo, "README.md"), "base\n")
+	runSetupGit(t, repo, "add", "README.md")
+	runSetupGit(t, repo, "commit", "-m", "base")
+	sha := strings.TrimSpace(runSetupGit(t, repo, "rev-parse", "HEAD"))
+	target := filepath.Join(herdrRoot, "odd target [retired]")
+	runSetupGit(t, repo, "worktree", "add", "-b", "agent/task", target, sha)
+	return New(runner.OSRunner{}, "git", herdrRoot, repo), repo, herdrRoot, target, sha
+}

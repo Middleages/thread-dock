@@ -866,6 +866,319 @@ func (g *Git) ReconcileIntegrationWorktree(ctx context.Context, path, branch, ba
 	return true, nil
 }
 
+// RetirementProof is the immutable Git identity recorded before a Herdr
+// Workspace is closed. Path and RepositoryCommonDir are canonical paths;
+// Branch and HeadSHA are the exact branch and commit observed by Git.
+//
+// The proof intentionally carries no patch or command output. It is only an
+// identity record that can be checked again before a later non-force remove.
+type RetirementProof struct {
+	RepositoryCommonDir string
+	Path                string
+	Branch              string
+	HeadSHA             string
+}
+
+type registeredRetirementWorktree struct {
+	path   string
+	head   string
+	branch string
+}
+
+// InspectRetirementTarget proves that worktreePath is the exact, clean,
+// registered linked Worktree represented by the supplied branch and HEAD.
+// Every check is read-only. The repository path must resolve to the
+// configured repository's common directory, while ManagedRoot is the trusted
+// Herdr Worktree root.
+func (g *Git) InspectRetirementTarget(ctx context.Context, repositoryPath, worktreePath, expectedBranch, expectedSHA string) (RetirementProof, error) {
+	if !validRetirementArguments(g, repositoryPath, worktreePath, expectedBranch, expectedSHA) {
+		return RetirementProof{}, ErrUnsafeTarget
+	}
+	proof, exists, err := g.proveRetirementTarget(ctx, repositoryPath, g.ManagedRoot, worktreePath, expectedBranch, expectedSHA, false)
+	if err != nil || !exists {
+		if err != nil {
+			return RetirementProof{}, err
+		}
+		return RetirementProof{}, ErrUnsafeTarget
+	}
+	return proof, nil
+}
+
+// RemoveRetired re-proves the durable retirement identity immediately before
+// asking Git to remove the target. It never uses --force and never deletes a
+// branch. A retry after response loss succeeds only when both the target and
+// its Git registration are gone; a stale registration is unsafe.
+func (g *Git) RemoveRetired(ctx context.Context, repositoryPath, trustedHerdrRoot string, proof RetirementProof) error {
+	if !validRetirementProofArguments(g, repositoryPath, trustedHerdrRoot, proof) {
+		return ErrUnsafeTarget
+	}
+	proofCommonDir, err := resolvePath(proof.RepositoryCommonDir)
+	if err != nil {
+		return ErrUnsafeTarget
+	}
+	current, exists, err := g.proveRetirementTarget(ctx, repositoryPath, trustedHerdrRoot, proof.Path, proof.Branch, proof.HeadSHA, true)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		// No target and no exact registration is the only safe interpretation of
+		// a lost successful response. The repository identity still has to
+		// match the durable proof so a missing path cannot mask a wrong repo.
+		if !samePath(current.RepositoryCommonDir, proofCommonDir) || !samePath(current.Path, proof.Path) {
+			return ErrUnsafeTarget
+		}
+		return nil
+	}
+	if !sameRetirementProof(current, proof, proofCommonDir) {
+		return ErrUnsafeTarget
+	}
+	repositoryRoot, err := resolvePath(repositoryPath)
+	if err != nil {
+		return ErrUnsafeTarget
+	}
+	return g.run(ctx, repositoryRoot, "worktree", "remove", current.Path)
+}
+
+func validRetirementArguments(g *Git, repositoryPath, worktreePath, branch, sha string) bool {
+	return g != nil && g.Runner != nil && strings.TrimSpace(repositoryPath) != "" && strings.TrimSpace(repositoryPath) == repositoryPath && strings.TrimSpace(worktreePath) != "" && strings.TrimSpace(worktreePath) == worktreePath && validGitRef(branch) && isCommitSHA(sha)
+}
+
+func validRetirementProofArguments(g *Git, repositoryPath, trustedHerdrRoot string, proof RetirementProof) bool {
+	if !validRetirementArguments(g, repositoryPath, proof.Path, proof.Branch, proof.HeadSHA) {
+		return false
+	}
+	if strings.TrimSpace(trustedHerdrRoot) == "" || strings.TrimSpace(trustedHerdrRoot) != trustedHerdrRoot || strings.TrimSpace(proof.RepositoryCommonDir) == "" || strings.TrimSpace(proof.RepositoryCommonDir) != proof.RepositoryCommonDir {
+		return false
+	}
+	return filepath.IsAbs(proof.Path) && filepath.IsAbs(proof.RepositoryCommonDir)
+}
+
+func (g *Git) proveRetirementTarget(ctx context.Context, repositoryPath, trustedHerdrRoot, worktreePath, expectedBranch, expectedSHA string, allowMissing bool) (RetirementProof, bool, error) {
+	paths, err := g.resolveRetirementPaths(repositoryPath, trustedHerdrRoot, worktreePath, allowMissing)
+	if err != nil {
+		return RetirementProof{}, false, err
+	}
+	configuredCommonDir, err := g.gitCommonDir(ctx, paths.configuredRoot)
+	if err != nil {
+		return RetirementProof{}, false, retirementUnsafe(err)
+	}
+	if !samePath(paths.repositoryRoot, paths.configuredRoot) {
+		suppliedCommonDir, suppliedErr := g.gitCommonDir(ctx, paths.repositoryRoot)
+		if suppliedErr != nil || !samePath(suppliedCommonDir, configuredCommonDir) {
+			return RetirementProof{}, false, retirementUnsafe(suppliedErr)
+		}
+	}
+	registrations, err := g.retirementRegistrations(ctx, paths.repositoryRoot)
+	if err != nil {
+		return RetirementProof{}, false, retirementUnsafe(err)
+	}
+	matches := make([]registeredRetirementWorktree, 0, 1)
+	for _, registration := range registrations {
+		registeredPath, pathErr := canonicalRetirementRegistrationPath(paths.repositoryRoot, registration.path)
+		if pathErr != nil {
+			return RetirementProof{}, false, ErrUnsafeTarget
+		}
+		if samePath(registeredPath, paths.target) {
+			registration.path = registeredPath
+			matches = append(matches, registration)
+		}
+	}
+	if !paths.targetExists {
+		if len(matches) != 0 {
+			return RetirementProof{}, false, ErrUnsafeTarget
+		}
+		if !allowMissing {
+			return RetirementProof{}, false, ErrUnsafeTarget
+		}
+		return RetirementProof{RepositoryCommonDir: configuredCommonDir, Path: paths.target}, false, nil
+	}
+	if len(matches) != 1 {
+		return RetirementProof{}, false, ErrUnsafeTarget
+	}
+	registration := matches[0]
+	if registration.branch != expectedBranch || registration.head != expectedSHA {
+		return RetirementProof{}, false, ErrUnsafeTarget
+	}
+	targetCommonDir, err := g.gitCommonDir(ctx, paths.target)
+	if err != nil {
+		return RetirementProof{}, false, retirementUnsafe(err)
+	}
+	if !samePath(targetCommonDir, configuredCommonDir) {
+		return RetirementProof{}, false, ErrUnsafeTarget
+	}
+	branchResult, err := g.command(ctx, paths.target, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return RetirementProof{}, false, retirementUnsafe(err)
+	}
+	branch := strings.TrimSpace(branchResult.Stdout)
+	if branch != expectedBranch {
+		return RetirementProof{}, false, ErrUnsafeTarget
+	}
+	headResult, err := g.command(ctx, paths.target, "rev-parse", "HEAD")
+	if err != nil {
+		return RetirementProof{}, false, retirementUnsafe(err)
+	}
+	head := strings.TrimSpace(headResult.Stdout)
+	if head != expectedSHA || !isCommitSHA(head) {
+		return RetirementProof{}, false, ErrUnsafeTarget
+	}
+	statusResult, err := g.command(ctx, paths.target, "status", "--porcelain=v1")
+	if err != nil {
+		return RetirementProof{}, false, retirementUnsafe(err)
+	}
+	if strings.TrimSpace(statusResult.Stdout) != "" {
+		return RetirementProof{}, false, ErrUnsafeTarget
+	}
+	return RetirementProof{RepositoryCommonDir: configuredCommonDir, Path: paths.target, Branch: branch, HeadSHA: head}, true, nil
+}
+
+func (g *Git) retirementRegistrations(ctx context.Context, repositoryRoot string) ([]registeredRetirementWorktree, error) {
+	result, err := g.command(ctx, repositoryRoot, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	return parseRetirementRegistrations(result.Stdout)
+}
+
+func parseRetirementRegistrations(output string) ([]registeredRetirementWorktree, error) {
+	output = strings.TrimRight(output, "\n")
+	if strings.TrimSpace(output) == "" {
+		return nil, ErrUnsafeTarget
+	}
+	var registrations []registeredRetirementWorktree
+	for _, record := range strings.Split(output, "\n\n") {
+		lines := strings.Split(record, "\n")
+		if len(lines) == 1 && lines[0] == "bare" {
+			continue
+		}
+		if len(lines) == 0 || !strings.HasPrefix(lines[0], "worktree ") || strings.TrimPrefix(lines[0], "worktree ") == "" {
+			return nil, ErrUnsafeTarget
+		}
+		registration := registeredRetirementWorktree{path: strings.TrimPrefix(lines[0], "worktree ")}
+		seen := map[string]bool{"worktree": true}
+		for _, line := range lines[1:] {
+			switch {
+			case line == "bare":
+				if seen["bare"] || seen["head"] || seen["branch"] || seen["detached"] {
+					return nil, ErrUnsafeTarget
+				}
+				seen["bare"] = true
+			case strings.HasPrefix(line, "HEAD "):
+				if seen["head"] || seen["bare"] {
+					return nil, ErrUnsafeTarget
+				}
+				registration.head = strings.TrimPrefix(line, "HEAD ")
+				seen["head"] = true
+			case strings.HasPrefix(line, "branch "):
+				if seen["branch"] || seen["bare"] || !strings.HasPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/") {
+					return nil, ErrUnsafeTarget
+				}
+				registration.branch = strings.TrimPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/")
+				if registration.branch == "" {
+					return nil, ErrUnsafeTarget
+				}
+				seen["branch"] = true
+			case line == "detached":
+				if seen["detached"] || seen["branch"] || seen["bare"] {
+					return nil, ErrUnsafeTarget
+				}
+				seen["detached"] = true
+			case strings.HasPrefix(line, "locked"), strings.HasPrefix(line, "prunable "):
+				// These are metadata about a registered Worktree, not identity.
+			default:
+				return nil, ErrUnsafeTarget
+			}
+		}
+		if seen["bare"] {
+			continue
+		}
+		if !seen["head"] || !isCommitSHA(registration.head) || (!seen["branch"] && !seen["detached"]) {
+			return nil, ErrUnsafeTarget
+		}
+		registrations = append(registrations, registration)
+	}
+	return registrations, nil
+}
+
+func canonicalRetirementRegistrationPath(repositoryRoot, path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repositoryRoot, path)
+	}
+	resolved, _, err := resolveCreatePath(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
+}
+
+type retirementPaths struct {
+	configuredRoot string
+	repositoryRoot string
+	target         string
+	targetExists   bool
+}
+
+func (g *Git) resolveRetirementPaths(repositoryPath, trustedHerdrRoot, targetPath string, allowMissing bool) (retirementPaths, error) {
+	if g == nil || strings.TrimSpace(repositoryPath) == "" || strings.TrimSpace(repositoryPath) != repositoryPath || strings.TrimSpace(trustedHerdrRoot) == "" || strings.TrimSpace(trustedHerdrRoot) != trustedHerdrRoot || strings.TrimSpace(targetPath) == "" || strings.TrimSpace(targetPath) != targetPath {
+		return retirementPaths{}, ErrUnsafeTarget
+	}
+	managedRoot, err := resolvePath(trustedHerdrRoot)
+	if err != nil || validateTrustedManagedRoot(managedRoot) != nil {
+		return retirementPaths{}, ErrUnsafeTarget
+	}
+	configuredRoot, err := resolvePath(g.RepositoryRoot)
+	if err != nil {
+		return retirementPaths{}, ErrUnsafeTarget
+	}
+	suppliedRepository, err := resolvePath(repositoryPath)
+	if err != nil {
+		return retirementPaths{}, ErrUnsafeTarget
+	}
+	homePath, err := os.UserHomeDir()
+	if err != nil {
+		return retirementPaths{}, ErrUnsafeTarget
+	}
+	home, err := resolvePath(homePath)
+	if err != nil || isFilesystemRoot(managedRoot) || isFilesystemRoot(configuredRoot) || isFilesystemRoot(suppliedRepository) || samePath(managedRoot, home) || samePath(configuredRoot, home) || samePath(suppliedRepository, home) || samePath(managedRoot, configuredRoot) || samePath(managedRoot, suppliedRepository) {
+		return retirementPaths{}, ErrUnsafeTarget
+	}
+	var target string
+	var targetExists bool
+	if allowMissing {
+		target, targetExists, err = resolveCreatePath(targetPath)
+	} else {
+		target, err = resolvePath(targetPath)
+		targetExists = err == nil
+	}
+	if err != nil {
+		return retirementPaths{}, ErrUnsafeTarget
+	}
+	if !strictlyContained(managedRoot, target) || samePath(target, home) || samePath(target, configuredRoot) || samePath(target, suppliedRepository) || samePath(target, managedRoot) || isFilesystemRoot(target) {
+		return retirementPaths{}, ErrUnsafeTarget
+	}
+	if targetExists {
+		info, statErr := os.Stat(target)
+		if statErr != nil || !info.IsDir() {
+			return retirementPaths{}, ErrUnsafeTarget
+		}
+	}
+	return retirementPaths{configuredRoot: configuredRoot, repositoryRoot: suppliedRepository, target: filepath.Clean(target), targetExists: targetExists}, nil
+}
+
+func sameRetirementProof(actual, expected RetirementProof, expectedCommonDir string) bool {
+	return samePath(actual.RepositoryCommonDir, expectedCommonDir) && samePath(actual.Path, expected.Path) && actual.Branch == expected.Branch && actual.HeadSHA == expected.HeadSHA
+}
+
+func retirementUnsafe(err error) error {
+	if err == nil {
+		return ErrUnsafeTarget
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return ErrUnsafeTarget
+}
+
 func isCommitSHA(value string) bool {
 	if len(value) != 40 {
 		return false
