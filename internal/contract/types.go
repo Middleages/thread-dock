@@ -83,7 +83,15 @@ const (
 )
 
 type NextAction struct{ Kind, Label string }
-type AgentView struct{ Name, Role, State, Summary string }
+
+// AgentView retains the provider lifecycle State and adds the durable
+// ThreadDock session lifecycle. Lifecycle is active, retiring, or retired;
+// it must not replace State because historical provider identity remains
+// useful after a Workspace is closed.
+type AgentView struct {
+	Name, Role, State, Summary string
+	Lifecycle                  string
+}
 type GitHubView struct {
 	ParentIssue, PullRequest int
 	URL, CI                  string

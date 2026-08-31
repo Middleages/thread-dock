@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,12 +29,21 @@ type RunService interface {
 	Cleanup(context.Context, contract.RunID) error
 }
 
+// RetirementService is the narrow command boundary for explicit session
+// retirement. The bool is true only for an explicit blocked-run request.
+// Keeping this separate from RunService preserves compatibility with older
+// monitor and test implementations that do not know about retirement.
+type RetirementService interface {
+	Retire(context.Context, contract.RunID, bool) error
+}
+
 // Dependencies are the injectable command dependencies. Contract commands do
 // not require Runs, preserving the original agentctl contract interface.
 type Dependencies struct {
-	Runs      RunService
-	Confirmer ProtectedChangeConfirmer
-	Reverter  RevertRunService
+	Runs       RunService
+	Retirement RetirementService
+	Confirmer  ProtectedChangeConfirmer
+	Reverter   RevertRunService
 }
 
 var errRunServiceMissing = errors.New("실행 서비스가 구성되지 않았습니다")
@@ -47,6 +57,8 @@ func NeedsProductionDependencies(args []string) bool {
 	switch args[0] {
 	case "start", "stop", "resume", "cleanup":
 		return len(args) == 2 && strings.TrimSpace(args[1]) != ""
+	case "retire":
+		return validRetireArgs(args[1:])
 	case "confirm":
 		return len(args) == 3 && strings.TrimSpace(args[1]) != "" && args[2] == "protected-change"
 	case "create-revert":
@@ -149,6 +161,28 @@ func runCommand(ctx context.Context, args []string, stdout, stderr io.Writer, ru
 	}
 }
 
+func runRetire(ctx context.Context, args []string, stdout, stderr io.Writer, service RetirementService) int {
+	if !validRetireArgs(args) {
+		printUsage(stderr)
+		return 2
+	}
+	if service == nil {
+		return reportGenericRunError(stderr)
+	}
+	blocked := len(args) == 2
+	if err := service.Retire(ctx, contract.RunID(args[0]), blocked); err != nil {
+		return reportGenericRunError(stderr)
+	}
+	return 0
+}
+
+func validRetireArgs(args []string) bool {
+	if len(args) == 1 {
+		return strings.TrimSpace(args[0]) != "" && !strings.HasPrefix(args[0], "-")
+	}
+	return len(args) == 2 && strings.TrimSpace(args[0]) != "" && !strings.HasPrefix(args[0], "-") && args[1] == "--blocked"
+}
+
 func parseStatusArgs(args []string) (contract.RunID, bool, bool) {
 	var id contract.RunID
 	jsonOutput := false
@@ -182,6 +216,11 @@ func writeHumanStatus(stdout io.Writer, view contract.StatusView) {
 		updated = view.UpdatedAt.Format(time.RFC3339)
 	}
 	fmt.Fprintf(stdout, "실행 ID: %s\n단계: %s\n요약: %s\n최근 갱신: %s\n다음 작업: %s\n", view.RunID, view.Phase, view.Summary, updated, next)
+	for _, agent := range view.Agents {
+		if strings.TrimSpace(agent.Lifecycle) != "" {
+			fmt.Fprintf(stdout, "세션 %s: %s\n", agent.Name, agent.Lifecycle)
+		}
+	}
 }
 
 type statusJSON struct {
@@ -201,10 +240,11 @@ type nextActionJSON struct {
 }
 
 type agentJSON struct {
-	Name    string `json:"name"`
-	Role    string `json:"role"`
-	State   string `json:"state"`
-	Summary string `json:"summary"`
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	State     string `json:"state"`
+	Summary   string `json:"summary"`
+	Lifecycle string `json:"lifecycle"`
 }
 
 type githubJSON struct {
@@ -228,7 +268,7 @@ func writeStatusJSON(stdout io.Writer, view contract.StatusView) error {
 		wire.NextAction = &nextActionJSON{Kind: view.NextAction.Kind, Label: view.NextAction.Label}
 	}
 	for _, agent := range view.Agents {
-		wire.Agents = append(wire.Agents, agentJSON{Name: agent.Name, Role: agent.Role, State: agent.State, Summary: agent.Summary})
+		wire.Agents = append(wire.Agents, agentJSON{Name: agent.Name, Role: agent.Role, State: agent.State, Summary: agent.Summary, Lifecycle: agent.Lifecycle})
 	}
 	return json.NewEncoder(stdout).Encode(wire)
 }
@@ -237,7 +277,22 @@ func reportRunError(stderr io.Writer, err error) int {
 	if err == nil {
 		return 1
 	}
+	// Provider adapters and filesystem errors may contain command output or
+	// credential-shaped values. Keep the historical useful detail for ordinary
+	// policy errors, but replace provider/raw diagnostics at this boundary.
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{"provider", "herdr", "stderr", "stdout", "token", "secret", "password", "credential", "authorization", "api_key", "private key"} {
+		if strings.Contains(message, marker) {
+			fmt.Fprintln(stderr, "실행 명령을 처리하지 못했습니다. 상태와 운영 로그를 확인하십시오.")
+			return 1
+		}
+	}
 	fmt.Fprintf(stderr, "실행 명령을 처리하지 못했습니다: %v\n", err)
+	return 1
+}
+
+func reportGenericRunError(stderr io.Writer) int {
+	fmt.Fprintln(stderr, "실행 명령을 처리하지 못했습니다. 상태와 운영 로그를 확인하십시오.")
 	return 1
 }
 
@@ -271,6 +326,26 @@ type HerdrWorktreeCleanup interface {
 	RemoveHerdr(context.Context, string) error
 }
 
+// RetiredWorktreeCleanup removes a previously closed Workspace's checkout by
+// verified Git path. The target carries the durable proof, so callers never
+// need to reconstruct a branch or HEAD from provider output.
+type RetiredWorktreeCleanup interface {
+	RemoveRetired(context.Context, string, string, state.RetirementTarget) error
+}
+
+// RetiredWorktreeInspector is the read-only half of RetiredWorktreeCleanup.
+// It lets Cleanup complete every proof check before issuing its first remove.
+// Adapters that do not expose this optional seam still have their durable
+// proof fields validated by the service; the production adapter implements
+// this with Git's strict InspectRetirementTarget operation.
+type RetiredWorktreeInspector interface {
+	InspectRetired(context.Context, string, string, state.RetirementTarget) error
+}
+
+type herdrWorktreeRootProvider interface {
+	TrustedHerdrWorktreeRoot() string
+}
+
 type HerdrWorktreeLocator interface {
 	FindWorktree(context.Context, string, string, string) (herdr.Worktree, bool, error)
 }
@@ -295,13 +370,18 @@ type OrchestratorRunService struct {
 	removeState        StateRemover
 	now                func() time.Time
 	trustedManagedRoot string
+	trustedHerdrRoot   string
 }
 
-func NewOrchestratorRunService(coordinator RunCoordinator, store RunStateStore, cleanup WorktreeCleanup, removeState StateRemover, now func() time.Time, trustedManagedRoot string) *OrchestratorRunService {
+func NewOrchestratorRunService(coordinator RunCoordinator, store RunStateStore, cleanup WorktreeCleanup, removeState StateRemover, now func() time.Time, trustedManagedRoot string, trustedHerdrRoot ...string) *OrchestratorRunService {
 	if now == nil {
 		now = time.Now
 	}
-	return &OrchestratorRunService{coordinator: coordinator, store: store, cleanup: cleanup, removeState: removeState, now: now, trustedManagedRoot: trustedManagedRoot}
+	herdrRoot := ""
+	if len(trustedHerdrRoot) > 0 {
+		herdrRoot = trustedHerdrRoot[0]
+	}
+	return &OrchestratorRunService{coordinator: coordinator, store: store, cleanup: cleanup, removeState: removeState, now: now, trustedManagedRoot: trustedManagedRoot, trustedHerdrRoot: herdrRoot}
 }
 
 func (s *OrchestratorRunService) Start(ctx context.Context, path string) (contract.RunID, error) {
@@ -408,20 +488,30 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 	}
 	var herdrCleanup HerdrWorktreeCleanup
 	var herdrLocator HerdrWorktreeLocator
+	var retiredCleanup RetiredWorktreeCleanup
+	var retiredInspector RetiredWorktreeInspector
 	for _, target := range targets {
-		if target.kind != cleanupHerdr {
-			continue
-		}
 		var ok bool
-		herdrCleanup, ok = s.cleanup.(HerdrWorktreeCleanup)
-		if !ok {
-			return errors.New("Herdr Worktree 제거 기능이 구성되지 않아 정리를 중단했습니다")
+		switch target.kind {
+		case cleanupHerdr:
+			herdrCleanup, ok = s.cleanup.(HerdrWorktreeCleanup)
+			if !ok {
+				return errors.New("Herdr Worktree 제거 기능이 구성되지 않아 정리를 중단했습니다")
+			}
+			herdrLocator, ok = s.cleanup.(HerdrWorktreeLocator)
+			if !ok {
+				return errors.New("Herdr Worktree 식별 확인 기능이 구성되지 않아 정리를 중단했습니다")
+			}
+		case cleanupRetired:
+			retiredCleanup, ok = s.cleanup.(RetiredWorktreeCleanup)
+			if !ok {
+				return errors.New("retired Worktree 제거 기능이 구성되지 않아 정리를 중단했습니다")
+			}
+			// The inspector is optional for compatibility with narrow test and
+			// legacy adapters. The durable proof fields are still checked below;
+			// production SafeWorktreeCleanup always supplies this strict read.
+			retiredInspector, _ = s.cleanup.(RetiredWorktreeInspector)
 		}
-		herdrLocator, ok = s.cleanup.(HerdrWorktreeLocator)
-		if !ok {
-			return errors.New("Herdr Worktree 식별 확인 기능이 구성되지 않아 정리를 중단했습니다")
-		}
-		break
 	}
 	managedRoot := filepath.Clean(s.trustedManagedRoot)
 	if strings.TrimSpace(s.trustedManagedRoot) == "" {
@@ -430,9 +520,28 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 	if managedRoot == "." || managedRoot == string(filepath.Separator) {
 		return errors.New("관리 대상 Worktree 루트가 안전하지 않습니다")
 	}
+	herdrRoot := s.trustedHerdrRoot
+	if strings.TrimSpace(herdrRoot) == "" {
+		if provider, ok := s.cleanup.(herdrWorktreeRootProvider); ok {
+			herdrRoot = provider.TrustedHerdrWorktreeRoot()
+		}
+	}
 	for _, target := range targets {
 		if sameCleanPath(target.path, snapshot.Integration.Path) && !pathWithinRoot(managedRoot, target.path) {
-			return errors.New("관리 대상 루트 밖의 Worktree가 있어 정리를 거부했습니다")
+			// A shared Reviewer target is owned by Herdr and is validated against
+			// the configured Herdr root below; plain Integration paths remain in
+			// ThreadDock's managed root.
+			if target.kind != cleanupRetired && target.kind != cleanupHerdr {
+				return errors.New("관리 대상 루트 밖의 Worktree가 있어 정리를 거부했습니다")
+			}
+		}
+		if target.kind == cleanupRetired {
+			if err := validateRetiredProof(target.retirement, target.path); err != nil {
+				return err
+			}
+			if strings.TrimSpace(herdrRoot) != "" && !pathWithinRoot(herdrRoot, target.path) {
+				return errors.New("retired Worktree가 관리 대상 Herdr 루트 밖에 있어 정리를 거부했습니다")
+			}
 		}
 	}
 
@@ -444,6 +553,17 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 			if locateErr != nil || !found || actual.Path != target.path || actual.WorkspaceID != target.workspaceID || actual.PaneID != target.paneID {
 				return errors.New("Herdr Worktree 식별자가 persisted 상태와 달라 정리를 중단했습니다")
 			}
+		}
+		if target.kind == cleanupRetired && retiredInspector != nil {
+			if err := retiredInspector.InspectRetired(ctx, snapshot.RepositoryPath, herdrRoot, target.retirement); err != nil {
+				return errors.New("retired Worktree Git proof가 persisted 상태와 달라 정리를 중단했습니다")
+			}
+		}
+		if target.kind == cleanupRetired {
+			// InspectRetirementTarget performs its own exact clean-status check
+			// in the production adapter. Narrow adapters without that optional
+			// method are still required to provide complete durable proof above.
+			continue
 		}
 		status, statusErr := s.cleanup.Status(ctx, target.path)
 		if statusErr != nil {
@@ -460,6 +580,12 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 			}
 			continue
 		}
+		if target.kind == cleanupRetired {
+			if err := retiredCleanup.RemoveRetired(ctx, snapshot.RepositoryPath, herdrRoot, target.retirement); err != nil {
+				return errors.New("retired Worktree 정리에 실패했습니다")
+			}
+			continue
+		}
 		if err := herdrCleanup.RemoveHerdr(ctx, target.workspaceID); err != nil {
 			// Herdr adapters must not expose command output, which may contain
 			// credentials or unrelated terminal diagnostics.
@@ -467,6 +593,13 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 		}
 	}
 	return s.removeState.Remove(ctx, id)
+}
+
+func validateRetiredProof(proof state.RetirementTarget, path string) error {
+	if proof.Status != "retired" || strings.TrimSpace(proof.Path) == "" || !sameCleanPath(proof.Path, path) || !filepath.IsAbs(proof.Path) || filepath.Clean(proof.Path) != proof.Path || strings.TrimSpace(proof.RepositoryCommonDir) == "" || !filepath.IsAbs(proof.RepositoryCommonDir) || filepath.Clean(proof.RepositoryCommonDir) != proof.RepositoryCommonDir || strings.TrimSpace(proof.Branch) == "" || strings.TrimSpace(proof.HeadSHA) == "" {
+		return errors.New("retired Worktree의 Git proof가 불완전하여 정리를 거부했습니다")
+	}
+	return nil
 }
 
 func (s *OrchestratorRunService) loadStatusSnapshot(ctx context.Context, id contract.RunID) (state.RunSnapshot, error) {
@@ -504,20 +637,66 @@ func statusView(snapshot state.RunSnapshot) contract.StatusView {
 	} else if snapshot.Phase != contract.PhaseCompleted && snapshot.Phase != contract.PhaseBlocked && snapshot.Phase != contract.PhasePaused {
 		view.NextAction = &contract.NextAction{Kind: "advance", Label: "다음 단계 진행"}
 	}
+	seenAgents := make(map[string]bool)
 	if snapshot.Builder.Name != "" {
-		view.Agents = append(view.Agents, contract.AgentView{Name: snapshot.Builder.Name, Role: "builder", State: "unknown", Summary: snapshot.Summary})
+		view.Agents = append(view.Agents, contract.AgentView{Name: snapshot.Builder.Name, Role: "builder", State: "unknown", Summary: snapshot.Summary, Lifecycle: sessionLifecycleForTarget(snapshot, "builder", "", snapshot.BuilderWorktree.Path)})
+		seenAgents[snapshot.Builder.Name] = true
 	}
 	if snapshot.Reviewer.Name != "" {
-		view.Agents = append(view.Agents, contract.AgentView{Name: snapshot.Reviewer.Name, Role: "reviewer", State: "unknown", Summary: snapshot.Summary})
+		view.Agents = append(view.Agents, contract.AgentView{Name: snapshot.Reviewer.Name, Role: "reviewer", State: "unknown", Summary: snapshot.Summary, Lifecycle: sessionLifecycleForTarget(snapshot, "reviewer", "", snapshot.ReviewerWorktree.Path)})
+		seenAgents[snapshot.Reviewer.Name] = true
+	}
+	taskIDs := append([]string(nil), snapshot.TaskOrder...)
+	if len(taskIDs) == 0 {
+		for id := range snapshot.Tasks {
+			taskIDs = append(taskIDs, id)
+		}
+		sort.Strings(taskIDs)
+	}
+	for _, id := range taskIDs {
+		task, ok := snapshot.Tasks[id]
+		if !ok || task.Agent.Name == "" || seenAgents[task.Agent.Name] {
+			continue
+		}
+		role := "builder"
+		if task.Agent.Name == snapshot.Reviewer.Name {
+			role = "reviewer"
+		}
+		stateName := task.State
+		if stateName == "" {
+			stateName = "unknown"
+		}
+		view.Agents = append(view.Agents, contract.AgentView{Name: task.Agent.Name, Role: role, State: stateName, Summary: snapshot.Summary, Lifecycle: sessionLifecycleForTarget(snapshot, role, id, task.Worktree.Path)})
+		seenAgents[task.Agent.Name] = true
 	}
 	return view
+}
+
+func sessionLifecycleForTarget(snapshot state.RunSnapshot, role, taskID, path string) string {
+	fallback := sessionLifecycle(snapshot)
+	for _, target := range snapshot.Retirement.Targets {
+		if target.Role != role {
+			continue
+		}
+		if taskID != "" && target.TaskID != taskID {
+			continue
+		}
+		if taskID == "" && path != "" && !sameCleanPath(target.Path, path) {
+			continue
+		}
+		if target.Status == "retired" {
+			return "retired"
+		}
+		return "retiring"
+	}
+	return fallback
 }
 
 func resumablePhase(phase contract.RunPhase) bool {
 	switch phase {
 	case contract.PhaseRegistered, contract.PhaseAnalyzing, contract.PhaseBuilding, contract.PhaseIntegrating, contract.PhaseReviewing:
 		return true
-	case contract.PhaseCI, contract.PhaseMerging:
+	case contract.PhaseCI, contract.PhaseMerging, contract.PhaseRetiring:
 		return true
 	default:
 		return false
@@ -529,6 +708,7 @@ type cleanupTargetKind uint8
 const (
 	cleanupIntegration cleanupTargetKind = iota
 	cleanupHerdr
+	cleanupRetired
 )
 
 type cleanupTarget struct {
@@ -536,13 +716,14 @@ type cleanupTarget struct {
 	path        string
 	workspaceID string
 	paneID      string
+	retirement  state.RetirementTarget
 }
 
 func cleanupTargets(snapshot state.RunSnapshot) ([]cleanupTarget, error) {
-	if strings.TrimSpace(snapshot.IntegrationPath) == "" || strings.TrimSpace(snapshot.Integration.Path) == "" {
+	integrationPath := strings.TrimSpace(snapshot.Integration.Path)
+	if strings.TrimSpace(snapshot.IntegrationPath) == "" || integrationPath == "" {
 		return nil, errors.New("Integration Worktree 정보가 없어 정리할 수 없습니다")
 	}
-	integrationPath := strings.TrimSpace(snapshot.Integration.Path)
 	if !sameCleanPath(strings.TrimSpace(snapshot.IntegrationPath), integrationPath) {
 		return nil, errors.New("Integration Worktree 경로가 persisted 상태와 달라 정리를 거부했습니다")
 	}
@@ -554,17 +735,82 @@ func cleanupTargets(snapshot state.RunSnapshot) ([]cleanupTarget, error) {
 		if strings.TrimSpace(work.Path) == "" || strings.TrimSpace(work.WorkspaceID) == "" || strings.TrimSpace(work.PaneID) == "" {
 			return nil, errors.New("Builder/Reviewer Worktree 식별자가 불완전하여 정리를 거부했습니다")
 		}
-		target := cleanupTarget{kind: cleanupHerdr, path: strings.TrimSpace(work.Path), workspaceID: strings.TrimSpace(work.WorkspaceID), paneID: strings.TrimSpace(work.PaneID)}
+		role := "builder"
+		if index == 1 {
+			role = "reviewer"
+		}
+		target := cleanupTargetForWorktree(snapshot, strings.TrimSpace(work.Path), strings.TrimSpace(work.WorkspaceID), strings.TrimSpace(work.PaneID), role)
 		if index == 1 && sameCleanPath(target.path, integrationPath) {
 			// Reviewer is the reconciled owner of a shared Integration checkout.
-			// Prefer its Herdr removal and replace the Git target so the physical
-			// checkout is removed exactly once.
+			// Replace the Git target so the physical checkout is removed once.
 			targets[0] = target
+			continue
+		}
+		if duplicateCleanupPath(targets, target.path) {
 			continue
 		}
 		targets = append(targets, target)
 	}
+
+	// Retirement proof is durable state. If a historical snapshot retained a
+	// target after its legacy Worktree fields were compacted, include that
+	// target by its exact proof rather than reconstructing it from a path.
+	for _, durable := range snapshot.Retirement.Targets {
+		if strings.TrimSpace(durable.Path) == "" {
+			return nil, errors.New("retirement target is missing a Worktree path")
+		}
+		if durable.Status == "retired" {
+			if replaceCleanupTarget(targets, durable.Path, cleanupTarget{kind: cleanupRetired, path: strings.TrimSpace(durable.Path), retirement: durable}) {
+				continue
+			}
+			targets = append(targets, cleanupTarget{kind: cleanupRetired, path: strings.TrimSpace(durable.Path), retirement: durable})
+			continue
+		}
+		if strings.TrimSpace(durable.WorkspaceID) == "" || strings.TrimSpace(durable.PaneID) == "" {
+			return nil, errors.New("active retirement target identity is incomplete")
+		}
+		active := cleanupTarget{kind: cleanupHerdr, path: strings.TrimSpace(durable.Path), workspaceID: strings.TrimSpace(durable.WorkspaceID), paneID: strings.TrimSpace(durable.PaneID)}
+		if durable.Role == "reviewer" && sameCleanPath(active.path, integrationPath) {
+			targets[0] = active
+			continue
+		}
+		if !duplicateCleanupPath(targets, active.path) {
+			targets = append(targets, active)
+		}
+	}
 	return targets, nil
+}
+
+func cleanupTargetForWorktree(snapshot state.RunSnapshot, path, workspaceID, paneID, role string) cleanupTarget {
+	for _, retired := range snapshot.Retirement.Targets {
+		if retired.Status != "retired" || !sameCleanPath(retired.Path, path) {
+			continue
+		}
+		if retired.Role != "" && retired.Role != role {
+			continue
+		}
+		return cleanupTarget{kind: cleanupRetired, path: path, workspaceID: workspaceID, paneID: paneID, retirement: retired}
+	}
+	return cleanupTarget{kind: cleanupHerdr, path: path, workspaceID: workspaceID, paneID: paneID}
+}
+
+func duplicateCleanupPath(targets []cleanupTarget, path string) bool {
+	for _, existing := range targets {
+		if sameCleanPath(existing.path, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func replaceCleanupTarget(targets []cleanupTarget, path string, replacement cleanupTarget) bool {
+	for index := range targets {
+		if sameCleanPath(targets[index].path, path) {
+			targets[index] = replacement
+			return true
+		}
+	}
+	return false
 }
 
 func pathWithinRoot(root, target string) bool {
@@ -583,10 +829,11 @@ func pathWithinRoot(root, target string) bool {
 // SafeWorktreeCleanup adapts worktree.Git's existing safe removal operation
 // while allowing each run to supply its persisted repository and managed root.
 type SafeWorktreeCleanup struct {
-	Runner       runner.Runner
-	Binary       string
-	HerdrBinary  string
-	HerdrLocator HerdrWorktreeLocator
+	Runner            runner.Runner
+	Binary            string
+	HerdrBinary       string
+	HerdrWorktreeRoot string
+	HerdrLocator      HerdrWorktreeLocator
 }
 
 func (c SafeWorktreeCleanup) Status(ctx context.Context, path string) (string, error) {
@@ -611,6 +858,40 @@ func (c SafeWorktreeCleanup) RemoveHerdr(ctx context.Context, workspaceID string
 	}
 	return nil
 }
+
+// InspectRetired performs the complete read-only Git proof immediately before
+// cleanup's removal phase. It intentionally accepts the durable target as a
+// value so callers cannot substitute a provider-derived path or branch.
+func (c SafeWorktreeCleanup) InspectRetired(ctx context.Context, repositoryPath, herdrRoot string, target state.RetirementTarget) error {
+	if c.Runner == nil || strings.TrimSpace(repositoryPath) == "" || strings.TrimSpace(herdrRoot) == "" {
+		return errors.New("retired Worktree Git proof를 확인할 수 없습니다")
+	}
+	if strings.TrimSpace(target.RepositoryCommonDir) == "" || strings.TrimSpace(target.Path) == "" || strings.TrimSpace(target.Branch) == "" || strings.TrimSpace(target.HeadSHA) == "" {
+		return errors.New("retired Worktree Git proof가 불완전합니다")
+	}
+	git := worktree.New(c.Runner, c.Binary, herdrRoot, repositoryPath)
+	proof, err := git.InspectRetirementTarget(ctx, repositoryPath, target.Path, target.Branch, target.HeadSHA)
+	if err != nil || proof.RepositoryCommonDir != target.RepositoryCommonDir || proof.Path != target.Path || proof.Branch != target.Branch || proof.HeadSHA != target.HeadSHA {
+		return errors.New("retired Worktree Git proof가 일치하지 않습니다")
+	}
+	return nil
+}
+
+// RemoveRetired removes only a verified retired checkout. Unlike Herdr
+// removal it never passes a Workspace ID; Herdr has forgotten that identity
+// by the time this cleanup path is reached.
+func (c SafeWorktreeCleanup) RemoveRetired(ctx context.Context, repositoryPath, herdrRoot string, target state.RetirementTarget) error {
+	if c.Runner == nil || strings.TrimSpace(repositoryPath) == "" || strings.TrimSpace(herdrRoot) == "" {
+		return errors.New("retired Worktree 정리에 실패했습니다")
+	}
+	if err := validateRetiredProof(target, target.Path); err != nil {
+		return err
+	}
+	git := worktree.New(c.Runner, c.Binary, herdrRoot, repositoryPath)
+	return git.RemoveRetired(ctx, repositoryPath, herdrRoot, worktree.RetirementProof{RepositoryCommonDir: target.RepositoryCommonDir, Path: target.Path, Branch: target.Branch, HeadSHA: target.HeadSHA})
+}
+
+func (c SafeWorktreeCleanup) TrustedHerdrWorktreeRoot() string { return c.HerdrWorktreeRoot }
 
 func (c SafeWorktreeCleanup) FindWorktree(ctx context.Context, cwd, path, label string) (herdr.Worktree, bool, error) {
 	if c.HerdrLocator == nil {
@@ -717,3 +998,5 @@ var _ RunStateStore = (*state.Store)(nil)
 var _ WorktreeCleanup = SafeWorktreeCleanup{}
 var _ HerdrWorktreeCleanup = SafeWorktreeCleanup{}
 var _ HerdrWorktreeLocator = SafeWorktreeCleanup{}
+var _ RetiredWorktreeCleanup = SafeWorktreeCleanup{}
+var _ RetiredWorktreeInspector = SafeWorktreeCleanup{}

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"thread-dock/internal/cli"
 	"thread-dock/internal/config"
+	"thread-dock/internal/contract"
 	"thread-dock/internal/github"
 	"thread-dock/internal/herdr"
 	"thread-dock/internal/orchestrator"
@@ -54,40 +56,63 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 	}
 
 	process := runner.OSRunner{}
+	store := state.NewStore(cfg.StateDir)
 	repositoryPath, err := repositoryPathForCommand(context.Background(), args, process, cfg.GitBinary, cli.DiscoverRepositoryPath)
 	if err != nil {
 		return cli.Dependencies{}, err
 	}
+	if len(args) > 0 && args[0] == "retire" {
+		// Retirement must operate on the repository captured in the durable
+		// snapshot. The current working directory is not authoritative after a
+		// restart, and retirement intentionally does not require a GHES token.
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			return cli.Dependencies{}, errors.New("retirement run ID is required")
+		}
+		snapshot, loadErr := store.Load(context.Background(), contract.RunID(args[1]))
+		if loadErr != nil {
+			return cli.Dependencies{}, errors.New("retirement run state could not be loaded")
+		}
+		repositoryPath = strings.TrimSpace(snapshot.RepositoryPath)
+		if repositoryPath == "" {
+			return cli.Dependencies{}, errors.New("retirement run has no persisted repository path")
+		}
+	}
 	worktreeRoot := filepath.Join(cfg.StateDir, "worktrees")
-	store := state.NewStore(cfg.StateDir)
 	// Configure both roots so managed integration/revert operations can prove
 	// ownership before touching a checkout.
 	git := worktree.New(process, cfg.GitBinary, worktreeRoot, repositoryPath)
+	retirementGit := worktree.New(process, cfg.GitBinary, cfg.HerdrWorktreeRoot, repositoryPath)
 	ghes := github.NewRESTClient(cfg.APIBase, token, cfg.APIVersion, nil)
 	herdrClient := herdr.NewCLI(process, cfg.HerdrBinary)
 	orch := orchestrator.NewAuto(orchestrator.Dependencies{
-		Store:                    store,
-		GitHub:                   ghes,
-		Herdr:                    herdrClient,
-		Git:                      git,
-		Worktree:                 git,
-		RepositoryPath:           repositoryPath,
-		WorktreeRoot:             worktreeRoot,
-		ProjectAutomationEnabled: cfg.ProjectAutomationEnabled,
-		Project:                  github.ProjectRef{ID: cfg.ProjectID, StatusFieldID: cfg.ProjectStatusFieldID, StatusOptions: cfg.ProjectStatusOptions},
-		WorkingWait:              cfg.WorkingWait,
-		RecoveryLimit:            cfg.RecoveryLimit,
-		Remote:                   "origin",
+		Store:                       store,
+		GitHub:                      ghes,
+		Herdr:                       herdrClient,
+		Git:                         git,
+		Worktree:                    git,
+		RepositoryPath:              repositoryPath,
+		WorktreeRoot:                worktreeRoot,
+		ProjectAutomationEnabled:    cfg.ProjectAutomationEnabled,
+		Project:                     github.ProjectRef{ID: cfg.ProjectID, StatusFieldID: cfg.ProjectStatusFieldID, StatusOptions: cfg.ProjectStatusOptions},
+		WorkingWait:                 cfg.WorkingWait,
+		RecoveryLimit:               cfg.RecoveryLimit,
+		Remote:                      "origin",
+		WorkspaceReader:             herdrClient,
+		WorkspaceCloser:             herdrClient,
+		RetirementGitInspector:      retirementGit,
+		AutoRetireCompletedSessions: cfg.AutoRetireCompletedSessions,
+		HerdrWorktreeRoot:           cfg.HerdrWorktreeRoot,
 	})
 	service := cli.NewOrchestratorRunService(
 		orch,
 		store,
-		cli.SafeWorktreeCleanup{Runner: process, Binary: cfg.GitBinary, HerdrBinary: cfg.HerdrBinary, HerdrLocator: herdrClient},
+		cli.SafeWorktreeCleanup{Runner: process, Binary: cfg.GitBinary, HerdrBinary: cfg.HerdrBinary, HerdrWorktreeRoot: cfg.HerdrWorktreeRoot, HerdrLocator: herdrClient},
 		cli.NewRunStateRemover(cfg.StateDir),
 		nil,
 		worktreeRoot,
+		cfg.HerdrWorktreeRoot,
 	)
-	return cli.Dependencies{Runs: service, Confirmer: orch, Reverter: cli.NewRevertRunService(store, revert.New(git, ghes), worktreeRoot)}, nil
+	return cli.Dependencies{Runs: service, Retirement: service, Confirmer: orch, Reverter: cli.NewRevertRunService(store, revert.New(git, ghes), worktreeRoot)}, nil
 }
 
 type repositoryDiscoverer func(context.Context, runner.Runner, string) (string, error)

@@ -27,6 +27,14 @@ func RunWithDependencies(ctx context.Context, args []string, stdout, stderr io.W
 		switch args[0] {
 		case "start", "status", "stop", "resume", "cleanup":
 			return runCommand(ctx, args, stdout, stderr, deps.Runs)
+		case "retire":
+			service := deps.Retirement
+			if service == nil {
+				if candidate, ok := deps.Runs.(RetirementService); ok {
+					service = candidate
+				}
+			}
+			return runRetire(ctx, args[1:], stdout, stderr, service)
 		case "confirm":
 			return runConfirm(ctx, args[1:], stdout, stderr, deps.Confirmer)
 		case "create-revert":
@@ -38,5 +46,5 @@ func RunWithDependencies(ctx context.Context, args []string, stdout, stderr io.W
 }
 
 func printUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "사용법: agentctl version | contract <validate|preview> <file> | start CONTRACT | status [RUN] [--json] | stop RUN | resume RUN | cleanup RUN | confirm RUN protected-change | create-revert RUN --reason TEXT")
+	fmt.Fprintln(stderr, "사용법: agentctl version | contract <validate|preview> <file> | start CONTRACT | status [RUN] [--json] | stop RUN | resume RUN | retire RUN [--blocked] | cleanup RUN | confirm RUN protected-change | create-revert RUN --reason TEXT")
 }
