@@ -24,6 +24,14 @@ _Avoid_: 실행 상태, 에이전트 상태
 개발자 PC에서 특정 작업을 수행하는 에이전트 프로세스와 격리된 작업 공간의 일시적인 실행 단위.
 _Avoid_: 업무 상태, Issue
 
+**실행 세션 은퇴 (Execution Session Retirement)**:
+수정이나 복구가 더 필요하지 않은 RUN에서 에이전트 프로세스와 terminal workspace를 닫되 Worktree, 실행 근거와 업무 기록은 보존하는 lifecycle 전환.
+_Avoid_: cleanup, Issue 종료, Worktree 삭제
+
+**실행 근거 정리 (Execution Artifact Cleanup)**:
+보존 기간이 지난 완료 RUN의 clean Worktree와 로컬 실행 상태를 명시적으로 제거하는 운영 행위.
+_Avoid_: 실행 세션 은퇴, Agent 종료, 자동 삭제
+
 **감독형 자율 실행 (Supervised Autonomous Run)**:
 사용자가 작업 인터뷰 결과와 Issue 묶음을 승인하면 에이전트가 구현, 검증, 리뷰와 main 병합까지 수행하고 사용자가 사후에 결과를 확인하는 실행 방식.
 _Avoid_: 완전 무인 운영, 수동 실행
