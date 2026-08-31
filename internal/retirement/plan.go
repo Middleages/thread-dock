@@ -74,8 +74,8 @@ type targetCandidate struct {
 
 // Build derives the deterministic retirement plan from a run snapshot.
 // Reviewer is first, followed by builders in reverse contract order. Every
-// candidate is validated before exact duplicate workspace identities are
-// collapsed. Conflicting identities fail closed.
+// candidate is validated and every Workspace must have exactly one owner.
+// Aliases fail closed because later cleanup is keyed by the durable task.
 func Build(snapshot state.RunSnapshot, automatic bool, targetPhase contract.RunPhase) (state.RetirementState, error) {
 	plan := state.RetirementState{Status: "pending", TargetPhase: targetPhase, Automatic: automatic}
 	var candidates []targetCandidate
@@ -108,18 +108,15 @@ func Build(snapshot state.RunSnapshot, automatic bool, targetPhase contract.RunP
 		})
 	}
 
-	seen := make(map[string]targetCandidate, len(candidates))
+	seen := make(map[string]string, len(candidates))
 	for _, candidate := range candidates {
 		if err := validateCandidate(candidate.key, candidate.agent, candidate.worktree, candidate.head); err != nil {
 			return state.RetirementState{}, err
 		}
-		if previous, ok := seen[candidate.worktree.WorkspaceID]; ok {
-			if !sameCandidateIdentity(previous, candidate) {
-				return state.RetirementState{}, fmt.Errorf("retirement target %q: workspace identity conflicts with %q", candidate.key, previous.key)
-			}
-			continue
+		if previousKey, ok := seen[candidate.worktree.WorkspaceID]; ok {
+			return state.RetirementState{}, fmt.Errorf("retirement target %q: workspace is already owned by %q", candidate.key, previousKey)
 		}
-		seen[candidate.worktree.WorkspaceID] = candidate
+		seen[candidate.worktree.WorkspaceID] = candidate.key
 		plan.Targets = append(plan.Targets, state.RetirementTarget{
 			Key: candidate.key, Role: candidate.role, TaskID: candidate.taskID,
 			WorkspaceID:         candidate.worktree.WorkspaceID,
@@ -153,14 +150,6 @@ func validateTaskOrder(tasks map[string]state.TaskRunState, order []string) erro
 		seen[taskID] = struct{}{}
 	}
 	return nil
-}
-
-func sameCandidateIdentity(left, right targetCandidate) bool {
-	return left.agent.Name == right.agent.Name &&
-		left.worktree.WorkspaceID == right.worktree.WorkspaceID &&
-		left.worktree.PaneID == right.worktree.PaneID &&
-		filepath.Clean(left.worktree.Path) == filepath.Clean(right.worktree.Path) &&
-		left.worktree.Branch == right.worktree.Branch && left.head == right.head
 }
 
 func validateCandidate(key string, agent state.AgentEvidence, worktree state.WorktreeState, head string) error {

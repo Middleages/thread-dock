@@ -15,20 +15,20 @@ const (
 	retirementBetaSHA  = "fedcba9876543210fedcba9876543210fedcba98"
 )
 
-func TestBuildOrdersReviewerThenBuildersInReverseAndDeduplicatesExactWorkspaceIdentity(t *testing.T) {
+func TestBuildOrdersReviewerThenBuildersInReverse(t *testing.T) {
 	snapshot := state.RunSnapshot{TaskOrder: []string{"alpha", "beta"}, FinalSHA: retirementTestSHA}
 	snapshot.RepositoryPath = "/repo/checkout"
 	snapshot.Reviewer = state.AgentEvidence{Name: "reviewer"}
 	snapshot.ReviewerWorktree = state.WorktreeState{WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration", Branch: "agent/integration"}
 	snapshot.Tasks = map[string]state.TaskRunState{
 		"alpha": {Agent: state.AgentEvidence{Name: "alpha", CommitSHA: retirementAlphaSHA}, Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "a:p1", Path: "/herdr/a", Branch: "agent/a"}},
-		"beta":  {Agent: state.AgentEvidence{Name: "alpha", CommitSHA: retirementAlphaSHA}, Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "a:p1", Path: "/herdr/a", Branch: "agent/a"}},
+		"beta":  {Agent: state.AgentEvidence{Name: "beta", CommitSHA: retirementBetaSHA}, Worktree: state.WorktreeState{WorkspaceID: "b", PaneID: "b:p1", Path: "/herdr/b", Branch: "agent/b"}},
 	}
 	got, err := Build(snapshot, true, contract.PhaseCompleted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ids := targetKeys(got.Targets); !reflect.DeepEqual(ids, []string{"reviewer", "builder:beta"}) {
+	if ids := targetKeys(got.Targets); !reflect.DeepEqual(ids, []string{"reviewer", "builder:beta", "builder:alpha"}) {
 		t.Fatalf("targets=%v", ids)
 	}
 	if got.Targets[0].RepositoryCommonDir != "" {
@@ -39,15 +39,22 @@ func TestBuildOrdersReviewerThenBuildersInReverseAndDeduplicatesExactWorkspaceId
 	}
 }
 
-func TestBuildRejectsConflictingDuplicateWorkspaceIdentity(t *testing.T) {
-	snapshot := retirementSnapshot()
-	snapshot.TaskOrder = []string{"alpha", "beta"}
-	snapshot.Tasks["beta"] = state.TaskRunState{
-		Agent:    state.AgentEvidence{Name: "beta", CommitSHA: retirementBetaSHA},
-		Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "b:p1", Path: "/herdr/b", Branch: "agent/b"},
-	}
-	if _, err := Build(snapshot, true, contract.PhaseCompleted); err == nil {
-		t.Fatal("Build accepted conflicting identities for one Workspace")
+func TestBuildRejectsDuplicateWorkspaceIdentity(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		task state.TaskRunState
+	}{
+		{name: "exact alias", task: state.TaskRunState{Agent: state.AgentEvidence{Name: "alpha", CommitSHA: retirementAlphaSHA}, Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "a:p1", Path: "/herdr/a", Branch: "agent/a"}}},
+		{name: "conflicting alias", task: state.TaskRunState{Agent: state.AgentEvidence{Name: "beta", CommitSHA: retirementBetaSHA}, Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "b:p1", Path: "/herdr/b", Branch: "agent/b"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := retirementSnapshot()
+			snapshot.TaskOrder = []string{"alpha", "beta"}
+			snapshot.Tasks["beta"] = tt.task
+			if _, err := Build(snapshot, true, contract.PhaseCompleted); err == nil {
+				t.Fatal("Build accepted duplicate Workspace ownership")
+			}
+		})
 	}
 }
 
