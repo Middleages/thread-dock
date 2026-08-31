@@ -319,6 +319,54 @@ func TestResumeReviewerReadyPausedSavesResumeIntentWithoutAdvance(t *testing.T) 
 	}
 }
 
+func TestResumeParallelReviewerSchemaReceiptAdvancesWhileSingleRunRemainsTerminal(t *testing.T) {
+	cases := []struct {
+		name            string
+		strategy        string
+		phase           contract.RunPhase
+		previousPhase   contract.RunPhase
+		wantAdvance     int
+		wantSaves       int
+		wantResumeEvent int
+	}{
+		{name: "parallel-active", strategy: "parallel", phase: contract.PhaseReviewing, wantAdvance: 1},
+		{name: "parallel-paused", strategy: "parallel", phase: contract.PhasePaused, previousPhase: contract.PhaseReviewing, wantAdvance: 1, wantSaves: 1, wantResumeEvent: 1},
+		{name: "single-active", strategy: "single", phase: contract.PhaseReviewing},
+		{name: "legacy-active", phase: contract.PhaseReviewing},
+		{name: "unknown-active", strategy: "future", phase: contract.PhaseReviewing},
+		{name: "single-paused", strategy: "single", phase: contract.PhasePaused, previousPhase: contract.PhaseReviewing, wantSaves: 1, wantResumeEvent: 1},
+		{name: "legacy-paused", phase: contract.PhasePaused, previousPhase: contract.PhaseReviewing, wantSaves: 1, wantResumeEvent: 1},
+		{name: "unknown-paused", strategy: "future", phase: contract.PhasePaused, previousPhase: contract.PhaseReviewing, wantSaves: 1, wantResumeEvent: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStateStore{snapshot: state.RunSnapshot{
+				RunID:          "run-184",
+				Phase:          tc.phase,
+				PreviousPhase:  tc.previousPhase,
+				Strategy:       tc.strategy,
+				Reviewer:       state.AgentEvidence{Name: "reviewer-184", Verification: []string{"review schema sent"}},
+				ReviewerPrompt: state.PromptReceipt{RequestID: "run-184:reviewer-prompt"},
+				ReviewerWorktree: state.WorktreeState{
+					Path: "/managed/reviewer", WorkspaceID: "ws-reviewer", PaneID: "pane-reviewer",
+				},
+			}}
+			coordinator := &fakeCoordinator{}
+			service := NewOrchestratorRunService(coordinator, store, nil, nil, func() time.Time { return time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC) }, "/managed")
+
+			if err := service.Resume(context.Background(), store.snapshot.RunID); err != nil {
+				t.Fatal(err)
+			}
+			if coordinator.advanceCalls != tc.wantAdvance {
+				t.Fatalf("advance calls=%d, want %d", coordinator.advanceCalls, tc.wantAdvance)
+			}
+			if len(store.saves) != tc.wantSaves || len(store.events) != tc.wantResumeEvent {
+				t.Fatalf("saves=%d events=%d, want saves=%d events=%d", len(store.saves), len(store.events), tc.wantSaves, tc.wantResumeEvent)
+			}
+		})
+	}
+}
+
 func TestResumeIncompleteReviewerReadyStateStillAdvancesOnce(t *testing.T) {
 	cases := []struct {
 		name   string

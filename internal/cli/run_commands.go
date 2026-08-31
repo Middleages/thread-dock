@@ -363,6 +363,12 @@ func (s *OrchestratorRunService) Resume(ctx context.Context, id contract.RunID) 
 }
 
 func reviewerReady(snapshot state.RunSnapshot) bool {
+	// A schema receipt is the terminal handoff for the historical Single-run
+	// reviewer. Parallel runs must advance so the coordinator can collect
+	// strict ReviewEvidence and continue through PR, CI, and merge gates.
+	if snapshot.Strategy == "parallel" {
+		return false
+	}
 	reviewing := snapshot.Phase == contract.PhaseReviewing ||
 		(snapshot.Phase == contract.PhasePaused && snapshot.PreviousPhase == contract.PhaseReviewing)
 	hasSchemaReceipt := false
