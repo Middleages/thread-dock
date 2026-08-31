@@ -66,6 +66,27 @@ func TestBuildRejectsMissingIdentityOrExpectedHead(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsNonCanonicalRetirementIdentity(t *testing.T) {
+	mutations := []struct {
+		name   string
+		mutate func(*state.RunSnapshot)
+	}{
+		{name: "agent name", mutate: func(s *state.RunSnapshot) { s.Reviewer.Name = " reviewer" }},
+		{name: "workspace ID", mutate: func(s *state.RunSnapshot) { s.ReviewerWorktree.WorkspaceID = "review " }},
+		{name: "pane ID", mutate: func(s *state.RunSnapshot) { s.ReviewerWorktree.PaneID = "review:p1 " }},
+		{name: "path", mutate: func(s *state.RunSnapshot) { s.ReviewerWorktree.Path = "/managed/review/" }},
+	}
+	for _, tt := range mutations {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := retirementSnapshot()
+			tt.mutate(&snapshot)
+			if _, err := Build(snapshot, true, contract.PhaseCompleted); err == nil {
+				t.Fatal("Build accepted non-canonical retirement identity")
+			}
+		})
+	}
+}
+
 func TestNextRequiresOperatorForWorkingBlockedOrUnknownAgent(t *testing.T) {
 	for _, agentState := range []string{"working", "blocked", "unknown", ""} {
 		t.Run(agentState, func(t *testing.T) {
@@ -90,7 +111,7 @@ func TestNextAdvancesIdleOrDoneThroughProofAndClose(t *testing.T) {
 			}
 			plan.Targets[0].Status = "workspace_observed"
 			plan.Targets[0].RepositoryCommonDir = "/repo/.git"
-			if got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: true, WorkspaceObserved: true, WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration"}); got.Kind != CloseWorkspace {
+			if got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: true, WorkspaceObserved: true, WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration", WorkspaceState: "done"}); got.Kind != CloseWorkspace {
 				t.Fatalf("workspace decision=%#v", got)
 			}
 		})
@@ -117,7 +138,7 @@ func TestNextPureSequencePersistsEachRetirementStatusBeforeClosing(t *testing.T)
 	}
 	applyDecision(&plan, decision)
 
-	workspace := &Observation{TargetKey: "reviewer", WorkspaceObserved: true, WorkspaceFound: true, WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration"}
+	workspace := &Observation{TargetKey: "reviewer", WorkspaceObserved: true, WorkspaceFound: true, WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration", WorkspaceState: "done"}
 	decision = Next(plan, workspace)
 	if decision.Kind != RecordWorkspace || decision.NextStatus != "workspace_observed" {
 		t.Fatalf("workspace decision=%#v", decision)
@@ -191,12 +212,26 @@ func TestNextAllowsAlreadyClosedWorkspaceAfterGitProof(t *testing.T) {
 func TestNextRejectsConflictingWorkspaceIdentity(t *testing.T) {
 	plan := pendingRetirement()
 	plan.Targets[0].Status = "closing"
-	got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceObserved: true, WorkspaceFound: true, WorkspaceID: "other", PaneID: "wrong"})
+	got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceObserved: true, WorkspaceFound: true, WorkspaceID: "other", PaneID: "wrong", Path: "/managed/integration", WorkspaceState: "done"})
 	if got.Kind != NeedsOperator {
 		t.Fatalf("decision=%#v", got)
 	}
 	if !strings.Contains(got.Reason, "identity") {
 		t.Fatalf("reason=%q", got.Reason)
+	}
+}
+
+func TestNextRejectsUnsafeWorkspaceLifecycleState(t *testing.T) {
+	for _, lifecycle := range []string{"working", "blocked", "unknown", ""} {
+		t.Run(lifecycle, func(t *testing.T) {
+			plan := pendingRetirement()
+			plan.Targets[0].Status = "git_proven"
+			plan.Targets[0].RepositoryCommonDir = "/repo/.git"
+			got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: true, WorkspaceObserved: true, WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration", WorkspaceState: lifecycle})
+			if got.Kind != NeedsOperator {
+				t.Fatalf("decision=%#v", got)
+			}
+		})
 	}
 }
 

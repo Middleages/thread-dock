@@ -144,6 +144,61 @@ func (o *Orchestrator) advanceRetirement(ctx context.Context, snapshot *state.Ru
 	}
 }
 
+// completeOrBeginRetirement is the single terminal transition used by the
+// parallel merge hooks. Automatic runs persist their complete retirement plan
+// while the run is still in PhaseRetiring; they never write a completed
+// snapshot first and then attempt to retrofit retirement state.
+func (o *Orchestrator) completeOrBeginRetirement(ctx context.Context, snapshot *state.RunSnapshot, message string, terminalEvent *state.Event) error {
+	if snapshot == nil {
+		return errors.New("retirement snapshot is nil")
+	}
+	if o.deps.AutoRetireCompletedSessions {
+		plan, err := retirementpolicy.Build(*snapshot, true, contract.PhaseCompleted)
+		if err != nil {
+			snapshot.Retirement = state.RetirementState{Status: "needs_operator", TargetPhase: contract.PhaseCompleted, Automatic: true, UpdatedAt: o.now()}
+			snapshot.Phase = contract.PhaseRetiring
+			snapshot.PendingAction, snapshot.PendingTaskID = "", ""
+			snapshot.Summary = "retirement target identity is incomplete: " + err.Error()
+			snapshot.UpdatedAt = o.now()
+			if saveErr := o.deps.Store.Save(ctx, *snapshot); saveErr != nil {
+				return saveErr
+			}
+			return o.append(ctx, snapshot.RunID, state.Event{Type: "retirement_needs_operator", Phase: contract.PhaseRetiring, Message: snapshot.Summary})
+		}
+		snapshot.Retirement = plan
+		snapshot.Phase = contract.PhaseRetiring
+		snapshot.PendingAction, snapshot.PendingTaskID = "", ""
+		snapshot.Summary = "Execution sessions are retiring"
+		snapshot.UpdatedAt = o.now()
+		if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
+			return err
+		}
+		if terminalEvent != nil {
+			terminalEvent.Phase = contract.PhaseRetiring
+			if err := o.append(ctx, snapshot.RunID, *terminalEvent); err != nil {
+				return err
+			}
+		}
+		return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Kind: "retirement_prepare", Phase: contract.PhaseRetiring, Message: "retirement_prepare", Data: map[string]any{"automatic": true, "targetPhase": contract.PhaseCompleted, "targets": len(plan.Targets)}})
+	}
+
+	snapshot.Retirement = state.RetirementState{Status: "active", TargetPhase: contract.PhaseCompleted, Automatic: false, UpdatedAt: o.now()}
+	snapshot.Phase = contract.PhaseCompleted
+	snapshot.PendingAction, snapshot.PendingTaskID = "", ""
+	snapshot.Summary = message
+	snapshot.UpdatedAt = o.now()
+	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
+		return err
+	}
+	if terminalEvent != nil {
+		terminalEvent.Phase = contract.PhaseCompleted
+		if err := o.append(ctx, snapshot.RunID, *terminalEvent); err != nil {
+			return err
+		}
+	}
+	return o.append(ctx, snapshot.RunID, state.Event{Type: "completed", Phase: contract.PhaseCompleted, Message: message})
+}
+
 func (o *Orchestrator) observeRetirementAgent(ctx context.Context, snapshot *state.RunSnapshot, decision retirementpolicy.Decision) error {
 	locator, ok := o.deps.Herdr.(AgentLocator)
 	if !ok {
@@ -228,7 +283,7 @@ func (o *Orchestrator) observeRetirementWorkspace(ctx context.Context, snapshot 
 	}
 	observation := retirementpolicy.Observation{TargetKey: target.Key, WorkspaceObserved: true, WorkspaceFound: found}
 	if found {
-		observation.WorkspaceID, observation.PaneID, observation.Path = info.WorkspaceID, info.RootPaneID, info.Path
+		observation.WorkspaceID, observation.PaneID, observation.Path, observation.WorkspaceState = info.WorkspaceID, info.RootPaneID, info.Path, string(info.State)
 	}
 	return o.applyRetirementObservation(ctx, snapshot, observation, decision, "retirement Workspace observation recorded")
 }
@@ -352,7 +407,7 @@ func (o *Orchestrator) reconcileRetirementWorkspace(ctx context.Context, snapsho
 	}
 	observation := retirementpolicy.Observation{TargetKey: key, WorkspaceObserved: true, WorkspaceFound: found}
 	if found {
-		observation.WorkspaceID, observation.PaneID, observation.Path = info.WorkspaceID, info.RootPaneID, info.Path
+		observation.WorkspaceID, observation.PaneID, observation.Path, observation.WorkspaceState = info.WorkspaceID, info.RootPaneID, info.Path, string(info.State)
 	}
 	decision := retirementpolicy.Next(snapshot.Retirement, &observation)
 	if decision.Kind == retirementpolicy.NeedsOperator {
@@ -466,15 +521,23 @@ func (o *Orchestrator) finishRetirement(ctx context.Context, snapshot *state.Run
 	}
 	snapshot.Retirement.Status = "retired"
 	snapshot.Retirement.UpdatedAt = o.now()
+	// The audit is the commit record for retirement. Keep the durable snapshot
+	// in PhaseRetiring until this append succeeds; a failed append must never
+	// expose a terminal run without its retirement audit.
+	snapshot.Phase = contract.PhaseRetiring
+	snapshot.Summary = "Execution sessions retired"
+	retiredKeys := make([]string, 0, len(snapshot.Retirement.Targets))
+	for _, target := range snapshot.Retirement.Targets {
+		retiredKeys = append(retiredKeys, target.Key)
+	}
+	if err := o.append(ctx, snapshot.RunID, state.Event{Type: "sessions_retired", Kind: "sessions_retired", Phase: contract.PhaseRetiring, Message: snapshot.Summary, Data: map[string]any{"targets": retiredKeys}}); err != nil {
+		return err
+	}
 	snapshot.Phase = snapshot.Retirement.TargetPhase
 	snapshot.PendingAction = ""
 	snapshot.PendingTaskID = ""
-	snapshot.Summary = "Execution sessions retired"
 	snapshot.UpdatedAt = o.now()
 	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
-		return err
-	}
-	if err := o.append(ctx, snapshot.RunID, state.Event{Type: "sessions_retired", Phase: snapshot.Phase, Message: snapshot.Summary}); err != nil {
 		return err
 	}
 	if snapshot.Phase == contract.PhaseCompleted {
@@ -531,14 +594,34 @@ func retirementActionKey(action string) string {
 }
 
 func retirementAgentIdentityMismatch(snapshot state.RunSnapshot, target *state.RetirementTarget, info herdr.AgentInfo) string {
-	if target == nil || strings.TrimSpace(info.Name) != strings.TrimSpace(target.AgentName) || strings.TrimSpace(info.SessionID) == "" || strings.TrimSpace(info.WorkspaceID) != strings.TrimSpace(target.WorkspaceID) || strings.TrimSpace(info.PaneID) != strings.TrimSpace(target.PaneID) || strings.TrimSpace(info.Path) == "" || filepath.Clean(info.Path) != filepath.Clean(target.Path) {
+	if target == nil || !canonicalRetirementAgentName(info.Name) || info.Name != target.AgentName || !canonicalRetirementProviderID(info.SessionID) || !canonicalRetirementProviderID(info.WorkspaceID) || info.WorkspaceID != target.WorkspaceID || !canonicalRetirementProviderID(info.PaneID) || info.PaneID != target.PaneID || !canonicalRetirementPath(info.Path) || info.Path != target.Path {
 		return "Agent identity mismatch"
 	}
 	expected := retirementAgentEvidence(snapshot, *target)
-	if expected.SessionID != "" && expected.SessionID != info.SessionID {
+	if expected.SessionID != "" && (!canonicalRetirementProviderID(expected.SessionID) || expected.SessionID != info.SessionID) {
 		return "Agent session identity mismatch"
 	}
 	return ""
+}
+
+func canonicalRetirementProviderID(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) && !strings.ContainsAny(value, "/\\\r\n\t") && !strings.Contains(value, "..")
+}
+
+func canonicalRetirementAgentName(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || len(value) > 32 {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalRetirementPath(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) && filepath.IsAbs(value) && filepath.Clean(value) == value
 }
 
 func retirementAgentEvidence(snapshot state.RunSnapshot, target state.RetirementTarget) state.AgentEvidence {

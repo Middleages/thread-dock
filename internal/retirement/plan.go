@@ -47,10 +47,14 @@ type Decision struct {
 // provider-neutral so a caller can persist the observation separately while
 // keeping this package free of Herdr and Git concerns.
 type Observation struct {
-	TargetKey           string
-	AgentState          string
-	WorkspaceFound      bool
-	WorkspaceObserved   bool
+	TargetKey         string
+	AgentState        string
+	WorkspaceFound    bool
+	WorkspaceObserved bool
+	// WorkspaceState is the lifecycle state of the exact workspace/pane
+	// observation. It is distinct from AgentState because an Agent can report
+	// done while the latest pane/workspace has become active again.
+	WorkspaceState      string
 	WorkspaceID         string
 	PaneID              string
 	Path                string
@@ -133,7 +137,39 @@ func validateCandidate(key string, agent state.AgentEvidence, worktree state.Wor
 			return fmt.Errorf("retirement target %q: %s is required", key, label)
 		}
 	}
+	if !canonicalAgentName(agent.Name) {
+		return fmt.Errorf("retirement target %q: agent name is not canonical", key)
+	}
+	if !canonicalID(worktree.WorkspaceID) {
+		return fmt.Errorf("retirement target %q: workspace ID is not canonical", key)
+	}
+	if !canonicalID(worktree.PaneID) {
+		return fmt.Errorf("retirement target %q: pane ID is not canonical", key)
+	}
+	if !canonicalPath(worktree.Path) {
+		return fmt.Errorf("retirement target %q: path is not canonical", key)
+	}
 	return nil
+}
+
+func canonicalAgentName(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || len(value) > 32 {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalID(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) && !strings.ContainsAny(value, "/\\\r\n\t") && !strings.Contains(value, "..")
+}
+
+func canonicalPath(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) && filepath.IsAbs(value) && filepath.Clean(value) == value
 }
 
 func isZeroWorktree(worktree state.WorktreeState) bool {
@@ -203,6 +239,9 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 				base.NextStatus = "retired"
 				return base
 			}
+			if !safeWorkspaceLifecycle(observation.WorkspaceState) {
+				return needs(base, "workspace lifecycle state is not safe to retire")
+			}
 			if reason := workspaceIdentityMismatch(target, observation); reason != "" {
 				return needs(base, reason)
 			}
@@ -220,6 +259,9 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 			}
 			if !observation.WorkspaceObserved || !observation.WorkspaceFound {
 				return needs(base, "workspace observation is not an exact existing identity")
+			}
+			if !safeWorkspaceLifecycle(observation.WorkspaceState) {
+				return needs(base, "workspace lifecycle state is not safe to retire")
 			}
 			if reason := workspaceIdentityMismatch(target, observation); reason != "" {
 				return needs(base, reason)
@@ -253,6 +295,15 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 	return Decision{Kind: Complete}
 }
 
+func safeWorkspaceLifecycle(value string) bool {
+	switch strings.ToLower(value) {
+	case "idle", "done", "complete", "completed":
+		return true
+	default:
+		return false
+	}
+}
+
 func gitIdentityMismatch(target state.RetirementTarget, observation *Observation) string {
 	if observation.Path != target.Path || observation.Branch != target.Branch || observation.HeadSHA != target.HeadSHA {
 		return "git identity mismatch"
@@ -264,7 +315,7 @@ func gitIdentityMismatch(target state.RetirementTarget, observation *Observation
 }
 
 func workspaceIdentityMismatch(target state.RetirementTarget, observation *Observation) string {
-	if !observation.WorkspaceObserved || !observation.WorkspaceFound || strings.TrimSpace(observation.WorkspaceID) == "" || strings.TrimSpace(observation.PaneID) == "" || strings.TrimSpace(observation.Path) == "" || filepath.Clean(observation.Path) != observation.Path || observation.WorkspaceID != target.WorkspaceID || observation.PaneID != target.PaneID || observation.Path != target.Path {
+	if !observation.WorkspaceObserved || !observation.WorkspaceFound || !canonicalID(observation.WorkspaceID) || !canonicalID(observation.PaneID) || !canonicalPath(observation.Path) || observation.WorkspaceID != target.WorkspaceID || observation.PaneID != target.PaneID || observation.Path != target.Path {
 		return "workspace identity mismatch"
 	}
 	return ""

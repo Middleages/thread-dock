@@ -2022,25 +2022,8 @@ func (o *Orchestrator) finishParallelMainMerge(ctx context.Context, snapshot *st
 		}
 		return o.append(ctx, snapshot.RunID, state.Event{Type: "intent", Phase: snapshot.Phase, Message: "Project Done 상태 관찰", Data: map[string]any{"action": snapshot.PendingAction}})
 	}
-	snapshot.Phase = contract.PhaseCompleted
-	snapshot.Summary = "병렬 실행과 감독형 자동 병합 완료"
-	snapshot.PendingAction = ""
-	snapshot.PendingTaskID = ""
 	snapshot.ProjectStatus = "Done"
-	if o.deps.AutoRetireCompletedSessions {
-		return o.beginRetirementSnapshot(ctx, snapshot, contract.PhaseCompleted, true)
-	}
-	// Keep the historical completed state explicit: sessions remain active and
-	// can be retired later by an operator.
-	snapshot.Retirement.Status = "active"
-	snapshot.UpdatedAt = o.now()
-	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
-		return err
-	}
-	if err := o.append(ctx, snapshot.RunID, state.Event{Type: "project_automation_skipped", Phase: snapshot.Phase, Message: "Project automation disabled; placeholder IDs are not evidence", Data: map[string]any{"status": "Done"}}); err != nil {
-		return err
-	}
-	return o.append(ctx, snapshot.RunID, state.Event{Type: "completed", Phase: contract.PhaseCompleted, Message: snapshot.Summary})
+	return o.completeOrBeginRetirement(ctx, snapshot, "병렬 실행과 감독형 자동 병합 완료", &state.Event{Type: "project_automation_skipped", Message: "Project automation disabled; placeholder IDs are not evidence", Data: map[string]any{"status": "Done"}})
 }
 
 func (o *Orchestrator) reconcileProjectObservation(ctx context.Context, snapshot *state.RunSnapshot, runtime *runRuntime, status string) error {
@@ -2069,17 +2052,7 @@ func (o *Orchestrator) reconcileProjectObservation(ctx context.Context, snapshot
 	if projectStatusPresent(observed) && observed.Status == status {
 		snapshot.ProjectStatus = status
 		if status == "Done" && snapshot.PullRequestMerged {
-			snapshot.Phase = contract.PhaseCompleted
-			if !o.deps.AutoRetireCompletedSessions {
-				snapshot.Retirement.Status = "active"
-			}
-			if err := o.parallelFinishPreserveCursor(ctx, snapshot, "Project status reconciled"); err != nil {
-				return err
-			}
-			if o.deps.AutoRetireCompletedSessions {
-				return o.beginRetirementSnapshot(ctx, snapshot, contract.PhaseCompleted, true)
-			}
-			return o.append(ctx, snapshot.RunID, state.Event{Type: "completed", Phase: contract.PhaseCompleted, Message: "병렬 실행과 감독형 자동 병합 완료"})
+			return o.completeOrBeginRetirement(ctx, snapshot, "병렬 실행과 감독형 자동 병합 완료", &state.Event{Type: "action_succeeded", Message: "Project status reconciled"})
 		}
 		return o.parallelFinishPreserveCursor(ctx, snapshot, "Project status reconciled")
 	}
