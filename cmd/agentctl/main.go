@@ -61,21 +61,9 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 	if err != nil {
 		return cli.Dependencies{}, err
 	}
-	if len(args) > 0 && args[0] == "retire" {
-		// Retirement must operate on the repository captured in the durable
-		// snapshot. The current working directory is not authoritative after a
-		// restart, and retirement intentionally does not require a GHES token.
-		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
-			return cli.Dependencies{}, errors.New("retirement run ID is required")
-		}
-		snapshot, loadErr := store.Load(context.Background(), contract.RunID(args[1]))
-		if loadErr != nil {
-			return cli.Dependencies{}, errors.New("retirement run state could not be loaded")
-		}
-		repositoryPath = strings.TrimSpace(snapshot.RepositoryPath)
-		if repositoryPath == "" {
-			return cli.Dependencies{}, errors.New("retirement run has no persisted repository path")
-		}
+	repositoryPath, err = repositoryPathForPersistedCommand(context.Background(), args, store, repositoryPath)
+	if err != nil {
+		return cli.Dependencies{}, err
 	}
 	worktreeRoot := filepath.Join(cfg.StateDir, "worktrees")
 	// Configure both roots so managed integration/revert operations can prove
@@ -118,6 +106,31 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 		cfg.HerdrWorktreeRoot,
 	)
 	return cli.Dependencies{Runs: service, Retirement: service, Confirmer: orch, Reverter: cli.NewRevertRunService(store, revert.New(git, ghes), worktreeRoot)}, nil
+}
+
+type persistedRunLoader interface {
+	Load(context.Context, contract.RunID) (state.RunSnapshot, error)
+}
+
+// repositoryPathForPersistedCommand binds delayed destructive operations to
+// the repository captured by the RUN. The caller's current checkout is not
+// authoritative after a restart.
+func repositoryPathForPersistedCommand(ctx context.Context, args []string, store persistedRunLoader, current string) (string, error) {
+	if len(args) == 0 || (args[0] != "retire" && args[0] != "cleanup") {
+		return current, nil
+	}
+	if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+		return "", errors.New("persisted command run ID is required")
+	}
+	snapshot, err := store.Load(ctx, contract.RunID(args[1]))
+	if err != nil {
+		return "", errors.New("persisted command run state could not be loaded")
+	}
+	repositoryPath := strings.TrimSpace(snapshot.RepositoryPath)
+	if repositoryPath == "" {
+		return "", errors.New("persisted command run has no repository path")
+	}
+	return repositoryPath, nil
 }
 
 type repositoryDiscoverer func(context.Context, runner.Runner, string) (string, error)

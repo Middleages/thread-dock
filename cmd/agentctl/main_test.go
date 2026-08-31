@@ -66,6 +66,23 @@ func TestRetireUsesSnapshotWiringWithoutRepositoryDiscoveryOrGHESCredential(t *t
 	}
 }
 
+func TestPersistedRepositoryCommandsUseSnapshotPath(t *testing.T) {
+	store := state.NewStore(t.TempDir())
+	snapshot := state.RunSnapshot{RunID: "persisted-repository", Phase: contract.PhaseCompleted, RepositoryPath: "/snapshot/repository"}
+	if err := store.Create(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"retire", "cleanup"} {
+		got, err := repositoryPathForPersistedCommand(context.Background(), []string{command, string(snapshot.RunID)}, store, "")
+		if err != nil {
+			t.Fatalf("%s: %v", command, err)
+		}
+		if got != snapshot.RepositoryPath {
+			t.Fatalf("%s repository=%q, want %q", command, got, snapshot.RepositoryPath)
+		}
+	}
+}
+
 func TestProductionDependenciesUseSnapshotRepositoryAndCompositeRetirementRoots(t *testing.T) {
 	t.Setenv("THREADDOCK_GH_TOKEN", "")
 	stateDir := t.TempDir()
