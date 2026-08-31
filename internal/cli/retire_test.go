@@ -60,6 +60,17 @@ func TestRetireReportsGenericErrorWithoutProviderOutput(t *testing.T) {
 	}
 }
 
+func TestRetireReportsBlockedGuardPolicyErrorExactly(t *testing.T) {
+	service := &fakeRetireService{err: errBlockedRetirementRequiresGuard}
+	var out, errOut bytes.Buffer
+	if code := RunWithDependencies(context.Background(), []string{"retire", "blocked-run"}, &out, &errOut, Dependencies{Retirement: service}); code == 0 {
+		t.Fatal("retire unexpectedly succeeded")
+	}
+	if got, want := errOut.String(), "blocked retirement requires --blocked\n"; got != want {
+		t.Fatalf("stderr=%q, want %q", got, want)
+	}
+}
+
 type retireCoordinator struct {
 	store    *fakeStateStore
 	begin    int

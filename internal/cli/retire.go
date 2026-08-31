@@ -20,8 +20,9 @@ type RetirementCoordinator interface {
 }
 
 var (
-	errRetirementNeedsOperator = errors.New("retirement requires operator attention")
-	errRetirementNotTerminal   = errors.New("retirement did not reach a terminal state")
+	errRetirementNeedsOperator        = errors.New("retirement requires operator attention")
+	errRetirementNotTerminal          = errors.New("retirement did not reach a terminal state")
+	errBlockedRetirementRequiresGuard = errors.New("blocked retirement requires --blocked")
 )
 
 // Retire validates the durable run phase, creates or resumes its exact
@@ -115,7 +116,7 @@ func retirementRequestPhase(snapshot state.RunSnapshot, blocked bool) (contract.
 			return "", errors.New("--blocked is only valid for blocked runs")
 		}
 		if !blocked && target == contract.PhaseBlocked {
-			return "", errors.New("blocked retirement requires --blocked")
+			return "", errBlockedRetirementRequiresGuard
 		}
 		return target, nil
 	}
@@ -127,7 +128,7 @@ func retirementRequestPhase(snapshot state.RunSnapshot, blocked bool) (contract.
 		return contract.PhaseCompleted, nil
 	case contract.PhaseBlocked:
 		if !blocked {
-			return "", errors.New("blocked retirement requires --blocked")
+			return "", errBlockedRetirementRequiresGuard
 		}
 		return contract.PhaseBlocked, nil
 	default:

@@ -52,6 +52,30 @@ func TestBeginRetirementPersistsOrderedPlanAndRetiringPhase(t *testing.T) {
 	}
 }
 
+func TestBeginRetirementFailsClosedForMapOnlyParallelTasks(t *testing.T) {
+	h := newHarness(t)
+	snapshot := state.RunSnapshot{
+		RunID: "map-only-retirement", ContractPath: h.contractPath, Strategy: "parallel",
+		Phase: contract.PhaseCompleted, MergeSHA: validSHA,
+		Tasks: map[string]state.TaskRunState{
+			"alpha": {Agent: state.AgentEvidence{Name: "alpha", CommitSHA: validSHA}, Worktree: state.WorktreeState{WorkspaceID: "alpha", PaneID: "alpha:pane", Path: "/managed/alpha", Branch: "agent/alpha"}},
+		},
+	}
+	if err := h.store.Create(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.orchestrator.BeginRetirement(context.Background(), snapshot.RunID, contract.PhaseCompleted, true); err != nil {
+		t.Fatal(err)
+	}
+	got := h.mustLoad(snapshot.RunID)
+	if got.Phase != contract.PhaseRetiring || got.Retirement.Status != "needs_operator" || len(got.Retirement.Targets) != 0 {
+		t.Fatalf("snapshot=%#v", got)
+	}
+	if !strings.Contains(got.Summary, "task map and order") {
+		t.Fatalf("summary=%q", got.Summary)
+	}
+}
+
 func TestRetirementCompleteStoryPreservesEvidenceAndClosesInOrder(t *testing.T) {
 	h := newHarness(t)
 	calls := []string{}

@@ -171,6 +171,10 @@ func runRetire(ctx context.Context, args []string, stdout, stderr io.Writer, ser
 	}
 	blocked := len(args) == 2
 	if err := service.Retire(ctx, contract.RunID(args[0]), blocked); err != nil {
+		if errors.Is(err, errBlockedRetirementRequiresGuard) {
+			fmt.Fprintln(stderr, errBlockedRetirementRequiresGuard)
+			return 1
+		}
 		return reportGenericRunError(stderr)
 	}
 	return 0

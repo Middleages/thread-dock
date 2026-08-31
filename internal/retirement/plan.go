@@ -4,6 +4,7 @@
 package retirement
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -64,53 +65,61 @@ type Observation struct {
 	HeadSHA             string
 }
 
+type targetCandidate struct {
+	key, role, taskID string
+	agent             state.AgentEvidence
+	worktree          state.WorktreeState
+	head              string
+}
+
 // Build derives the deterministic retirement plan from a run snapshot.
 // Reviewer is first, followed by builders in reverse contract order. Every
-// candidate is validated before duplicate workspace IDs are collapsed.
+// candidate is validated before exact duplicate workspace identities are
+// collapsed. Conflicting identities fail closed.
 func Build(snapshot state.RunSnapshot, automatic bool, targetPhase contract.RunPhase) (state.RetirementState, error) {
 	plan := state.RetirementState{Status: "pending", TargetPhase: targetPhase, Automatic: automatic}
-	type candidate struct {
-		key, role, taskID string
-		agent             state.AgentEvidence
-		worktree          state.WorktreeState
-		head              string
-	}
-	var candidates []candidate
+	var candidates []targetCandidate
 
 	if snapshot.Reviewer.Name != "" || !isZeroWorktree(snapshot.ReviewerWorktree) || snapshot.FinalSHA != "" {
-		candidates = append(candidates, candidate{
+		candidates = append(candidates, targetCandidate{
 			key: "reviewer", role: "reviewer", agent: snapshot.Reviewer,
 			worktree: snapshot.ReviewerWorktree, head: snapshot.FinalSHA,
 		})
 	}
 	if len(snapshot.Tasks) > 0 || len(snapshot.TaskOrder) > 0 {
+		if err := validateTaskOrder(snapshot.Tasks, snapshot.TaskOrder); err != nil {
+			return state.RetirementState{}, err
+		}
 		for i := len(snapshot.TaskOrder) - 1; i >= 0; i-- {
 			taskID := snapshot.TaskOrder[i]
 			task, ok := snapshot.Tasks[taskID]
 			if !ok {
 				return state.RetirementState{}, fmt.Errorf("retirement target %q: task is missing", taskID)
 			}
-			candidates = append(candidates, candidate{
+			candidates = append(candidates, targetCandidate{
 				key: "builder:" + taskID, role: "builder", taskID: taskID,
 				agent: task.Agent, worktree: task.Worktree, head: task.Agent.CommitSHA,
 			})
 		}
 	} else if snapshot.Builder.Name != "" || !isZeroWorktree(snapshot.BuilderWorktree) || snapshot.Builder.CommitSHA != "" {
-		candidates = append(candidates, candidate{
+		candidates = append(candidates, targetCandidate{
 			key: "builder", role: "builder", agent: snapshot.Builder,
 			worktree: snapshot.BuilderWorktree, head: snapshot.Builder.CommitSHA,
 		})
 	}
 
-	seen := make(map[string]struct{}, len(candidates))
+	seen := make(map[string]targetCandidate, len(candidates))
 	for _, candidate := range candidates {
 		if err := validateCandidate(candidate.key, candidate.agent, candidate.worktree, candidate.head); err != nil {
 			return state.RetirementState{}, err
 		}
-		if _, ok := seen[candidate.worktree.WorkspaceID]; ok {
+		if previous, ok := seen[candidate.worktree.WorkspaceID]; ok {
+			if !sameCandidateIdentity(previous, candidate) {
+				return state.RetirementState{}, fmt.Errorf("retirement target %q: workspace identity conflicts with %q", candidate.key, previous.key)
+			}
 			continue
 		}
-		seen[candidate.worktree.WorkspaceID] = struct{}{}
+		seen[candidate.worktree.WorkspaceID] = candidate
 		plan.Targets = append(plan.Targets, state.RetirementTarget{
 			Key: candidate.key, Role: candidate.role, TaskID: candidate.taskID,
 			WorkspaceID:         candidate.worktree.WorkspaceID,
@@ -124,6 +133,34 @@ func Build(snapshot state.RunSnapshot, automatic bool, targetPhase contract.RunP
 		})
 	}
 	return plan, nil
+}
+
+func validateTaskOrder(tasks map[string]state.TaskRunState, order []string) error {
+	if len(tasks) != len(order) {
+		return errors.New("retirement task map and order must contain the same tasks")
+	}
+	seen := make(map[string]struct{}, len(order))
+	for _, taskID := range order {
+		if strings.TrimSpace(taskID) == "" {
+			return errors.New("retirement task order contains an empty task ID")
+		}
+		if _, duplicate := seen[taskID]; duplicate {
+			return fmt.Errorf("retirement task order contains duplicate task %q", taskID)
+		}
+		if _, ok := tasks[taskID]; !ok {
+			return fmt.Errorf("retirement target %q: task is missing", taskID)
+		}
+		seen[taskID] = struct{}{}
+	}
+	return nil
+}
+
+func sameCandidateIdentity(left, right targetCandidate) bool {
+	return left.agent.Name == right.agent.Name &&
+		left.worktree.WorkspaceID == right.worktree.WorkspaceID &&
+		left.worktree.PaneID == right.worktree.PaneID &&
+		filepath.Clean(left.worktree.Path) == filepath.Clean(right.worktree.Path) &&
+		left.worktree.Branch == right.worktree.Branch && left.head == right.head
 }
 
 func validateCandidate(key string, agent state.AgentEvidence, worktree state.WorktreeState, head string) error {

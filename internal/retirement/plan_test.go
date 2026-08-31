@@ -15,14 +15,14 @@ const (
 	retirementBetaSHA  = "fedcba9876543210fedcba9876543210fedcba98"
 )
 
-func TestBuildOrdersReviewerThenBuildersInReverseAndDeduplicatesWorkspace(t *testing.T) {
+func TestBuildOrdersReviewerThenBuildersInReverseAndDeduplicatesExactWorkspaceIdentity(t *testing.T) {
 	snapshot := state.RunSnapshot{TaskOrder: []string{"alpha", "beta"}, FinalSHA: retirementTestSHA}
 	snapshot.RepositoryPath = "/repo/checkout"
 	snapshot.Reviewer = state.AgentEvidence{Name: "reviewer"}
 	snapshot.ReviewerWorktree = state.WorktreeState{WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration", Branch: "agent/integration"}
 	snapshot.Tasks = map[string]state.TaskRunState{
 		"alpha": {Agent: state.AgentEvidence{Name: "alpha", CommitSHA: retirementAlphaSHA}, Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "a:p1", Path: "/herdr/a", Branch: "agent/a"}},
-		"beta":  {Agent: state.AgentEvidence{Name: "beta", CommitSHA: retirementBetaSHA}, Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "b:p1", Path: "/herdr/b", Branch: "agent/b"}},
+		"beta":  {Agent: state.AgentEvidence{Name: "alpha", CommitSHA: retirementAlphaSHA}, Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "a:p1", Path: "/herdr/a", Branch: "agent/a"}},
 	}
 	got, err := Build(snapshot, true, contract.PhaseCompleted)
 	if err != nil {
@@ -36,6 +36,43 @@ func TestBuildOrdersReviewerThenBuildersInReverseAndDeduplicatesWorkspace(t *tes
 	}
 	if got.Status != "pending" || !got.Automatic || got.TargetPhase != contract.PhaseCompleted {
 		t.Fatalf("state=%#v", got)
+	}
+}
+
+func TestBuildRejectsConflictingDuplicateWorkspaceIdentity(t *testing.T) {
+	snapshot := retirementSnapshot()
+	snapshot.TaskOrder = []string{"alpha", "beta"}
+	snapshot.Tasks["beta"] = state.TaskRunState{
+		Agent:    state.AgentEvidence{Name: "beta", CommitSHA: retirementBetaSHA},
+		Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "b:p1", Path: "/herdr/b", Branch: "agent/b"},
+	}
+	if _, err := Build(snapshot, true, contract.PhaseCompleted); err == nil {
+		t.Fatal("Build accepted conflicting identities for one Workspace")
+	}
+}
+
+func TestBuildRejectsTaskMapOrderDisagreement(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*state.RunSnapshot)
+	}{
+		{name: "map only", mutate: func(s *state.RunSnapshot) { s.TaskOrder = nil }},
+		{name: "map entry omitted from order", mutate: func(s *state.RunSnapshot) {
+			s.Tasks["beta"] = state.TaskRunState{Agent: state.AgentEvidence{Name: "beta", CommitSHA: retirementBetaSHA}, Worktree: state.WorktreeState{WorkspaceID: "b", PaneID: "b:p1", Path: "/herdr/b", Branch: "agent/b"}}
+		}},
+		{name: "duplicate order entry", mutate: func(s *state.RunSnapshot) {
+			s.TaskOrder = []string{"alpha", "alpha"}
+			s.Tasks["beta"] = state.TaskRunState{Agent: state.AgentEvidence{Name: "beta", CommitSHA: retirementBetaSHA}, Worktree: state.WorktreeState{WorkspaceID: "b", PaneID: "b:p1", Path: "/herdr/b", Branch: "agent/b"}}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := retirementSnapshot()
+			tt.mutate(&snapshot)
+			if _, err := Build(snapshot, true, contract.PhaseCompleted); err == nil {
+				t.Fatal("Build accepted task map/order disagreement")
+			}
+		})
 	}
 }
 
