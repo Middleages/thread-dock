@@ -76,6 +76,7 @@ const (
 	PhaseCI            RunPhase = "ci"
 	PhaseNeedsOperator RunPhase = "needs_operator"
 	PhaseMerging       RunPhase = "merging"
+	PhaseRetiring      RunPhase = "retiring"
 	PhaseCompleted     RunPhase = "completed"
 	PhaseBlocked       RunPhase = "blocked"
 	PhasePaused        RunPhase = "paused"

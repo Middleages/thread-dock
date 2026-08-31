@@ -8,6 +8,29 @@ import (
 	"time"
 )
 
+func TestParseDefaultsRetirementSettingsWithoutBreakingOldJSON(t *testing.T) {
+	got, err := Parse(strings.NewReader(`{"ghesHost":"https://github.example.test","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.AutoRetireCompletedSessions || !strings.HasSuffix(got.HerdrWorktreeRoot, string(filepath.Separator)+".herdr"+string(filepath.Separator)+"worktrees") {
+		t.Fatalf("config=%#v", got)
+	}
+}
+
+func TestParsePreservesExplicitFalseAutoRetirement(t *testing.T) {
+	got, err := Parse(strings.NewReader(`{"ghesHost":"https://github.example.test","autoRetireCompletedSessions":false,"herdrWorktreeRoot":"./managed-worktrees","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AutoRetireCompletedSessions {
+		t.Fatal("explicit false was replaced by the default")
+	}
+	if !filepath.IsAbs(got.HerdrWorktreeRoot) || got.HerdrWorktreeRoot != filepath.Clean(got.HerdrWorktreeRoot) {
+		t.Fatalf("worktree root is not canonical: %q", got.HerdrWorktreeRoot)
+	}
+}
+
 func TestParseRejectsMissingGHESHost(t *testing.T) {
 	_, err := Parse(strings.NewReader(`{"stateDir":"/tmp/thread-dock","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`))
 	if err == nil || !strings.Contains(err.Error(), "ghesHost") {

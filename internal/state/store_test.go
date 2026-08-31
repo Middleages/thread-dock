@@ -134,6 +134,34 @@ func TestLegacySingleRunSnapshotStillDecodes(t *testing.T) {
 	}
 }
 
+func TestLegacySnapshotEncodingOmitsEmptyRetirementState(t *testing.T) {
+	data, err := json.Marshal(RunSnapshot{RunID: "legacy", Phase: contract.PhaseCompleted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte(`"retirement"`)) {
+		t.Fatalf("legacy snapshot unexpectedly contains retirement: %s", data)
+	}
+}
+
+func TestRetirementStateRoundTripsWithoutDroppingTargetIdentity(t *testing.T) {
+	want := RunSnapshot{RunID: "retiring", Phase: contract.PhaseRetiring, Retirement: RetirementState{
+		Status: "pending", TargetPhase: contract.PhaseCompleted, Automatic: true,
+		Targets: []RetirementTarget{{Key: "builder:api", Role: "builder", TaskID: "api", WorkspaceID: "ws", PaneID: "pane", Path: "/herdr/api", Branch: "agent/api", HeadSHA: "0123456789abcdef0123456789abcdef01234567", Status: "pending", AgentName: "api", RepositoryCommonDir: "/repo/.git"}},
+	}}
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got RunSnapshot
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Retirement, want.Retirement) {
+		t.Fatalf("retirement=%#v want %#v", got.Retirement, want.Retirement)
+	}
+}
+
 func TestAppendWritesCompleteJSONLines(t *testing.T) {
 	store := NewStore(t.TempDir())
 	if err := store.Create(context.Background(), RunSnapshot{RunID: "run-1", Phase: contract.PhaseRegistered}); err != nil {

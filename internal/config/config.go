@@ -27,18 +27,20 @@ var requiredProjectStatuses = []string{"Backlog", "Ready", "In Progress", "Revie
 // Config contains local paths, GHES connection metadata and Project status
 // option IDs. It deliberately contains no credentials.
 type Config struct {
-	GHESHost                 string            `json:"ghesHost"`
-	APIBase                  string            `json:"apiBase"`
-	APIVersion               string            `json:"apiVersion"`
-	StateDir                 string            `json:"stateDir"`
-	HerdrBinary              string            `json:"herdrBinary"`
-	GitBinary                string            `json:"gitBinary"`
-	WorkingWait              time.Duration     `json:"workingWait"`
-	RecoveryLimit            int               `json:"recoveryLimit"`
-	ProjectAutomationEnabled bool              `json:"projectAutomationEnabled"`
-	ProjectID                string            `json:"projectId"`
-	ProjectStatusFieldID     string            `json:"projectStatusFieldId"`
-	ProjectStatusOptions     map[string]string `json:"projectStatusOptions"`
+	GHESHost                    string            `json:"ghesHost"`
+	APIBase                     string            `json:"apiBase"`
+	APIVersion                  string            `json:"apiVersion"`
+	StateDir                    string            `json:"stateDir"`
+	HerdrBinary                 string            `json:"herdrBinary"`
+	GitBinary                   string            `json:"gitBinary"`
+	WorkingWait                 time.Duration     `json:"workingWait"`
+	RecoveryLimit               int               `json:"recoveryLimit"`
+	ProjectAutomationEnabled    bool              `json:"projectAutomationEnabled"`
+	AutoRetireCompletedSessions bool              `json:"autoRetireCompletedSessions"`
+	HerdrWorktreeRoot           string            `json:"herdrWorktreeRoot"`
+	ProjectID                   string            `json:"projectId"`
+	ProjectStatusFieldID        string            `json:"projectStatusFieldId"`
+	ProjectStatusOptions        map[string]string `json:"projectStatusOptions"`
 }
 
 // Load reads and validates a JSON configuration file.
@@ -83,6 +85,19 @@ func Parse(r io.Reader) (Config, error) {
 	if strings.TrimSpace(stateDir) == "" {
 		stateDir = defaultStateDir()
 	}
+	herdrWorktreeRoot := raw.HerdrWorktreeRoot
+	if strings.TrimSpace(herdrWorktreeRoot) == "" {
+		herdrWorktreeRoot = defaultHerdrWorktreeRoot()
+	} else {
+		herdrWorktreeRoot, err = canonicalPath(herdrWorktreeRoot)
+		if err != nil {
+			return Config{}, fmt.Errorf("herdrWorktreeRoot: %w", err)
+		}
+	}
+	autoRetire := true
+	if raw.AutoRetireCompletedSessions != nil {
+		autoRetire = *raw.AutoRetireCompletedSessions
+	}
 	apiVersion := raw.APIVersion
 	if strings.TrimSpace(apiVersion) == "" {
 		apiVersion = defaultAPIVersion
@@ -110,18 +125,20 @@ func Parse(r io.Reader) (Config, error) {
 	}
 
 	c := Config{
-		GHESHost:                 host,
-		APIBase:                  apiBase,
-		APIVersion:               apiVersion,
-		StateDir:                 stateDir,
-		HerdrBinary:              herdrBinary,
-		GitBinary:                gitBinary,
-		WorkingWait:              workingWait,
-		RecoveryLimit:            recoveryLimit,
-		ProjectAutomationEnabled: raw.ProjectAutomationEnabled,
-		ProjectID:                strings.TrimSpace(raw.ProjectID),
-		ProjectStatusFieldID:     strings.TrimSpace(raw.ProjectStatusFieldID),
-		ProjectStatusOptions:     cloneOptions(raw.ProjectStatusOptions),
+		GHESHost:                    host,
+		APIBase:                     apiBase,
+		APIVersion:                  apiVersion,
+		StateDir:                    stateDir,
+		HerdrBinary:                 herdrBinary,
+		GitBinary:                   gitBinary,
+		WorkingWait:                 workingWait,
+		RecoveryLimit:               recoveryLimit,
+		ProjectAutomationEnabled:    raw.ProjectAutomationEnabled,
+		AutoRetireCompletedSessions: autoRetire,
+		HerdrWorktreeRoot:           herdrWorktreeRoot,
+		ProjectID:                   strings.TrimSpace(raw.ProjectID),
+		ProjectStatusFieldID:        strings.TrimSpace(raw.ProjectStatusFieldID),
+		ProjectStatusOptions:        cloneOptions(raw.ProjectStatusOptions),
 	}
 	if err := validate(c); err != nil {
 		return Config{}, err
@@ -130,18 +147,20 @@ func Parse(r io.Reader) (Config, error) {
 }
 
 type configJSON struct {
-	GHESHost                 string            `json:"ghesHost"`
-	APIBase                  string            `json:"apiBase"`
-	APIVersion               string            `json:"apiVersion"`
-	StateDir                 string            `json:"stateDir"`
-	HerdrBinary              string            `json:"herdrBinary"`
-	GitBinary                string            `json:"gitBinary"`
-	WorkingWait              json.RawMessage   `json:"workingWait"`
-	RecoveryLimit            int               `json:"recoveryLimit"`
-	ProjectAutomationEnabled bool              `json:"projectAutomationEnabled"`
-	ProjectID                string            `json:"projectId"`
-	ProjectStatusFieldID     string            `json:"projectStatusFieldId"`
-	ProjectStatusOptions     map[string]string `json:"projectStatusOptions"`
+	GHESHost                    string            `json:"ghesHost"`
+	APIBase                     string            `json:"apiBase"`
+	APIVersion                  string            `json:"apiVersion"`
+	StateDir                    string            `json:"stateDir"`
+	HerdrBinary                 string            `json:"herdrBinary"`
+	GitBinary                   string            `json:"gitBinary"`
+	WorkingWait                 json.RawMessage   `json:"workingWait"`
+	RecoveryLimit               int               `json:"recoveryLimit"`
+	ProjectAutomationEnabled    bool              `json:"projectAutomationEnabled"`
+	AutoRetireCompletedSessions *bool             `json:"autoRetireCompletedSessions"`
+	HerdrWorktreeRoot           string            `json:"herdrWorktreeRoot"`
+	ProjectID                   string            `json:"projectId"`
+	ProjectStatusFieldID        string            `json:"projectStatusFieldId"`
+	ProjectStatusOptions        map[string]string `json:"projectStatusOptions"`
 }
 
 func decodeDuration(data json.RawMessage) (time.Duration, error) {
@@ -284,6 +303,33 @@ func defaultStateDir() string {
 		return filepath.Join("~", ".local", "state", "threaddock")
 	}
 	return filepath.Join(home, ".local", "state", "threaddock")
+}
+
+func defaultHerdrWorktreeRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return filepath.Clean(filepath.Join("~", ".herdr", "worktrees"))
+	}
+	return filepath.Clean(filepath.Join(home, ".herdr", "worktrees"))
+}
+
+func canonicalPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("must not be empty")
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			return "", errors.New("cannot resolve home directory")
+		}
+		path = filepath.Join(home, path[2:])
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
 }
 
 func cloneOptions(options map[string]string) map[string]string {

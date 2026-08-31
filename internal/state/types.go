@@ -3,6 +3,7 @@
 package state
 
 import (
+	"encoding/json"
 	"time"
 
 	"thread-dock/internal/contract"
@@ -87,6 +88,32 @@ type ReviewFinding struct {
 	CheckState string   `json:"checkState,omitempty"`
 }
 
+// RetirementState is the durable, provider-neutral session retirement plan.
+type RetirementState struct {
+	Status      string             `json:"status,omitempty"`
+	TargetPhase contract.RunPhase  `json:"targetPhase,omitempty"`
+	Automatic   bool               `json:"automatic,omitempty"`
+	Targets     []RetirementTarget `json:"targets,omitempty"`
+	UpdatedAt   time.Time          `json:"updatedAt,omitempty"`
+}
+
+// RetirementTarget is a durable proof record for one Herdr Workspace.
+type RetirementTarget struct {
+	Key                 string    `json:"key"`
+	Role                string    `json:"role"`
+	TaskID              string    `json:"taskId,omitempty"`
+	WorkspaceID         string    `json:"workspaceId"`
+	PaneID              string    `json:"paneId"`
+	Path                string    `json:"path"`
+	Branch              string    `json:"branch"`
+	HeadSHA             string    `json:"headSha"`
+	Status              string    `json:"status"`
+	RetiredAt           time.Time `json:"retiredAt,omitempty"`
+	AgentName           string    `json:"agentName,omitempty"`
+	RepositoryCommonDir string    `json:"repositoryCommonDir,omitempty"`
+	LastError           string    `json:"lastError,omitempty"`
+}
+
 type RunSnapshot struct {
 	ContractVersion int               `json:"contractVersion"`
 	RunID           contract.RunID    `json:"runId"`
@@ -146,6 +173,7 @@ type RunSnapshot struct {
 	ProjectItemID            string                 `json:"projectItemId,omitempty"`
 	ReviewDecision           string                 `json:"reviewDecision,omitempty"`
 	ReviewFindings           []ReviewFinding        `json:"reviewFindings,omitempty"`
+	Retirement               RetirementState        `json:"retirement,omitempty"`
 	ReviewRiskCategories     []string               `json:"reviewRiskCategories,omitempty"`
 	CIState                  string                 `json:"ciState,omitempty"`
 	MergeabilityKnown        bool                   `json:"mergeabilityKnown,omitempty"`
@@ -154,6 +182,27 @@ type RunSnapshot struct {
 	MergePreflightReady      bool                   `json:"mergePreflightReady,omitempty"`
 	MergeSHA                 string                 `json:"mergeSha,omitempty"`
 	UpdatedAt                time.Time              `json:"updatedAt"`
+}
+
+// MarshalJSON keeps the additive retirement object absent from legacy
+// snapshots. encoding/json does not apply omitempty to value structs, while
+// the value field is intentional so legacy callers can inspect
+// snapshot.Retirement.Status without nil checks.
+func (snapshot RunSnapshot) MarshalJSON() ([]byte, error) {
+	type alias RunSnapshot
+	var retirement *RetirementState
+	if !snapshot.Retirement.empty() {
+		value := snapshot.Retirement
+		retirement = &value
+	}
+	return json.Marshal(struct {
+		alias
+		Retirement *RetirementState `json:"retirement,omitempty"`
+	}{alias: alias(snapshot), Retirement: retirement})
+}
+
+func (retirement RetirementState) empty() bool {
+	return retirement.Status == "" && retirement.TargetPhase == "" && !retirement.Automatic && len(retirement.Targets) == 0 && retirement.UpdatedAt.IsZero()
 }
 
 // Event is one append-only state transition or diagnostic record.
