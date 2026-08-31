@@ -205,25 +205,29 @@ scan fails.
 
 ## Stage 2: age one fixture and clean safely
 
-Cleanup is intentionally separate from retirement. Do not age or edit the
-production state directory. Copy only the disposable run to an isolated
-fixture state directory and set its `UpdatedAt` to more than seven days in the
-past through a controlled fixture edit. Keep the source snapshot untouched:
+Cleanup is intentionally separate from retirement. Never age or edit a
+production or evidence-awaiting-acceptance RUN. For this disposable pilot,
+copy the pre-cleanup snapshot outside the state directory, then set the
+disposable RUN's `UpdatedAt` to more than seven days in the past through a
+controlled fixture edit. The cleanup command must keep using the original pilot config
+so its state-managed Worktree trust root remains identical to the
+one used when the RUN was created:
 
 ```bash
-export CLEANUP_STATE="$PILOT_ROOT/cleanup-state"
-mkdir -p "$CLEANUP_STATE/runs"
-cp -a "$PILOT_STATE/runs/$RUN" "$CLEANUP_STATE/runs/$RUN"
+cp "$PILOT_STATE/runs/$RUN/run.json" "$PILOT_ROOT/run-before-cleanup.json"
 export OLD_UPDATED_AT="$(date -u -d '8 days ago' '+%Y-%m-%dT%H:%M:%SZ')"
 jq --arg updatedAt "$OLD_UPDATED_AT" '.updatedAt = $updatedAt' \
-  "$CLEANUP_STATE/runs/$RUN/run.json" >"$CLEANUP_STATE/runs/$RUN/run.json.tmp"
-mv "$CLEANUP_STATE/runs/$RUN/run.json.tmp" "$CLEANUP_STATE/runs/$RUN/run.json"
-THREADDOCK_CONFIG="$PILOT_ROOT/config-cleanup.json" "$PILOT_BIN" cleanup "$RUN"
+  "$PILOT_STATE/runs/$RUN/run.json" >"$PILOT_STATE/runs/$RUN/run.json.tmp"
+mv "$PILOT_STATE/runs/$RUN/run.json.tmp" "$PILOT_STATE/runs/$RUN/run.json"
+THREADDOCK_CONFIG="$PILOT_ROOT/config.json" "$PILOT_BIN" cleanup "$RUN"
 ```
 
-The cleanup config must set `stateDir` to `$CLEANUP_STATE` and keep the same
-trusted repository and Herdr Worktree roots. Before any removal, cleanup
-preflights every target. For an active Herdr Workspace it verifies exact
+Changing `stateDir` for this copied snapshot is unsafe: the managed Worktree
+root is derived from `stateDir`, so it would no longer match the persisted
+Integration path. The saved `run-before-cleanup.json` is the immutable
+pre-cleanup evidence; the disposable RUN state itself is expected to be
+deleted on success. Before any removal, cleanup preflights every target. For
+an active Herdr Workspace it verifies exact
 Workspace/pane/path identity and uses the provider removal handle. For a
 retired target it re-proves the durable repository common directory, exact
 path, branch, HEAD, Worktree registration, and clean status, then uses the
@@ -244,7 +248,8 @@ only after cleanup reports success:
 
 ```bash
 test ! -e "$WORKTREE_PATH"
-test ! -e "$CLEANUP_STATE/runs/$RUN"
+test ! -e "$PILOT_STATE/runs/$RUN"
+test -f "$PILOT_ROOT/run-before-cleanup.json"
 ! git -C "$PILOT_REPO" worktree list --porcelain | grep -F -- "$WORKTREE_PATH"
 ```
 

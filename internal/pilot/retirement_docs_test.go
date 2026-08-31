@@ -43,11 +43,16 @@ func TestSessionRetirementRunbookDocumentsCommandsAndGuards(t *testing.T) {
 		"Workspace ID",
 		"worktree remove",
 		"evidence awaiting acceptance",
+		"run-before-cleanup.json",
+		"original pilot config",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(doc, phrase) {
 			t.Errorf("session retirement runbook missing %q", phrase)
 		}
+	}
+	if strings.Contains(doc, "config-cleanup.json") || strings.Contains(doc, "CLEANUP_STATE") {
+		t.Fatal("session retirement runbook must not rebind managed Worktree trust by changing stateDir")
 	}
 }
 
