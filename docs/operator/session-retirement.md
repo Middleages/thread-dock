@@ -190,10 +190,14 @@ grep -F '"phase":"completed"' "$PILOT_STATE/runs/$RUN/run.json"
 grep -F '"status":"retired"' "$PILOT_STATE/runs/$RUN/run.json"
 ```
 
-Run a secret scan over the disposable state, checkout metadata, and recorded
-pilot result. The scan must pass and the output must contain no token,
-credential, or raw terminal response. If the exact scanner used by the
-operator is `gitleaks`, for example:
+Run a secret scan over all disposable runtime RUN state under
+`$PILOT_STATE/runs`, config, saved snapshots, the recorded pilot result, and
+structural checkout metadata (`config`, `HEAD`, `gitdir`, and `commondir`). A
+fallback marker scan must not treat source checkouts or Git object blobs as
+runtime metadata; repository source is covered by the normal repository
+secret gate and may contain synthetic redaction fixtures. The scan must pass
+and the output must contain no token, credential, or raw terminal response. If
+the exact scanner used by the operator is `gitleaks`, for example:
 
 ```bash
 gitleaks detect --no-banner --redact --source "$PILOT_ROOT"

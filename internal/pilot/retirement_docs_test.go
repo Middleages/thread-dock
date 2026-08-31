@@ -55,11 +55,14 @@ func TestSessionRetirementRunbookDocumentsCommandsAndGuards(t *testing.T) {
 		"rev-parse HEAD",
 		"status --porcelain=v1",
 		"herdr workspace get",
+		"! herdr workspace get \"$WORKSPACE_ID\"",
 		"herdr pane list --workspace",
 		"jq --arg updatedAt",
 		"test ! -e \"$WORKTREE_PATH\"",
-		"grep -F -- \"$WORKTREE_PATH\"",
-		"gitleaks detect --no-banner --redact",
+		"test ! -e \"$PILOT_STATE/runs/$RUN\"",
+		"git -C \"$PILOT_REPO\" worktree list --porcelain | grep -F -- \"$WORKTREE_PATH\"",
+		"! git -C \"$PILOT_REPO\" worktree list --porcelain | grep -F -- \"$WORKTREE_PATH\"",
+		"gitleaks detect --no-banner --redact --source \"$PILOT_ROOT\"",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(doc, phrase) {
