@@ -238,7 +238,7 @@ func TestReadEvidenceRejectsBuilderWrapWithoutExactDisplayIndent(t *testing.T) {
 		"unterminated string": strings.Join([]string{
 			"      " + EvidenceBeginMarker,
 			`      {"requestId":"` + requestID + `","commitSha":"49a4d414ee7a46540f85b754eb9590071f24`,
-			`      0112","verification":[{"command":"test \\"$(cat pkg/alpha/value.txt)\\" = \\"alpha-ready","outcome":"passed","duration":"1ms"}]}`,
+			`      0112","verification":[{"command":"test $(cat pkg/alpha/value.txt) = alpha-ready}]}`,
 			"      " + EvidenceEndMarker,
 		}, "\n"),
 	}
@@ -247,8 +247,12 @@ func TestReadEvidenceRejectsBuilderWrapWithoutExactDisplayIndent(t *testing.T) {
 			r := fixtureRunner(t, map[string]string{
 				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
 			})
-			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+			_, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api")
+			if err == nil {
 				t.Fatal("accepted Builder evidence with invalid wrapped continuation")
+			}
+			if name == "unterminated string" && !strings.Contains(err.Error(), "not structured JSON") {
+				t.Fatalf("err=%q, want structured JSON rejection", err)
 			}
 		})
 	}
