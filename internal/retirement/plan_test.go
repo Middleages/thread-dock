@@ -73,7 +73,9 @@ func TestBuildRejectsNonCanonicalRetirementIdentity(t *testing.T) {
 	}{
 		{name: "agent name", mutate: func(s *state.RunSnapshot) { s.Reviewer.Name = " reviewer" }},
 		{name: "workspace ID", mutate: func(s *state.RunSnapshot) { s.ReviewerWorktree.WorkspaceID = "review " }},
+		{name: "workspace punctuation", mutate: func(s *state.RunSnapshot) { s.ReviewerWorktree.WorkspaceID = "review!" }},
 		{name: "pane ID", mutate: func(s *state.RunSnapshot) { s.ReviewerWorktree.PaneID = "review:p1 " }},
+		{name: "pane punctuation", mutate: func(s *state.RunSnapshot) { s.ReviewerWorktree.PaneID = "review:p1?" }},
 		{name: "path", mutate: func(s *state.RunSnapshot) { s.ReviewerWorktree.Path = "/managed/review/" }},
 	}
 	for _, tt := range mutations {

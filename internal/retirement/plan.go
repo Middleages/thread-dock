@@ -165,7 +165,15 @@ func canonicalAgentName(value string) bool {
 }
 
 func canonicalID(value string) bool {
-	return value != "" && value == strings.TrimSpace(value) && !strings.ContainsAny(value, "/\\\r\n\t") && !strings.Contains(value, "..")
+	if value == "" || value != strings.TrimSpace(value) || strings.Contains(value, "..") {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '.' && char != '_' && char != ':' && char != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func canonicalPath(value string) bool {

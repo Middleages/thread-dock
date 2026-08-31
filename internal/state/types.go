@@ -208,6 +208,7 @@ func (retirement RetirementState) empty() bool {
 // Event is one append-only state transition or diagnostic record.
 type Event struct {
 	RunID     contract.RunID    `json:"runId,omitempty"`
+	ID        string            `json:"id,omitempty"`
 	Type      string            `json:"type"`
 	Kind      string            `json:"kind,omitempty"`
 	Phase     contract.RunPhase `json:"phase,omitempty"`

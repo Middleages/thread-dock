@@ -530,7 +530,7 @@ func (o *Orchestrator) finishRetirement(ctx context.Context, snapshot *state.Run
 	for _, target := range snapshot.Retirement.Targets {
 		retiredKeys = append(retiredKeys, target.Key)
 	}
-	if err := o.append(ctx, snapshot.RunID, state.Event{Type: "sessions_retired", Kind: "sessions_retired", Phase: contract.PhaseRetiring, Message: snapshot.Summary, Data: map[string]any{"targets": retiredKeys}}); err != nil {
+	if err := o.append(ctx, snapshot.RunID, state.Event{ID: string(snapshot.RunID) + ":sessions_retired", Type: "sessions_retired", Kind: "sessions_retired", Phase: contract.PhaseRetiring, Message: snapshot.Summary, Data: map[string]any{"targets": retiredKeys}}); err != nil {
 		return err
 	}
 	snapshot.Phase = snapshot.Retirement.TargetPhase
@@ -605,7 +605,15 @@ func retirementAgentIdentityMismatch(snapshot state.RunSnapshot, target *state.R
 }
 
 func canonicalRetirementProviderID(value string) bool {
-	return value != "" && value == strings.TrimSpace(value) && !strings.ContainsAny(value, "/\\\r\n\t") && !strings.Contains(value, "..")
+	if value == "" || value != strings.TrimSpace(value) || strings.Contains(value, "..") {
+		return false
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '.' && char != '_' && char != ':' && char != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func canonicalRetirementAgentName(value string) bool {

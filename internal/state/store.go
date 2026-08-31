@@ -140,12 +140,62 @@ func (s *Store) Append(ctx context.Context, runID contract.RunID, event Event) e
 	if err != nil {
 		return fmt.Errorf("open event log: %w", err)
 	}
+	if event.ID != "" {
+		// Repair an incomplete tail before scanning so a provider/process crash
+		// cannot hide an already-committed event behind partial JSON. The store
+		// mutex covers repair, scan, and append as one idempotent operation.
+		if err := repairEventTail(f); err != nil {
+			_ = f.Close()
+			return err
+		}
+		found, err := eventIDExists(f, event.ID)
+		if err != nil {
+			_ = f.Close()
+			return err
+		}
+		if found {
+			if err := f.Close(); err != nil {
+				return fmt.Errorf("close event log: %w", err)
+			}
+			return nil
+		}
+	}
 	appendErr := appendEventFile(f, encoded)
 	closeErr := f.Close()
 	if appendErr != nil || closeErr != nil {
 		return fmt.Errorf("append event: %w", errors.Join(appendErr, closeErr))
 	}
 	return nil
+}
+
+func eventIDExists(f eventFile, id string) (bool, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return false, fmt.Errorf("seek event log for ID scan: %w", err)
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return false, fmt.Errorf("read event log for ID scan: %w", err)
+	}
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var existing Event
+		if err := json.Unmarshal(line, &existing); err != nil {
+			return false, fmt.Errorf("decode event log for ID scan: %w", err)
+		}
+		if existing.ID == id {
+			if _, err := f.Seek(0, io.SeekEnd); err != nil {
+				return false, fmt.Errorf("seek event log after ID scan: %w", err)
+			}
+			return true, nil
+		}
+	}
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		return false, fmt.Errorf("seek event log after ID scan: %w", err)
+	}
+	return false, nil
 }
 
 type eventFile interface {

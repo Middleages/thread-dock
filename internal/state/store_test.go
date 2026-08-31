@@ -200,6 +200,63 @@ func TestAppendWritesCompleteJSONLines(t *testing.T) {
 	}
 }
 
+func TestAppendWithIDIsIdempotentAndDifferentIDsRemainDistinct(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	if err := store.Create(context.Background(), RunSnapshot{RunID: "run-id", Phase: contract.PhaseRegistered}); err != nil {
+		t.Fatal(err)
+	}
+	first := Event{RunID: "run-id", ID: "run-id:sessions_retired", Type: "sessions_retired", At: time.Unix(1, 0).UTC()}
+	if err := store.Append(context.Background(), "run-id", first); err != nil {
+		t.Fatal(err)
+	}
+	first.Type = "duplicate"
+	if err := store.Append(context.Background(), "run-id", first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(context.Background(), "run-id", Event{RunID: "run-id", ID: "run-id:other", Type: "other", At: time.Unix(2, 0).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "runs", "run-id", "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSuffix(data, []byte{'\n'}), []byte{'\n'})
+	if len(lines) != 2 {
+		t.Fatalf("lines=%d data=%s", len(lines), data)
+	}
+	var got Event
+	if err := json.Unmarshal(lines[0], &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != "sessions_retired" || got.ID != "run-id:sessions_retired" {
+		t.Fatalf("duplicate changed durable event=%#v", got)
+	}
+}
+
+func TestAppendWithIDRepairsPartialTailBeforeIdempotencyScan(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	if err := store.Create(context.Background(), RunSnapshot{RunID: "run-tail-id", Phase: contract.PhaseRegistered}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "runs", "run-tail-id", "events.jsonl")
+	complete := `{"runId":"run-tail-id","id":"run-tail-id:sessions_retired","type":"sessions_retired"}` + "\n"
+	if err := os.WriteFile(path, append([]byte(complete), []byte(`{"runId":"run-tail-id","id":"partial`)...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(context.Background(), "run-tail-id", Event{RunID: "run-tail-id", ID: "run-tail-id:sessions_retired", Type: "duplicate", At: time.Unix(2, 0).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != complete {
+		t.Fatalf("partial tail or duplicate remains: %q", data)
+	}
+}
+
 func TestAppendRepairsPreExistingPartialTail(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)

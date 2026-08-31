@@ -324,6 +324,51 @@ func TestRetirementAuditAppendFailureNeverPersistsTerminalPhase(t *testing.T) {
 	}
 }
 
+func TestRetirementAuditIDIsIdempotentAcrossTerminalSaveFailure(t *testing.T) {
+	h := newHarness(t)
+	hd := &retirementTestHerdr{fakeHerdr: h.herdr, workspaces: map[string]herdr.WorkspaceInfo{}, removeOnClose: true}
+	git := &retirementTestGit{fakeGit: h.git}
+	recorder := &retirementRecordingStore{base: h.store, failTerminalSave: true}
+	h.Deps.Store, h.Deps.Herdr, h.Deps.Git, h.Deps.Worktree = recorder, hd, git, git
+	h.orchestrator = New(h.Deps)
+	snapshot := state.RunSnapshot{RunID: "audit-idempotent", ContractPath: h.contractPath, Phase: contract.PhaseCompleted, RepositoryPath: "/repo", Builder: state.AgentEvidence{Name: "builder", CommitSHA: validSHA}, BuilderWorktree: state.WorktreeState{WorkspaceID: "builder", PaneID: "builder:pane", Path: "/managed/builder", Branch: "agent/builder"}}
+	if err := h.store.Create(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.orchestrator.BeginRetirement(context.Background(), snapshot.RunID, contract.PhaseCompleted, false); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); err == nil {
+		t.Fatal("terminal save unexpectedly succeeded")
+	}
+	if got := h.mustLoad(snapshot.RunID); got.Phase != contract.PhaseRetiring {
+		t.Fatalf("terminalized after save failure=%#v", got)
+	}
+	recorder.failTerminalSave = false
+	if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); err != nil {
+		t.Fatal(err)
+	}
+	got := h.mustLoad(snapshot.RunID)
+	if got.Phase != contract.PhaseCompleted || got.Retirement.Status != "retired" {
+		t.Fatalf("retry snapshot=%#v", got)
+	}
+	events := h.events(snapshot.RunID)
+	count := 0
+	for _, event := range events {
+		if event.ID == string(snapshot.RunID)+":sessions_retired" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("sessions_retired events=%d, want one", count)
+	}
+}
+
 func TestRetirementWorkspaceLifecycleChangeBlocksBeforeClose(t *testing.T) {
 	h := newHarness(t)
 	hd := &retirementTestHerdr{fakeHerdr: h.herdr, workspaces: map[string]herdr.WorkspaceInfo{
