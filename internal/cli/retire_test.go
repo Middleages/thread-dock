@@ -154,11 +154,11 @@ func TestCleanupUsesGitPathForRetiredAndHerdrForActiveTargets(t *testing.T) {
 	now := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
 	store := &fakeStateStore{snapshot: state.RunSnapshot{
 		RunID: "old-completed", Phase: contract.PhaseCompleted,
-		UpdatedAt: now.Add(-8 * 24 * time.Hour), RepositoryPath: "/repo", IntegrationPath: "/herdr/integration",
-		Integration:      state.WorktreeState{Path: "/herdr/integration"},
+		UpdatedAt: now.Add(-8 * 24 * time.Hour), RepositoryPath: "/repo", IntegrationPath: "/managed/integration",
+		Integration:      state.WorktreeState{Path: "/managed/integration"},
 		BuilderWorktree:  state.WorktreeState{Path: "/herdr/builder", WorkspaceID: "builder-ws", PaneID: "builder-pane"},
-		ReviewerWorktree: state.WorktreeState{Path: "/herdr/integration", WorkspaceID: "reviewer-ws", PaneID: "reviewer-pane"},
-		Retirement:       state.RetirementState{Targets: []state.RetirementTarget{{Role: "reviewer", Path: "/herdr/integration", Status: "retired", RepositoryCommonDir: "/repo/.git", Branch: "agent/reviewer", HeadSHA: "0123456789abcdef0123456789abcdef01234567"}}},
+		ReviewerWorktree: state.WorktreeState{Path: "/managed/integration", WorkspaceID: "reviewer-ws", PaneID: "reviewer-pane"},
+		Retirement:       state.RetirementState{Targets: []state.RetirementTarget{{Role: "reviewer", Path: "/managed/integration", Status: "retired", RepositoryCommonDir: "/repo/.git", Branch: "agent/reviewer", HeadSHA: "0123456789abcdef0123456789abcdef01234567"}}},
 	}}
 	cleanup := &mixedRetirementCleanup{}
 	remover := &fakeStateRemover{}

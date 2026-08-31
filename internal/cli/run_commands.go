@@ -475,6 +475,9 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(snapshot.RepositoryPath) == "" {
+		return errors.New("repository path가 없어 정리를 중단했습니다")
+	}
 	cutoff := s.now().Add(-7 * 24 * time.Hour)
 	if snapshot.Phase != contract.PhaseCompleted {
 		return errors.New("완료된 실행만 정리할 수 있습니다")
@@ -507,10 +510,10 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 			if !ok {
 				return errors.New("retired Worktree 제거 기능이 구성되지 않아 정리를 중단했습니다")
 			}
-			// The inspector is optional for compatibility with narrow test and
-			// legacy adapters. The durable proof fields are still checked below;
-			// production SafeWorktreeCleanup always supplies this strict read.
-			retiredInspector, _ = s.cleanup.(RetiredWorktreeInspector)
+			retiredInspector, ok = s.cleanup.(RetiredWorktreeInspector)
+			if !ok {
+				return errors.New("retired Worktree 식별 확인 기능이 구성되지 않아 정리를 중단했습니다")
+			}
 		}
 	}
 	managedRoot := filepath.Clean(s.trustedManagedRoot)
@@ -527,20 +530,12 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 		}
 	}
 	for _, target := range targets {
-		if sameCleanPath(target.path, snapshot.Integration.Path) && !pathWithinRoot(managedRoot, target.path) {
-			// A shared Reviewer target is owned by Herdr and is validated against
-			// the configured Herdr root below; plain Integration paths remain in
-			// ThreadDock's managed root.
-			if target.kind != cleanupRetired && target.kind != cleanupHerdr {
-				return errors.New("관리 대상 루트 밖의 Worktree가 있어 정리를 거부했습니다")
-			}
+		if err := validateCleanupTargetContainment(snapshot, target, managedRoot, herdrRoot); err != nil {
+			return err
 		}
 		if target.kind == cleanupRetired {
 			if err := validateRetiredProof(target.retirement, target.path); err != nil {
 				return err
-			}
-			if strings.TrimSpace(herdrRoot) != "" && !pathWithinRoot(herdrRoot, target.path) {
-				return errors.New("retired Worktree가 관리 대상 Herdr 루트 밖에 있어 정리를 거부했습니다")
 			}
 		}
 	}
@@ -554,15 +549,11 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 				return errors.New("Herdr Worktree 식별자가 persisted 상태와 달라 정리를 중단했습니다")
 			}
 		}
-		if target.kind == cleanupRetired && retiredInspector != nil {
-			if err := retiredInspector.InspectRetired(ctx, snapshot.RepositoryPath, herdrRoot, target.retirement); err != nil {
+		if target.kind == cleanupRetired {
+			proofRoot := cleanupProofRoot(snapshot, target, managedRoot, herdrRoot)
+			if err := retiredInspector.InspectRetired(ctx, snapshot.RepositoryPath, proofRoot, target.retirement); err != nil {
 				return errors.New("retired Worktree Git proof가 persisted 상태와 달라 정리를 중단했습니다")
 			}
-		}
-		if target.kind == cleanupRetired {
-			// InspectRetirementTarget performs its own exact clean-status check
-			// in the production adapter. Narrow adapters without that optional
-			// method are still required to provide complete durable proof above.
 			continue
 		}
 		status, statusErr := s.cleanup.Status(ctx, target.path)
@@ -581,7 +572,8 @@ func (s *OrchestratorRunService) Cleanup(ctx context.Context, id contract.RunID)
 			continue
 		}
 		if target.kind == cleanupRetired {
-			if err := retiredCleanup.RemoveRetired(ctx, snapshot.RepositoryPath, herdrRoot, target.retirement); err != nil {
+			proofRoot := cleanupProofRoot(snapshot, target, managedRoot, herdrRoot)
+			if err := retiredCleanup.RemoveRetired(ctx, snapshot.RepositoryPath, proofRoot, target.retirement); err != nil {
 				return errors.New("retired Worktree 정리에 실패했습니다")
 			}
 			continue
@@ -600,6 +592,91 @@ func validateRetiredProof(proof state.RetirementTarget, path string) error {
 		return errors.New("retired Worktree의 Git proof가 불완전하여 정리를 거부했습니다")
 	}
 	return nil
+}
+
+func validateCleanupTargetContainment(snapshot state.RunSnapshot, target cleanupTarget, managedRoot, herdrRoot string) error {
+	if target.kind == cleanupIntegration {
+		if !strictPathWithinRoot(managedRoot, target.path) {
+			return errors.New("관리 대상 루트 밖의 Worktree가 있어 정리를 거부했습니다")
+		}
+	} else if target.kind == cleanupHerdr {
+		sharedReviewer := target.role == "reviewer" && sameCleanPath(target.path, snapshot.Integration.Path)
+		if sharedReviewer {
+			if !sameCleanPath(target.path, snapshot.Integration.Path) {
+				return errors.New("Reviewer Integration 경로가 persisted 상태와 달라 정리를 거부했습니다")
+			}
+			if !strictPathWithinRoot(managedRoot, target.path) {
+				return errors.New("shared Reviewer/Integration Worktree가 관리 대상 루트 밖에 있어 정리를 거부했습니다")
+			}
+			integrationIdentity := cleanupTarget{branch: strings.TrimSpace(snapshot.Integration.Branch), headSHA: strings.TrimSpace(snapshot.IntegrationSHA)}
+			if (snapshot.Strategy == "parallel" || integrationIdentity.branch != "") && (integrationIdentity.branch == "" || target.branch == "") {
+				return errors.New("shared Reviewer/Integration Worktree branch identity가 불완전하여 정리를 거부했습니다")
+			}
+			if (snapshot.Strategy == "parallel" && integrationIdentity.headSHA == "") || (integrationIdentity.headSHA != "" && target.headSHA == "") {
+				return errors.New("shared Reviewer/Integration Worktree HEAD identity가 불완전하여 정리를 거부했습니다")
+			}
+			if !compatibleBranchHead(integrationIdentity, target) {
+				return errors.New("shared Reviewer/Integration Worktree의 branch 또는 HEAD가 달라 정리를 거부했습니다")
+			}
+		} else if strings.TrimSpace(herdrRoot) != "" && !strictPathWithinRoot(herdrRoot, target.path) {
+			return errors.New("Builder/Reviewer Worktree가 관리 대상 Herdr 루트 밖에 있어 정리를 거부했습니다")
+		}
+	} else {
+		proofRoot := cleanupProofRoot(snapshot, target, managedRoot, herdrRoot)
+		if strings.TrimSpace(proofRoot) == "" || !strictPathWithinRoot(proofRoot, target.path) {
+			return errors.New("retired Worktree가 관리 대상 루트 밖에 있어 정리를 거부했습니다")
+		}
+	}
+	if sameCleanPath(target.path, snapshot.RepositoryPath) || isFilesystemRoot(filepath.Clean(target.path)) {
+		return errors.New("repository 또는 filesystem root를 Worktree로 정리할 수 없습니다")
+	}
+	if home, err := os.UserHomeDir(); err == nil && sameCleanPath(target.path, home) {
+		return errors.New("home 디렉터리를 Worktree로 정리할 수 없습니다")
+	}
+	return nil
+}
+
+func cleanupProofRoot(snapshot state.RunSnapshot, target cleanupTarget, managedRoot, herdrRoot string) string {
+	if (target.role == "reviewer" || target.role == "integration") && sameCleanPath(target.path, snapshot.Integration.Path) {
+		return managedRoot
+	}
+	return herdrRoot
+}
+
+// strictPathWithinRoot uses canonical paths when the filesystem entries are
+// available, catching symlink escapes. Test doubles may use virtual paths;
+// for those, the lexical containment check preserves the adapter seam.
+func strictPathWithinRoot(root, target string) bool {
+	cleanRoot := filepath.Clean(root)
+	if cleanRoot == "." || cleanRoot == string(filepath.Separator) {
+		return false
+	}
+	if !pathWithinRoot(root, target) {
+		return false
+	}
+	rootAbs, rootErr := filepath.Abs(filepath.Clean(root))
+	targetAbs, targetErr := filepath.Abs(filepath.Clean(target))
+	if rootErr != nil || targetErr != nil {
+		return false
+	}
+	if _, err := os.Stat(rootAbs); err != nil {
+		return true
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(targetAbs); err != nil {
+		// The adapter's read-only status/proof operation will report a missing
+		// checkout. Keep virtual test doubles on the same lexical boundary while
+		// still canonicalizing every existing target for symlink escape checks.
+		return pathWithinRoot(canonicalRoot, targetAbs)
+	}
+	canonicalTarget, err := filepath.EvalSymlinks(targetAbs)
+	if err != nil {
+		return false
+	}
+	return pathWithinRoot(canonicalRoot, canonicalTarget)
 }
 
 func (s *OrchestratorRunService) loadStatusSnapshot(ctx context.Context, id contract.RunID) (state.RunSnapshot, error) {
@@ -647,12 +724,18 @@ func statusView(snapshot state.RunSnapshot) contract.StatusView {
 		seenAgents[snapshot.Reviewer.Name] = true
 	}
 	taskIDs := append([]string(nil), snapshot.TaskOrder...)
-	if len(taskIDs) == 0 {
-		for id := range snapshot.Tasks {
-			taskIDs = append(taskIDs, id)
-		}
-		sort.Strings(taskIDs)
+	seenTaskIDs := make(map[string]bool, len(taskIDs))
+	for _, id := range taskIDs {
+		seenTaskIDs[id] = true
 	}
+	remainingTaskIDs := make([]string, 0, len(snapshot.Tasks))
+	for id := range snapshot.Tasks {
+		if !seenTaskIDs[id] {
+			remainingTaskIDs = append(remainingTaskIDs, id)
+		}
+	}
+	sort.Strings(remainingTaskIDs)
+	taskIDs = append(taskIDs, remainingTaskIDs...)
 	for _, id := range taskIDs {
 		task, ok := snapshot.Tasks[id]
 		if !ok || task.Agent.Name == "" || seenAgents[task.Agent.Name] {
@@ -716,6 +799,10 @@ type cleanupTarget struct {
 	path        string
 	workspaceID string
 	paneID      string
+	role        string
+	taskID      string
+	branch      string
+	headSHA     string
 	retirement  state.RetirementTarget
 }
 
@@ -727,90 +814,166 @@ func cleanupTargets(snapshot state.RunSnapshot) ([]cleanupTarget, error) {
 	if !sameCleanPath(strings.TrimSpace(snapshot.IntegrationPath), integrationPath) {
 		return nil, errors.New("Integration Worktree 경로가 persisted 상태와 달라 정리를 거부했습니다")
 	}
-	targets := []cleanupTarget{{kind: cleanupIntegration, path: integrationPath}}
-	for index, work := range []state.WorktreeState{snapshot.BuilderWorktree, snapshot.ReviewerWorktree} {
-		if strings.TrimSpace(work.Path) == "" && strings.TrimSpace(work.WorkspaceID) == "" && strings.TrimSpace(work.PaneID) == "" {
+	targets := []cleanupTarget{{kind: cleanupIntegration, path: integrationPath, role: "integration", branch: strings.TrimSpace(snapshot.Integration.Branch), headSHA: strings.TrimSpace(snapshot.IntegrationSHA)}}
+
+	// Keep the historical top-level Builder/Reviewer identities first. These
+	// fields are still populated by Single runs and by the parallel Reviewer.
+	if err := addCleanupWorktreeTarget(&targets, cleanupTargetForWorktree(snapshot, snapshot.BuilderWorktree, "builder", ""), false); err != nil {
+		return nil, err
+	}
+	if err := addCleanupWorktreeTarget(&targets, cleanupTargetForWorktree(snapshot, snapshot.ReviewerWorktree, "reviewer", ""), true); err != nil {
+		return nil, err
+	}
+
+	// Parallel task worktrees are durable under Tasks, not the legacy Builder
+	// fields. Follow TaskOrder and then append any map-only IDs in sorted order
+	// so cleanup never drops a Builder or depends on map iteration order.
+	taskIDs := append([]string(nil), snapshot.TaskOrder...)
+	seenTaskIDs := make(map[string]bool, len(taskIDs))
+	for _, id := range taskIDs {
+		seenTaskIDs[id] = true
+	}
+	remainingTaskIDs := make([]string, 0, len(snapshot.Tasks))
+	for id := range snapshot.Tasks {
+		if !seenTaskIDs[id] {
+			remainingTaskIDs = append(remainingTaskIDs, id)
+		}
+	}
+	sort.Strings(remainingTaskIDs)
+	taskIDs = append(taskIDs, remainingTaskIDs...)
+	for _, id := range taskIDs {
+		task, ok := snapshot.Tasks[id]
+		if !ok {
+			return nil, fmt.Errorf("parallel task %q is missing durable state", id)
+		}
+		if isEmptyTaskRunState(task) && snapshot.Strategy != "parallel" && len(snapshot.Tasks) == 0 {
 			continue
 		}
-		if strings.TrimSpace(work.Path) == "" || strings.TrimSpace(work.WorkspaceID) == "" || strings.TrimSpace(work.PaneID) == "" {
-			return nil, errors.New("Builder/Reviewer Worktree 식별자가 불완전하여 정리를 거부했습니다")
+		if strings.TrimSpace(task.Agent.Name) == "" || !hasAnyWorktreeIdentity(task.Worktree) {
+			return nil, fmt.Errorf("parallel Builder target %q is incomplete", id)
 		}
-		role := "builder"
-		if index == 1 {
-			role = "reviewer"
+		if err := addCleanupWorktreeTarget(&targets, cleanupTargetForWorktree(snapshot, task.Worktree, "builder", id), false); err != nil {
+			return nil, err
 		}
-		target := cleanupTargetForWorktree(snapshot, strings.TrimSpace(work.Path), strings.TrimSpace(work.WorkspaceID), strings.TrimSpace(work.PaneID), role)
-		if index == 1 && sameCleanPath(target.path, integrationPath) {
-			// Reviewer is the reconciled owner of a shared Integration checkout.
-			// Replace the Git target so the physical checkout is removed once.
-			targets[0] = target
-			continue
-		}
-		if duplicateCleanupPath(targets, target.path) {
-			continue
-		}
-		targets = append(targets, target)
 	}
 
 	// Retirement proof is durable state. If a historical snapshot retained a
-	// target after its legacy Worktree fields were compacted, include that
-	// target by its exact proof rather than reconstructing it from a path.
+	// target after its top-level or task fields were compacted, include it by
+	// exact proof rather than reconstructing identity from prose or a path.
 	for _, durable := range snapshot.Retirement.Targets {
 		if strings.TrimSpace(durable.Path) == "" {
 			return nil, errors.New("retirement target is missing a Worktree path")
 		}
-		if durable.Status == "retired" {
-			if replaceCleanupTarget(targets, durable.Path, cleanupTarget{kind: cleanupRetired, path: strings.TrimSpace(durable.Path), retirement: durable}) {
-				continue
-			}
-			targets = append(targets, cleanupTarget{kind: cleanupRetired, path: strings.TrimSpace(durable.Path), retirement: durable})
-			continue
+		target, err := cleanupTargetForRetirement(durable)
+		if err != nil {
+			return nil, err
 		}
-		if strings.TrimSpace(durable.WorkspaceID) == "" || strings.TrimSpace(durable.PaneID) == "" {
-			return nil, errors.New("active retirement target identity is incomplete")
-		}
-		active := cleanupTarget{kind: cleanupHerdr, path: strings.TrimSpace(durable.Path), workspaceID: strings.TrimSpace(durable.WorkspaceID), paneID: strings.TrimSpace(durable.PaneID)}
-		if durable.Role == "reviewer" && sameCleanPath(active.path, integrationPath) {
-			targets[0] = active
-			continue
-		}
-		if !duplicateCleanupPath(targets, active.path) {
-			targets = append(targets, active)
+		allowShared := durable.Role == "reviewer" && sameCleanPath(durable.Path, integrationPath)
+		if err := addCleanupWorktreeTarget(&targets, target, allowShared); err != nil {
+			return nil, err
 		}
 	}
 	return targets, nil
 }
 
-func cleanupTargetForWorktree(snapshot state.RunSnapshot, path, workspaceID, paneID, role string) cleanupTarget {
-	for _, retired := range snapshot.Retirement.Targets {
-		if retired.Status != "retired" || !sameCleanPath(retired.Path, path) {
+func cleanupTargetForWorktree(snapshot state.RunSnapshot, work state.WorktreeState, role, taskID string) cleanupTarget {
+	path := strings.TrimSpace(work.Path)
+	if path == "" && strings.TrimSpace(work.WorkspaceID) == "" && strings.TrimSpace(work.PaneID) == "" {
+		return cleanupTarget{}
+	}
+	for _, durable := range snapshot.Retirement.Targets {
+		if durable.Status != "retired" || durable.Role != role || !sameCleanPath(durable.Path, path) {
 			continue
 		}
-		if retired.Role != "" && retired.Role != role {
+		if taskID != "" && durable.TaskID != "" && durable.TaskID != taskID {
 			continue
 		}
-		return cleanupTarget{kind: cleanupRetired, path: path, workspaceID: workspaceID, paneID: paneID, retirement: retired}
+		return cleanupTarget{kind: cleanupRetired, path: path, workspaceID: strings.TrimSpace(work.WorkspaceID), paneID: strings.TrimSpace(work.PaneID), role: role, taskID: taskID, branch: strings.TrimSpace(durable.Branch), headSHA: strings.TrimSpace(durable.HeadSHA), retirement: durable}
 	}
-	return cleanupTarget{kind: cleanupHerdr, path: path, workspaceID: workspaceID, paneID: paneID}
+	target := cleanupTarget{kind: cleanupHerdr, path: path, workspaceID: strings.TrimSpace(work.WorkspaceID), paneID: strings.TrimSpace(work.PaneID), role: role, taskID: taskID, branch: strings.TrimSpace(work.Branch)}
+	if role == "reviewer" && sameCleanPath(path, snapshot.Integration.Path) {
+		target.headSHA = strings.TrimSpace(snapshot.IntegrationSHA)
+	}
+	return target
 }
 
-func duplicateCleanupPath(targets []cleanupTarget, path string) bool {
-	for _, existing := range targets {
-		if sameCleanPath(existing.path, path) {
-			return true
+func cleanupTargetForRetirement(durable state.RetirementTarget) (cleanupTarget, error) {
+	if durable.Status == "retired" {
+		if err := validateRetiredProof(durable, durable.Path); err != nil {
+			return cleanupTarget{}, err
 		}
+		return cleanupTarget{kind: cleanupRetired, path: strings.TrimSpace(durable.Path), workspaceID: strings.TrimSpace(durable.WorkspaceID), paneID: strings.TrimSpace(durable.PaneID), role: durable.Role, taskID: durable.TaskID, branch: strings.TrimSpace(durable.Branch), headSHA: strings.TrimSpace(durable.HeadSHA), retirement: durable}, nil
 	}
-	return false
+	if durable.Status != "active" && durable.Status != "pending" && durable.Status != "workspace_observed" && durable.Status != "git_proven" {
+		return cleanupTarget{}, errors.New("retirement target status is not removable")
+	}
+	if strings.TrimSpace(durable.WorkspaceID) == "" || strings.TrimSpace(durable.PaneID) == "" {
+		return cleanupTarget{}, errors.New("active retirement target identity is incomplete")
+	}
+	return cleanupTarget{kind: cleanupHerdr, path: strings.TrimSpace(durable.Path), workspaceID: strings.TrimSpace(durable.WorkspaceID), paneID: strings.TrimSpace(durable.PaneID), role: durable.Role, taskID: durable.TaskID, branch: strings.TrimSpace(durable.Branch), headSHA: strings.TrimSpace(durable.HeadSHA)}, nil
 }
 
-func replaceCleanupTarget(targets []cleanupTarget, path string, replacement cleanupTarget) bool {
-	for index := range targets {
-		if sameCleanPath(targets[index].path, path) {
-			targets[index] = replacement
-			return true
-		}
+func addCleanupWorktreeTarget(targets *[]cleanupTarget, target cleanupTarget, allowSharedReviewer bool) error {
+	if target.path == "" && target.workspaceID == "" && target.paneID == "" {
+		return nil
 	}
-	return false
+	if target.path == "" || (target.kind != cleanupRetired && (target.workspaceID == "" || target.paneID == "")) {
+		return errors.New("Builder/Reviewer Worktree 식별자가 불완전하여 정리를 거부했습니다")
+	}
+	for index, existing := range *targets {
+		if !sameCleanPath(existing.path, target.path) {
+			continue
+		}
+		if allowSharedReviewer && target.role == "reviewer" && existing.role == "integration" {
+			if err := compatibleSharedOwnership(existing, target); err != nil {
+				return err
+			}
+			(*targets)[index] = target
+			return nil
+		}
+		if existing.role == "reviewer" && target.role == "integration" {
+			if err := compatibleSharedOwnership(existing, target); err != nil {
+				return err
+			}
+			return nil
+		}
+		if sameCleanupOwnership(existing, target) {
+			return nil
+		}
+		return errors.New("Worktree 경로가 서로 다른 소유자 또는 retirement 상태와 충돌하여 정리를 거부했습니다")
+	}
+	*targets = append(*targets, target)
+	return nil
+}
+
+func isEmptyTaskRunState(task state.TaskRunState) bool {
+	return strings.TrimSpace(task.Agent.Name) == "" && strings.TrimSpace(task.Worktree.Path) == "" && strings.TrimSpace(task.Worktree.WorkspaceID) == "" && strings.TrimSpace(task.Worktree.PaneID) == ""
+}
+
+func hasAnyWorktreeIdentity(work state.WorktreeState) bool {
+	return strings.TrimSpace(work.Path) != "" || strings.TrimSpace(work.WorkspaceID) != "" || strings.TrimSpace(work.PaneID) != ""
+}
+
+func sameCleanupOwnership(left, right cleanupTarget) bool {
+	return left.kind == right.kind && left.role == right.role && left.taskID == right.taskID && compatibleIdentity(left.workspaceID, right.workspaceID) && compatibleIdentity(left.paneID, right.paneID) && compatibleBranchHead(left, right)
+}
+
+func compatibleIdentity(left, right string) bool {
+	return left == "" || right == "" || left == right
+}
+
+func compatibleSharedOwnership(left, right cleanupTarget) error {
+	if left.workspaceID != "" && right.workspaceID != "" && left.workspaceID != right.workspaceID {
+		return errors.New("shared Reviewer/Integration Worktree가 서로 다른 Workspace ID를 가져 정리를 거부했습니다")
+	}
+	if !compatibleBranchHead(left, right) {
+		return errors.New("shared Reviewer/Integration Worktree의 branch 또는 HEAD가 달라 정리를 거부했습니다")
+	}
+	return nil
+}
+
+func compatibleBranchHead(left, right cleanupTarget) bool {
+	return (left.branch == "" || right.branch == "" || left.branch == right.branch) && (left.headSHA == "" || right.headSHA == "" || left.headSHA == right.headSHA)
 }
 
 func pathWithinRoot(root, target string) bool {

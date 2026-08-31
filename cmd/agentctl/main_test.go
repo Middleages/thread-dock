@@ -45,3 +45,17 @@ func TestRepositoryDiscoveryPropagatesStartFailure(t *testing.T) {
 		t.Fatalf("err=%v, want %v", err, want)
 	}
 }
+
+func TestRetireUsesSnapshotWiringWithoutRepositoryDiscoveryOrGHESCredential(t *testing.T) {
+	if requiresGHESCredential([]string{"retire", "run-184"}) {
+		t.Fatal("retire must not require a GHES token")
+	}
+	var calls int
+	path, err := repositoryPathForCommand(context.Background(), []string{"retire", "run-184"}, nil, "git", func(context.Context, runner.Runner, string) (string, error) {
+		calls++
+		return "/wrong/current/checkout", nil
+	})
+	if err != nil || path != "" || calls != 0 {
+		t.Fatalf("retire repository discovery path=%q err=%v calls=%d", path, err, calls)
+	}
+}
