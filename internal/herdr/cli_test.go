@@ -191,7 +191,7 @@ func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
 }
 
 func TestReadEvidenceAcceptsCapturedDisplayWrappedBuilderEnvelope(t *testing.T) {
-	const requestID = "run-1787939711953381828-1:pilot-builder:prompt"
+	const requestID = "run-1788139711953381821-1:api:prompt"
 	const commitSHA = "abcdef0123456789abcdef0123456789abcdef01"
 	output := strings.Join([]string{
 		"      " + EvidenceBeginMarker,
@@ -221,6 +221,41 @@ func TestReadEvidenceAcceptsCapturedDisplayWrappedBuilderEnvelope(t *testing.T) 
 	}
 }
 
+func TestReadEvidenceRejectsBuilderWrapWithoutExactDisplayIndent(t *testing.T) {
+	const requestID = "run-1788139711953381821-1:api:prompt"
+	validPrefix := "      {\"requestId\":\"" + requestID + "\",\"commitSha\":\"abcdef0123456789abcdef0123456789abcdef01\",\"verification\":[{\"command\":\"test -f pilot-"
+	cases := map[string]string{
+		"unindented continuation": strings.Join([]string{
+			"      " + EvidenceBeginMarker,
+			validPrefix,
+			"result.txt\",\"outcome\":\"passed\",\"duration\":\"1ms\"}]}",
+			"      " + EvidenceEndMarker,
+		}, "\n"),
+		"mismatched continuation": strings.Join([]string{
+			"      " + EvidenceBeginMarker,
+			validPrefix,
+			"       result.txt\",\"outcome\":\"passed\",\"duration\":\"1ms\"}]}",
+			"      " + EvidenceEndMarker,
+		}, "\n"),
+		"unterminated string": strings.Join([]string{
+			"      " + EvidenceBeginMarker,
+			"      {\"requestId\":\"" + requestID + "\",\"commitSha\":\"abcdef0123456789abcdef0123456789ab",
+			"      cdef01\",\"verification\":[{\"command\":\"test -f pilot-result.txt\",\"outcome\":\"passed\",\"duration\":\"1ms}]}",
+			"      " + EvidenceEndMarker,
+		}, "\n"),
+	}
+	for name, output := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadEvidence(context.Background(), "builder_api"); err == nil {
+				t.Fatal("accepted Builder evidence with invalid wrapped continuation")
+			}
+		})
+	}
+}
+
 func TestReadReviewEvidenceAcceptsStrictBlockEnvelope(t *testing.T) {
 	payload := `{"requestId":"review-1","decision":"block","blockingFindings":[{"id":"F-1","summary":"missing test","paths":["internal/api.go"]}],"riskCategories":["data"]}`
 	r := fixtureRunner(t, map[string]string{
@@ -232,8 +267,8 @@ func TestReadReviewEvidenceAcceptsStrictBlockEnvelope(t *testing.T) {
 	}
 }
 
-func TestReadReviewEvidenceAcceptsCapturedDisplayWrappedReviewerEnvelope(t *testing.T) {
-	const requestID = "run-1787939711953381828-1:pilot-reviewer:prompt"
+func TestReadReviewEvidenceAcceptsSyntheticDisplayWrappedReviewerEnvelope(t *testing.T) {
+	const requestID = "run-wrap-reviewer:prompt"
 	output := strings.Join([]string{
 		"      " + THREADDOCK_REVIEW_BEGIN,
 		"      {\"requestId\":\"" + requestID + "\",\"decision\":\"block\",\"blockingFindings\":[",
@@ -256,6 +291,46 @@ func TestReadReviewEvidenceAcceptsCapturedDisplayWrappedReviewerEnvelope(t *test
 	finding := got.BlockingFindings[0]
 	if finding.Summary != "verification output wrapped across the display \"boundary\"" || len(finding.Paths) != 1 || finding.Paths[0] != "internal/herdr/cli.go" {
 		t.Fatalf("finding=%#v, want exact reconstructed values", finding)
+	}
+}
+
+func TestReadReviewEvidenceRejectsReviewerWrapWithoutExactDisplayIndent(t *testing.T) {
+	const requestID = "run-wrap-reviewer:prompt"
+	const prefix = "      {\"requestId\":\"" + requestID + "\",\"decision\":\"block\",\"blockingFindings\":["
+	const findingPrefix = "      {\"id\":\"F-wrap\",\"summary\":\"verification output wrapped across the "
+	const suffix = "\",\"paths\":[\"internal/herdr/cli.go\"]}],\"riskCategories\":[\"public_contract\"]}"
+	cases := map[string]string{
+		"unindented continuation": strings.Join([]string{
+			"      " + THREADDOCK_REVIEW_BEGIN,
+			prefix,
+			findingPrefix,
+			"display" + suffix,
+			"      " + THREADDOCK_REVIEW_END,
+		}, "\n"),
+		"mismatched continuation": strings.Join([]string{
+			"      " + THREADDOCK_REVIEW_BEGIN,
+			prefix,
+			findingPrefix,
+			"       display" + suffix,
+			"      " + THREADDOCK_REVIEW_END,
+		}, "\n"),
+		"unterminated string": strings.Join([]string{
+			"      " + THREADDOCK_REVIEW_BEGIN,
+			prefix,
+			findingPrefix,
+			"      display",
+			"      " + THREADDOCK_REVIEW_END,
+		}, "\n"),
+	}
+	for name, output := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00agent\x00read\x00reviewer_api\x00--source\x00recent-unwrapped\x00--lines\x00120": output,
+			})
+			if _, err := NewCLI(r, "herdr").ReadReviewEvidence(context.Background(), "reviewer_api", requestID); err == nil {
+				t.Fatal("accepted Reviewer evidence with invalid wrapped continuation")
+			}
+		})
 	}
 }
 

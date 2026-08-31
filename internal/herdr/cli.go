@@ -654,8 +654,10 @@ func joinDisplayWrappedJSON(payload string) string {
 	for i, line := range lines {
 		if i > 0 {
 			if inString {
-				if strings.HasPrefix(line, displayIndent) {
+				if hasExactDisplayIndent(line, displayIndent) {
 					line = line[len(displayIndent):]
+				} else {
+					joined.WriteByte('\n')
 				}
 			} else {
 				joined.WriteByte('\n')
@@ -678,6 +680,14 @@ func joinDisplayWrappedJSON(payload string) string {
 		}
 	}
 	return joined.String()
+}
+
+func hasExactDisplayIndent(line, displayIndent string) bool {
+	if !strings.HasPrefix(line, displayIndent) || len(line) == len(displayIndent) {
+		return false
+	}
+	next := line[len(displayIndent)]
+	return next != ' ' && next != '\t'
 }
 
 func leadingWhitespace(value string) string {
