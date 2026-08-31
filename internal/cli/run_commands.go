@@ -373,6 +373,36 @@ type OrchestratorRunService struct {
 	trustedHerdrRoot   string
 }
 
+// RetirementRuntime captures the immutable repository and trusted cleanup
+// roots used by one retirement invocation. It is intentionally narrow so
+// production wiring tests can verify that retirement is snapshot-based without
+// invoking Herdr or Git mutations.
+type RetirementRuntime struct {
+	RepositoryPath string
+	ManagedRoot    string
+	HerdrRoot      string
+	Composite      bool
+}
+
+func (s *OrchestratorRunService) RetirementRuntime(ctx context.Context, id contract.RunID) (RetirementRuntime, error) {
+	if s == nil || s.store == nil {
+		return RetirementRuntime{}, errRunServiceMissing
+	}
+	snapshot, err := s.store.Load(ctx, id)
+	if err != nil {
+		return RetirementRuntime{}, err
+	}
+	herdrRoot := s.trustedHerdrRoot
+	composite := false
+	if safe, ok := s.cleanup.(SafeWorktreeCleanup); ok {
+		if herdrRoot == "" {
+			herdrRoot = safe.HerdrWorktreeRoot
+		}
+		_, composite = safe.RetirementAdapter.(*worktree.CompositeRetirementInspector)
+	}
+	return RetirementRuntime{RepositoryPath: snapshot.RepositoryPath, ManagedRoot: s.trustedManagedRoot, HerdrRoot: herdrRoot, Composite: composite}, nil
+}
+
 func NewOrchestratorRunService(coordinator RunCoordinator, store RunStateStore, cleanup WorktreeCleanup, removeState StateRemover, now func() time.Time, trustedManagedRoot string, trustedHerdrRoot ...string) *OrchestratorRunService {
 	if now == nil {
 		now = time.Now

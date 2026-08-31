@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"thread-dock/internal/cli"
+	"thread-dock/internal/contract"
 	"thread-dock/internal/runner"
+	"thread-dock/internal/state"
 )
 
 func TestRepositoryDiscoveryOnlyRunsForStart(t *testing.T) {
@@ -57,5 +63,48 @@ func TestRetireUsesSnapshotWiringWithoutRepositoryDiscoveryOrGHESCredential(t *t
 	})
 	if err != nil || path != "" || calls != 0 {
 		t.Fatalf("retire repository discovery path=%q err=%v calls=%d", path, err, calls)
+	}
+}
+
+func TestProductionDependenciesUseSnapshotRepositoryAndCompositeRetirementRoots(t *testing.T) {
+	t.Setenv("THREADDOCK_GH_TOKEN", "")
+	stateDir := t.TempDir()
+	herdrRoot := filepath.Join(t.TempDir(), "herdr-worktrees")
+	if err := os.MkdirAll(herdrRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]any{
+		"ghesHost": "https://github.example.test", "stateDir": stateDir,
+		"herdrWorktreeRoot": herdrRoot, "projectId": "PVT_1", "projectStatusFieldId": "PVTSSF_1",
+		"projectStatusOptions": map[string]string{"Backlog": "opt-1", "Ready": "opt-2", "In Progress": "opt-3", "Review": "opt-4", "Done": "opt-5"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, configData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("THREADDOCK_CONFIG", configPath)
+	store := state.NewStore(stateDir)
+	snapshot := state.RunSnapshot{RunID: "retire-wiring", Phase: contract.PhaseCompleted, RepositoryPath: "/snapshot/repository"}
+	if err := store.Create(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	deps, err := productionDependencies([]string{"retire", string(snapshot.RunID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, ok := deps.Retirement.(*cli.OrchestratorRunService)
+	if !ok {
+		t.Fatalf("retirement service=%T", deps.Retirement)
+	}
+	runtime, err := service.RetirementRuntime(context.Background(), snapshot.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantManaged := filepath.Join(stateDir, "worktrees")
+	if runtime.RepositoryPath != snapshot.RepositoryPath || runtime.ManagedRoot != wantManaged || runtime.HerdrRoot != filepath.Clean(herdrRoot) || !runtime.Composite {
+		t.Fatalf("runtime=%#v want repo=%q managed=%q herdr=%q composite=true", runtime, snapshot.RepositoryPath, wantManaged, herdrRoot)
 	}
 }
