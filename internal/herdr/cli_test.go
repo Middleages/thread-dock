@@ -191,15 +191,13 @@ func TestReadEvidenceAcceptsOnlyStructuredResultsWithDuration(t *testing.T) {
 }
 
 func TestReadEvidenceAcceptsCapturedDisplayWrappedBuilderEnvelope(t *testing.T) {
-	const requestID = "run-1788139711953381821-1:api:prompt"
-	const commitSHA = "abcdef0123456789abcdef0123456789abcdef01"
+	const requestID = "run-1788131976915047221-1:alpha:prompt"
+	const commitSHA = "49a4d414ee7a46540f85b754eb9590071f240112"
 	output := strings.Join([]string{
 		"      " + EvidenceBeginMarker,
-		"      {\"requestId\":\"" + requestID + "\",\"commitSha\":\"abcdef0123456789abcdef0123456789ab",
-		"      cdef01\",\"verification\":[",
-		`      {"command":"test -f pilot-`,
-		`      result.txt","outcome":"passed","duration":"1ms"}`,
-		"      ]}",
+		`      {"requestId":"` + requestID + `","commitSha":"49a4d414ee7a46540f85b754eb9590071f24`,
+		`      0112","verification":[{"command":"test \"$(cat pkg/`,
+		`      alpha/value.txt)\" = \"alpha-ready\"","outcome":"passed","duration":"1ms"}]}`,
 		"      " + EvidenceEndMarker,
 	}, "\n")
 	r := fixtureRunner(t, map[string]string{
@@ -216,31 +214,31 @@ func TestReadEvidenceAcceptsCapturedDisplayWrappedBuilderEnvelope(t *testing.T) 
 	if len(got.Verification) != 1 {
 		t.Fatalf("verification=%#v, want one check", got.Verification)
 	}
-	if got.Verification[0].Command != "test -f pilot-result.txt" {
+	if got.Verification[0].Command != `test "$(cat pkg/alpha/value.txt)" = "alpha-ready"` {
 		t.Fatalf("command=%q, want exact reconstructed command", got.Verification[0].Command)
 	}
 }
 
 func TestReadEvidenceRejectsBuilderWrapWithoutExactDisplayIndent(t *testing.T) {
-	const requestID = "run-1788139711953381821-1:api:prompt"
-	validPrefix := "      {\"requestId\":\"" + requestID + "\",\"commitSha\":\"abcdef0123456789abcdef0123456789abcdef01\",\"verification\":[{\"command\":\"test -f pilot-"
+	const requestID = "run-1788131976915047221-1:alpha:prompt"
+	validPrefix := `      {"requestId":"` + requestID + `","commitSha":"49a4d414ee7a46540f85b754eb9590071f240112","verification":[{"command":"test \"$(cat pkg/`
 	cases := map[string]string{
 		"unindented continuation": strings.Join([]string{
 			"      " + EvidenceBeginMarker,
 			validPrefix,
-			"result.txt\",\"outcome\":\"passed\",\"duration\":\"1ms\"}]}",
+			`alpha/value.txt)\" = \"alpha-ready\"","outcome":"passed","duration":"1ms"}]}`,
 			"      " + EvidenceEndMarker,
 		}, "\n"),
 		"mismatched continuation": strings.Join([]string{
 			"      " + EvidenceBeginMarker,
 			validPrefix,
-			"       result.txt\",\"outcome\":\"passed\",\"duration\":\"1ms\"}]}",
+			`       alpha/value.txt)\" = \"alpha-ready\"","outcome":"passed","duration":"1ms"}]}`,
 			"      " + EvidenceEndMarker,
 		}, "\n"),
 		"unterminated string": strings.Join([]string{
 			"      " + EvidenceBeginMarker,
-			"      {\"requestId\":\"" + requestID + "\",\"commitSha\":\"abcdef0123456789abcdef0123456789ab",
-			"      cdef01\",\"verification\":[{\"command\":\"test -f pilot-result.txt\",\"outcome\":\"passed\",\"duration\":\"1ms}]}",
+			`      {"requestId":"` + requestID + `","commitSha":"49a4d414ee7a46540f85b754eb9590071f24`,
+			`      0112","verification":[{"command":"test \\"$(cat pkg/alpha/value.txt)\\" = \\"alpha-ready","outcome":"passed","duration":"1ms"}]}`,
 			"      " + EvidenceEndMarker,
 		}, "\n"),
 	}

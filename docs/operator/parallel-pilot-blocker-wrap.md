@@ -1,6 +1,6 @@
 # Parallel pilot blocker: terminal-wrapped evidence
 
-- Run ID: `run-1788139711953381821-1`
+- Run ID: `run-1788131976915047221-1`
 - Frozen source SHA: `fb0fe12`
 
 ## Symptom and root cause
@@ -9,7 +9,8 @@ The live parallel pilot reached the Builder evidence step, but `ReadEvidence`
 rejected the Herdr `recent-unwrapped` response as non-structured JSON. OpenCode
 rendered the one-line Evidence envelope at terminal width, inserting physical
 line breaks inside JSON strings. In particular, the `commitSha` and the exact
-`test -f pilot-result.txt` command were split across display-indented lines;
+`test "$(cat pkg/alpha/value.txt)" = "alpha-ready"` command were split across
+display-indented lines;
 the same rendering can split a string immediately beside an escape/backslash.
 The Reviewer wrap test in this change is synthetic coverage, not a captured
 Reviewer transcript.
