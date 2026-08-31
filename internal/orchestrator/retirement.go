@@ -245,7 +245,7 @@ func (o *Orchestrator) proveRetirementGit(ctx context.Context, snapshot *state.R
 	if err := o.prepareRetirementAction(ctx, snapshot, retirementGitAction+target.Key, "retirement Git proof", target.Key); err != nil {
 		return err
 	}
-	proof, err := inspector.InspectRetirementTarget(ctx, snapshot.RepositoryPath, target.Path, target.Branch, target.HeadSHA)
+	proof, err := inspectRetirementTarget(ctx, inspector, snapshot.RepositoryPath, *target)
 	if err != nil {
 		if errors.Is(err, worktree.ErrUnsafeTarget) {
 			return o.retirementNeedsOperator(ctx, snapshot, decisionWithReason(decision, "retirement Git identity is unsafe"))
@@ -373,7 +373,7 @@ func (o *Orchestrator) reconcileRetirementGit(ctx context.Context, snapshot *sta
 	if !ok {
 		return o.retirementNeedsOperator(ctx, snapshot, retirementpolicy.Decision{TargetKey: key, Reason: "retirement target is missing"})
 	}
-	proof, err := inspector.InspectRetirementTarget(ctx, snapshot.RepositoryPath, target.Path, target.Branch, target.HeadSHA)
+	proof, err := inspectRetirementTarget(ctx, inspector, snapshot.RepositoryPath, *target)
 	if err != nil {
 		if errors.Is(err, worktree.ErrUnsafeTarget) {
 			return o.retirementNeedsOperator(ctx, snapshot, retirementpolicy.Decision{TargetKey: key, Reason: "retirement Git identity is unsafe"})
@@ -660,4 +660,11 @@ func validRetirementProof(proof worktree.RetirementProof) bool {
 		filepath.IsAbs(proof.RepositoryCommonDir) && filepath.Clean(proof.RepositoryCommonDir) == proof.RepositoryCommonDir &&
 		strings.TrimSpace(proof.Path) == proof.Path && filepath.IsAbs(proof.Path) && filepath.Clean(proof.Path) == proof.Path &&
 		strings.TrimSpace(proof.Branch) == proof.Branch && strings.TrimSpace(proof.HeadSHA) == proof.HeadSHA
+}
+
+func inspectRetirementTarget(ctx context.Context, inspector RetirementGitInspector, repositoryPath string, target state.RetirementTarget) (worktree.RetirementProof, error) {
+	if roleAware, ok := inspector.(RoleAwareRetirementGitInspector); ok {
+		return roleAware.InspectRetirementTargetForRole(ctx, repositoryPath, target.Role, target.Path, target.Branch, target.HeadSHA)
+	}
+	return inspector.InspectRetirementTarget(ctx, repositoryPath, target.Path, target.Branch, target.HeadSHA)
 }

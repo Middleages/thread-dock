@@ -189,6 +189,10 @@ func (f *fakeCleanup) FindWorktree(_ context.Context, cwd, path, label string) (
 	return work, true, nil
 }
 
+func (f *fakeCleanup) TrustedHerdrWorktreeRoot() string {
+	return "/home/operator/.herdr/worktrees"
+}
+
 type recordedProcessCall struct {
 	cwd, executable string
 	args            []string

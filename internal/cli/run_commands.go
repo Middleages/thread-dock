@@ -608,7 +608,7 @@ func validateCleanupTargetContainment(snapshot state.RunSnapshot, target cleanup
 			if !strictPathWithinRoot(managedRoot, target.path) {
 				return errors.New("shared Reviewer/Integration Worktree가 관리 대상 루트 밖에 있어 정리를 거부했습니다")
 			}
-			integrationIdentity := cleanupTarget{branch: strings.TrimSpace(snapshot.Integration.Branch), headSHA: strings.TrimSpace(snapshot.IntegrationSHA)}
+			integrationIdentity := cleanupTarget{branch: strings.TrimSpace(snapshot.Integration.Branch), headSHA: cleanupIntegrationHeadSHA(snapshot)}
 			if (snapshot.Strategy == "parallel" || integrationIdentity.branch != "") && (integrationIdentity.branch == "" || target.branch == "") {
 				return errors.New("shared Reviewer/Integration Worktree branch identity가 불완전하여 정리를 거부했습니다")
 			}
@@ -618,8 +618,10 @@ func validateCleanupTargetContainment(snapshot state.RunSnapshot, target cleanup
 			if !compatibleBranchHead(integrationIdentity, target) {
 				return errors.New("shared Reviewer/Integration Worktree의 branch 또는 HEAD가 달라 정리를 거부했습니다")
 			}
-		} else if strings.TrimSpace(herdrRoot) != "" && !strictPathWithinRoot(herdrRoot, target.path) {
-			return errors.New("Builder/Reviewer Worktree가 관리 대상 Herdr 루트 밖에 있어 정리를 거부했습니다")
+		} else {
+			if strings.TrimSpace(herdrRoot) == "" || !strictPathWithinRoot(herdrRoot, target.path) {
+				return errors.New("Builder/Reviewer Worktree가 관리 대상 Herdr 루트 밖에 있어 정리를 거부했습니다")
+			}
 		}
 	} else {
 		proofRoot := cleanupProofRoot(snapshot, target, managedRoot, herdrRoot)
@@ -664,6 +666,9 @@ func strictPathWithinRoot(root, target string) bool {
 	}
 	canonicalRoot, err := filepath.EvalSymlinks(rootAbs)
 	if err != nil {
+		return false
+	}
+	if filepath.Clean(canonicalRoot) != filepath.Clean(rootAbs) {
 		return false
 	}
 	if _, err := os.Stat(targetAbs); err != nil {
@@ -814,7 +819,7 @@ func cleanupTargets(snapshot state.RunSnapshot) ([]cleanupTarget, error) {
 	if !sameCleanPath(strings.TrimSpace(snapshot.IntegrationPath), integrationPath) {
 		return nil, errors.New("Integration Worktree 경로가 persisted 상태와 달라 정리를 거부했습니다")
 	}
-	targets := []cleanupTarget{{kind: cleanupIntegration, path: integrationPath, role: "integration", branch: strings.TrimSpace(snapshot.Integration.Branch), headSHA: strings.TrimSpace(snapshot.IntegrationSHA)}}
+	targets := []cleanupTarget{{kind: cleanupIntegration, path: integrationPath, role: "integration", branch: strings.TrimSpace(snapshot.Integration.Branch), headSHA: cleanupIntegrationHeadSHA(snapshot)}}
 
 	// Keep the historical top-level Builder/Reviewer identities first. These
 	// fields are still populated by Single runs and by the parallel Reviewer.
@@ -892,9 +897,16 @@ func cleanupTargetForWorktree(snapshot state.RunSnapshot, work state.WorktreeSta
 	}
 	target := cleanupTarget{kind: cleanupHerdr, path: path, workspaceID: strings.TrimSpace(work.WorkspaceID), paneID: strings.TrimSpace(work.PaneID), role: role, taskID: taskID, branch: strings.TrimSpace(work.Branch)}
 	if role == "reviewer" && sameCleanPath(path, snapshot.Integration.Path) {
-		target.headSHA = strings.TrimSpace(snapshot.IntegrationSHA)
+		target.headSHA = cleanupIntegrationHeadSHA(snapshot)
 	}
 	return target
+}
+
+func cleanupIntegrationHeadSHA(snapshot state.RunSnapshot) string {
+	if strings.TrimSpace(snapshot.FinalSHA) != "" {
+		return strings.TrimSpace(snapshot.FinalSHA)
+	}
+	return strings.TrimSpace(snapshot.IntegrationSHA)
 }
 
 func cleanupTargetForRetirement(durable state.RetirementTarget) (cleanupTarget, error) {
@@ -955,7 +967,13 @@ func hasAnyWorktreeIdentity(work state.WorktreeState) bool {
 }
 
 func sameCleanupOwnership(left, right cleanupTarget) bool {
-	return left.kind == right.kind && left.role == right.role && left.taskID == right.taskID && compatibleIdentity(left.workspaceID, right.workspaceID) && compatibleIdentity(left.paneID, right.paneID) && compatibleBranchHead(left, right)
+	if left.kind != right.kind || left.role != right.role || left.taskID != right.taskID || !compatibleIdentity(left.workspaceID, right.workspaceID) || !compatibleIdentity(left.paneID, right.paneID) || !compatibleBranchHead(left, right) {
+		return false
+	}
+	if left.kind == cleanupRetired {
+		return sameRetirementProof(left.retirement, right.retirement)
+	}
+	return true
 }
 
 func compatibleIdentity(left, right string) bool {
@@ -969,7 +987,14 @@ func compatibleSharedOwnership(left, right cleanupTarget) error {
 	if !compatibleBranchHead(left, right) {
 		return errors.New("shared Reviewer/Integration Worktree의 branch 또는 HEAD가 달라 정리를 거부했습니다")
 	}
+	if left.kind == cleanupRetired && right.kind == cleanupRetired && !sameRetirementProof(left.retirement, right.retirement) {
+		return errors.New("shared Reviewer/Integration Worktree의 Git proof가 달라 정리를 거부했습니다")
+	}
 	return nil
+}
+
+func sameRetirementProof(left, right state.RetirementTarget) bool {
+	return left.Path == right.Path && left.Branch == right.Branch && left.HeadSHA == right.HeadSHA && left.RepositoryCommonDir == right.RepositoryCommonDir
 }
 
 func compatibleBranchHead(left, right cleanupTarget) bool {
@@ -996,7 +1021,11 @@ type SafeWorktreeCleanup struct {
 	Binary            string
 	HerdrBinary       string
 	HerdrWorktreeRoot string
-	HerdrLocator      HerdrWorktreeLocator
+	RetirementAdapter interface {
+		InspectRetirementTarget(context.Context, string, string, string, string) (worktree.RetirementProof, error)
+		RemoveRetired(context.Context, string, string, worktree.RetirementProof) error
+	}
+	HerdrLocator HerdrWorktreeLocator
 }
 
 func (c SafeWorktreeCleanup) Status(ctx context.Context, path string) (string, error) {
@@ -1032,6 +1061,13 @@ func (c SafeWorktreeCleanup) InspectRetired(ctx context.Context, repositoryPath,
 	if strings.TrimSpace(target.RepositoryCommonDir) == "" || strings.TrimSpace(target.Path) == "" || strings.TrimSpace(target.Branch) == "" || strings.TrimSpace(target.HeadSHA) == "" {
 		return errors.New("retired Worktree Git proof가 불완전합니다")
 	}
+	if c.RetirementAdapter != nil {
+		proof, err := c.RetirementAdapter.InspectRetirementTarget(ctx, repositoryPath, target.Path, target.Branch, target.HeadSHA)
+		if err != nil || proof.RepositoryCommonDir != target.RepositoryCommonDir || proof.Path != target.Path || proof.Branch != target.Branch || proof.HeadSHA != target.HeadSHA {
+			return errors.New("retired Worktree Git proof가 일치하지 않습니다")
+		}
+		return nil
+	}
 	git := worktree.New(c.Runner, c.Binary, herdrRoot, repositoryPath)
 	proof, err := git.InspectRetirementTarget(ctx, repositoryPath, target.Path, target.Branch, target.HeadSHA)
 	if err != nil || proof.RepositoryCommonDir != target.RepositoryCommonDir || proof.Path != target.Path || proof.Branch != target.Branch || proof.HeadSHA != target.HeadSHA {
@@ -1050,8 +1086,12 @@ func (c SafeWorktreeCleanup) RemoveRetired(ctx context.Context, repositoryPath, 
 	if err := validateRetiredProof(target, target.Path); err != nil {
 		return err
 	}
+	proof := worktree.RetirementProof{RepositoryCommonDir: target.RepositoryCommonDir, Path: target.Path, Branch: target.Branch, HeadSHA: target.HeadSHA}
+	if c.RetirementAdapter != nil {
+		return c.RetirementAdapter.RemoveRetired(ctx, repositoryPath, herdrRoot, proof)
+	}
 	git := worktree.New(c.Runner, c.Binary, herdrRoot, repositoryPath)
-	return git.RemoveRetired(ctx, repositoryPath, herdrRoot, worktree.RetirementProof{RepositoryCommonDir: target.RepositoryCommonDir, Path: target.Path, Branch: target.Branch, HeadSHA: target.HeadSHA})
+	return git.RemoveRetired(ctx, repositoryPath, herdrRoot, proof)
 }
 
 func (c SafeWorktreeCleanup) TrustedHerdrWorktreeRoot() string { return c.HerdrWorktreeRoot }

@@ -102,6 +102,13 @@ type RetirementGitInspector interface {
 	InspectRetirementTarget(context.Context, string, string, string, string) (worktree.RetirementProof, error)
 }
 
+// RoleAwareRetirementGitInspector lets adapters enforce the distinct trusted
+// roots for Reviewer/Integration and Builder targets while preserving the
+// original provider-neutral inspector port for legacy implementations.
+type RoleAwareRetirementGitInspector interface {
+	InspectRetirementTargetForRole(context.Context, string, string, string, string, string) (worktree.RetirementProof, error)
+}
+
 // PromptReceiptReader performs the single logical external read used to
 // reconcile a pending prompt. Implementations return agent sequence metadata
 // and only whether the exact request ID was observed, never terminal output.

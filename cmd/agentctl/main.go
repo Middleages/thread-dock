@@ -81,7 +81,12 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 	// Configure both roots so managed integration/revert operations can prove
 	// ownership before touching a checkout.
 	git := worktree.New(process, cfg.GitBinary, worktreeRoot, repositoryPath)
-	retirementGit := worktree.New(process, cfg.GitBinary, cfg.HerdrWorktreeRoot, repositoryPath)
+	retirementGit := worktree.NewCompositeRetirementInspector(
+		worktree.New(process, cfg.GitBinary, worktreeRoot, repositoryPath),
+		worktree.New(process, cfg.GitBinary, cfg.HerdrWorktreeRoot, repositoryPath),
+		worktreeRoot,
+		cfg.HerdrWorktreeRoot,
+	)
 	ghes := github.NewRESTClient(cfg.APIBase, token, cfg.APIVersion, nil)
 	herdrClient := herdr.NewCLI(process, cfg.HerdrBinary)
 	orch := orchestrator.NewAuto(orchestrator.Dependencies{
@@ -106,7 +111,7 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 	service := cli.NewOrchestratorRunService(
 		orch,
 		store,
-		cli.SafeWorktreeCleanup{Runner: process, Binary: cfg.GitBinary, HerdrBinary: cfg.HerdrBinary, HerdrWorktreeRoot: cfg.HerdrWorktreeRoot, HerdrLocator: herdrClient},
+		cli.SafeWorktreeCleanup{Runner: process, Binary: cfg.GitBinary, HerdrBinary: cfg.HerdrBinary, HerdrWorktreeRoot: cfg.HerdrWorktreeRoot, RetirementAdapter: retirementGit, HerdrLocator: herdrClient},
 		cli.NewRunStateRemover(cfg.StateDir),
 		nil,
 		worktreeRoot,
