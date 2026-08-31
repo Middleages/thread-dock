@@ -71,6 +71,9 @@ func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceIn
 	if err != nil {
 		return WorkspaceInfo{}, false, err
 	}
+	if result.ExitCode != 0 {
+		return WorkspaceInfo{}, false, safeError("workspace get", result.ExitCode)
+	}
 	if envelopeErr != nil || envelope.Error != nil || envelope.Result == nil {
 		return WorkspaceInfo{}, false, safeError("workspace get", result.ExitCode)
 	}
@@ -86,6 +89,9 @@ func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceIn
 	panes, err := c.run(ctx, "pane list", "pane", "list", "--workspace", workspaceID)
 	if err != nil {
 		return WorkspaceInfo{}, false, err
+	}
+	if panes.ExitCode != 0 {
+		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 	}
 	paneEnvelope, paneEnvelopeErr := decodeHerdrEnvelope(panes.Stdout)
 	if paneEnvelopeErr != nil || paneEnvelope.Error != nil || paneEnvelope.Result == nil {
@@ -154,6 +160,9 @@ func (c *CLI) CloseWorkspace(ctx context.Context, workspaceID string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if result.ExitCode != 0 {
+		return safeError("workspace close", result.ExitCode)
 	}
 	if envelopeErr != nil || envelope.Error != nil || envelope.Result == nil {
 		return safeError("workspace close", result.ExitCode)

@@ -87,6 +87,21 @@ type responseErrorRunner struct {
 	calls  [][]string
 }
 
+type scriptedResultRunner struct {
+	responses []runner.Result
+	calls     [][]string
+}
+
+func (r *scriptedResultRunner) Run(_ context.Context, _ string, executable string, args ...string) (runner.Result, error) {
+	r.calls = append(r.calls, append([]string{executable}, args...))
+	if len(r.responses) == 0 {
+		return runner.Result{ExitCode: 1}, &testError{"unexpected command"}
+	}
+	result := r.responses[0]
+	r.responses = r.responses[1:]
+	return result, nil
+}
+
 func (r *responseErrorRunner) Run(_ context.Context, _ string, executable string, args ...string) (runner.Result, error) {
 	r.calls = append(r.calls, append([]string{executable}, args...))
 	return runner.Result{Stdout: r.stdout, ExitCode: 1}, r.err
@@ -847,6 +862,45 @@ func TestCloseWorkspaceTreatsNotFoundAsIdempotentSuccess(t *testing.T) {
 	r := &responseErrorRunner{stdout: `{"error":{"code":"workspace_not_found","message":"not found"},"id":"cli:workspace:close"}`, err: &testError{"provider failure"}}
 	if err := NewCLI(r, "herdr").CloseWorkspace(context.Background(), "w7"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWorkspaceAdaptersRejectNonzeroSuccessResults(t *testing.T) {
+	workspace := workspaceFixture("w7", "tab-7", "/repo/task", "done")
+	pane := paneFixture("w7", "tab-7", "w7:p1", "/repo/task", "done")
+	t.Run("get", func(t *testing.T) {
+		r := &scriptedResultRunner{responses: []runner.Result{{Stdout: workspace, ExitCode: 1}, {Stdout: pane, ExitCode: 1}}}
+		_, found, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "w7")
+		if err == nil || found || err.Error() != "herdr workspace get failed (exit code 1)" {
+			t.Fatalf("found=%v err=%v", found, err)
+		}
+	})
+	t.Run("close", func(t *testing.T) {
+		r := &scriptedResultRunner{responses: []runner.Result{{Stdout: `{"id":"cli:workspace:close","result":{"type":"ok"}}`, ExitCode: 1}}}
+		err := NewCLI(r, "herdr").CloseWorkspace(context.Background(), "w7")
+		if err == nil || err.Error() != "herdr workspace close failed (exit code 1)" {
+			t.Fatalf("err=%v", err)
+		}
+	})
+}
+
+func TestWorkspaceAdaptersNeverExposeMalformedOrSecretProviderBodies(t *testing.T) {
+	secret := "provider-secret-42"
+	for _, tc := range []struct {
+		name string
+		call func(*CLI) error
+		body string
+	}{
+		{name: "get", call: func(cli *CLI) error { _, _, err := cli.GetWorkspace(context.Background(), "w7"); return err }, body: `{"id":"cli:workspace:get","error":{"code":"provider_failure","message":"` + secret + `"}}`},
+		{name: "close", call: func(cli *CLI) error { return cli.CloseWorkspace(context.Background(), "w7") }, body: "malformed-" + secret},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &responseErrorRunner{stdout: tc.body, err: &testError{"runner failure"}}
+			err := tc.call(NewCLI(r, "herdr"))
+			if err == nil || strings.Contains(err.Error(), secret) {
+				t.Fatalf("err=%v, want safe provider error", err)
+			}
+		})
 	}
 }
 
