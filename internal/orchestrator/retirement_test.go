@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"thread-dock/internal/contract"
 	"thread-dock/internal/herdr"
+	"thread-dock/internal/runner"
 	"thread-dock/internal/state"
 	"thread-dock/internal/worktree"
 )
@@ -128,13 +131,12 @@ func TestRetirementCompleteStoryPreservesEvidenceAndClosesInOrder(t *testing.T) 
 	if got.ReviewerWorktree.Path != snapshot.ReviewerWorktree.Path || got.FinalSHA != snapshot.FinalSHA {
 		t.Fatalf("reviewer evidence changed: %#v", got)
 	}
-	if git.removedWorktrees != 0 || git.removedState != 0 {
-		t.Fatalf("retirement removed durable evidence: worktrees=%d state=%d", git.removedWorktrees, git.removedState)
-	}
 }
 
 func TestLegacyCompletedSnapshotDoesNotRetroTriggerRetirement(t *testing.T) {
 	h := newHarness(t)
+	h.Deps.AutoRetireCompletedSessions = true
+	h.orchestrator = New(h.Deps)
 	snapshot := state.RunSnapshot{RunID: "legacy-completed", ContractPath: h.contractPath, Phase: contract.PhaseCompleted}
 	if err := h.store.Create(context.Background(), snapshot); err != nil {
 		t.Fatal(err)
@@ -181,6 +183,55 @@ func TestClosingWorkspaceLifecycleStatesNeedOperatorWithoutRetryClose(t *testing
 				t.Fatalf("snapshot=%#v closes=%v", got, hd.closes)
 			}
 		})
+	}
+}
+
+type adapterLifecycleRunner struct {
+	calls []string
+}
+
+func (r *adapterLifecycleRunner) Run(_ context.Context, _, executable string, args ...string) (runner.Result, error) {
+	key := executable + "\x00" + strings.Join(args, "\x00")
+	r.calls = append(r.calls, key)
+	switch key {
+	case "herdr\x00agent\x00get\x00builder":
+		return runner.Result{Stdout: `{"result":{"agent":{"name":"builder","pane_id":"builder:pane","workspace_id":"builder","cwd":"/managed/builder","agent_status":"done","agent_session":{"value":"session-builder"}}}}`}, nil
+	case "herdr\x00workspace\x00get\x00builder":
+		return runner.Result{Stdout: `{"id":"workspace-get","result":{"type":"workspace_info","workspace":{"workspace_id":"builder","active_tab_id":"tab-builder","agent_status":"done","worktree":{"checkout_path":"/managed/builder"}}}}`}, nil
+	case "herdr\x00pane\x00list\x00--workspace\x00builder":
+		return runner.Result{Stdout: `{"id":"pane-list","result":{"type":"pane_list","panes":[{"pane_id":"builder:pane","workspace_id":"builder","tab_id":"tab-builder","cwd":"/managed/builder","agent_status":"working"}]}}`}, nil
+	default:
+		return runner.Result{}, fmt.Errorf("unexpected Herdr operation %q", key)
+	}
+}
+
+func TestHerdrAdapterUnsafeWorkspaceStateReachesNeedsOperatorWithoutClose(t *testing.T) {
+	h := newHarness(t)
+	adapterRunner := &adapterLifecycleRunner{}
+	hd := herdr.NewCLI(adapterRunner, "herdr")
+	git := &retirementTestGit{fakeGit: h.git}
+	h.Deps.Herdr, h.Deps.Git, h.Deps.Worktree = hd, git, git
+	h.orchestrator = New(h.Deps)
+	snapshot := state.RunSnapshot{RunID: "adapter-state", ContractPath: h.contractPath, Phase: contract.PhaseCompleted, RepositoryPath: "/repo", Builder: state.AgentEvidence{Name: "builder", SessionID: "session-builder", CommitSHA: validSHA}, BuilderWorktree: state.WorktreeState{WorkspaceID: "builder", PaneID: "builder:pane", Path: "/managed/builder", Branch: "agent/builder"}}
+	if err := h.store.Create(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.orchestrator.BeginRetirement(context.Background(), snapshot.RunID, contract.PhaseCompleted, true); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := h.mustLoad(snapshot.RunID)
+	if got.Retirement.Status != "needs_operator" {
+		t.Fatalf("snapshot=%#v", got)
+	}
+	for _, call := range adapterRunner.calls {
+		if strings.Contains(call, "workspace\x00close") {
+			t.Fatalf("unsafe workspace was closed: calls=%v", adapterRunner.calls)
+		}
 	}
 }
 
@@ -241,10 +292,8 @@ func (h *retirementTestHerdr) CloseWorkspace(_ context.Context, id string) error
 
 type retirementTestGit struct {
 	*fakeGit
-	inspects         int
-	calls            *[]string
-	removedWorktrees int
-	removedState     int
+	inspects int
+	calls    *[]string
 }
 
 type retirementRecordingStore struct {

@@ -759,9 +759,9 @@ func TestGetWorkspaceCombinesWorkspaceAndMatchedPaneLifecycleState(t *testing.T)
 	}{
 		"done workspace idle pane":    {workspaceState: "done", paneState: "idle", wantState: AgentStateIdle},
 		"idle workspace done pane":    {workspaceState: "idle", paneState: "done", wantState: AgentStateDone},
-		"working workspace done pane": {workspaceState: "working", paneState: "done"},
-		"idle workspace blocked pane": {workspaceState: "idle", paneState: "blocked"},
-		"unknown workspace done pane": {workspaceState: "unknown", paneState: "done"},
+		"working workspace done pane": {workspaceState: "working", paneState: "done", wantState: AgentStateWorking},
+		"idle workspace blocked pane": {workspaceState: "idle", paneState: "blocked", wantState: AgentStateBlocked},
+		"unknown workspace done pane": {workspaceState: "unknown", paneState: "done", wantState: AgentStateUnknown},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -770,13 +770,7 @@ func TestGetWorkspaceCombinesWorkspaceAndMatchedPaneLifecycleState(t *testing.T)
 				"herdr\x00pane\x00list\x00--workspace\x00w7": paneFixture("w7", "tab-7", "w7:p1", "/repo/task", tc.paneState),
 			})
 			info, found, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "w7")
-			if tc.wantState != "" {
-				if err != nil || !found || info.State != tc.wantState {
-					t.Fatalf("info=%#v found=%v err=%v", info, found, err)
-				}
-				return
-			}
-			if err == nil || found || err.Error() != "herdr pane list failed (exit code 0)" {
+			if err != nil || !found || info.State != tc.wantState {
 				t.Fatalf("info=%#v found=%v err=%v", info, found, err)
 			}
 		})

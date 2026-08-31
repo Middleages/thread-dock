@@ -114,10 +114,31 @@ func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceIn
 		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 	}
 	workspaceState := ParseAgentState(workspace.AgentStatus)
-	if !safeWorkspaceState(workspaceState) || !safeWorkspaceState(rootPaneState) {
-		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
+	return WorkspaceInfo{WorkspaceID: workspace.WorkspaceID, RootPaneID: rootPaneID, Path: workspace.Worktree.CheckoutPath, State: combinedWorkspaceLifecycle(workspaceState, rootPaneState)}, true, nil
+}
+
+// combinedWorkspaceLifecycle preserves an exact identity observation even
+// when its lifecycle is unsafe. Retirement policy must see working, blocked,
+// or unknown state and durably require operator review; collapsing those
+// states into a generic adapter error would leave the coordinator unable to
+// distinguish an unsafe active session from a transient read failure.
+func combinedWorkspaceLifecycle(workspaceState, paneState AgentState) AgentState {
+	for _, state := range []AgentState{workspaceState, paneState} {
+		if state == AgentStateUnknown {
+			return AgentStateUnknown
+		}
 	}
-	return WorkspaceInfo{WorkspaceID: workspace.WorkspaceID, RootPaneID: rootPaneID, Path: workspace.Worktree.CheckoutPath, State: rootPaneState}, true, nil
+	for _, state := range []AgentState{workspaceState, paneState} {
+		if state == AgentStateBlocked {
+			return AgentStateBlocked
+		}
+	}
+	for _, state := range []AgentState{workspaceState, paneState} {
+		if state == AgentStateWorking {
+			return AgentStateWorking
+		}
+	}
+	return paneState
 }
 
 // CloseWorkspace closes exactly one Workspace. Herdr forgets a Workspace
