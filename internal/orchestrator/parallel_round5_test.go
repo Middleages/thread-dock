@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,84 @@ import (
 	"thread-dock/internal/herdr"
 	"thread-dock/internal/state"
 )
+
+func TestParallelPromptRotationUsesOneMonotonicTaskGeneration(t *testing.T) {
+	snapshot := state.RunSnapshot{RunID: "run-1788136436747506769-1"}
+	task := state.TaskRunState{Prompt: state.PromptReceipt{RequestID: "run-1788136436747506769-1:api:prompt"}}
+	for generation := 1; generation <= 3; generation++ {
+		if err := rotateParallelPrompt(&snapshot, "api", &task); err != nil {
+			t.Fatal(err)
+		}
+		want := fmt.Sprintf("run-1788136436747506769-1:api:attempt-%d", generation)
+		if task.PromptGeneration != generation || task.Prompt.RequestID != want {
+			t.Fatalf("rotation %d: generation=%d requestID=%q want %q", generation, task.PromptGeneration, task.Prompt.RequestID, want)
+		}
+	}
+}
+
+func TestParallelPromptRotationRejectsCollisionWithoutPanicking(t *testing.T) {
+	snapshot := state.RunSnapshot{RunID: "run-1788136436747506769-1"}
+	task := state.TaskRunState{Prompt: state.PromptReceipt{RequestID: "run-1788136436747506769-1:api:attempt-1"}}
+	if err := rotateParallelPrompt(&snapshot, "api", &task); err == nil {
+		t.Fatal("rotation unexpectedly accepted duplicate request ID")
+	}
+}
+
+func TestParallelLegacyGenerationZeroUsesInitialPromptID(t *testing.T) {
+	h := newParallelHarness(t)
+	snapshot := state.RunSnapshot{RunID: "run-1788136436747506769-1", Phase: contract.PhaseBuilding, Tasks: map[string]state.TaskRunState{}}
+	task := state.TaskRunState{
+		Agent:    state.AgentEvidence{Name: "builder-api"},
+		Worktree: state.WorktreeState{Path: "/tmp/agent-api", WorkspaceID: "workspace-agent-api", PaneID: "pane-agent-api"},
+		Prompt:   state.PromptReceipt{},
+		// A legacy snapshot may carry a repair counter but has no prompt generation.
+		RepairCount: 2,
+	}
+	if err := h.orchestrator.parallelBaselineTask(context.Background(), &snapshot, "api", task); err != nil {
+		t.Fatal(err)
+	}
+	got := snapshot.Tasks["api"]
+	if got.PromptGeneration != 0 || got.Prompt.RequestID != "run-1788136436747506769-1:api:prompt" {
+		t.Fatalf("legacy baseline prompt=%q generation=%d", got.Prompt.RequestID, got.PromptGeneration)
+	}
+}
+
+func TestParallelBaselinePreservesRotatedPromptIDAndGeneration(t *testing.T) {
+	h := newParallelHarness(t)
+	snapshot := state.RunSnapshot{RunID: "run-1788136436747506769-1", Phase: contract.PhaseBuilding, Tasks: map[string]state.TaskRunState{}}
+	wantID := "run-1788136436747506769-1:api:attempt-2"
+	task := state.TaskRunState{
+		Agent:    state.AgentEvidence{Name: "builder-api"},
+		Worktree: state.WorktreeState{Path: "/tmp/agent-api", WorkspaceID: "workspace-agent-api", PaneID: "pane-agent-api"},
+		Prompt:   state.PromptReceipt{RequestID: wantID, BaselineSeq: 7}, PromptGeneration: 2,
+		PreviousRequestID: "run-1788136436747506769-1:api:attempt-1",
+	}
+	if err := h.orchestrator.parallelBaselineTask(context.Background(), &snapshot, "api", task); err != nil {
+		t.Fatal(err)
+	}
+	got := snapshot.Tasks["api"]
+	if got.Prompt.RequestID != wantID || got.PromptGeneration != 2 || got.Prompt.BaselineSeq == 7 {
+		t.Fatalf("baseline changed prompt identity: requestID=%q generation=%d baseline=%d", got.Prompt.RequestID, got.PromptGeneration, got.Prompt.BaselineSeq)
+	}
+}
+
+func TestParallelPendingBaselinePreservesRotatedPromptIDAndGeneration(t *testing.T) {
+	h := newParallelHarness(t)
+	snapshot := state.RunSnapshot{RunID: "run-1788136436747506769-1", Phase: contract.PhaseBuilding, Tasks: map[string]state.TaskRunState{}}
+	wantID := "run-1788136436747506769-1:api:attempt-2"
+	snapshot.Tasks["api"] = state.TaskRunState{
+		Agent:    state.AgentEvidence{Name: "builder-api"},
+		Worktree: state.WorktreeState{Path: "/tmp/agent-api", WorkspaceID: "workspace-agent-api", PaneID: "pane-agent-api"},
+		Prompt:   state.PromptReceipt{RequestID: wantID, BaselineSeq: 7}, PromptGeneration: 2,
+	}
+	if err := h.orchestrator.reconcileParallelTaskBaseline(context.Background(), &snapshot, "api"); err != nil {
+		t.Fatal(err)
+	}
+	got := snapshot.Tasks["api"]
+	if got.Prompt.RequestID != wantID || got.PromptGeneration != 2 || got.Prompt.BaselineSeq == 7 {
+		t.Fatalf("pending baseline changed prompt identity: requestID=%q generation=%d baseline=%d", got.Prompt.RequestID, got.PromptGeneration, got.Prompt.BaselineSeq)
+	}
+}
 
 type projectReaderClient struct {
 	*parallelGitHub

@@ -16,7 +16,7 @@ import (
 
 func TestParallelRecoveryPromptRequiresFreshEvidenceRequestID(t *testing.T) {
 	h := newParallelHarness(t)
-	newRequestID := "run-1788136436747506769-1:api:repair-1"
+	newRequestID := "run-1788136436747506769-1:api:attempt-1"
 	oldRequestID := "run-1788136436747506769-1:api:prompt"
 	snapshot := state.RunSnapshot{RunID: "run-1788136436747506769-1", Phase: contract.PhaseBuilding, Tasks: map[string]state.TaskRunState{}}
 	taskState := state.TaskRunState{
@@ -50,14 +50,22 @@ func TestParallelRecoveryRotationPersistsPreviousRequestID(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := snapshot.Tasks["api"]
-	if got.PreviousRequestID != oldRequestID || got.Prompt.RequestID != "run-1788136436747506769-1:api:repair-1" {
+	if got.PreviousRequestID != oldRequestID || got.Prompt.RequestID != "run-1788136436747506769-1:api:attempt-1" {
 		t.Fatalf("rotated request IDs: previous=%q current=%q", got.PreviousRequestID, got.Prompt.RequestID)
+	}
+	persisted, err := h.store.Load(context.Background(), snapshot.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistedTask := persisted.Tasks["api"]
+	if persistedTask.PreviousRequestID != oldRequestID || persistedTask.Prompt.RequestID != got.Prompt.RequestID || persistedTask.PromptGeneration != got.PromptGeneration {
+		t.Fatalf("rotated request IDs were not durable: persisted=%+v", persistedTask)
 	}
 }
 
 func TestParallelRepairPromptRequiresFreshEvidenceRequestID(t *testing.T) {
 	h := newParallelHarness(t)
-	newRequestID := "run-1788136436747506769-1:api:repair-1"
+	newRequestID := "run-1788136436747506769-1:api:attempt-1"
 	oldRequestID := "run-1788136436747506769-1:api:prompt"
 	snapshot := state.RunSnapshot{
 		RunID: "run-1788136436747506769-1", Phase: contract.PhaseBuilding,

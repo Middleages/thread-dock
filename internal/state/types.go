@@ -61,6 +61,7 @@ type TaskRunState struct {
 	Agent               AgentEvidence `json:"agent"`
 	Worktree            WorktreeState `json:"worktree"`
 	Prompt              PromptReceipt `json:"prompt"`
+	PromptGeneration    int           `json:"promptGeneration,omitempty"`
 	PreviousRequestID   string        `json:"previousRequestId,omitempty"`
 	ProgressFingerprint string        `json:"progressFingerprint"`
 	PreviousFingerprint string        `json:"previousFingerprint,omitempty"`

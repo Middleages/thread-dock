@@ -106,7 +106,7 @@ func TestSaveAndLoadPersistsPreviousTaskRequestID(t *testing.T) {
 	want := RunSnapshot{
 		RunID: "run-request-id", Phase: contract.PhaseBuilding,
 		Tasks: map[string]TaskRunState{
-			"api": {Prompt: PromptReceipt{RequestID: "run-request-id:api:repair-1"}, PreviousRequestID: "run-request-id:api:prompt"},
+			"api": {Prompt: PromptReceipt{RequestID: "run-request-id:api:attempt-1"}, PromptGeneration: 1, PreviousRequestID: "run-request-id:api:prompt"},
 		},
 	}
 	if err := store.Save(context.Background(), want); err != nil {
@@ -118,6 +118,9 @@ func TestSaveAndLoadPersistsPreviousTaskRequestID(t *testing.T) {
 	}
 	if got.Tasks["api"].PreviousRequestID != "run-request-id:api:prompt" {
 		t.Fatalf("previous request ID=%q", got.Tasks["api"].PreviousRequestID)
+	}
+	if got.Tasks["api"].PromptGeneration != 1 {
+		t.Fatalf("prompt generation=%d", got.Tasks["api"].PromptGeneration)
 	}
 }
 

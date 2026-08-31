@@ -693,7 +693,13 @@ func (o *Orchestrator) parallelBaselineTask(ctx context.Context, snapshot *state
 		taskState.Agent.IdentitySource = "provider"
 		taskState.NativeResume = true
 	}
-	taskState.Prompt = state.PromptReceipt{RequestID: parallelPromptRequestID(snapshot.RunID, id, taskState.RepairCount), BaselineSeq: info.StateChangeSeq}
+	if taskState.Prompt.RequestID == "" {
+		if taskState.PromptGeneration != 0 {
+			return errors.New("parallel Builder prompt generation has no request ID")
+		}
+		taskState.Prompt.RequestID = parallelPromptRequestID(snapshot.RunID, id, taskState.PromptGeneration)
+	}
+	taskState.Prompt.BaselineSeq = info.StateChangeSeq
 	taskState.Stage = "prompt"
 	taskState.LastProgressAt = o.now()
 	snapshot.Tasks[id] = taskState
@@ -778,11 +784,48 @@ func (o *Orchestrator) reconcileProtectedOperatorComment(ctx context.Context, sn
 	return o.append(ctx, snapshot.RunID, state.Event{Type: "needs_operator", Phase: snapshot.Phase, Message: snapshot.Summary, Data: map[string]any{"marker": marker, "reasons": append([]string(nil), snapshot.ProtectedReasons...)}})
 }
 
-func parallelPromptRequestID(id contract.RunID, taskID string, repair int) string {
-	if repair <= 0 {
+func parallelPromptRequestID(id contract.RunID, taskID string, generation int) string {
+	if generation <= 0 {
 		return string(id) + ":" + taskID + ":prompt"
 	}
-	return fmt.Sprintf("%s:%s:repair-%d", id, taskID, repair)
+	return fmt.Sprintf("%s:%s:attempt-%d", id, taskID, generation)
+}
+
+// rotateParallelPrompt is the only operation that creates a new Builder
+// prompt identity. Its generation is task-local and monotonic, so recovery
+// and repair rotations cannot collide by consulting separate counters.
+func rotateParallelPrompt(snapshot *state.RunSnapshot, taskID string, taskState *state.TaskRunState) error {
+	if snapshot == nil {
+		return errors.New("parallel run snapshot is required")
+	}
+	if taskState == nil {
+		return errors.New("parallel Builder prompt state is required")
+	}
+	previous := taskState.Prompt.RequestID
+	if previous == "" {
+		if taskState.PromptGeneration != 0 {
+			return errors.New("parallel Builder prompt generation has no request ID")
+		}
+		// A legacy crash can reach repair before the initial baseline receipt
+		// was persisted. Materialize its generation-zero identity so the first
+		// real rotation still has a durable predecessor.
+		previous = parallelPromptRequestID(snapshot.RunID, taskID, 0)
+	}
+	if taskState.PromptGeneration < 0 {
+		return errors.New("parallel Builder prompt generation is invalid")
+	}
+	nextGeneration := taskState.PromptGeneration + 1
+	if nextGeneration <= taskState.PromptGeneration {
+		return errors.New("parallel Builder prompt generation exhausted")
+	}
+	next := parallelPromptRequestID(snapshot.RunID, taskID, nextGeneration)
+	if next == previous || next == "" {
+		return errors.New("parallel Builder prompt rotation produced a duplicate request ID")
+	}
+	taskState.PreviousRequestID = previous
+	taskState.PromptGeneration = nextGeneration
+	taskState.Prompt.RequestID = next
+	return nil
 }
 
 func (o *Orchestrator) parallelPromptTask(ctx context.Context, snapshot *state.RunSnapshot, runtime *runRuntime, id string, task contract.Task, taskState state.TaskRunState) error {
@@ -1124,15 +1167,15 @@ func (o *Orchestrator) parallelApplyRecovery(ctx context.Context, snapshot *stat
 	case recovery.Block:
 		return o.parallelBlock(ctx, snapshot, "recovery limit exhausted")
 	case recovery.Continue, recovery.ResumeSession:
-		previousRequestID := taskState.Prompt.RequestID
+		if err := rotateParallelPrompt(snapshot, id, &taskState); err != nil {
+			return err
+		}
 		taskState.RecoveryCount = decision.NextCount
 		if decision.Kind == recovery.ResumeSession {
 			taskState.Stage = "resume"
 		} else {
 			taskState.Stage = "recovery_prompt"
 		}
-		taskState.PreviousRequestID = previousRequestID
-		taskState.Prompt.RequestID = parallelPromptRequestID(snapshot.RunID, id, taskState.RecoveryCount)
 		taskState.LastProgressAt = o.now()
 		snapshot.Tasks[id] = taskState
 		snapshot.PendingAction = ""
@@ -1903,8 +1946,9 @@ func (o *Orchestrator) parallelCIRepairOrBlock(ctx context.Context, snapshot *st
 		taskState.RequiresFreshCommit = true
 		taskState.PreviousCommitSHA = taskState.Agent.CommitSHA
 		taskState.PreviousFingerprint = taskState.ProgressFingerprint
-		taskState.PreviousRequestID = taskState.Prompt.RequestID
-		taskState.Prompt = state.PromptReceipt{RequestID: parallelPromptRequestID(snapshot.RunID, taskID, taskState.RepairCount)}
+		if err := rotateParallelPrompt(snapshot, taskID, &taskState); err != nil {
+			return err
+		}
 		taskState.Agent.VerificationEvidence = nil
 		taskState.Agent.ChangedFiles = nil
 		taskState.Agent.Patch = ""
@@ -2105,10 +2149,11 @@ func (o *Orchestrator) applyParallelReviewEvidence(ctx context.Context, snapshot
 		taskState.RequiresFreshCommit = true
 		taskState.PreviousCommitSHA = taskState.Agent.CommitSHA
 		taskState.PreviousFingerprint = taskState.ProgressFingerprint
-		taskState.PreviousRequestID = taskState.Prompt.RequestID
+		if err := rotateParallelPrompt(snapshot, taskID, &taskState); err != nil {
+			return err
+		}
 		taskState.Agent.RequestID = ""
 		taskState.Agent.VerificationEvidence, taskState.Agent.ChangedFiles, taskState.Agent.Patch = nil, nil, ""
-		taskState.Prompt = state.PromptReceipt{RequestID: parallelPromptRequestID(snapshot.RunID, taskID, taskState.RepairCount)}
 		snapshot.Tasks[taskID] = taskState
 		snapshot.CurrentTask = taskID
 		snapshot.RepairBaseSHA = snapshot.IntegrationSHA
@@ -2706,7 +2751,13 @@ func (o *Orchestrator) reconcileParallelTaskBaseline(ctx context.Context, snapsh
 		return o.pendingUncertain(ctx, snapshot)
 	}
 	taskState.Agent.SessionID = info.SessionID
-	taskState.Prompt = state.PromptReceipt{RequestID: parallelPromptRequestID(snapshot.RunID, id, taskState.RepairCount), BaselineSeq: info.StateChangeSeq}
+	if taskState.Prompt.RequestID == "" {
+		if taskState.PromptGeneration != 0 {
+			return errors.New("parallel Builder prompt generation has no request ID")
+		}
+		taskState.Prompt.RequestID = parallelPromptRequestID(snapshot.RunID, id, taskState.PromptGeneration)
+	}
+	taskState.Prompt.BaselineSeq = info.StateChangeSeq
 	taskState.Stage = "prompt"
 	snapshot.Tasks[id] = taskState
 	return o.parallelFinish(ctx, snapshot, "Builder baseline intent reconciled")
