@@ -101,6 +101,26 @@ func TestSaveAndLoadPersistsTaskMapDeterministically(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadPersistsPreviousTaskRequestID(t *testing.T) {
+	store := NewStore(t.TempDir())
+	want := RunSnapshot{
+		RunID: "run-request-id", Phase: contract.PhaseBuilding,
+		Tasks: map[string]TaskRunState{
+			"api": {Prompt: PromptReceipt{RequestID: "run-request-id:api:repair-1"}, PreviousRequestID: "run-request-id:api:prompt"},
+		},
+	}
+	if err := store.Save(context.Background(), want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load(context.Background(), want.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tasks["api"].PreviousRequestID != "run-request-id:api:prompt" {
+		t.Fatalf("previous request ID=%q", got.Tasks["api"].PreviousRequestID)
+	}
+}
+
 func TestLegacySingleRunSnapshotStillDecodes(t *testing.T) {
 	var got RunSnapshot
 	if err := json.Unmarshal([]byte(`{"runId":"run-1","builder":{"name":"builder-run-1"}}`), &got); err != nil {

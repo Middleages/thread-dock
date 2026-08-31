@@ -808,6 +808,14 @@ func (o *Orchestrator) parallelPromptTask(ctx context.Context, snapshot *state.R
 		if err != nil {
 			return o.parallelBlock(ctx, snapshot, "Repair packet를 생성할 수 없습니다")
 		}
+	}
+	// A non-empty previous request ID means this prompt follows a rotation. It
+	// can occur after a native session resume, whose baseline stage returns to
+	// the ordinary prompt path rather than recovery_prompt.
+	if taskState.PreviousRequestID != "" {
+		packet += "\n\n" + freshEvidenceRequestInstruction(taskState.Prompt.RequestID, taskState.PreviousRequestID)
+	}
+	if taskState.Stage == "repair_prompt" {
 		packet += "\nUse requestId=" + taskState.Prompt.RequestID + "."
 	}
 	if err := o.deps.Herdr.Prompt(ctx, taskState.Agent.Name, packet); err != nil {
@@ -824,7 +832,7 @@ func (o *Orchestrator) parallelRecoveryPromptTask(ctx context.Context, snapshot 
 	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "recovery continuation prompt", map[string]any{"requestId": taskState.Prompt.RequestID}); err != nil {
 		return err
 	}
-	packet := recovery.ContinuationInstruction + "\nUse requestId=" + taskState.Prompt.RequestID + "."
+	packet := recovery.ContinuationInstruction + "\n\n" + freshEvidenceRequestInstruction(taskState.Prompt.RequestID, taskState.PreviousRequestID) + "\nUse requestId=" + taskState.Prompt.RequestID + "."
 	if err := o.deps.Herdr.Prompt(ctx, taskState.Agent.Name, packet); err != nil {
 		return err
 	}
@@ -832,6 +840,19 @@ func (o *Orchestrator) parallelRecoveryPromptTask(ctx context.Context, snapshot 
 	taskState.LastProgressAt = o.now()
 	snapshot.Tasks[id] = taskState
 	return o.parallelFinish(ctx, snapshot, "recovery continuation prompt sent")
+}
+
+// freshEvidenceRequestInstruction makes a rotated prompt receipt explicit at
+// the agent boundary. Strict evidence validation rejects any envelope carrying
+// an earlier request ID, so a continuation must preserve the current work but
+// emit a fresh, exactly identified envelope after verification.
+func freshEvidenceRequestInstruction(newRequestID, previousRequestID string) string {
+	quoted := strconv.Quote(newRequestID)
+	instruction := "Prior Evidence envelopes and request IDs are stale. Keep the current commit and work; do not repeat completed work. Emit a NEW Evidence envelope only after exact verification. The exact new requestId is " + quoted + "; repeat requestId=" + quoted + " exactly in that envelope."
+	if previousRequestID != "" {
+		instruction += " Do not reuse " + previousRequestID + "."
+	}
+	return instruction
 }
 
 func (o *Orchestrator) parallelResumeTask(ctx context.Context, snapshot *state.RunSnapshot, id string, taskState state.TaskRunState) error {
@@ -1103,12 +1124,14 @@ func (o *Orchestrator) parallelApplyRecovery(ctx context.Context, snapshot *stat
 	case recovery.Block:
 		return o.parallelBlock(ctx, snapshot, "recovery limit exhausted")
 	case recovery.Continue, recovery.ResumeSession:
+		previousRequestID := taskState.Prompt.RequestID
 		taskState.RecoveryCount = decision.NextCount
 		if decision.Kind == recovery.ResumeSession {
 			taskState.Stage = "resume"
 		} else {
 			taskState.Stage = "recovery_prompt"
 		}
+		taskState.PreviousRequestID = previousRequestID
 		taskState.Prompt.RequestID = parallelPromptRequestID(snapshot.RunID, id, taskState.RecoveryCount)
 		taskState.LastProgressAt = o.now()
 		snapshot.Tasks[id] = taskState
@@ -1880,6 +1903,7 @@ func (o *Orchestrator) parallelCIRepairOrBlock(ctx context.Context, snapshot *st
 		taskState.RequiresFreshCommit = true
 		taskState.PreviousCommitSHA = taskState.Agent.CommitSHA
 		taskState.PreviousFingerprint = taskState.ProgressFingerprint
+		taskState.PreviousRequestID = taskState.Prompt.RequestID
 		taskState.Prompt = state.PromptReceipt{RequestID: parallelPromptRequestID(snapshot.RunID, taskID, taskState.RepairCount)}
 		taskState.Agent.VerificationEvidence = nil
 		taskState.Agent.ChangedFiles = nil
@@ -2081,6 +2105,7 @@ func (o *Orchestrator) applyParallelReviewEvidence(ctx context.Context, snapshot
 		taskState.RequiresFreshCommit = true
 		taskState.PreviousCommitSHA = taskState.Agent.CommitSHA
 		taskState.PreviousFingerprint = taskState.ProgressFingerprint
+		taskState.PreviousRequestID = taskState.Prompt.RequestID
 		taskState.Agent.RequestID = ""
 		taskState.Agent.VerificationEvidence, taskState.Agent.ChangedFiles, taskState.Agent.Patch = nil, nil, ""
 		taskState.Prompt = state.PromptReceipt{RequestID: parallelPromptRequestID(snapshot.RunID, taskID, taskState.RepairCount)}

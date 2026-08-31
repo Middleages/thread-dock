@@ -3,13 +3,104 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 
 	"thread-dock/internal/contract"
 	"thread-dock/internal/github"
+	"thread-dock/internal/herdr"
 	"thread-dock/internal/state"
 	"thread-dock/internal/testfixture"
 )
+
+func TestParallelRecoveryPromptRequiresFreshEvidenceRequestID(t *testing.T) {
+	h := newParallelHarness(t)
+	newRequestID := "run-1788136436747506769-1:api:repair-1"
+	oldRequestID := "run-1788136436747506769-1:api:prompt"
+	snapshot := state.RunSnapshot{RunID: "run-1788136436747506769-1", Phase: contract.PhaseBuilding, Tasks: map[string]state.TaskRunState{}}
+	taskState := state.TaskRunState{
+		Agent:             state.AgentEvidence{Name: "builder-api"},
+		Prompt:            state.PromptReceipt{RequestID: newRequestID},
+		PreviousRequestID: oldRequestID,
+	}
+	if err := h.orchestrator.parallelRecoveryPromptTask(context.Background(), &snapshot, "api", taskState); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.parallelHD.prompts) != 1 {
+		t.Fatalf("prompts=%d, want one", len(h.parallelHD.prompts))
+	}
+	assertFreshEvidenceRequestInstructions(t, h.parallelHD.prompts[0], newRequestID, oldRequestID)
+}
+
+func TestParallelRecoveryRotationPersistsPreviousRequestID(t *testing.T) {
+	h := newParallelHarness(t)
+	oldRequestID := "run-1788136436747506769-1:api:prompt"
+	snapshot := state.RunSnapshot{
+		RunID: "run-1788136436747506769-1", Phase: contract.PhaseBuilding,
+		Tasks: map[string]state.TaskRunState{},
+	}
+	taskState := state.TaskRunState{
+		Agent:    state.AgentEvidence{Name: "builder-api"},
+		Worktree: state.WorktreeState{Path: "/tmp/api", WorkspaceID: "workspace-api", PaneID: "pane-api"},
+		Prompt:   state.PromptReceipt{RequestID: oldRequestID},
+	}
+	info := herdr.AgentInfo{Name: "builder-api", SessionID: "session-builder-api", State: herdr.AgentStateIdle, WorkspaceID: "workspace-api", PaneID: "pane-api", Path: "/tmp/api"}
+	if err := h.orchestrator.parallelApplyRecovery(context.Background(), &snapshot, "api", taskState, info, nil, "stale evidence"); err != nil {
+		t.Fatal(err)
+	}
+	got := snapshot.Tasks["api"]
+	if got.PreviousRequestID != oldRequestID || got.Prompt.RequestID != "run-1788136436747506769-1:api:repair-1" {
+		t.Fatalf("rotated request IDs: previous=%q current=%q", got.PreviousRequestID, got.Prompt.RequestID)
+	}
+}
+
+func TestParallelRepairPromptRequiresFreshEvidenceRequestID(t *testing.T) {
+	h := newParallelHarness(t)
+	newRequestID := "run-1788136436747506769-1:api:repair-1"
+	oldRequestID := "run-1788136436747506769-1:api:prompt"
+	snapshot := state.RunSnapshot{
+		RunID: "run-1788136436747506769-1", Phase: contract.PhaseBuilding,
+		RepairCount: 1, RepairBaseSHA: validSHA,
+		ReviewFindings: []state.ReviewFinding{{ID: "F-1", Summary: "fix this", Paths: []string{"src/payments/retry.go"}}},
+		Tasks:          map[string]state.TaskRunState{},
+	}
+	runtime := &runRuntime{contract: testfixture.ValidContract()}
+	task := runtime.contract.Tasks[0]
+	taskState := state.TaskRunState{
+		Stage:             "repair_prompt",
+		Agent:             state.AgentEvidence{Name: "builder-api"},
+		Prompt:            state.PromptReceipt{RequestID: newRequestID},
+		PreviousRequestID: oldRequestID,
+	}
+	if err := h.orchestrator.parallelPromptTask(context.Background(), &snapshot, runtime, "api", task, taskState); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.parallelHD.prompts) != 1 {
+		t.Fatalf("prompts=%d, want one", len(h.parallelHD.prompts))
+	}
+	assertFreshEvidenceRequestInstructions(t, h.parallelHD.prompts[0], newRequestID, oldRequestID)
+}
+
+func assertFreshEvidenceRequestInstructions(t *testing.T, packet, newRequestID, oldRequestID string) {
+	t.Helper()
+	for _, want := range []string{
+		"Prior Evidence envelopes and request IDs are stale",
+		"NEW Evidence envelope",
+		"Keep the current commit and work",
+		"do not repeat completed work",
+		"only after exact verification",
+		"Do not reuse " + oldRequestID,
+	} {
+		if !strings.Contains(packet, want) {
+			t.Errorf("packet missing %q:\n%s", want, packet)
+		}
+	}
+	quoted := strconv.Quote(newRequestID)
+	if strings.Count(packet, quoted) < 2 {
+		t.Errorf("packet must quote and repeat new request ID %q:\n%s", quoted, packet)
+	}
+}
 
 func TestParallelBuilderWorktreeReconcileAdoptsCanonicalPathWhenPreEffectPathIsEmpty(t *testing.T) {
 	h := newParallelHarness(t)
