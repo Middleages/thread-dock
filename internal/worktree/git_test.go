@@ -614,6 +614,86 @@ func TestInspectRetirementTargetRejectsRootsAndMissingConfiguration(t *testing.T
 	}
 }
 
+func TestRemoveRetiredRejectsMovedRegisteredTarget(t *testing.T) {
+	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
+	proof, err := git.InspectRetirementTarget(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(herdrRoot, "moved target")
+	runSetupGit(t, repo, "worktree", "move", target, moved)
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("err=%v, want ErrUnsafeTarget", err)
+	}
+	if _, err := os.Stat(moved); err != nil {
+		t.Fatalf("moved target was removed: %v", err)
+	}
+}
+
+func TestRetirementRejectsSymlinkProofPathWithoutRemovingTarget(t *testing.T) {
+	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
+	proof, err := git.InspectRetirementTarget(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(herdrRoot, "symlink target")
+	runSetupGit(t, repo, "worktree", "move", target, moved)
+	if err := os.Symlink(moved, target); err != nil {
+		t.Fatal(err)
+	}
+	trace := &recordingRunner{}
+	git.Runner = trace
+	if _, err := git.InspectRetirementTarget(context.Background(), repo, target, "agent/task", sha); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("Inspect symlink err=%v, want ErrUnsafeTarget", err)
+	}
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("Remove symlink err=%v, want ErrUnsafeTarget", err)
+	}
+	if _, err := os.Stat(moved); err != nil {
+		t.Fatalf("symlink target was removed: %v", err)
+	}
+	assertNoWorktreeRemove(t, trace.calls)
+}
+
+func TestRetirementRejectsUnregisteredOrdinaryDirectoryWithoutMutation(t *testing.T) {
+	git, repo, herdrRoot, _, sha := realRetirementRepo(t)
+	ordinary := filepath.Join(herdrRoot, "ordinary directory")
+	if err := os.Mkdir(ordinary, 0700); err != nil {
+		t.Fatal(err)
+	}
+	proof := RetirementProof{RepositoryCommonDir: filepath.Join(repo, ".git"), Path: ordinary, Branch: "agent/task", HeadSHA: sha}
+	trace := &recordingRunner{}
+	git.Runner = trace
+	if _, err := git.InspectRetirementTarget(context.Background(), repo, ordinary, "agent/task", sha); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("Inspect ordinary directory err=%v, want ErrUnsafeTarget", err)
+	}
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("Remove ordinary directory err=%v, want ErrUnsafeTarget", err)
+	}
+	if _, err := os.Stat(ordinary); err != nil {
+		t.Fatalf("ordinary directory was removed: %v", err)
+	}
+	assertNoWorktreeRemove(t, trace.calls)
+}
+
+func assertNoWorktreeRemove(t *testing.T, calls []fakeCall) {
+	t.Helper()
+	for _, call := range calls {
+		if len(call.args) >= 2 && call.args[0] == "worktree" && call.args[1] == "remove" {
+			t.Fatalf("unsafe worktree removal call: %#v", call)
+		}
+	}
+}
+
+type recordingRunner struct {
+	calls []fakeCall
+}
+
+func (r *recordingRunner) Run(ctx context.Context, cwd, executable string, args ...string) (runner.Result, error) {
+	r.calls = append(r.calls, fakeCall{cwd: cwd, exec: executable, args: append([]string(nil), args...)})
+	return (runner.OSRunner{}).Run(ctx, cwd, executable, args...)
+}
+
 func realRetirementRepo(t *testing.T) (*Git, string, string, string, string) {
 	t.Helper()
 	root := t.TempDir()
