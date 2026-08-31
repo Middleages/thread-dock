@@ -912,7 +912,7 @@ func (g *Git) RemoveRetired(ctx context.Context, repositoryPath, trustedHerdrRoo
 	if !validRetirementProofArguments(g, repositoryPath, trustedHerdrRoot, proof) {
 		return ErrUnsafeTarget
 	}
-	proofCommonDir, err := resolvePath(proof.RepositoryCommonDir)
+	proofCommonDir, err := resolveRetirementCommonDir(proof.RepositoryCommonDir)
 	if err != nil {
 		return ErrUnsafeTarget
 	}
@@ -924,7 +924,7 @@ func (g *Git) RemoveRetired(ctx context.Context, repositoryPath, trustedHerdrRoo
 		// No target and no exact registration is the only safe interpretation of
 		// a lost successful response. The repository identity still has to
 		// match the durable proof so a missing path cannot mask a wrong repo.
-		if !samePath(current.RepositoryCommonDir, proofCommonDir) || current.Path != filepath.Clean(proof.Path) {
+		if current.RepositoryCommonDir != proofCommonDir || current.Path != filepath.Clean(proof.Path) {
 			return ErrUnsafeTarget
 		}
 		return nil
@@ -964,7 +964,7 @@ func (g *Git) proveRetirementTarget(ctx context.Context, repositoryPath, trusted
 	}
 	if !samePath(paths.repositoryRoot, paths.configuredRoot) {
 		suppliedCommonDir, suppliedErr := g.gitCommonDir(ctx, paths.repositoryRoot)
-		if suppliedErr != nil || !samePath(suppliedCommonDir, configuredCommonDir) {
+		if suppliedErr != nil || suppliedCommonDir != configuredCommonDir {
 			return RetirementProof{}, false, retirementUnsafe(suppliedErr)
 		}
 	}
@@ -987,7 +987,7 @@ func (g *Git) proveRetirementTarget(ctx context.Context, repositoryPath, trusted
 		if len(matches) != 0 {
 			return RetirementProof{}, false, ErrUnsafeTarget
 		}
-		if retirementIdentityMoved(registrations, paths, expectedBranch, expectedSHA) {
+		if retirementBranchMoved(registrations, expectedBranch) {
 			return RetirementProof{}, false, ErrUnsafeTarget
 		}
 		if !allowMissing {
@@ -1006,7 +1006,7 @@ func (g *Git) proveRetirementTarget(ctx context.Context, repositoryPath, trusted
 	if err != nil {
 		return RetirementProof{}, false, retirementUnsafe(err)
 	}
-	if !samePath(targetCommonDir, configuredCommonDir) {
+	if targetCommonDir != configuredCommonDir {
 		return RetirementProof{}, false, ErrUnsafeTarget
 	}
 	branchResult, err := g.command(ctx, paths.target, "rev-parse", "--abbrev-ref", "HEAD")
@@ -1128,31 +1128,17 @@ func canonicalRetirementRegistrationPath(repositoryRoot, path string) (string, e
 	return filepath.Clean(resolved), nil
 }
 
-// retirementIdentityMoved detects a proof whose exact path disappeared while
-// Git still has its branch/HEAD identity registered elsewhere. A HEAD-only
-// match is meaningful only when unique; repository roots are excluded from
-// that check because a linked target can legitimately share their HEAD.
-func retirementIdentityMoved(registrations []registeredRetirementWorktree, paths retirementPaths, branch, head string) bool {
-	branchMatches, headMatches := 0, 0
+// retirementBranchMoved detects a proof whose exact path disappeared while
+// Git still has its branch registered elsewhere. Branch identity is unique to
+// a Worktree; HEAD identity is deliberately not considered because multiple
+// differently named branches may legitimately point at the same commit.
+func retirementBranchMoved(registrations []registeredRetirementWorktree, branch string) bool {
 	for _, registration := range registrations {
-		registeredPath, err := canonicalRetirementRegistrationPath(paths.repositoryRoot, registration.path)
-		if err != nil {
-			return true
-		}
-		if registration.branch == branch && registration.head == head {
-			return true
-		}
-		if registeredPath == paths.repositoryRoot || registeredPath == paths.configuredRoot {
-			continue
-		}
 		if registration.branch == branch {
-			branchMatches++
-		}
-		if registration.head == head {
-			headMatches++
+			return true
 		}
 	}
-	return branchMatches == 1 || headMatches == 1
+	return false
 }
 
 type retirementPaths struct {
@@ -1243,8 +1229,19 @@ func resolveRetirementTargetPath(path string, allowMissing bool) (string, bool, 
 	return filepath.Clean(resolved), false, nil
 }
 
+func resolveRetirementCommonDir(path string) (string, error) {
+	if strings.TrimSpace(path) == "" || strings.TrimSpace(path) != path || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return "", ErrUnsafeTarget
+	}
+	resolved, err := resolvePath(path)
+	if err != nil || resolved != path {
+		return "", ErrUnsafeTarget
+	}
+	return resolved, nil
+}
+
 func sameRetirementProof(actual, expected RetirementProof, expectedCommonDir string) bool {
-	return samePath(actual.RepositoryCommonDir, expectedCommonDir) && actual.Path == filepath.Clean(expected.Path) && actual.Branch == expected.Branch && actual.HeadSHA == expected.HeadSHA
+	return actual.RepositoryCommonDir == expectedCommonDir && actual.Path == filepath.Clean(expected.Path) && actual.Branch == expected.Branch && actual.HeadSHA == expected.HeadSHA
 }
 
 func retirementUnsafe(err error) error {

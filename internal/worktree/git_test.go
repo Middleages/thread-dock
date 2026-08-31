@@ -676,6 +676,47 @@ func TestRetirementRejectsUnregisteredOrdinaryDirectoryWithoutMutation(t *testin
 	assertNoWorktreeRemove(t, trace.calls)
 }
 
+func TestRemoveRetiredRejectsCommonDirSymlinkAlias(t *testing.T) {
+	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
+	proof, err := git.InspectRetirementTarget(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(filepath.Dir(herdrRoot), "common-dir-alias")
+	if err := os.Symlink(proof.RepositoryCommonDir, alias); err != nil {
+		t.Fatal(err)
+	}
+	proof.RepositoryCommonDir = alias
+	trace := &recordingRunner{}
+	git.Runner = trace
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("CommonDir alias err=%v, want ErrUnsafeTarget", err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("target was removed after CommonDir alias: %v", err)
+	}
+	assertNoWorktreeRemove(t, trace.calls)
+}
+
+func TestRemoveRetiredAllowsResponseLossWithDifferentBranchAtSameHead(t *testing.T) {
+	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
+	other := filepath.Join(herdrRoot, "other branch")
+	runSetupGit(t, repo, "worktree", "add", "-b", "agent/other", other, sha)
+	proof, err := git.InspectRetirementTarget(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); err != nil {
+		t.Fatal(err)
+	}
+	if err := git.RemoveRetired(context.Background(), repo, herdrRoot, proof); err != nil {
+		t.Fatalf("same-head different-branch retry err=%v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("different-branch worktree was removed: %v", err)
+	}
+}
+
 func assertNoWorktreeRemove(t *testing.T, calls []fakeCall) {
 	t.Helper()
 	for _, call := range calls {
