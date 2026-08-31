@@ -237,6 +237,29 @@ func TestNextRejectsUnsafeWorkspaceLifecycleState(t *testing.T) {
 	}
 }
 
+func TestNextRejectsUnsafeLifecycleWhileClosing(t *testing.T) {
+	for _, tc := range []struct {
+		name, agentState, workspaceState string
+	}{
+		{name: "working agent", agentState: "working", workspaceState: "done"},
+		{name: "blocked agent", agentState: "blocked", workspaceState: "done"},
+		{name: "unknown agent", agentState: "unknown", workspaceState: "done"},
+		{name: "working workspace", agentState: "done", workspaceState: "working"},
+		{name: "blocked workspace", agentState: "done", workspaceState: "blocked"},
+		{name: "unknown workspace", agentState: "done", workspaceState: "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := pendingRetirement()
+			plan.Targets[0].Status = "closing"
+			observation := &Observation{TargetKey: "reviewer", WorkspaceFound: true, WorkspaceObserved: true, WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration", WorkspaceState: tc.workspaceState, AgentState: tc.agentState}
+			got := Next(plan, observation)
+			if got.Kind != NeedsOperator {
+				t.Fatalf("decision=%#v", got)
+			}
+		})
+	}
+}
+
 func retirementSnapshot() state.RunSnapshot {
 	return state.RunSnapshot{
 		TaskOrder: []string{"alpha"}, FinalSHA: retirementTestSHA,

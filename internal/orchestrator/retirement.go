@@ -425,7 +425,9 @@ func (o *Orchestrator) reconcileRetirementWorkspace(ctx context.Context, snapsho
 		snapshot.PendingAction = ""
 		snapshot.PendingTaskID = ""
 		snapshot.Summary = "retirement Workspace remains present; close will retry"
-		snapshot.Retirement.UpdatedAt = o.now()
+		updatedAt := o.now()
+		snapshot.Retirement.UpdatedAt = updatedAt
+		snapshot.UpdatedAt = updatedAt
 		if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
 			return err
 		}
@@ -464,7 +466,9 @@ func (o *Orchestrator) applyRetirementObservation(ctx context.Context, snapshot 
 	}
 	snapshot.PendingAction = ""
 	snapshot.PendingTaskID = ""
-	snapshot.Retirement.UpdatedAt = o.now()
+	updatedAt := o.now()
+	snapshot.Retirement.UpdatedAt = updatedAt
+	snapshot.UpdatedAt = updatedAt
 	snapshot.Summary = message
 	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
 		return err
@@ -472,7 +476,7 @@ func (o *Orchestrator) applyRetirementObservation(ctx context.Context, snapshot 
 	if err := o.append(ctx, snapshot.RunID, state.Event{Type: "action_succeeded", Phase: snapshot.Phase, Message: message}); err != nil {
 		return err
 	}
-	if decision.Kind == retirementpolicy.Complete || allRetirementTargetsRetired(snapshot.Retirement) {
+	if (decision.Kind == retirementpolicy.Complete && decision.TargetKey == "") || allRetirementTargetsRetired(snapshot.Retirement) {
 		return o.finishRetirement(ctx, snapshot)
 	}
 	return nil

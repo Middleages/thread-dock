@@ -247,7 +247,7 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 				base.NextStatus = "retired"
 				return base
 			}
-			if !safeWorkspaceLifecycle(observation.WorkspaceState) {
+			if !safeWorkspaceObservation(observation) {
 				return needs(base, "workspace lifecycle state is not safe to retire")
 			}
 			if reason := workspaceIdentityMismatch(target, observation); reason != "" {
@@ -268,11 +268,11 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 			if !observation.WorkspaceObserved || !observation.WorkspaceFound {
 				return needs(base, "workspace observation is not an exact existing identity")
 			}
-			if !safeWorkspaceLifecycle(observation.WorkspaceState) {
-				return needs(base, "workspace lifecycle state is not safe to retire")
-			}
 			if reason := workspaceIdentityMismatch(target, observation); reason != "" {
 				return needs(base, reason)
+			}
+			if !safeWorkspaceObservation(observation) {
+				return needs(base, "workspace lifecycle state is not safe to retire")
 			}
 			base.Kind = CloseWorkspace
 			base.NextStatus = "closing"
@@ -293,6 +293,9 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 			if reason := workspaceIdentityMismatch(target, observation); reason != "" {
 				return needs(base, reason)
 			}
+			if !safeWorkspaceObservation(observation) {
+				return needs(base, "workspace lifecycle state is not safe to retire")
+			}
 			base.Kind = CloseWorkspace
 			base.NextStatus = "closing"
 			return base
@@ -310,6 +313,27 @@ func safeWorkspaceLifecycle(value string) bool {
 	default:
 		return false
 	}
+}
+
+// safeWorkspaceObservation accepts either modeled lifecycle field when the
+// other is not supplied, but every supplied field must be safe. Herdr's
+// adapter currently exposes the exact pane state as WorkspaceState; tests and
+// alternate adapters may also provide AgentState for the same observation.
+func safeWorkspaceObservation(observation *Observation) bool {
+	if observation == nil {
+		return false
+	}
+	seen := false
+	for _, value := range []string{observation.AgentState, observation.WorkspaceState} {
+		if value == "" {
+			continue
+		}
+		seen = true
+		if !safeWorkspaceLifecycle(value) {
+			return false
+		}
+	}
+	return seen
 }
 
 func gitIdentityMismatch(target state.RetirementTarget, observation *Observation) string {

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -48,6 +49,141 @@ func TestBeginRetirementPersistsOrderedPlanAndRetiringPhase(t *testing.T) {
 	}
 }
 
+func TestRetirementCompleteStoryPreservesEvidenceAndClosesInOrder(t *testing.T) {
+	h := newHarness(t)
+	calls := []string{}
+	hd := &retirementTestHerdr{fakeHerdr: h.herdr, calls: &calls, agentInfos: map[string]herdr.AgentInfo{}, workspaces: map[string]herdr.WorkspaceInfo{}, removeOnClose: true}
+	git := &retirementTestGit{fakeGit: h.git, calls: &calls}
+	for _, target := range []struct {
+		name, workspace, pane, path string
+	}{
+		{name: "reviewer", workspace: "review", pane: "review:pane", path: "/managed/review"},
+		{name: "beta", workspace: "beta", pane: "beta:pane", path: "/managed/beta"},
+		{name: "alpha", workspace: "alpha", pane: "alpha:pane", path: "/managed/alpha"},
+	} {
+		hd.agentInfos[target.name] = herdr.AgentInfo{Name: target.name, SessionID: "session-" + target.name, WorkspaceID: target.workspace, PaneID: target.pane, Path: target.path, State: herdr.AgentStateDone}
+		hd.workspaces[target.workspace] = herdr.WorkspaceInfo{WorkspaceID: target.workspace, RootPaneID: target.pane, Path: target.path, State: herdr.AgentStateDone}
+	}
+	h.Deps.Herdr, h.Deps.Git, h.Deps.Worktree = hd, git, git
+	h.orchestrator = New(h.Deps)
+	evidence := []state.VerificationEvidence{{Command: "go test ./alpha", Outcome: "passed", Duration: "1s"}}
+	snapshot := state.RunSnapshot{
+		RunID: contract.RunID("retire-complete-story"), ContractPath: h.contractPath, Phase: contract.PhaseCompleted, RepositoryPath: "/repo", FinalSHA: validSHA,
+		Reviewer: state.AgentEvidence{Name: "reviewer", SessionID: "session-reviewer"}, ReviewerWorktree: state.WorktreeState{WorkspaceID: "review", PaneID: "review:pane", Path: "/managed/review", Branch: "agent/review"},
+		TaskOrder: []string{"alpha", "beta"}, Tasks: map[string]state.TaskRunState{
+			"alpha": {State: "completed", Agent: state.AgentEvidence{Name: "alpha", SessionID: "session-alpha", CommitSHA: validSHA, VerificationEvidence: evidence}, Worktree: state.WorktreeState{WorkspaceID: "alpha", PaneID: "alpha:pane", Path: "/managed/alpha", Branch: "agent/alpha"}},
+			"beta":  {State: "completed", Agent: state.AgentEvidence{Name: "beta", SessionID: "session-beta", CommitSHA: validSHA, VerificationEvidence: evidence}, Worktree: state.WorktreeState{WorkspaceID: "beta", PaneID: "beta:pane", Path: "/managed/beta", Branch: "agent/beta"}},
+		},
+	}
+	if err := h.store.Create(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.orchestrator.BeginRetirement(context.Background(), snapshot.RunID, contract.PhaseCompleted, true); err != nil {
+		t.Fatal(err)
+	}
+	beforeTargets, err := json.Marshal(h.mustLoad(snapshot.RunID).Retirement.Targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callCount := len(calls)
+	if err := h.orchestrator.BeginRetirement(context.Background(), snapshot.RunID, contract.PhaseCompleted, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != callCount {
+		t.Fatalf("idempotent BeginRetirement made provider calls: %v", calls[callCount:])
+	}
+	afterTargets, err := json.Marshal(h.mustLoad(snapshot.RunID).Retirement.Targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeTargets, afterTargets) {
+		t.Fatalf("idempotent target plan changed: before=%s after=%s", beforeTargets, afterTargets)
+	}
+	originalTasks := snapshot.Tasks
+	for i := 0; i < 100; i++ {
+		before := len(calls)
+		if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); err != nil {
+			t.Fatal(err)
+		}
+		if delta := len(calls) - before; delta > 1 {
+			t.Fatalf("Advance %d made %d provider operations: %v", i, delta, calls[before:])
+		}
+		if got := h.mustLoad(snapshot.RunID); got.Phase == contract.PhaseCompleted {
+			break
+		}
+	}
+	got := h.mustLoad(snapshot.RunID)
+	if got.Phase != contract.PhaseCompleted || got.Retirement.Status != "retired" {
+		t.Fatalf("story snapshot=%#v calls=%v", got, calls)
+	}
+	if !reflect.DeepEqual(hd.closes, []string{"review", "beta", "alpha"}) {
+		t.Fatalf("close order=%v targets=%#v calls=%v", hd.closes, got.Retirement.Targets, calls)
+	}
+	for id, before := range originalTasks {
+		after := got.Tasks[id]
+		if after.Worktree.Path != before.Worktree.Path || after.Agent.CommitSHA != before.Agent.CommitSHA || !reflect.DeepEqual(after.Agent.VerificationEvidence, before.Agent.VerificationEvidence) || after.State != before.State {
+			t.Fatalf("task %s evidence/worktree changed: before=%#v after=%#v", id, before, after)
+		}
+	}
+	if got.ReviewerWorktree.Path != snapshot.ReviewerWorktree.Path || got.FinalSHA != snapshot.FinalSHA {
+		t.Fatalf("reviewer evidence changed: %#v", got)
+	}
+	if git.removedWorktrees != 0 || git.removedState != 0 {
+		t.Fatalf("retirement removed durable evidence: worktrees=%d state=%d", git.removedWorktrees, git.removedState)
+	}
+}
+
+func TestLegacyCompletedSnapshotDoesNotRetroTriggerRetirement(t *testing.T) {
+	h := newHarness(t)
+	snapshot := state.RunSnapshot{RunID: "legacy-completed", ContractPath: h.contractPath, Phase: contract.PhaseCompleted}
+	if err := h.store.Create(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	before := h.mustLoad(snapshot.RunID)
+	if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); !errors.Is(err, ErrRunFinished) {
+		t.Fatalf("Advance error=%v want ErrRunFinished", err)
+	}
+	after := h.mustLoad(snapshot.RunID)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("legacy snapshot mutated: before=%#v after=%#v", before, after)
+	}
+	if h.herdr.getInfoCalls != 0 {
+		t.Fatalf("legacy retirement provider calls=%d", h.herdr.getInfoCalls)
+	}
+}
+
+func TestClosingWorkspaceLifecycleStatesNeedOperatorWithoutRetryClose(t *testing.T) {
+	for _, lifecycle := range []herdr.AgentState{herdr.AgentStateWorking, herdr.AgentStateBlocked, herdr.AgentStateUnknown} {
+		t.Run(string(lifecycle), func(t *testing.T) {
+			h := newHarness(t)
+			hd := &retirementTestHerdr{fakeHerdr: h.herdr, workspaces: map[string]herdr.WorkspaceInfo{"builder": {WorkspaceID: "builder", RootPaneID: "builder:pane", Path: "/managed/builder", State: herdr.AgentStateDone}}, removeOnClose: false}
+			git := &retirementTestGit{fakeGit: h.git}
+			h.Deps.Herdr, h.Deps.Git, h.Deps.Worktree = hd, git, git
+			h.orchestrator = New(h.Deps)
+			snapshot := state.RunSnapshot{RunID: contract.RunID("closing-state-" + string(lifecycle)), ContractPath: h.contractPath, Phase: contract.PhaseCompleted, RepositoryPath: "/repo", Builder: state.AgentEvidence{Name: "builder", CommitSHA: validSHA}, BuilderWorktree: state.WorktreeState{WorkspaceID: "builder", PaneID: "builder:pane", Path: "/managed/builder", Branch: "agent/builder"}}
+			if err := h.store.Create(context.Background(), snapshot); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.orchestrator.BeginRetirement(context.Background(), snapshot.RunID, contract.PhaseCompleted, true); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 4; i++ {
+				if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			hd.workspaces["builder"] = herdr.WorkspaceInfo{WorkspaceID: "builder", RootPaneID: "builder:pane", Path: "/managed/builder", State: lifecycle}
+			if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); err != nil {
+				t.Fatal(err)
+			}
+			got := h.mustLoad(snapshot.RunID)
+			if got.Retirement.Status != "needs_operator" || len(hd.closes) != 1 {
+				t.Fatalf("snapshot=%#v closes=%v", got, hd.closes)
+			}
+		})
+	}
+}
+
 type retirementTestHerdr struct {
 	*fakeHerdr
 	workspaces    map[string]herdr.WorkspaceInfo
@@ -56,9 +192,17 @@ type retirementTestHerdr struct {
 	removeOnClose bool
 	infoName      string
 	infoSession   string
+	calls         *[]string
+	agentInfos    map[string]herdr.AgentInfo
 }
 
 func (h *retirementTestHerdr) GetInfo(ctx context.Context, name string) (herdr.AgentInfo, error) {
+	if h.calls != nil {
+		*h.calls = append(*h.calls, "agent:"+name)
+	}
+	if info, ok := h.agentInfos[name]; ok {
+		return info, nil
+	}
 	info, err := h.fakeHerdr.GetInfo(ctx, name)
 	if err != nil {
 		return info, err
@@ -76,12 +220,18 @@ func (h *retirementTestHerdr) GetInfo(ctx context.Context, name string) (herdr.A
 }
 
 func (h *retirementTestHerdr) GetWorkspace(_ context.Context, id string) (herdr.WorkspaceInfo, bool, error) {
+	if h.calls != nil {
+		*h.calls = append(*h.calls, "workspace-get:"+id)
+	}
 	h.reads++
 	info, ok := h.workspaces[id]
 	return info, ok, nil
 }
 
 func (h *retirementTestHerdr) CloseWorkspace(_ context.Context, id string) error {
+	if h.calls != nil {
+		*h.calls = append(*h.calls, "workspace-close:"+id)
+	}
 	h.closes = append(h.closes, id)
 	if h.removeOnClose {
 		delete(h.workspaces, id)
@@ -91,7 +241,10 @@ func (h *retirementTestHerdr) CloseWorkspace(_ context.Context, id string) error
 
 type retirementTestGit struct {
 	*fakeGit
-	inspects int
+	inspects         int
+	calls            *[]string
+	removedWorktrees int
+	removedState     int
 }
 
 type retirementRecordingStore struct {
@@ -125,6 +278,9 @@ func (s *retirementRecordingStore) Append(ctx context.Context, id contract.RunID
 }
 
 func (g *retirementTestGit) InspectRetirementTarget(_ context.Context, _, path, branch, sha string) (worktree.RetirementProof, error) {
+	if g.calls != nil {
+		*g.calls = append(*g.calls, "git:"+path)
+	}
 	g.inspects++
 	return worktree.RetirementProof{RepositoryCommonDir: "/repo/.git", Path: path, Branch: branch, HeadSHA: sha}, nil
 }
@@ -443,7 +599,14 @@ func TestCloseResponseLossWithExactWorkspaceClearsIntentBeforeRetry(t *testing.T
 	if err := h.orchestrator.BeginRetirement(context.Background(), snapshot.RunID, contract.PhaseCompleted, false); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 3; i++ {
+	h.clock.now = h.mustLoad(snapshot.RunID).UpdatedAt.Add(time.Minute)
+	if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.mustLoad(snapshot.RunID); !got.UpdatedAt.Equal(h.clock.now) {
+		t.Fatalf("observation UpdatedAt=%s want %s", got.UpdatedAt, h.clock.now)
+	}
+	for i := 0; i < 2; i++ {
 		if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); err != nil {
 			t.Fatal(err)
 		}
@@ -454,11 +617,15 @@ func TestCloseResponseLossWithExactWorkspaceClearsIntentBeforeRetry(t *testing.T
 	if !reflect.DeepEqual(hd.closes, []string{"builder"}) {
 		t.Fatalf("initial close calls=%v", hd.closes)
 	}
+	h.clock.now = h.clock.now.Add(time.Minute)
 	if err := h.orchestrator.Advance(context.Background(), snapshot.RunID); err != nil {
 		t.Fatal(err)
 	}
 	got := h.mustLoad(snapshot.RunID)
 	if got.PendingAction != "" || got.Retirement.Targets[0].Status != "workspace_observed" || len(hd.closes) != 1 {
 		t.Fatalf("reconciled snapshot=%#v closes=%v", got, hd.closes)
+	}
+	if !got.UpdatedAt.Equal(h.clock.now) {
+		t.Fatalf("exact-present retry UpdatedAt=%s want %s", got.UpdatedAt, h.clock.now)
 	}
 }
