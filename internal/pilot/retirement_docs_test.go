@@ -100,3 +100,23 @@ func TestParallelPilotRunbookProtectsUnacceptedEvidenceFromRetirement(t *testing
 		}
 	}
 }
+
+func TestRetirementDesignAndPlanRequireOneWorkspaceOwner(t *testing.T) {
+	root := repositoryRoot(t)
+	for _, relative := range []string{
+		filepath.Join("docs", "superpowers", "specs", "2026-08-31-threaddock-session-retirement-design.md"),
+		filepath.Join("docs", "superpowers", "plans", "2026-08-31-threaddock-session-retirement.md"),
+	} {
+		contents, err := os.ReadFile(filepath.Join(root, relative))
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := string(contents)
+		if !strings.Contains(doc, "exactly one durable owner") || !strings.Contains(doc, "not collapsed") && !strings.Contains(doc, "fail closed") {
+			t.Errorf("%s does not preserve the one-owner Workspace invariant", relative)
+		}
+		if strings.Contains(doc, "Duplicate Workspace IDs collapse") || strings.Contains(doc, "collapses duplicate Workspace IDs") {
+			t.Errorf("%s still promises unsafe Workspace alias collapse", relative)
+		}
+	}
+}

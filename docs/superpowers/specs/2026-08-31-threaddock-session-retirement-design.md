@@ -66,7 +66,7 @@ type RetirementTarget struct {
 }
 ```
 
-Target order is deterministic: Reviewer first, then Builders in reverse contract order. Duplicate Workspace IDs collapse to one target. Historical Agent, Workspace, pane, path, session, commit and evidence fields remain unchanged; retirement marks lifecycle state instead of erasing identity.
+Target order is deterministic: Reviewer first, then Builders in reverse contract order. Every Workspace ID must have exactly one durable owner; duplicate IDs, including otherwise identical aliases, fail closed to `needs_operator` before any close. Cleanup is task-keyed, so collapsing an alias would lose the ownership needed to classify every later cleanup target safely. Historical Agent, Workspace, pane, path, session, commit and evidence fields remain unchanged; retirement marks lifecycle state instead of erasing identity.
 
 Before the first close action, ThreadDock derives every target and records its canonical path, branch, exact HEAD and repository common-directory identity. Missing or conflicting identity blocks retirement before any Workspace closes.
 

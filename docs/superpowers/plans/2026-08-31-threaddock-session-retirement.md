@@ -77,7 +77,7 @@ internal/pilot/retirement_docs_test.go          # runbook contract assertions
 - [ ] **Step 1: Write failing target-order, decision, compatibility, and config tests**
 
 ```go
-func TestBuildOrdersReviewerThenBuildersInReverseAndDeduplicatesWorkspace(t *testing.T) {
+func TestBuildOrdersReviewerThenBuildersInReverse(t *testing.T) {
     snapshot := state.RunSnapshot{TaskOrder:[]string{"alpha","beta"}, FinalSHA:validSHA}
     snapshot.Reviewer = state.AgentEvidence{Name:"reviewer"}
     snapshot.ReviewerWorktree = state.WorktreeState{WorkspaceID:"review",PaneID:"review:p1",Path:"/managed/integration",Branch:"agent/integration"}
@@ -88,6 +88,10 @@ func TestBuildOrdersReviewerThenBuildersInReverseAndDeduplicatesWorkspace(t *tes
     got, err := Build(snapshot,true,contract.PhaseCompleted)
     if err != nil { t.Fatal(err) }
     if ids := targetKeys(got.Targets); !reflect.DeepEqual(ids,[]string{"reviewer","builder:beta","builder:alpha"}) { t.Fatalf("targets=%v",ids) }
+}
+
+func TestBuildRejectsDuplicateWorkspaceIdentity(t *testing.T) {
+    // Exact and conflicting aliases both fail closed before any close.
 }
 
 func TestConfigDefaultsAutoRetirementWithoutBreakingOldJSON(t *testing.T) {
@@ -107,7 +111,7 @@ Expected: FAIL because the retirement package and fields do not exist.
 
 - [ ] **Step 3: Implement the pure plan, additive JSON, and nullable config default**
 
-`Build` rejects incomplete identity before returning targets. It keeps historical identity fields, collapses duplicate Workspace IDs, records `Status="pending"`, and never performs I/O. `Next` only consumes durable state plus one observation. Config parsing resolves and cleans the Herdr root without requiring it to exist during unit parsing.
+`Build` rejects incomplete identity and any Tasks/TaskOrder disagreement before returning targets. It keeps historical identity fields, requires exactly one durable owner per Workspace ID, records `Status="pending"`, and never performs I/O. Duplicate aliases are not collapsed because cleanup classifies persisted task ownership; losing an alias TaskID would make the later active/retired classification contradictory. `Next` only consumes durable state plus one observation. Config parsing resolves and cleans the Herdr root without requiring it to exist during unit parsing.
 
 - [ ] **Step 4: Run focused compatibility tests**
 
