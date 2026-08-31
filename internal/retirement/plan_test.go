@@ -97,6 +97,49 @@ func TestNextAdvancesIdleOrDoneThroughProofAndClose(t *testing.T) {
 	}
 }
 
+func TestNextPureSequencePersistsEachRetirementStatusBeforeClosing(t *testing.T) {
+	plan := pendingRetirement()
+	plan.Targets = plan.Targets[:1]
+	if got := Next(plan, nil); got.Kind != ObserveAgent {
+		t.Fatalf("initial decision=%#v", got)
+	}
+	agentObservation := &Observation{TargetKey: "reviewer", AgentState: "done"}
+	decision := Next(plan, agentObservation)
+	if decision.Kind != ProveGit || decision.NextStatus != "agent_observed" {
+		t.Fatalf("agent decision=%#v", decision)
+	}
+	applyDecision(&plan, decision)
+
+	proof := &Observation{TargetKey: "reviewer", GitProven: true, RepositoryCommonDir: "/repo/.git", Path: "/managed/integration", Branch: "agent/integration", HeadSHA: retirementTestSHA}
+	decision = Next(plan, proof)
+	if decision.Kind != ObserveWorkspace || decision.NextStatus != "git_proven" {
+		t.Fatalf("proof decision=%#v", decision)
+	}
+	applyDecision(&plan, decision)
+
+	workspace := &Observation{TargetKey: "reviewer", WorkspaceObserved: true, WorkspaceFound: true, WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration"}
+	decision = Next(plan, workspace)
+	if decision.Kind != RecordWorkspace || decision.NextStatus != "workspace_observed" {
+		t.Fatalf("workspace decision=%#v", decision)
+	}
+	applyDecision(&plan, decision)
+
+	decision = Next(plan, nil)
+	if decision.Kind != CloseWorkspace || decision.NextStatus != "closing" {
+		t.Fatalf("close decision=%#v", decision)
+	}
+	applyDecision(&plan, decision)
+
+	decision = Next(plan, &Observation{TargetKey: "reviewer", WorkspaceObserved: true, WorkspaceFound: false})
+	if decision.Kind != Complete || decision.NextStatus != "retired" {
+		t.Fatalf("reconciliation decision=%#v", decision)
+	}
+	applyDecision(&plan, decision)
+	if got := Next(plan, nil); got.Kind != Complete {
+		t.Fatalf("terminal decision=%#v", got)
+	}
+}
+
 func TestNextMissingWorkspaceCompletesTargetAndAllTargetsComplete(t *testing.T) {
 	plan := pendingRetirement()
 	plan.Targets[0].Status = "closing"
@@ -137,9 +180,10 @@ func TestNextNeverClosesFromGitProofWithoutWorkspaceObservation(t *testing.T) {
 
 func TestNextAllowsAlreadyClosedWorkspaceAfterGitProof(t *testing.T) {
 	plan := pendingRetirement()
-	plan.Targets[0].Status = "agent_observed"
-	got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: false, WorkspaceObserved: true, GitProven: true, Path: "/managed/integration", Branch: "agent/integration", HeadSHA: retirementTestSHA})
-	if got.Kind != NeedsOperator {
+	plan.Targets[0].Status = "git_proven"
+	plan.Targets[0].RepositoryCommonDir = "/repo/.git"
+	got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: false, WorkspaceObserved: true})
+	if got.Kind != MarkRetired || got.NextStatus != "retired" {
 		t.Fatalf("already-closed decision=%#v", got)
 	}
 }
@@ -180,4 +224,19 @@ func targetKeys(targets []state.RetirementTarget) []string {
 		keys[i] = target.Key
 	}
 	return keys
+}
+
+func applyDecision(plan *state.RetirementState, decision Decision) {
+	for i := range plan.Targets {
+		if plan.Targets[i].Key != decision.TargetKey {
+			continue
+		}
+		if decision.NextStatus != "" {
+			plan.Targets[i].Status = decision.NextStatus
+		}
+		if decision.NextStatus == "git_proven" {
+			plan.Targets[i].RepositoryCommonDir = "/repo/.git"
+		}
+		return
+	}
 }

@@ -24,6 +24,8 @@ const (
 	ObserveAgent     DecisionKind = "observe_agent"
 	ProveGit         DecisionKind = "prove_git"
 	ObserveWorkspace DecisionKind = "observe_workspace"
+	RecordWorkspace  DecisionKind = "record_workspace"
+	MarkRetired      DecisionKind = "mark_retired"
 	CloseWorkspace   DecisionKind = "close_workspace"
 	Complete         DecisionKind = "complete"
 	NeedsOperator    DecisionKind = "needs_operator"
@@ -36,6 +38,7 @@ type Decision struct {
 	Kind        DecisionKind
 	TargetKey   string
 	WorkspaceID string
+	NextStatus  string
 	Reason      string
 	Reasons     []string
 }
@@ -168,6 +171,7 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 			switch strings.ToLower(strings.TrimSpace(observation.AgentState)) {
 			case "idle", "done", "complete", "completed":
 				base.Kind = ProveGit
+				base.NextStatus = "agent_observed"
 				return base
 			default:
 				return needs(base, "agent state is not safe to retire")
@@ -184,12 +188,26 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 				return needs(base, "git repository identity is required")
 			}
 			base.Kind = ObserveWorkspace
+			base.NextStatus = "git_proven"
 			return base
 		case "git_proven":
 			if strings.TrimSpace(target.RepositoryCommonDir) == "" {
 				return needs(base, "git repository identity is not persisted")
 			}
-			base.Kind = ObserveWorkspace
+			if observation == nil || !observation.WorkspaceObserved {
+				base.Kind = ObserveWorkspace
+				return base
+			}
+			if !observation.WorkspaceFound {
+				base.Kind = MarkRetired
+				base.NextStatus = "retired"
+				return base
+			}
+			if reason := workspaceIdentityMismatch(target, observation); reason != "" {
+				return needs(base, reason)
+			}
+			base.Kind = RecordWorkspace
+			base.NextStatus = "workspace_observed"
 			return base
 		case "workspace_observed":
 			if strings.TrimSpace(target.RepositoryCommonDir) == "" {
@@ -197,6 +215,7 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 			}
 			if observation == nil {
 				base.Kind = CloseWorkspace
+				base.NextStatus = "closing"
 				return base
 			}
 			if !observation.WorkspaceObserved || !observation.WorkspaceFound {
@@ -206,6 +225,7 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 				return needs(base, reason)
 			}
 			base.Kind = CloseWorkspace
+			base.NextStatus = "closing"
 			return base
 		case "closing":
 			if observation == nil {
@@ -217,12 +237,14 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 			}
 			if !observation.WorkspaceFound {
 				base.Kind = Complete
+				base.NextStatus = "retired"
 				return base
 			}
 			if reason := workspaceIdentityMismatch(target, observation); reason != "" {
 				return needs(base, reason)
 			}
 			base.Kind = CloseWorkspace
+			base.NextStatus = "closing"
 			return base
 		default:
 			return needs(base, "unknown retirement target status")
@@ -242,7 +264,7 @@ func gitIdentityMismatch(target state.RetirementTarget, observation *Observation
 }
 
 func workspaceIdentityMismatch(target state.RetirementTarget, observation *Observation) string {
-	if observation.WorkspaceID != target.WorkspaceID || observation.PaneID != target.PaneID || observation.Path != target.Path {
+	if !observation.WorkspaceObserved || !observation.WorkspaceFound || strings.TrimSpace(observation.WorkspaceID) == "" || strings.TrimSpace(observation.PaneID) == "" || strings.TrimSpace(observation.Path) == "" || filepath.Clean(observation.Path) != observation.Path || observation.WorkspaceID != target.WorkspaceID || observation.PaneID != target.PaneID || observation.Path != target.Path {
 		return "workspace identity mismatch"
 	}
 	return ""
