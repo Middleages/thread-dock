@@ -92,7 +92,7 @@ func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceIn
 		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 	}
 	var paneResponse paneListResult
-	if err := decodeStrictJSON(*paneEnvelope.Result, &paneResponse); err != nil || paneResponse.Panes == nil || paneEnvelope.Type != "pane_list" {
+	if err := decodeStrictJSON(*paneEnvelope.Result, &paneResponse); err != nil || paneResponse.Panes == nil || paneResponse.Type != "pane_list" {
 		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 	}
 	rootPaneID := ""
@@ -105,7 +105,7 @@ func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceIn
 			return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 		}
 		if rootPaneID != "" {
-			return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
+			return WorkspaceInfo{}, false, errors.New("herdr pane list returned ambiguous canonical root panes")
 		}
 		rootPaneID = pane.PaneID
 		rootPaneState = ParseAgentState(pane.AgentStatus)
@@ -194,6 +194,7 @@ type workspaceWorktree struct {
 }
 
 type paneListResult struct {
+	Type  string     `json:"type"`
 	Panes []paneWire `json:"panes"`
 }
 

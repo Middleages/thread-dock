@@ -783,6 +783,18 @@ func TestGetWorkspaceCombinesWorkspaceAndMatchedPaneLifecycleState(t *testing.T)
 	}
 }
 
+func TestGetWorkspaceParsesCanonicalPaneListFixture(t *testing.T) {
+	paneOutput := strings.Replace(readFixture(t, "testdata/v0.8.2/pane-list.txt"), `"agent_status":"working"`, `"agent_status":"idle"`, 1)
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00workspace\x00get\x00workspace-redacted":            workspaceFixture("workspace-redacted", "tab-redacted", "/redacted/worktree", "idle"),
+		"herdr\x00pane\x00list\x00--workspace\x00workspace-redacted": paneOutput,
+	})
+	info, found, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "workspace-redacted")
+	if err != nil || !found || info.RootPaneID != "pane-redacted" || info.State != AgentStateIdle {
+		t.Fatalf("info=%#v found=%v err=%v", info, found, err)
+	}
+}
+
 func TestWorkspaceAdaptersRequireStrictEnvelopes(t *testing.T) {
 	getCases := map[string]string{
 		"unknown top-level field":        `{"id":"cli:workspace:get","result":{"type":"workspace_info","workspace":{"workspace_id":"w7","active_tab_id":"tab-7","agent_status":"done","worktree":{"checkout_path":"/repo/task"}}},"extra":true}`,
@@ -863,7 +875,7 @@ func TestGetWorkspaceRejectsMismatchedOrAmbiguousIdentity(t *testing.T) {
 		},
 		"multiple canonical panes": {
 			workspace: workspaceFixture("w7", "tab-7", "/repo/task", "done"),
-			panes:     `{"id":"cli:pane:list","result":{"panes":[{"pane_id":"w7:p1","workspace_id":"w7","tab_id":"tab-7","cwd":"/repo/task","agent_status":"done"},{"pane_id":"w7:p2","workspace_id":"w7","tab_id":"tab-7","cwd":"/repo/task","agent_status":"done"}]}}`,
+			panes:     `{"id":"cli:pane:list","result":{"type":"pane_list","panes":[{"pane_id":"w7:p1","workspace_id":"w7","tab_id":"tab-7","cwd":"/repo/task","agent_status":"done"},{"pane_id":"w7:p2","workspace_id":"w7","tab_id":"tab-7","cwd":"/repo/task","agent_status":"done"}]}}`,
 		},
 	}
 	for name, tc := range cases {
@@ -877,7 +889,7 @@ func TestGetWorkspaceRejectsMismatchedOrAmbiguousIdentity(t *testing.T) {
 			if name == "workspace mismatch" {
 				wantOperation = "workspace get"
 			}
-			if err == nil || found || err.Error() != "herdr "+wantOperation+" failed (exit code 0)" {
+			if err == nil || found || (name == "multiple canonical panes" && !strings.Contains(err.Error(), "ambiguous")) || (name != "multiple canonical panes" && err.Error() != "herdr "+wantOperation+" failed (exit code 0)") {
 				t.Fatalf("found=%v err=%v", found, err)
 			}
 		})
@@ -922,7 +934,7 @@ func TestWorkspaceAdaptersRejectMalformedResponsesWithoutProviderBody(t *testing
 				"herdr\x00workspace\x00get\x00w7": tc.get,
 			}
 			if tc.close != "" {
-				responses["herdr\x00pane\x00list\x00--workspace\x00w7"] = `{"id":"pane-list","result":{"panes":[]}}`
+				responses["herdr\x00pane\x00list\x00--workspace\x00w7"] = `{"id":"pane-list","result":{"type":"pane_list","panes":[]}}`
 			}
 			r := fixtureRunner(t, responses)
 			_, _, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "w7")
@@ -945,7 +957,7 @@ func workspaceFixture(workspaceID, activeTabID, path, state string) string {
 }
 
 func paneFixture(workspaceID, tabID, paneID, cwd, state string) string {
-	return fmt.Sprintf(`{"id":"pane-list","result":{"panes":[{"pane_id":%q,"workspace_id":%q,"tab_id":%q,"cwd":%q,"agent_status":%q}]},"type":"pane_list"}`, paneID, workspaceID, tabID, cwd, state)
+	return fmt.Sprintf(`{"id":"pane-list","result":{"type":"pane_list","panes":[{"pane_id":%q,"workspace_id":%q,"tab_id":%q,"cwd":%q,"agent_status":%q}]}}`, paneID, workspaceID, tabID, cwd, state)
 }
 
 func TestFindWorktreePropagatesPaneLookupFailure(t *testing.T) {
