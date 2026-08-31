@@ -27,6 +27,16 @@ checkout.
 5. Record that cleanup is prohibited until the controller accepts all evidence
    below. Never remove a managed Worktree, delete run state, or force-reset a
    checkout to make a story look clean.
+6. Session retirement is a separate, opt-in lifecycle. Do not run
+   `agentctl retire RUN` or `agentctl cleanup RUN` against any accepted or
+   diagnostic parallel-pilot RUN, Workspace, Worktree, state directory, or
+   evidence path while evidence is awaiting acceptance. The retirement pilot
+   must create a new disposable repository, Herdr Workspace, RUN, and
+   isolated state root; follow
+   [`session-retirement.md`](session-retirement.md) and record its exact
+   SHA/RUN/Workspace/path evidence outside this pilot's accepted artifacts.
+   In short: never retire and never clean an accepted or diagnostic RUN from
+   this pilot.
 
 ## Six stories
 
@@ -93,3 +103,15 @@ old checks and requires the latest-main/full-suite/push/check sequence again.
 Do not remove Worktrees or run cleanup until the controller explicitly accepts
 the story evidence; after acceptance, use only the safe, clean-worktree cleanup
 path and record each removal.
+
+## Retirement boundary
+
+The retirement runbook is a disposable local probe, not an additional story
+for this accepted parallel run. It exercises `agentctl retire RUN`,
+`agentctl status RUN --json`, `agentctl resume RUN`, and (only in a copied
+state fixture older than seven days) `agentctl cleanup RUN`. It verifies that
+Herdr Workspaces are absent after close while Git Worktree paths,
+`run.json`, append-only events, and structured evidence remain until cleanup.
+The probe's secret scan must pass. Its result must state that no accepted or
+diagnostic RUN was retired or cleaned; raw transcript and credentials never
+belong in the result.
