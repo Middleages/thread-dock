@@ -83,6 +83,25 @@ type AgentLocator interface {
 	GetInfo(context.Context, string) (herdr.AgentInfo, error)
 }
 
+// WorkspaceReader observes one exact Herdr Workspace during session
+// retirement. It is intentionally separate from AgentLocator so each
+// Advance can perform one provider operation only.
+type WorkspaceReader interface {
+	GetWorkspace(context.Context, string) (herdr.WorkspaceInfo, bool, error)
+}
+
+// WorkspaceCloser closes one exact Herdr Workspace. Closing a Workspace does
+// not remove its Git Worktree or any ThreadDock evidence.
+type WorkspaceCloser interface {
+	CloseWorkspace(context.Context, string) error
+}
+
+// RetirementGitInspector proves the immutable Git identity retained in a
+// retirement target before the corresponding Workspace is closed.
+type RetirementGitInspector interface {
+	InspectRetirementTarget(context.Context, string, string, string, string) (worktree.RetirementProof, error)
+}
+
 // PromptReceiptReader performs the single logical external read used to
 // reconcile a pending prompt. Implementations return agent sequence metadata
 // and only whether the exact request ID was observed, never terminal output.
@@ -120,6 +139,20 @@ type Dependencies struct {
 	WorkingWait              time.Duration
 	RecoveryLimit            int
 	Remote                   string
+	// Retirement adapters are optional so legacy Herdr/Git clients continue
+	// to satisfy the core dependency set. When unset, the orchestrator
+	// discovers the narrow port on Herdr or Git/Worktree.
+	WorkspaceReader        WorkspaceReader
+	WorkspaceCloser        WorkspaceCloser
+	RetirementGitInspector RetirementGitInspector
+	// AutoRetireCompletedSessions opts newly completed parallel runs into the
+	// one-action Workspace retirement state machine. Configuration parsing
+	// supplies the default true; a zero-value Dependencies remains compatible
+	// with existing callers and tests.
+	AutoRetireCompletedSessions bool
+	// HerdrWorktreeRoot is the trusted root retained by Git retirement proof
+	// adapters. It is not used to remove anything during session retirement.
+	HerdrWorktreeRoot string
 }
 
 // ReviewEvidenceReader is optional on legacy Herdr clients and required by

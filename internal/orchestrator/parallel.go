@@ -2026,6 +2026,13 @@ func (o *Orchestrator) finishParallelMainMerge(ctx context.Context, snapshot *st
 	snapshot.Summary = "병렬 실행과 감독형 자동 병합 완료"
 	snapshot.PendingAction = ""
 	snapshot.PendingTaskID = ""
+	snapshot.ProjectStatus = "Done"
+	if o.deps.AutoRetireCompletedSessions {
+		return o.beginRetirementSnapshot(ctx, snapshot, contract.PhaseCompleted, true)
+	}
+	// Keep the historical completed state explicit: sessions remain active and
+	// can be retired later by an operator.
+	snapshot.Retirement.Status = "active"
 	snapshot.UpdatedAt = o.now()
 	if err := o.deps.Store.Save(ctx, *snapshot); err != nil {
 		return err
@@ -2063,8 +2070,14 @@ func (o *Orchestrator) reconcileProjectObservation(ctx context.Context, snapshot
 		snapshot.ProjectStatus = status
 		if status == "Done" && snapshot.PullRequestMerged {
 			snapshot.Phase = contract.PhaseCompleted
+			if !o.deps.AutoRetireCompletedSessions {
+				snapshot.Retirement.Status = "active"
+			}
 			if err := o.parallelFinishPreserveCursor(ctx, snapshot, "Project status reconciled"); err != nil {
 				return err
+			}
+			if o.deps.AutoRetireCompletedSessions {
+				return o.beginRetirementSnapshot(ctx, snapshot, contract.PhaseCompleted, true)
 			}
 			return o.append(ctx, snapshot.RunID, state.Event{Type: "completed", Phase: contract.PhaseCompleted, Message: "병렬 실행과 감독형 자동 병합 완료"})
 		}

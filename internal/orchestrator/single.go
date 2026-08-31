@@ -230,6 +230,9 @@ func (o *Orchestrator) Advance(ctx context.Context, id contract.RunID) error {
 	if snapshot.Phase == contract.PhaseCompleted || snapshot.Phase == contract.PhaseBlocked {
 		return ErrRunFinished
 	}
+	if snapshot.Phase == contract.PhaseRetiring {
+		return o.advanceRetirement(ctx, &snapshot)
+	}
 	runtime, err := o.runtimeFor(ctx, snapshot)
 	if err != nil {
 		return err
