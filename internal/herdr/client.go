@@ -20,6 +20,27 @@ type Client interface {
 	ReadRecent(context.Context, string) (string, error)
 }
 
+// WorkspaceReader observes the narrow, identity-bearing Workspace state used
+// by session retirement. It deliberately exposes no provider response body or
+// terminal transcript.
+type WorkspaceReader interface {
+	GetWorkspace(context.Context, string) (WorkspaceInfo, bool, error)
+}
+
+// WorkspaceCloser closes exactly one Herdr Workspace. Closing a Workspace
+// does not remove its Git Worktree.
+type WorkspaceCloser interface {
+	CloseWorkspace(context.Context, string) error
+}
+
+// WorkspaceInfo is the safe identity observation returned by Herdr.
+type WorkspaceInfo struct {
+	WorkspaceID string
+	RootPaneID  string
+	Path        string
+	State       AgentState
+}
+
 type SessionResumer interface {
 	ResumeAgent(context.Context, ResumeAgentRequest) error
 }

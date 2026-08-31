@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -78,6 +79,17 @@ type stdoutErrorRunner struct{}
 
 func (stdoutErrorRunner) Run(context.Context, string, string, ...string) (runner.Result, error) {
 	return runner.Result{Stdout: `{"error":{"code":"agent_not_found","message":"not found"}}`, ExitCode: 1}, &testError{"command failed"}
+}
+
+type responseErrorRunner struct {
+	stdout string
+	err    error
+	calls  [][]string
+}
+
+func (r *responseErrorRunner) Run(_ context.Context, _ string, executable string, args ...string) (runner.Result, error) {
+	r.calls = append(r.calls, append([]string{executable}, args...))
+	return runner.Result{Stdout: r.stdout, ExitCode: 1}, r.err
 }
 
 func TestCreateWorktreeReturnsActualIDsAndUsesExplicitArguments(t *testing.T) {
@@ -713,6 +725,154 @@ func TestFindWorktreeReconcilesPathWorkspaceAndPane(t *testing.T) {
 	if err != nil || !found || got.Path != "/work/run" || got.WorkspaceID != "workspace-run" || got.PaneID != "pane-run" {
 		t.Fatalf("worktree=%#v found=%v err=%v", got, found, err)
 	}
+}
+
+func TestWorkspaceReaderAndCloserUseExactIDs(t *testing.T) {
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00workspace\x00get\x00w7":            workspaceFixture("w7", "tab-7", "/repo/task", "done"),
+		"herdr\x00pane\x00list\x00--workspace\x00w7": paneFixture("w7", "tab-7", "w7:p1", "/repo/task", "done"),
+		"herdr\x00workspace\x00close\x00w7":          `{"id":"close","result":{"type":"ok"}}`,
+	})
+	cli := NewCLI(r, "herdr")
+	info, found, err := cli.GetWorkspace(context.Background(), "w7")
+	if err != nil || !found || info.WorkspaceID != "w7" || info.RootPaneID != "w7:p1" || info.Path != "/repo/task" || info.State != AgentStateDone {
+		t.Fatalf("info=%#v found=%v err=%v", info, found, err)
+	}
+	if err := cli.CloseWorkspace(context.Background(), "w7"); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"herdr", "workspace", "get", "w7"},
+		{"herdr", "pane", "list", "--workspace", "w7"},
+		{"herdr", "workspace", "close", "w7"},
+	}
+	if !reflect.DeepEqual(r.calls, want) {
+		t.Fatalf("calls=%#v want=%#v", r.calls, want)
+	}
+}
+
+func TestGetWorkspaceMapsNotFoundWithoutListingPanes(t *testing.T) {
+	r := &responseErrorRunner{stdout: `{"error":{"code":"workspace_not_found","message":"not found"}}`, err: &testError{"provider failure"}}
+	// The runner must expose a provider failure result for reconciliation while
+	// the adapter returns only the safe not-found observation.
+	_, found, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "missing")
+	if err != nil || found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if len(r.calls) != 1 {
+		t.Fatalf("calls=%#v, want workspace get only", r.calls)
+	}
+}
+
+func TestCloseWorkspaceTreatsNotFoundAsIdempotentSuccess(t *testing.T) {
+	r := &responseErrorRunner{stdout: `{"error":{"code":"workspace_not_found","message":"not found"}}`, err: &testError{"provider failure"}}
+	if err := NewCLI(r, "herdr").CloseWorkspace(context.Background(), "w7"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetWorkspaceRejectsMismatchedOrAmbiguousIdentity(t *testing.T) {
+	cases := map[string]struct {
+		workspace string
+		panes     string
+	}{
+		"workspace mismatch": {
+			workspace: workspaceFixture("other", "tab-7", "/repo/task", "done"),
+			panes:     paneFixture("w7", "tab-7", "w7:p1", "/repo/task", "done"),
+		},
+		"pane workspace mismatch": {
+			workspace: workspaceFixture("w7", "tab-7", "/repo/task", "done"),
+			panes:     paneFixture("other", "tab-7", "w7:p1", "/repo/task", "done"),
+		},
+		"pane path mismatch": {
+			workspace: workspaceFixture("w7", "tab-7", "/repo/task", "done"),
+			panes:     paneFixture("w7", "tab-7", "w7:p1", "/repo/other", "done"),
+		},
+		"multiple canonical panes": {
+			workspace: workspaceFixture("w7", "tab-7", "/repo/task", "done"),
+			panes:     `{"result":{"panes":[{"pane_id":"w7:p1","workspace_id":"w7","tab_id":"tab-7","cwd":"/repo/task"},{"pane_id":"w7:p2","workspace_id":"w7","tab_id":"tab-7","cwd":"/repo/task"}]}}`,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00workspace\x00get\x00w7":            tc.workspace,
+				"herdr\x00pane\x00list\x00--workspace\x00w7": tc.panes,
+			})
+			_, found, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "w7")
+			wantOperation := "pane list"
+			if name == "workspace mismatch" {
+				wantOperation = "workspace get"
+			}
+			if err == nil || found || err.Error() != "herdr "+wantOperation+" failed (exit code 0)" {
+				t.Fatalf("found=%v err=%v", found, err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceAdaptersRejectUnsafeIDsWithoutInvokingRunner(t *testing.T) {
+	r := &recordingRunner{responses: map[string]string{}}
+	cli := NewCLI(r, "herdr")
+	for _, id := range []string{"", " w7", "w7 ", "w7/other", "w7\\other", "w7\x00other", "w7\nother"} {
+		if _, _, err := cli.GetWorkspace(context.Background(), id); err == nil {
+			t.Errorf("GetWorkspace(%q) accepted unsafe ID", id)
+		}
+		if err := cli.CloseWorkspace(context.Background(), id); err == nil {
+			t.Errorf("CloseWorkspace(%q) accepted unsafe ID", id)
+		}
+	}
+	if len(r.calls) != 0 {
+		t.Fatalf("calls=%#v, want no provider calls", r.calls)
+	}
+}
+
+func TestWorkspaceAdaptersRejectMalformedResponsesWithoutProviderBody(t *testing.T) {
+	cases := map[string]struct {
+		get   string
+		close string
+		want  string
+	}{
+		"malformed get": {
+			get:  "not-json",
+			want: "herdr workspace get failed (exit code 0)",
+		},
+		"missing pane identity": {
+			get:   workspaceFixture("w7", "tab-7", "/repo/task", "done"),
+			close: `{"id":"close","result":{"type":"ok"}}`,
+			want:  "herdr pane list failed (exit code 0)",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			responses := map[string]string{
+				"herdr\x00workspace\x00get\x00w7": tc.get,
+			}
+			if tc.close != "" {
+				responses["herdr\x00pane\x00list\x00--workspace\x00w7"] = `{"id":"pane-list","result":{"panes":[]}}`
+			}
+			r := fixtureRunner(t, responses)
+			_, _, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "w7")
+			if err == nil || err.Error() != tc.want || strings.Contains(err.Error(), tc.get) {
+				t.Fatalf("err=%v want=%q", err, tc.want)
+			}
+		})
+	}
+	r := fixtureRunner(t, map[string]string{
+		"herdr\x00workspace\x00close\x00w7": `{"id":"close","result":{"type":"not_ok"},"provider_secret":"secret"}`,
+	})
+	err := NewCLI(r, "herdr").CloseWorkspace(context.Background(), "w7")
+	if err == nil || err.Error() != "herdr workspace close failed (exit code 0)" || strings.Contains(err.Error(), "provider_secret") {
+		t.Fatalf("err=%v, want safe close error", err)
+	}
+}
+
+func workspaceFixture(workspaceID, activeTabID, path, state string) string {
+	return fmt.Sprintf(`{"id":"workspace-get","result":{"workspace":{"workspace_id":%q,"active_tab_id":%q,"agent_status":%q,"worktree":{"checkout_path":%q}}}}`, workspaceID, activeTabID, state, path)
+}
+
+func paneFixture(workspaceID, tabID, paneID, cwd, state string) string {
+	return fmt.Sprintf(`{"id":"pane-list","result":{"panes":[{"pane_id":%q,"workspace_id":%q,"tab_id":%q,"cwd":%q,"agent_status":%q}]}}`, paneID, workspaceID, tabID, cwd, state)
 }
 
 func TestFindWorktreePropagatesPaneLookupFailure(t *testing.T) {

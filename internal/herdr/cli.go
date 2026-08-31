@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -50,6 +51,139 @@ func (c *CLI) OpenWorktree(ctx context.Context, req OpenWorktreeRequest) (Worktr
 		return Worktree{}, err
 	}
 	return c.decodeWorktree(ctx, "worktree open", result.Stdout, result.ExitCode)
+}
+
+// GetWorkspace observes one exact Herdr Workspace. Herdr's workspace get
+// response does not include a pane ID, so the read-only pane list is composed
+// into this one identity observation. A root pane is considered identifiable
+// only when exactly one pane in the active tab has the Workspace's canonical
+// checkout path as its cwd.
+func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceInfo, bool, error) {
+	if !validHerdrWorkspaceID(workspaceID) {
+		return WorkspaceInfo{}, false, errors.New("Herdr workspace identity is invalid")
+	}
+
+	result, err := c.run(ctx, "workspace get", "workspace", "get", workspaceID)
+	if code := providerErrorCode(result.Stdout); code == "workspace_not_found" {
+		return WorkspaceInfo{}, false, nil
+	}
+	if err != nil {
+		return WorkspaceInfo{}, false, err
+	}
+	var response struct {
+		ID    string `json:"id"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+		Result struct {
+			Workspace struct {
+				WorkspaceID string `json:"workspace_id"`
+				ActiveTabID string `json:"active_tab_id"`
+				AgentStatus string `json:"agent_status"`
+				Worktree    struct {
+					Path string `json:"checkout_path"`
+				} `json:"worktree"`
+			} `json:"workspace"`
+		} `json:"result"`
+	}
+	if err := decode(result.Stdout, &response); err != nil || response.Error.Code != "" {
+		return WorkspaceInfo{}, false, safeError("workspace get", result.ExitCode)
+	}
+	workspace := response.Result.Workspace
+	if response.ID == "" || workspace.WorkspaceID != workspaceID || !validHerdrWorkspaceID(workspace.WorkspaceID) || !validHerdrWorkspaceID(workspace.ActiveTabID) || workspace.AgentStatus == "" || !canonicalHerdrPath(workspace.Worktree.Path) {
+		return WorkspaceInfo{}, false, safeError("workspace get", result.ExitCode)
+	}
+
+	panes, err := c.run(ctx, "pane list", "pane", "list", "--workspace", workspaceID)
+	if err != nil {
+		return WorkspaceInfo{}, false, err
+	}
+	var paneResponse struct {
+		ID    string `json:"id"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+		Result struct {
+			Panes []struct {
+				PaneID      string `json:"pane_id"`
+				WorkspaceID string `json:"workspace_id"`
+				TabID       string `json:"tab_id"`
+				CWD         string `json:"cwd"`
+			} `json:"panes"`
+		} `json:"result"`
+	}
+	if err := decode(panes.Stdout, &paneResponse); err != nil || paneResponse.Error.Code != "" || paneResponse.ID == "" {
+		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
+	}
+	rootPaneID := ""
+	for _, pane := range paneResponse.Result.Panes {
+		if pane.WorkspaceID != workspaceID || pane.TabID != workspace.ActiveTabID || pane.CWD != workspace.Worktree.Path {
+			continue
+		}
+		if !validHerdrPaneID(pane.PaneID) || !canonicalHerdrPath(pane.CWD) {
+			return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
+		}
+		if rootPaneID != "" {
+			return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
+		}
+		rootPaneID = pane.PaneID
+	}
+	if rootPaneID == "" {
+		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
+	}
+	return WorkspaceInfo{WorkspaceID: workspace.WorkspaceID, RootPaneID: rootPaneID, Path: workspace.Worktree.Path, State: ParseAgentState(workspace.AgentStatus)}, true, nil
+}
+
+// CloseWorkspace closes exactly one Workspace. Herdr forgets a Workspace
+// after a successful close, so a not-found response is an idempotent success.
+func (c *CLI) CloseWorkspace(ctx context.Context, workspaceID string) error {
+	if !validHerdrWorkspaceID(workspaceID) {
+		return errors.New("Herdr workspace identity is invalid")
+	}
+	result, err := c.run(ctx, "workspace close", "workspace", "close", workspaceID)
+	if providerErrorCode(result.Stdout) == "workspace_not_found" {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var response struct {
+		ID    string `json:"id"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+		Result struct {
+			Type string `json:"type"`
+		} `json:"result"`
+	}
+	if err := decode(result.Stdout, &response); err != nil || response.ID == "" || response.Error.Code != "" || response.Result.Type != "ok" {
+		return safeError("workspace close", result.ExitCode)
+	}
+	return nil
+}
+
+func validHerdrWorkspaceID(value string) bool {
+	return providerSessionIDPattern.MatchString(value) && !strings.Contains(value, "..")
+}
+
+func validHerdrPaneID(value string) bool {
+	return providerSessionIDPattern.MatchString(value) && !strings.Contains(value, "..")
+}
+
+func canonicalHerdrPath(value string) bool {
+	return value != "" && filepath.IsAbs(value) && filepath.Clean(value) == value && !strings.ContainsRune(value, '\x00')
+}
+
+func providerErrorCode(output string) string {
+	var response struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(output), &response) != nil {
+		return ""
+	}
+	return response.Error.Code
 }
 
 func (c *CLI) decodeWorktree(ctx context.Context, operation, output string, exitCode int) (Worktree, error) {
