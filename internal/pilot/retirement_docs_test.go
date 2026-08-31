@@ -45,6 +45,21 @@ func TestSessionRetirementRunbookDocumentsCommandsAndGuards(t *testing.T) {
 		"evidence awaiting acceptance",
 		"run-before-cleanup.json",
 		"original pilot config",
+		"git clone --no-local",
+		"go test -race ./...",
+		"make check",
+		"go build -trimpath",
+		"worktree list --porcelain",
+		"rev-parse --show-toplevel",
+		"rev-parse --abbrev-ref HEAD",
+		"rev-parse HEAD",
+		"status --porcelain=v1",
+		"herdr workspace get",
+		"herdr pane list --workspace",
+		"jq --arg updatedAt",
+		"test ! -e \"$WORKTREE_PATH\"",
+		"grep -F -- \"$WORKTREE_PATH\"",
+		"gitleaks detect --no-banner --redact",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(doc, phrase) {
