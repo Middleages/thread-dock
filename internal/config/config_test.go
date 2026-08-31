@@ -31,6 +31,20 @@ func TestParsePreservesExplicitFalseAutoRetirement(t *testing.T) {
 	}
 }
 
+func TestParseExpandsHomeOnlyTildeWithoutPanicking(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(strings.NewReader(`{"ghesHost":"https://github.example.test","herdrWorktreeRoot":"~","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HerdrWorktreeRoot != filepath.Clean(home) {
+		t.Fatalf("root=%q want %q", got.HerdrWorktreeRoot, filepath.Clean(home))
+	}
+}
+
 func TestParseRejectsMissingGHESHost(t *testing.T) {
 	_, err := Parse(strings.NewReader(`{"stateDir":"/tmp/thread-dock","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`))
 	if err == nil || !strings.Contains(err.Error(), "ghesHost") {

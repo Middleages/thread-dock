@@ -17,18 +17,22 @@ const (
 
 func TestBuildOrdersReviewerThenBuildersInReverseAndDeduplicatesWorkspace(t *testing.T) {
 	snapshot := state.RunSnapshot{TaskOrder: []string{"alpha", "beta"}, FinalSHA: retirementTestSHA}
+	snapshot.RepositoryPath = "/repo/checkout"
 	snapshot.Reviewer = state.AgentEvidence{Name: "reviewer"}
 	snapshot.ReviewerWorktree = state.WorktreeState{WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration", Branch: "agent/integration"}
 	snapshot.Tasks = map[string]state.TaskRunState{
 		"alpha": {Agent: state.AgentEvidence{Name: "alpha", CommitSHA: retirementAlphaSHA}, Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "a:p1", Path: "/herdr/a", Branch: "agent/a"}},
-		"beta":  {Agent: state.AgentEvidence{Name: "beta", CommitSHA: retirementBetaSHA}, Worktree: state.WorktreeState{WorkspaceID: "b", PaneID: "b:p1", Path: "/herdr/b", Branch: "agent/b"}},
+		"beta":  {Agent: state.AgentEvidence{Name: "beta", CommitSHA: retirementBetaSHA}, Worktree: state.WorktreeState{WorkspaceID: "a", PaneID: "b:p1", Path: "/herdr/b", Branch: "agent/b"}},
 	}
 	got, err := Build(snapshot, true, contract.PhaseCompleted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ids := targetKeys(got.Targets); !reflect.DeepEqual(ids, []string{"reviewer", "builder:beta", "builder:alpha"}) {
+	if ids := targetKeys(got.Targets); !reflect.DeepEqual(ids, []string{"reviewer", "builder:beta"}) {
 		t.Fatalf("targets=%v", ids)
+	}
+	if got.Targets[0].RepositoryCommonDir != "" {
+		t.Fatalf("Build populated repository proof from RepositoryPath: %#v", got.Targets[0])
 	}
 	if got.Status != "pending" || !got.Automatic || got.TargetPhase != contract.PhaseCompleted {
 		t.Fatalf("state=%#v", got)
@@ -81,8 +85,13 @@ func TestNextAdvancesIdleOrDoneThroughProofAndClose(t *testing.T) {
 				t.Fatalf("agent decision=%#v", got)
 			}
 			plan.Targets[0].Status = "agent_observed"
-			if got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: true, WorkspaceObserved: true, GitProven: true, RepositoryCommonDir: "/repo/.git", Path: "/managed/integration", Branch: "agent/integration", HeadSHA: retirementTestSHA}); got.Kind != CloseWorkspace {
+			if got := Next(plan, &Observation{TargetKey: "reviewer", GitProven: true, RepositoryCommonDir: "/repo/.git", Path: "/managed/integration", Branch: "agent/integration", HeadSHA: retirementTestSHA}); got.Kind != ObserveWorkspace {
 				t.Fatalf("proof decision=%#v", got)
+			}
+			plan.Targets[0].Status = "workspace_observed"
+			plan.Targets[0].RepositoryCommonDir = "/repo/.git"
+			if got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: true, WorkspaceObserved: true, WorkspaceID: "review", PaneID: "review:p1", Path: "/managed/integration"}); got.Kind != CloseWorkspace {
+				t.Fatalf("workspace decision=%#v", got)
 			}
 		})
 	}
@@ -92,7 +101,7 @@ func TestNextMissingWorkspaceCompletesTargetAndAllTargetsComplete(t *testing.T) 
 	plan := pendingRetirement()
 	plan.Targets[0].Status = "closing"
 	plan.Targets[1].Status = "retired"
-	got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: false})
+	got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: false, WorkspaceObserved: true})
 	if got.Kind != Complete || got.TargetKey != "reviewer" {
 		t.Fatalf("missing workspace decision=%#v", got)
 	}
@@ -102,11 +111,35 @@ func TestNextMissingWorkspaceCompletesTargetAndAllTargetsComplete(t *testing.T) 
 	}
 }
 
+func TestNextDoesNotTreatNilOrZeroWorkspaceObservationAsMissing(t *testing.T) {
+	plan := pendingRetirement()
+	plan.Targets[0].Status = "closing"
+	if got := Next(plan, nil); got.Kind != ObserveWorkspace {
+		t.Fatalf("nil observation decision=%#v", got)
+	}
+	if got := Next(plan, &Observation{TargetKey: "reviewer"}); got.Kind != NeedsOperator {
+		t.Fatalf("zero observation decision=%#v", got)
+	}
+}
+
+func TestNextNeverClosesFromGitProofWithoutWorkspaceObservation(t *testing.T) {
+	plan := pendingRetirement()
+	plan.Targets[0].Status = "git_proven"
+	plan.Targets[0].RepositoryCommonDir = "/repo/.git"
+	if got := Next(plan, nil); got.Kind != ObserveWorkspace {
+		t.Fatalf("git proof decision=%#v", got)
+	}
+	plan.Targets[0].Status = "workspace_observed"
+	if got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceObserved: true, WorkspaceFound: false}); got.Kind != NeedsOperator {
+		t.Fatalf("missing observed workspace decision=%#v", got)
+	}
+}
+
 func TestNextAllowsAlreadyClosedWorkspaceAfterGitProof(t *testing.T) {
 	plan := pendingRetirement()
 	plan.Targets[0].Status = "agent_observed"
 	got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: false, WorkspaceObserved: true, GitProven: true, Path: "/managed/integration", Branch: "agent/integration", HeadSHA: retirementTestSHA})
-	if got.Kind != Complete {
+	if got.Kind != NeedsOperator {
 		t.Fatalf("already-closed decision=%#v", got)
 	}
 }
@@ -114,7 +147,7 @@ func TestNextAllowsAlreadyClosedWorkspaceAfterGitProof(t *testing.T) {
 func TestNextRejectsConflictingWorkspaceIdentity(t *testing.T) {
 	plan := pendingRetirement()
 	plan.Targets[0].Status = "closing"
-	got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceFound: true, WorkspaceID: "other", PaneID: "wrong"})
+	got := Next(plan, &Observation{TargetKey: "reviewer", WorkspaceObserved: true, WorkspaceFound: true, WorkspaceID: "other", PaneID: "wrong"})
 	if got.Kind != NeedsOperator {
 		t.Fatalf("decision=%#v", got)
 	}

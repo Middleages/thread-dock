@@ -323,7 +323,11 @@ func canonicalPath(path string) (string, error) {
 		if err != nil || strings.TrimSpace(home) == "" {
 			return "", errors.New("cannot resolve home directory")
 		}
-		path = filepath.Join(home, path[2:])
+		if path == "~" {
+			path = home
+		} else {
+			path = filepath.Join(home, path[2:])
+		}
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {

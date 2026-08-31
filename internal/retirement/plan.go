@@ -21,11 +21,12 @@ type DecisionKind string
 type Kind = DecisionKind
 
 const (
-	ObserveAgent   DecisionKind = "observe_agent"
-	ProveGit       DecisionKind = "prove_git"
-	CloseWorkspace DecisionKind = "close_workspace"
-	Complete       DecisionKind = "complete"
-	NeedsOperator  DecisionKind = "needs_operator"
+	ObserveAgent     DecisionKind = "observe_agent"
+	ProveGit         DecisionKind = "prove_git"
+	ObserveWorkspace DecisionKind = "observe_workspace"
+	CloseWorkspace   DecisionKind = "close_workspace"
+	Complete         DecisionKind = "complete"
+	NeedsOperator    DecisionKind = "needs_operator"
 )
 
 // Decision is the pure result of applying one observation to a durable plan.
@@ -112,7 +113,7 @@ func Build(snapshot state.RunSnapshot, automatic bool, targetPhase contract.RunP
 			HeadSHA:             candidate.head,
 			Status:              "pending",
 			AgentName:           candidate.agent.Name,
-			RepositoryCommonDir: cleanOptional(snapshot.RepositoryPath),
+			RepositoryCommonDir: "",
 		})
 	}
 	return plan, nil
@@ -155,7 +156,7 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 			continue
 		}
 		base := Decision{TargetKey: target.Key, WorkspaceID: target.WorkspaceID}
-		if observation != nil && observation.TargetKey != "" && observation.TargetKey != target.Key {
+		if observation != nil && observation.TargetKey != target.Key {
 			return needs(base, "observation target identity mismatch")
 		}
 		switch target.Status {
@@ -179,19 +180,40 @@ func Next(plan state.RetirementState, observation *Observation) Decision {
 			if reason := gitIdentityMismatch(target, observation); reason != "" {
 				return needs(base, reason)
 			}
-			if observation.WorkspaceObserved && !observation.WorkspaceFound {
-				base.Kind = Complete
-				return base
+			if strings.TrimSpace(observation.RepositoryCommonDir) == "" {
+				return needs(base, "git repository identity is required")
 			}
-			base.Kind = CloseWorkspace
+			base.Kind = ObserveWorkspace
 			return base
 		case "git_proven":
+			if strings.TrimSpace(target.RepositoryCommonDir) == "" {
+				return needs(base, "git repository identity is not persisted")
+			}
+			base.Kind = ObserveWorkspace
+			return base
+		case "workspace_observed":
+			if strings.TrimSpace(target.RepositoryCommonDir) == "" {
+				return needs(base, "git repository identity is not persisted")
+			}
+			if observation == nil {
+				base.Kind = CloseWorkspace
+				return base
+			}
+			if !observation.WorkspaceObserved || !observation.WorkspaceFound {
+				return needs(base, "workspace observation is not an exact existing identity")
+			}
+			if reason := workspaceIdentityMismatch(target, observation); reason != "" {
+				return needs(base, reason)
+			}
 			base.Kind = CloseWorkspace
 			return base
 		case "closing":
 			if observation == nil {
-				base.Kind = CloseWorkspace
+				base.Kind = ObserveWorkspace
 				return base
+			}
+			if !observation.WorkspaceObserved {
+				return needs(base, "workspace observation is required")
 			}
 			if !observation.WorkspaceFound {
 				base.Kind = Complete
