@@ -64,14 +64,19 @@ func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceIn
 	}
 
 	result, err := c.run(ctx, "workspace get", "workspace", "get", workspaceID)
-	envelope, envelopeErr := decodeHerdrEnvelope(result.Stdout)
+	resultPayload, hasPayload := herdrResponsePayload(result)
+	var envelope herdrEnvelope
+	var envelopeErr error
+	if hasPayload {
+		envelope, envelopeErr = decodeHerdrEnvelope(resultPayload)
+	}
 	if envelopeErr == nil && envelope.Error != nil && envelope.Error.Code == "workspace_not_found" {
 		return WorkspaceInfo{}, false, nil
 	}
 	if err != nil {
 		return WorkspaceInfo{}, false, err
 	}
-	if result.ExitCode != 0 {
+	if !hasPayload || result.ExitCode != 0 {
 		return WorkspaceInfo{}, false, safeError("workspace get", result.ExitCode)
 	}
 	if envelopeErr != nil || envelope.Error != nil || envelope.Result == nil {
@@ -93,8 +98,16 @@ func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceIn
 	if panes.ExitCode != 0 {
 		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 	}
-	paneEnvelope, paneEnvelopeErr := decodeHerdrEnvelope(panes.Stdout)
+	panePayload, hasPanePayload := herdrResponsePayload(panes)
+	var paneEnvelope herdrEnvelope
+	var paneEnvelopeErr error
+	if hasPanePayload {
+		paneEnvelope, paneEnvelopeErr = decodeHerdrEnvelope(panePayload)
+	}
 	if paneEnvelopeErr != nil || paneEnvelope.Error != nil || paneEnvelope.Result == nil {
+		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
+	}
+	if !hasPanePayload {
 		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 	}
 	var paneResponse paneListResult
@@ -154,14 +167,19 @@ func (c *CLI) CloseWorkspace(ctx context.Context, workspaceID string) error {
 		return errors.New("Herdr workspace identity is invalid")
 	}
 	result, err := c.run(ctx, "workspace close", "workspace", "close", workspaceID)
-	envelope, envelopeErr := decodeHerdrEnvelope(result.Stdout)
+	resultPayload, hasPayload := herdrResponsePayload(result)
+	var envelope herdrEnvelope
+	var envelopeErr error
+	if hasPayload {
+		envelope, envelopeErr = decodeHerdrEnvelope(resultPayload)
+	}
 	if envelopeErr == nil && envelope.Error != nil && envelope.Error.Code == "workspace_not_found" {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if result.ExitCode != 0 {
+	if !hasPayload || result.ExitCode != 0 {
 		return safeError("workspace close", result.ExitCode)
 	}
 	if envelopeErr != nil || envelope.Error != nil || envelope.Result == nil {
@@ -184,6 +202,21 @@ func validHerdrPaneID(value string) bool {
 
 func canonicalHerdrPath(value string) bool {
 	return value != "" && filepath.IsAbs(value) && filepath.Clean(value) == value && !strings.ContainsRune(value, '\x00')
+}
+
+// herdrResponsePayload selects the sole channel that contains a provider
+// response. Herdr writes process failures to stderr, while successful JSON is
+// normally on stdout. Ambiguous or empty channel pairs are never decoded.
+func herdrResponsePayload(result runner.Result) (string, bool) {
+	stdout := strings.TrimSpace(result.Stdout)
+	stderr := strings.TrimSpace(result.Stderr)
+	if stdout == "" && stderr == "" || stdout != "" && stderr != "" {
+		return "", false
+	}
+	if stdout != "" {
+		return result.Stdout, true
+	}
+	return result.Stderr, true
 }
 
 type herdrProviderError struct {

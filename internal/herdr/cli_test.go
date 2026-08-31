@@ -83,6 +83,7 @@ func (stdoutErrorRunner) Run(context.Context, string, string, ...string) (runner
 
 type responseErrorRunner struct {
 	stdout string
+	stderr string
 	err    error
 	calls  [][]string
 }
@@ -104,7 +105,7 @@ func (r *scriptedResultRunner) Run(_ context.Context, _ string, executable strin
 
 func (r *responseErrorRunner) Run(_ context.Context, _ string, executable string, args ...string) (runner.Result, error) {
 	r.calls = append(r.calls, append([]string{executable}, args...))
-	return runner.Result{Stdout: r.stdout, ExitCode: 1}, r.err
+	return runner.Result{Stdout: r.stdout, Stderr: r.stderr, ExitCode: 1}, r.err
 }
 
 func TestCreateWorktreeReturnsActualIDsAndUsesExplicitArguments(t *testing.T) {
@@ -846,7 +847,7 @@ func TestWorkspaceAdaptersRequireStrictEnvelopes(t *testing.T) {
 }
 
 func TestGetWorkspaceMapsNotFoundWithoutListingPanes(t *testing.T) {
-	r := &responseErrorRunner{stdout: `{"error":{"code":"workspace_not_found","message":"not found"},"id":"cli:workspace:get"}`, err: &testError{"provider failure"}}
+	r := &responseErrorRunner{stderr: `{"error":{"code":"workspace_not_found","message":"not found"},"id":"cli:workspace:get"}`, err: &testError{"provider failure"}}
 	// The runner must expose a provider failure result for reconciliation while
 	// the adapter returns only the safe not-found observation.
 	_, found, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "missing")
@@ -859,7 +860,7 @@ func TestGetWorkspaceMapsNotFoundWithoutListingPanes(t *testing.T) {
 }
 
 func TestCloseWorkspaceTreatsNotFoundAsIdempotentSuccess(t *testing.T) {
-	r := &responseErrorRunner{stdout: `{"error":{"code":"workspace_not_found","message":"not found"},"id":"cli:workspace:close"}`, err: &testError{"provider failure"}}
+	r := &responseErrorRunner{stderr: `{"error":{"code":"workspace_not_found","message":"not found"},"id":"cli:workspace:close"}`, err: &testError{"provider failure"}}
 	if err := NewCLI(r, "herdr").CloseWorkspace(context.Background(), "w7"); err != nil {
 		t.Fatal(err)
 	}
@@ -895,10 +896,36 @@ func TestWorkspaceAdaptersNeverExposeMalformedOrSecretProviderBodies(t *testing.
 		{name: "close", call: func(cli *CLI) error { return cli.CloseWorkspace(context.Background(), "w7") }, body: "malformed-" + secret},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &responseErrorRunner{stdout: tc.body, err: &testError{"runner failure"}}
+			r := &responseErrorRunner{stderr: tc.body, err: &testError{"runner failure"}}
 			err := tc.call(NewCLI(r, "herdr"))
 			if err == nil || strings.Contains(err.Error(), secret) {
 				t.Fatalf("err=%v, want safe provider error", err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceAdaptersRejectAmbiguousOrEmptyOutputChannels(t *testing.T) {
+	notFoundGet := `{"error":{"code":"workspace_not_found","message":"not found"},"id":"cli:workspace:get"}`
+	notFoundClose := `{"error":{"code":"workspace_not_found","message":"not found"},"id":"cli:workspace:close"}`
+	for _, tc := range []struct {
+		name string
+		call func(*CLI) error
+		out  string
+		err  string
+	}{
+		{name: "get both channels", call: func(cli *CLI) error { _, _, err := cli.GetWorkspace(context.Background(), "w7"); return err }, out: notFoundGet, err: "herdr workspace get failed (exit code 1)"},
+		{name: "close both channels", call: func(cli *CLI) error { return cli.CloseWorkspace(context.Background(), "w7") }, out: notFoundClose, err: "herdr workspace close failed (exit code 1)"},
+		{name: "get empty channels", call: func(cli *CLI) error { _, _, err := cli.GetWorkspace(context.Background(), "w7"); return err }, err: "herdr workspace get failed (exit code 1)"},
+		{name: "close empty channels", call: func(cli *CLI) error { return cli.CloseWorkspace(context.Background(), "w7") }, err: "herdr workspace close failed (exit code 1)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &responseErrorRunner{stdout: tc.out, stderr: tc.out, err: &testError{"runner failure"}}
+			if strings.Contains(tc.name, "empty") {
+				r.stdout, r.stderr = "", ""
+			}
+			if err := tc.call(NewCLI(r, "herdr")); err == nil || err.Error() != tc.err {
+				t.Fatalf("err=%v want=%q", err, tc.err)
 			}
 		})
 	}
