@@ -64,33 +64,22 @@ func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceIn
 	}
 
 	result, err := c.run(ctx, "workspace get", "workspace", "get", workspaceID)
-	if code := providerErrorCode(result.Stdout); code == "workspace_not_found" {
+	envelope, envelopeErr := decodeHerdrEnvelope(result.Stdout)
+	if envelopeErr == nil && envelope.Error != nil && envelope.Error.Code == "workspace_not_found" {
 		return WorkspaceInfo{}, false, nil
 	}
 	if err != nil {
 		return WorkspaceInfo{}, false, err
 	}
-	var response struct {
-		ID    string `json:"id"`
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-		Result struct {
-			Workspace struct {
-				WorkspaceID string `json:"workspace_id"`
-				ActiveTabID string `json:"active_tab_id"`
-				AgentStatus string `json:"agent_status"`
-				Worktree    struct {
-					Path string `json:"checkout_path"`
-				} `json:"worktree"`
-			} `json:"workspace"`
-		} `json:"result"`
-	}
-	if err := decode(result.Stdout, &response); err != nil || response.Error.Code != "" {
+	if envelopeErr != nil || envelope.Error != nil || envelope.Result == nil {
 		return WorkspaceInfo{}, false, safeError("workspace get", result.ExitCode)
 	}
-	workspace := response.Result.Workspace
-	if response.ID == "" || workspace.WorkspaceID != workspaceID || !validHerdrWorkspaceID(workspace.WorkspaceID) || !validHerdrWorkspaceID(workspace.ActiveTabID) || workspace.AgentStatus == "" || !canonicalHerdrPath(workspace.Worktree.Path) {
+	var response workspaceResult
+	if err := decodeStrictJSON(*envelope.Result, &response); err != nil || response.Type != "workspace_info" {
+		return WorkspaceInfo{}, false, safeError("workspace get", result.ExitCode)
+	}
+	workspace := response.Workspace
+	if workspace.WorkspaceID != workspaceID || !validHerdrWorkspaceID(workspace.WorkspaceID) || !validHerdrWorkspaceID(workspace.ActiveTabID) || workspace.AgentStatus == "" || !canonicalHerdrPath(workspace.Worktree.CheckoutPath) {
 		return WorkspaceInfo{}, false, safeError("workspace get", result.ExitCode)
 	}
 
@@ -98,26 +87,18 @@ func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceIn
 	if err != nil {
 		return WorkspaceInfo{}, false, err
 	}
-	var paneResponse struct {
-		ID    string `json:"id"`
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-		Result struct {
-			Panes []struct {
-				PaneID      string `json:"pane_id"`
-				WorkspaceID string `json:"workspace_id"`
-				TabID       string `json:"tab_id"`
-				CWD         string `json:"cwd"`
-			} `json:"panes"`
-		} `json:"result"`
+	paneEnvelope, paneEnvelopeErr := decodeHerdrEnvelope(panes.Stdout)
+	if paneEnvelopeErr != nil || paneEnvelope.Error != nil || paneEnvelope.Result == nil {
+		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 	}
-	if err := decode(panes.Stdout, &paneResponse); err != nil || paneResponse.Error.Code != "" || paneResponse.ID == "" {
+	var paneResponse paneListResult
+	if err := decodeStrictJSON(*paneEnvelope.Result, &paneResponse); err != nil || paneResponse.Panes == nil || paneEnvelope.Type != "pane_list" {
 		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 	}
 	rootPaneID := ""
-	for _, pane := range paneResponse.Result.Panes {
-		if pane.WorkspaceID != workspaceID || pane.TabID != workspace.ActiveTabID || pane.CWD != workspace.Worktree.Path {
+	rootPaneState := AgentStateUnknown
+	for _, pane := range paneResponse.Panes {
+		if pane.WorkspaceID != workspaceID || pane.TabID != workspace.ActiveTabID || pane.CWD != workspace.Worktree.CheckoutPath {
 			continue
 		}
 		if !validHerdrPaneID(pane.PaneID) || !canonicalHerdrPath(pane.CWD) {
@@ -127,11 +108,16 @@ func (c *CLI) GetWorkspace(ctx context.Context, workspaceID string) (WorkspaceIn
 			return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 		}
 		rootPaneID = pane.PaneID
+		rootPaneState = ParseAgentState(pane.AgentStatus)
 	}
 	if rootPaneID == "" {
 		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
 	}
-	return WorkspaceInfo{WorkspaceID: workspace.WorkspaceID, RootPaneID: rootPaneID, Path: workspace.Worktree.Path, State: ParseAgentState(workspace.AgentStatus)}, true, nil
+	workspaceState := ParseAgentState(workspace.AgentStatus)
+	if !safeWorkspaceState(workspaceState) || !safeWorkspaceState(rootPaneState) {
+		return WorkspaceInfo{}, false, safeError("pane list", panes.ExitCode)
+	}
+	return WorkspaceInfo{WorkspaceID: workspace.WorkspaceID, RootPaneID: rootPaneID, Path: workspace.Worktree.CheckoutPath, State: rootPaneState}, true, nil
 }
 
 // CloseWorkspace closes exactly one Workspace. Herdr forgets a Workspace
@@ -141,22 +127,18 @@ func (c *CLI) CloseWorkspace(ctx context.Context, workspaceID string) error {
 		return errors.New("Herdr workspace identity is invalid")
 	}
 	result, err := c.run(ctx, "workspace close", "workspace", "close", workspaceID)
-	if providerErrorCode(result.Stdout) == "workspace_not_found" {
+	envelope, envelopeErr := decodeHerdrEnvelope(result.Stdout)
+	if envelopeErr == nil && envelope.Error != nil && envelope.Error.Code == "workspace_not_found" {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	var response struct {
-		ID    string `json:"id"`
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-		Result struct {
-			Type string `json:"type"`
-		} `json:"result"`
+	if envelopeErr != nil || envelope.Error != nil || envelope.Result == nil {
+		return safeError("workspace close", result.ExitCode)
 	}
-	if err := decode(result.Stdout, &response); err != nil || response.ID == "" || response.Error.Code != "" || response.Result.Type != "ok" {
+	var response closeResult
+	if err := decodeStrictJSON(*envelope.Result, &response); err != nil || (response.Type != "ok" && response.Type != "workspace_closed") {
 		return safeError("workspace close", result.ExitCode)
 	}
 	return nil
@@ -174,16 +156,123 @@ func canonicalHerdrPath(value string) bool {
 	return value != "" && filepath.IsAbs(value) && filepath.Clean(value) == value && !strings.ContainsRune(value, '\x00')
 }
 
-func providerErrorCode(output string) string {
-	var response struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
+type herdrProviderError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type herdrEnvelope struct {
+	ID     string              `json:"id"`
+	Type   string              `json:"type"`
+	Error  *herdrProviderError `json:"error"`
+	Result *json.RawMessage    `json:"result"`
+}
+
+type workspaceResult struct {
+	Type      string        `json:"type"`
+	Workspace workspaceWire `json:"workspace"`
+}
+
+type workspaceWire struct {
+	ActiveTabID string            `json:"active_tab_id"`
+	AgentStatus string            `json:"agent_status"`
+	Focused     bool              `json:"focused"`
+	Label       string            `json:"label"`
+	Number      int               `json:"number"`
+	PaneCount   int               `json:"pane_count"`
+	TabCount    int               `json:"tab_count"`
+	WorkspaceID string            `json:"workspace_id"`
+	Worktree    workspaceWorktree `json:"worktree"`
+}
+
+type workspaceWorktree struct {
+	CheckoutPath     string `json:"checkout_path"`
+	IsLinkedWorktree bool   `json:"is_linked_worktree"`
+	RepoKey          string `json:"repo_key"`
+	RepoName         string `json:"repo_name"`
+	RepoRoot         string `json:"repo_root"`
+}
+
+type paneListResult struct {
+	Panes []paneWire `json:"panes"`
+}
+
+type paneWire struct {
+	Agent                 string           `json:"agent"`
+	AgentSession          paneAgentSession `json:"agent_session"`
+	AgentStatus           string           `json:"agent_status"`
+	CWD                   string           `json:"cwd"`
+	Focused               bool             `json:"focused"`
+	ForegroundCWD         string           `json:"foreground_cwd"`
+	PaneID                string           `json:"pane_id"`
+	Revision              int              `json:"revision"`
+	Scroll                paneScroll       `json:"scroll"`
+	TabID                 string           `json:"tab_id"`
+	TerminalID            string           `json:"terminal_id"`
+	TerminalTitle         string           `json:"terminal_title"`
+	TerminalTitleStripped string           `json:"terminal_title_stripped"`
+	WorkspaceID           string           `json:"workspace_id"`
+}
+
+type paneAgentSession struct {
+	Agent  string `json:"agent"`
+	Kind   string `json:"kind"`
+	Source string `json:"source"`
+	Value  string `json:"value"`
+}
+
+type paneScroll struct {
+	MaxOffsetFromBottom int `json:"max_offset_from_bottom"`
+	OffsetFromBottom    int `json:"offset_from_bottom"`
+	ViewportRows        int `json:"viewport_rows"`
+}
+
+type closeResult struct {
+	Type string `json:"type"`
+}
+
+func decodeHerdrEnvelope(output string) (herdrEnvelope, error) {
+	var envelope herdrEnvelope
+	if err := decodeStrictJSON([]byte(output), &envelope); err != nil || envelope.ID == "" {
+		return herdrEnvelope{}, errors.New("invalid Herdr response envelope")
 	}
-	if json.Unmarshal([]byte(output), &response) != nil {
-		return ""
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(output), &fields); err != nil {
+		return herdrEnvelope{}, errors.New("invalid Herdr response envelope")
 	}
-	return response.Error.Code
+	errorRaw, hasError := fields["error"]
+	resultRaw, hasResult := fields["result"]
+	if hasError == hasResult || (hasError && (envelope.Error == nil || bytes.Equal(bytes.TrimSpace(errorRaw), []byte("null")))) || (hasResult && (envelope.Result == nil || bytes.Equal(bytes.TrimSpace(resultRaw), []byte("null")))) {
+		return herdrEnvelope{}, errors.New("Herdr response must contain exactly one result or error")
+	}
+	if envelope.Error != nil && !canonicalProviderCode(envelope.Error.Code) {
+		return herdrEnvelope{}, errors.New("Herdr response error code is invalid")
+	}
+	return envelope, nil
+}
+
+func decodeStrictJSON(output []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(output))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("JSON has trailing data")
+		}
+		return err
+	}
+	return nil
+}
+
+func canonicalProviderCode(value string) bool {
+	return providerSessionIDPattern.MatchString(value)
+}
+
+func safeWorkspaceState(state AgentState) bool {
+	return state == AgentStateIdle || state == AgentStateDone
 }
 
 func (c *CLI) decodeWorktree(ctx context.Context, operation, output string, exitCode int) (Worktree, error) {

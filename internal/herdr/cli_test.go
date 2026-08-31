@@ -751,8 +751,81 @@ func TestWorkspaceReaderAndCloserUseExactIDs(t *testing.T) {
 	}
 }
 
+func TestGetWorkspaceCombinesWorkspaceAndMatchedPaneLifecycleState(t *testing.T) {
+	cases := map[string]struct {
+		workspaceState string
+		paneState      string
+		wantState      AgentState
+	}{
+		"done workspace idle pane":    {workspaceState: "done", paneState: "idle", wantState: AgentStateIdle},
+		"idle workspace done pane":    {workspaceState: "idle", paneState: "done", wantState: AgentStateDone},
+		"working workspace done pane": {workspaceState: "working", paneState: "done"},
+		"idle workspace blocked pane": {workspaceState: "idle", paneState: "blocked"},
+		"unknown workspace done pane": {workspaceState: "unknown", paneState: "done"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00workspace\x00get\x00w7":            workspaceFixture("w7", "tab-7", "/repo/task", tc.workspaceState),
+				"herdr\x00pane\x00list\x00--workspace\x00w7": paneFixture("w7", "tab-7", "w7:p1", "/repo/task", tc.paneState),
+			})
+			info, found, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "w7")
+			if tc.wantState != "" {
+				if err != nil || !found || info.State != tc.wantState {
+					t.Fatalf("info=%#v found=%v err=%v", info, found, err)
+				}
+				return
+			}
+			if err == nil || found || err.Error() != "herdr pane list failed (exit code 0)" {
+				t.Fatalf("info=%#v found=%v err=%v", info, found, err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceAdaptersRequireStrictEnvelopes(t *testing.T) {
+	getCases := map[string]string{
+		"unknown top-level field":        `{"id":"cli:workspace:get","result":{"type":"workspace_info","workspace":{"workspace_id":"w7","active_tab_id":"tab-7","agent_status":"done","worktree":{"checkout_path":"/repo/task"}}},"extra":true}`,
+		"contradictory error and result": `{"id":"cli:workspace:get","error":{"code":"workspace_not_found","message":"not found"},"result":{"type":"workspace_info","workspace":{}}}`,
+		"empty-code error":               `{"id":"cli:workspace:get","error":{"code":"","message":"not found"}}`,
+		"message-only error":             `{"id":"cli:workspace:get","error":{"message":"not found"}}`,
+		"missing error and result":       `{"id":"cli:workspace:get"}`,
+		"trailing data":                  `{"id":"cli:workspace:get","result":{}} trailing`,
+	}
+	for name, output := range getCases {
+		t.Run("get/"+name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00workspace\x00get\x00w7": output,
+			})
+			_, found, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "w7")
+			if err == nil || found || err.Error() != "herdr workspace get failed (exit code 0)" {
+				t.Fatalf("found=%v err=%v", found, err)
+			}
+		})
+	}
+	closeCases := map[string]string{
+		"unknown top-level field":        `{"id":"cli:workspace:close","result":{"type":"ok"},"extra":true}`,
+		"contradictory error and result": `{"id":"cli:workspace:close","error":{"code":"workspace_not_found","message":"not found"},"result":{"type":"ok"}}`,
+		"empty-code error":               `{"id":"cli:workspace:close","error":{"code":"","message":"not found"}}`,
+		"message-only error":             `{"id":"cli:workspace:close","error":{"message":"not found"}}`,
+		"missing error and result":       `{"id":"cli:workspace:close"}`,
+		"trailing data":                  `{"id":"cli:workspace:close","result":{"type":"ok"}} trailing`,
+	}
+	for name, output := range closeCases {
+		t.Run("close/"+name, func(t *testing.T) {
+			r := fixtureRunner(t, map[string]string{
+				"herdr\x00workspace\x00close\x00w7": output,
+			})
+			err := NewCLI(r, "herdr").CloseWorkspace(context.Background(), "w7")
+			if err == nil || err.Error() != "herdr workspace close failed (exit code 0)" {
+				t.Fatalf("err=%v", err)
+			}
+		})
+	}
+}
+
 func TestGetWorkspaceMapsNotFoundWithoutListingPanes(t *testing.T) {
-	r := &responseErrorRunner{stdout: `{"error":{"code":"workspace_not_found","message":"not found"}}`, err: &testError{"provider failure"}}
+	r := &responseErrorRunner{stdout: `{"error":{"code":"workspace_not_found","message":"not found"},"id":"cli:workspace:get"}`, err: &testError{"provider failure"}}
 	// The runner must expose a provider failure result for reconciliation while
 	// the adapter returns only the safe not-found observation.
 	_, found, err := NewCLI(r, "herdr").GetWorkspace(context.Background(), "missing")
@@ -765,7 +838,7 @@ func TestGetWorkspaceMapsNotFoundWithoutListingPanes(t *testing.T) {
 }
 
 func TestCloseWorkspaceTreatsNotFoundAsIdempotentSuccess(t *testing.T) {
-	r := &responseErrorRunner{stdout: `{"error":{"code":"workspace_not_found","message":"not found"}}`, err: &testError{"provider failure"}}
+	r := &responseErrorRunner{stdout: `{"error":{"code":"workspace_not_found","message":"not found"},"id":"cli:workspace:close"}`, err: &testError{"provider failure"}}
 	if err := NewCLI(r, "herdr").CloseWorkspace(context.Background(), "w7"); err != nil {
 		t.Fatal(err)
 	}
@@ -790,7 +863,7 @@ func TestGetWorkspaceRejectsMismatchedOrAmbiguousIdentity(t *testing.T) {
 		},
 		"multiple canonical panes": {
 			workspace: workspaceFixture("w7", "tab-7", "/repo/task", "done"),
-			panes:     `{"result":{"panes":[{"pane_id":"w7:p1","workspace_id":"w7","tab_id":"tab-7","cwd":"/repo/task"},{"pane_id":"w7:p2","workspace_id":"w7","tab_id":"tab-7","cwd":"/repo/task"}]}}`,
+			panes:     `{"id":"cli:pane:list","result":{"panes":[{"pane_id":"w7:p1","workspace_id":"w7","tab_id":"tab-7","cwd":"/repo/task","agent_status":"done"},{"pane_id":"w7:p2","workspace_id":"w7","tab_id":"tab-7","cwd":"/repo/task","agent_status":"done"}]}}`,
 		},
 	}
 	for name, tc := range cases {
@@ -868,11 +941,11 @@ func TestWorkspaceAdaptersRejectMalformedResponsesWithoutProviderBody(t *testing
 }
 
 func workspaceFixture(workspaceID, activeTabID, path, state string) string {
-	return fmt.Sprintf(`{"id":"workspace-get","result":{"workspace":{"workspace_id":%q,"active_tab_id":%q,"agent_status":%q,"worktree":{"checkout_path":%q}}}}`, workspaceID, activeTabID, state, path)
+	return fmt.Sprintf(`{"id":"workspace-get","result":{"type":"workspace_info","workspace":{"workspace_id":%q,"active_tab_id":%q,"agent_status":%q,"worktree":{"checkout_path":%q}}}}`, workspaceID, activeTabID, state, path)
 }
 
 func paneFixture(workspaceID, tabID, paneID, cwd, state string) string {
-	return fmt.Sprintf(`{"id":"pane-list","result":{"panes":[{"pane_id":%q,"workspace_id":%q,"tab_id":%q,"cwd":%q,"agent_status":%q}]}}`, paneID, workspaceID, tabID, cwd, state)
+	return fmt.Sprintf(`{"id":"pane-list","result":{"panes":[{"pane_id":%q,"workspace_id":%q,"tab_id":%q,"cwd":%q,"agent_status":%q}]},"type":"pane_list"}`, paneID, workspaceID, tabID, cwd, state)
 }
 
 func TestFindWorktreePropagatesPaneLookupFailure(t *testing.T) {
