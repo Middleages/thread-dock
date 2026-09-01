@@ -653,7 +653,7 @@ func (o *Orchestrator) parallelStartTask(ctx context.Context, snapshot *state.Ru
 	if err := o.parallelPrepareTask(ctx, snapshot, id, action, "Builder Agent 시작", map[string]any{"taskId": id, "agent": taskState.Agent.Name}); err != nil {
 		return err
 	}
-	if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: taskState.Agent.Name, PaneID: taskState.Worktree.PaneID}); err != nil {
+	if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: taskState.Agent.Name, PaneID: taskState.Worktree.PaneID, OpenCodeAgent: taskState.Agent.OpenCodeAgent}); err != nil {
 		return err
 	}
 	taskState.Stage = "baseline"
@@ -910,7 +910,7 @@ func (o *Orchestrator) parallelResumeTask(ctx context.Context, snapshot *state.R
 	if !ok {
 		return o.pendingUncertain(ctx, snapshot)
 	}
-	if err := resumer.ResumeAgent(ctx, herdr.ResumeAgentRequest{Name: taskState.Agent.Name, PaneID: taskState.Worktree.PaneID, SessionID: taskState.Agent.SessionID}); err != nil {
+	if err := resumer.ResumeAgent(ctx, herdr.ResumeAgentRequest{Name: taskState.Agent.Name, PaneID: taskState.Worktree.PaneID, SessionID: taskState.Agent.SessionID, OpenCodeAgent: taskState.Agent.OpenCodeAgent}); err != nil {
 		return err
 	}
 	taskState.Stage = "baseline"
@@ -1340,10 +1340,11 @@ func (o *Orchestrator) advanceParallelReview(ctx context.Context, snapshot *stat
 		if err := o.parallelPrepare(ctx, snapshot, "parallel_start_reviewer", "Reviewer Agent 시작", map[string]any{"agent": snapshot.Reviewer.Name}); err != nil {
 			return err
 		}
-		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: snapshot.Reviewer.Name, PaneID: snapshot.ReviewerWorktree.PaneID}); err != nil {
+		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: snapshot.Reviewer.Name, PaneID: snapshot.ReviewerWorktree.PaneID, OpenCodeAgent: snapshot.Reviewer.OpenCodeAgent}); err != nil {
 			return err
 		}
-		snapshot.Reviewer = state.AgentEvidence{Name: name, IdentitySource: "provider"}
+		snapshot.Reviewer.Name = name
+		snapshot.Reviewer.IdentitySource = "provider"
 		return o.parallelFinish(ctx, snapshot, "Reviewer Agent 준비 완료")
 	case 2:
 		locator, ok := o.deps.Herdr.(AgentLocator)

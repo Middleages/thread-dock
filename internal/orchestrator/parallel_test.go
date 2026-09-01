@@ -28,6 +28,50 @@ func TestNewParallelUsesParallelStrategy(t *testing.T) {
 	}
 }
 
+func TestParallelStartPinsOpenCodeAgentSnapshot(t *testing.T) {
+	h := newParallelHarness(t)
+	h.Deps.BuilderOpenCodeAgent = "threaddock-builder"
+	h.Deps.ReviewerOpenCodeAgent = "threaddock-reviewer"
+	h.orchestrator = NewParallel(h.Deps)
+
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	if snapshot.Builder.OpenCodeAgent != "threaddock-builder" || snapshot.Reviewer.OpenCodeAgent != "threaddock-reviewer" {
+		t.Fatalf("legacy routing = builder %q reviewer %q", snapshot.Builder.OpenCodeAgent, snapshot.Reviewer.OpenCodeAgent)
+	}
+	for _, taskID := range snapshot.TaskOrder {
+		if got := snapshot.Tasks[taskID].Agent.OpenCodeAgent; got != "threaddock-builder" {
+			t.Fatalf("task %s routing = %q, want builder routing", taskID, got)
+		}
+	}
+}
+
+func TestParallelStartUsesPinnedOpenCodeAgentForBuilderAndReviewer(t *testing.T) {
+	h := newParallelHarness(t)
+	h.Deps.BuilderOpenCodeAgent = "threaddock-builder"
+	h.Deps.ReviewerOpenCodeAgent = "threaddock-reviewer"
+	h.orchestrator = NewParallel(h.Deps)
+
+	if got := h.runToStable(); got != contract.PhaseCompleted {
+		t.Fatalf("phase = %s", got)
+	}
+	if len(h.parallelHD.starts) != 3 {
+		t.Fatalf("starts = %#v, want two builders and one reviewer", h.parallelHD.starts)
+	}
+	for _, request := range h.parallelHD.starts {
+		want := "threaddock-builder"
+		if strings.HasPrefix(request.Name, "reviewer-") {
+			want = "threaddock-reviewer"
+		}
+		if request.OpenCodeAgent != want {
+			t.Fatalf("start request %#v has routing %q, want %q", request, request.OpenCodeAgent, want)
+		}
+	}
+}
+
 func TestTaskAgentNameIsStableDistinctAndHerdrCompatible(t *testing.T) {
 	run := contract.RunID("run-1787925632789000929")
 	one := taskAgentName("builder", run, "api")

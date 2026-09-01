@@ -79,6 +79,61 @@ func TestSingleRunPersistsActualAgentSessionIDsSeparatelyFromNames(t *testing.T)
 	}
 }
 
+func TestSingleStartPinsOpenCodeAgentSnapshot(t *testing.T) {
+	h := newHarness(t)
+	h.Deps.BuilderOpenCodeAgent = "threaddock-builder"
+	h.Deps.ReviewerOpenCodeAgent = "threaddock-reviewer"
+	h.orchestrator = New(h.Deps)
+
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	if snapshot.Builder.OpenCodeAgent != "threaddock-builder" || snapshot.Reviewer.OpenCodeAgent != "threaddock-reviewer" {
+		t.Fatalf("initial routing = builder %q reviewer %q", snapshot.Builder.OpenCodeAgent, snapshot.Reviewer.OpenCodeAgent)
+	}
+}
+
+func TestSingleStartUsesPinnedOpenCodeAgentForBuilderAndReviewer(t *testing.T) {
+	h := newHarness(t)
+	h.Deps.BuilderOpenCodeAgent = "threaddock-builder"
+	h.Deps.ReviewerOpenCodeAgent = "threaddock-reviewer"
+	h.orchestrator = New(h.Deps)
+
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 14 && len(h.herdr.starts) < 2; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(h.herdr.starts) != 2 {
+		t.Fatalf("starts = %#v, want builder and reviewer", h.herdr.starts)
+	}
+	if h.herdr.starts[0].OpenCodeAgent != "threaddock-builder" || h.herdr.starts[1].OpenCodeAgent != "threaddock-reviewer" {
+		t.Fatalf("start routing = %#v", h.herdr.starts)
+	}
+}
+
+func TestSingleStartLeavesLegacyOpenCodeAgentEmpty(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 14 && len(h.herdr.starts) < 2; i++ {
+		if err := h.orchestrator.Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(h.herdr.starts) != 2 || h.herdr.starts[0].OpenCodeAgent != "" || h.herdr.starts[1].OpenCodeAgent != "" {
+		t.Fatalf("legacy start routing = %#v", h.herdr.starts)
+	}
+}
+
 func TestSingleRunPersistsDistinctTerminalIdentitiesForSeparateAgentWorkspaces(t *testing.T) {
 	h := newHarness(t)
 	h.herdr.useTerminalIdentity = true

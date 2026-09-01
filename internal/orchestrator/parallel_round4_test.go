@@ -417,3 +417,77 @@ func TestParallelMergedResponseLossDisabledProjectCompletesWithAudit(t *testing.
 		t.Fatalf("merged response-loss snapshot=%+v", got)
 	}
 }
+
+func TestParallelRepairAndRecoveryKeepOpenCodeAgentPinnedAcrossConfigDrift(t *testing.T) {
+	h := newParallelHarness(t)
+	h.Deps.BuilderOpenCodeAgent = "threaddock-builder"
+	h.orchestrator = NewParallel(h.Deps)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	name := taskAgentName("builder", id, "api")
+	task := snapshot.Tasks["api"]
+	task.State, task.Stage = "running", "repair_prompt"
+	task.Agent.Name = name
+	task.Worktree = state.WorktreeState{Path: "/tmp/agent-api", WorkspaceID: "workspace-agent-api", PaneID: "pane-agent-api", Branch: "agent/api"}
+	task.Prompt = state.PromptReceipt{RequestID: string(id) + ":api:attempt-1"}
+	snapshot.Phase, snapshot.ProjectStatus, snapshot.Tasks["api"] = contract.PhaseBuilding, "In Progress", task
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := h.Deps
+	changed.BuilderOpenCodeAgent = "changed-builder"
+	if err := NewParallel(changed).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.mustLoad(id).Tasks["api"].Agent.OpenCodeAgent; got != "threaddock-builder" {
+		t.Fatalf("repair routing = %q, want pinned builder routing", got)
+	}
+
+	snapshot = h.mustLoad(id)
+	task = snapshot.Tasks["api"]
+	task.Stage, task.NativeResume = "resume", true
+	task.Agent.SessionID, task.Agent.IdentitySource = "session-"+name, "provider"
+	snapshot.Tasks["api"] = task
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewParallel(changed).Advance(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.parallelHD.resumes) != 1 || h.parallelHD.resumes[0].OpenCodeAgent != "threaddock-builder" {
+		t.Fatalf("recovery resume requests = %#v", h.parallelHD.resumes)
+	}
+}
+
+func TestParallelLegacyRecoveryDoesNotAdoptChangedOpenCodeAgent(t *testing.T) {
+	h := newParallelHarness(t)
+	id, err := h.orchestrator.Start(context.Background(), h.contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := h.mustLoad(id)
+	name := taskAgentName("builder", id, "api")
+	task := snapshot.Tasks["api"]
+	task.State, task.Stage, task.NativeResume = "running", "resume", true
+	task.Agent.Name, task.Agent.SessionID, task.Agent.IdentitySource = name, "session-"+name, "provider"
+	task.Worktree = state.WorktreeState{Path: "/tmp/agent-api", WorkspaceID: "workspace-agent-api", PaneID: "pane-agent-api", Branch: "agent/api"}
+	snapshot.Phase, snapshot.ProjectStatus, snapshot.Tasks["api"] = contract.PhaseBuilding, "In Progress", task
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := h.Deps
+	changed.BuilderOpenCodeAgent = "changed-builder"
+	for i := 0; i < 2 && len(h.parallelHD.resumes) == 0; i++ {
+		if err := NewParallel(changed).Advance(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(h.parallelHD.resumes) != 1 || h.parallelHD.resumes[0].OpenCodeAgent != "" {
+		t.Fatalf("legacy recovery resume requests = %#v", h.parallelHD.resumes)
+	}
+}

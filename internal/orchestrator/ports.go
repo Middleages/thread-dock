@@ -146,6 +146,12 @@ type Dependencies struct {
 	WorkingWait              time.Duration
 	RecoveryLimit            int
 	Remote                   string
+	// BuilderOpenCodeAgent and ReviewerOpenCodeAgent select the OpenCode
+	// profile for their respective roles. They are copied into the initial
+	// snapshot so later actions and recovery remain pinned to the run's
+	// original routing.
+	BuilderOpenCodeAgent  string
+	ReviewerOpenCodeAgent string
 	// Retirement adapters are optional so legacy Herdr/Git clients continue
 	// to satisfy the core dependency set. When unset, the orchestrator
 	// discovers the narrow port on Herdr or Git/Worktree.

@@ -146,6 +146,8 @@ func (o *Orchestrator) Start(ctx context.Context, contractPath string) (contract
 		RepositoryPath:  repositoryPath,
 		IntegrationPath: integrationPath,
 		Integration:     state.WorktreeState{Path: integrationPath, Branch: integrationBranch},
+		Builder:         state.AgentEvidence{OpenCodeAgent: o.deps.BuilderOpenCodeAgent},
+		Reviewer:        state.AgentEvidence{OpenCodeAgent: o.deps.ReviewerOpenCodeAgent},
 		Registration:    state.RegistrationState{Status: "pending", Marker: marker(id)},
 		PendingAction:   "register_issue_bundle",
 		Summary:         "GHES Issue 등록 대기 중",
@@ -163,7 +165,7 @@ func (o *Orchestrator) Start(ctx context.Context, contractPath string) (contract
 		snapshot.Tasks = make(map[string]state.TaskRunState, len(c.Tasks))
 		for _, task := range c.Tasks {
 			snapshot.TaskOrder = append(snapshot.TaskOrder, task.ID)
-			snapshot.Tasks[task.ID] = state.TaskRunState{State: "pending"}
+			snapshot.Tasks[task.ID] = state.TaskRunState{State: "pending", Agent: state.AgentEvidence{OpenCodeAgent: o.deps.BuilderOpenCodeAgent}}
 		}
 	}
 	if err := o.deps.Store.Create(ctx, snapshot); err != nil {
@@ -455,11 +457,11 @@ func (o *Orchestrator) advanceBuilding(ctx context.Context, snapshot state.RunSn
 		if paneID == "" {
 			paneID = runtime.worktree.PaneID
 		}
-		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: name, PaneID: paneID}); err != nil {
+		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: name, PaneID: paneID, OpenCodeAgent: snapshot.Builder.OpenCodeAgent}); err != nil {
 			_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Builder Agent 시작 실패: %v", err)})
 			return err
 		}
-		snapshot.Builder = state.AgentEvidence{Name: name}
+		snapshot.Builder.Name = name
 		return o.finish(ctx, &snapshot, "Builder Agent 준비 완료", false)
 	}
 	if snapshot.ActionCursor == 2 {
@@ -580,11 +582,11 @@ func (o *Orchestrator) advanceReview(ctx context.Context, snapshot state.RunSnap
 		if err := o.prepare(ctx, &snapshot, "start_reviewer", "새 Reviewer Agent session 시작", map[string]any{"agent": name, "builderTranscript": false}); err != nil {
 			return err
 		}
-		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: name, PaneID: snapshot.ReviewerWorktree.PaneID}); err != nil {
+		if err := o.deps.Herdr.StartAgent(ctx, herdr.StartAgentRequest{Name: name, PaneID: snapshot.ReviewerWorktree.PaneID, OpenCodeAgent: snapshot.Reviewer.OpenCodeAgent}); err != nil {
 			_ = o.append(ctx, snapshot.RunID, state.Event{Type: "action_failed", Phase: snapshot.Phase, Message: fmt.Sprintf("Reviewer Agent 시작 실패: %v", err)})
 			return err
 		}
-		snapshot.Reviewer = state.AgentEvidence{Name: name}
+		snapshot.Reviewer.Name = name
 		return o.finish(ctx, &snapshot, "독립 Reviewer session 준비 완료", false)
 	}
 	if snapshot.ActionCursor == 2 {
