@@ -20,6 +20,7 @@ Reviewer에게 전달합니다. 아직 PR 생성, main 병합, CI/CD와 운영 �
 - [ThreadDock 구현 로드맵](docs/superpowers/plans/2026-08-28-threaddock-roadmap.md)
 - [Foundation 파일럿 walkthrough](docs/operator/foundation-pilot.md)
 - [Single-run 파일럿 빠른 시작](docs/operator/single-run-pilot.md)
+- [OpenCode 역할 Agent routing 운영 절차](docs/operator/opencode-role-agents.md)
 
 검증과 미리보기의 현재 계약 구현은 `internal/contract`에 있으며, 반복 가능한
 검사 게이트는 `make check`입니다.

@@ -77,6 +77,7 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 	)
 	ghes := github.NewRESTClient(cfg.APIBase, token, cfg.APIVersion, nil)
 	herdrClient := herdr.NewCLI(process, cfg.HerdrBinary)
+	builderOpenCodeAgent, reviewerOpenCodeAgent := roleAgentRouting(cfg)
 	orch := orchestrator.NewAuto(orchestrator.Dependencies{
 		Store:                       store,
 		GitHub:                      ghes,
@@ -95,6 +96,8 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 		RetirementGitInspector:      retirementGit,
 		AutoRetireCompletedSessions: cfg.AutoRetireCompletedSessions,
 		HerdrWorktreeRoot:           cfg.HerdrWorktreeRoot,
+		BuilderOpenCodeAgent:        builderOpenCodeAgent,
+		ReviewerOpenCodeAgent:       reviewerOpenCodeAgent,
 	})
 	service := cli.NewOrchestratorRunService(
 		orch,
@@ -106,6 +109,10 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 		cfg.HerdrWorktreeRoot,
 	)
 	return cli.Dependencies{Runs: service, Retirement: service, Confirmer: orch, Reverter: cli.NewRevertRunService(store, revert.New(git, ghes), worktreeRoot)}, nil
+}
+
+func roleAgentRouting(cfg config.Config) (builder, reviewer string) {
+	return cfg.OpenCodeAgents.Builder, cfg.OpenCodeAgents.Reviewer
 }
 
 type persistedRunLoader interface {

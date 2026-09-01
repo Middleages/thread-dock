@@ -9,10 +9,23 @@ import (
 	"testing"
 
 	"thread-dock/internal/cli"
+	"thread-dock/internal/config"
 	"thread-dock/internal/contract"
 	"thread-dock/internal/runner"
 	"thread-dock/internal/state"
 )
+
+func TestProductionDependenciesRouteOpenCodeRoleAgents(t *testing.T) {
+	cfg := config.Config{OpenCodeAgents: config.OpenCodeAgents{
+		Builder:  "build",
+		Reviewer: "review",
+	}}
+
+	builder, reviewer := roleAgentRouting(cfg)
+	if builder != "build" || reviewer != "review" {
+		t.Fatalf("role agent routing builder=%q reviewer=%q, want build/review", builder, reviewer)
+	}
+}
 
 func TestRepositoryDiscoveryOnlyRunsForStart(t *testing.T) {
 	var calls int
