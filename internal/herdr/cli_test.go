@@ -144,6 +144,72 @@ func TestResumeAgentUsesExactProviderSessionArguments(t *testing.T) {
 	}
 }
 
+func TestStartAgentUsesExactLegacyArguments(t *testing.T) {
+	r := &recordingRunner{responses: map[string]string{
+		"herdr\x00agent\x00start\x00builder\x00--kind\x00opencode\x00--pane\x00pane-1": "{}",
+	}}
+	cli := NewCLI(r, "herdr")
+	if err := cli.StartAgent(context.Background(), StartAgentRequest{Name: "builder", PaneID: "pane-1"}); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"herdr", "agent", "start", "builder", "--kind", "opencode", "--pane", "pane-1"}}
+	if !reflect.DeepEqual(r.calls, want) {
+		t.Fatalf("calls=%#v want=%#v", r.calls, want)
+	}
+}
+
+func TestStartAgentRoutesOpenCodeAgentWithExactArguments(t *testing.T) {
+	r := &recordingRunner{responses: map[string]string{
+		"herdr\x00agent\x00start\x00builder\x00--kind\x00opencode\x00--pane\x00pane-1\x00--\x00--agent\x00threaddock-builder": "{}",
+	}}
+	cli := NewCLI(r, "herdr")
+	if err := cli.StartAgent(context.Background(), StartAgentRequest{Name: "builder", PaneID: "pane-1", OpenCodeAgent: "threaddock-builder"}); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"herdr", "agent", "start", "builder", "--kind", "opencode", "--pane", "pane-1", "--", "--agent", "threaddock-builder"}}
+	if !reflect.DeepEqual(r.calls, want) {
+		t.Fatalf("calls=%#v want=%#v", r.calls, want)
+	}
+}
+
+func TestResumeAgentRoutesOpenCodeAgentWithExactArguments(t *testing.T) {
+	r := &recordingRunner{responses: map[string]string{
+		"herdr\x00agent\x00start\x00builder\x00--kind\x00opencode\x00--pane\x00pane-1\x00--\x00--session\x00ses_123\x00--agent\x00threaddock-builder": "{}",
+	}}
+	cli := NewCLI(r, "herdr")
+	if err := cli.ResumeAgent(context.Background(), ResumeAgentRequest{Name: "builder", PaneID: "pane-1", SessionID: "ses_123", OpenCodeAgent: "threaddock-builder"}); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"herdr", "agent", "start", "builder", "--kind", "opencode", "--pane", "pane-1", "--", "--session", "ses_123", "--agent", "threaddock-builder"}}
+	if !reflect.DeepEqual(r.calls, want) {
+		t.Fatalf("calls=%#v want=%#v", r.calls, want)
+	}
+}
+
+func TestAgentRoutingRejectsUnsafeNamesWithoutCallingRunner(t *testing.T) {
+	for _, name := range []string{" review", "review/agent", "review;touch"} {
+		t.Run(name, func(t *testing.T) {
+			r := &recordingRunner{responses: map[string]string{}}
+			cli := NewCLI(r, "herdr")
+			if err := cli.StartAgent(context.Background(), StartAgentRequest{Name: "builder", PaneID: "pane-1", OpenCodeAgent: name}); err == nil {
+				t.Fatal("expected StartAgent to reject unsafe OpenCode Agent name")
+			}
+			if len(r.calls) != 0 {
+				t.Fatalf("StartAgent calls=%#v want zero calls", r.calls)
+			}
+
+			r = &recordingRunner{responses: map[string]string{}}
+			cli = NewCLI(r, "herdr")
+			if err := cli.ResumeAgent(context.Background(), ResumeAgentRequest{Name: "builder", PaneID: "pane-1", SessionID: "ses_123", OpenCodeAgent: name}); err == nil {
+				t.Fatal("expected ResumeAgent to reject unsafe OpenCode Agent name")
+			}
+			if len(r.calls) != 0 {
+				t.Fatalf("ResumeAgent calls=%#v want zero calls", r.calls)
+			}
+		})
+	}
+}
+
 func TestAgentLifecycleCommandsUseStructuredArguments(t *testing.T) {
 	r := fixtureRunner(t, map[string]string{
 		"herdr\x00agent\x00start\x00builder_api\x00--kind\x00opencode\x00--pane\x00pane-redacted":                           `{}`,

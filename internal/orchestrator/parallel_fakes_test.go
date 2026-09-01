@@ -205,7 +205,7 @@ func (h *parallelHerdr) OpenWorktree(_ context.Context, request herdr.OpenWorktr
 
 func (h *parallelHerdr) ResumeAgent(ctx context.Context, request herdr.ResumeAgentRequest) error {
 	h.resumes = append(h.resumes, request)
-	return h.fakeHerdr.StartAgent(ctx, herdr.StartAgentRequest{Name: request.Name, PaneID: request.PaneID})
+	return h.fakeHerdr.StartAgent(ctx, herdr.StartAgentRequest{Name: request.Name, PaneID: request.PaneID, OpenCodeAgent: request.OpenCodeAgent})
 }
 
 func (h *parallelHerdr) ReadEvidence(ctx context.Context, name string) (herdr.Evidence, error) {

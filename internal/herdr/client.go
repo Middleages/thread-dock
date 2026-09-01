@@ -204,14 +204,16 @@ type AgentInfo struct {
 }
 
 type StartAgentRequest struct {
-	Name   string
-	PaneID string
+	Name          string
+	PaneID        string
+	OpenCodeAgent string
 }
 
 type ResumeAgentRequest struct {
-	Name      string
-	PaneID    string
-	SessionID string
+	Name          string
+	PaneID        string
+	SessionID     string
+	OpenCodeAgent string
 }
 
 type AgentState string

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"thread-dock/internal/contract"
+	"thread-dock/internal/opencodeagent"
 	"thread-dock/internal/pathscope"
 	"thread-dock/internal/runner"
 )
@@ -482,7 +483,14 @@ func (c *CLI) firstPane(ctx context.Context, workspaceID string) (string, error)
 }
 
 func (c *CLI) StartAgent(ctx context.Context, req StartAgentRequest) error {
-	_, err := c.run(ctx, "agent start", "agent", "start", req.Name, "--kind", "opencode", "--pane", req.PaneID)
+	args := []string{"agent", "start", req.Name, "--kind", "opencode", "--pane", req.PaneID}
+	if req.OpenCodeAgent != "" {
+		if !opencodeagent.ValidName(req.OpenCodeAgent) {
+			return errors.New("OpenCode Agent name is invalid")
+		}
+		args = append(args, "--", "--agent", req.OpenCodeAgent)
+	}
+	_, err := c.run(ctx, "agent start", args...)
 	return err
 }
 
@@ -490,7 +498,14 @@ func (c *CLI) ResumeAgent(ctx context.Context, req ResumeAgentRequest) error {
 	if strings.TrimSpace(req.Name) == "" || len(req.Name) > 32 || !validHerdrName(req.Name) || strings.TrimSpace(req.PaneID) == "" || strings.TrimSpace(req.SessionID) == "" || req.SessionID != strings.TrimSpace(req.SessionID) || strings.HasPrefix(strings.ToLower(req.SessionID), "herdr-terminal:") || !providerSessionIDPattern.MatchString(req.SessionID) {
 		return errors.New("Herdr provider session identity is invalid")
 	}
-	_, err := c.run(ctx, "agent resume", "agent", "start", req.Name, "--kind", "opencode", "--pane", req.PaneID, "--", "--session", req.SessionID)
+	args := []string{"agent", "start", req.Name, "--kind", "opencode", "--pane", req.PaneID, "--", "--session", req.SessionID}
+	if req.OpenCodeAgent != "" {
+		if !opencodeagent.ValidName(req.OpenCodeAgent) {
+			return errors.New("OpenCode Agent name is invalid")
+		}
+		args = append(args, "--agent", req.OpenCodeAgent)
+	}
+	_, err := c.run(ctx, "agent resume", args...)
 	return err
 }
 
