@@ -23,6 +23,7 @@ type AgentEvidence struct {
 	// the terminal fallback. Terminal identities are addressable for
 	// reconciliation but never eligible for native resume.
 	IdentitySource string `json:"identitySource,omitempty"`
+	OpenCodeAgent  string `json:"openCodeAgent,omitempty"`
 }
 
 type VerificationEvidence struct {

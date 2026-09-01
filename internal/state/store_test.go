@@ -129,9 +129,29 @@ func TestLegacySingleRunSnapshotStillDecodes(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"runId":"run-1","builder":{"name":"builder-run-1"}}`), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Builder.Name != "builder-run-1" || got.Tasks != nil {
+	if got.Builder.Name != "builder-run-1" || got.Builder.OpenCodeAgent != "" || got.Tasks != nil {
 		t.Fatalf("snapshot=%#v", got)
 	}
+}
+
+func TestAgentEvidenceOpenCodeAgentIsAdditiveAndOmittedWhenEmpty(t *testing.T) {
+	encoded := marshalSnapshotWithAgent(t, "threaddock-builder")
+	if !bytes.Contains(encoded, []byte(`"openCodeAgent":"threaddock-builder"`)) {
+		t.Fatal(string(encoded))
+	}
+	legacy := marshalSnapshotWithAgent(t, "")
+	if bytes.Contains(legacy, []byte("openCodeAgent")) {
+		t.Fatal(string(legacy))
+	}
+}
+
+func marshalSnapshotWithAgent(t *testing.T, agent string) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(RunSnapshot{RunID: "run-agent", Builder: AgentEvidence{OpenCodeAgent: agent}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func TestLegacySnapshotEncodingOmitsEmptyRetirementState(t *testing.T) {

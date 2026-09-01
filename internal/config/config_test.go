@@ -18,6 +18,61 @@ func TestParseDefaultsRetirementSettingsWithoutBreakingOldJSON(t *testing.T) {
 	}
 }
 
+func TestParseOpenCodeAgents(t *testing.T) {
+	got, err := Parse(strings.NewReader(`{"ghesHost":"https://github.example.test","openCodeAgents":{"builder":"threaddock-builder","reviewer":"threaddock-reviewer"},"projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OpenCodeAgents.Builder != "threaddock-builder" || got.OpenCodeAgents.Reviewer != "threaddock-reviewer" {
+		t.Fatalf("openCodeAgents=%#v", got.OpenCodeAgents)
+	}
+}
+
+func TestParseOpenCodeAgentsAllowsOmittedObjectAndEmptyFields(t *testing.T) {
+	base := `{"ghesHost":"https://github.example.test","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`
+	for _, value := range []string{"", `{}`, `{"builder":"","reviewer":""}`} {
+		data := base
+		if value != "" {
+			data = strings.Replace(data, `,"projectId"`, `,"openCodeAgents":`+value+`,"projectId"`, 1)
+		}
+		got, err := Parse(strings.NewReader(data))
+		if err != nil {
+			t.Fatalf("openCodeAgents=%s: %v", value, err)
+		}
+		if got.OpenCodeAgents.Builder != "" || got.OpenCodeAgents.Reviewer != "" {
+			t.Fatalf("openCodeAgents=%#v", got.OpenCodeAgents)
+		}
+	}
+}
+
+func TestParseRejectsInvalidOpenCodeAgentNamesWithFieldName(t *testing.T) {
+	for _, tt := range []struct {
+		field string
+		value string
+	}{
+		{field: "builder", value: " reviewer"},
+		{field: "reviewer", value: "리뷰어"},
+		{field: "builder", value: "review/agent"},
+		{field: "reviewer", value: "reviewer;touch"},
+		{field: "builder", value: strings.Repeat("a", 65)},
+	} {
+		data := `{"ghesHost":"https://github.example.test","openCodeAgents":{"builder":"build","reviewer":"review"},"projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`
+		original := map[string]string{"builder": "build", "reviewer": "review"}[tt.field]
+		data = strings.Replace(data, `"`+tt.field+`":"`+original+`"`, `"`+tt.field+`":"`+tt.value+`"`, 1)
+		_, err := Parse(strings.NewReader(data))
+		if err == nil || !strings.Contains(err.Error(), "openCodeAgents."+tt.field) {
+			t.Fatalf("field=%s value=%q err=%v", tt.field, tt.value, err)
+		}
+	}
+}
+
+func TestParseRejectsUnknownOpenCodeAgentFields(t *testing.T) {
+	data := `{"ghesHost":"https://github.example.test","openCodeAgents":{"builder":"build","reviewer":"review","model":"provider/model"},"projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`
+	if _, err := Parse(strings.NewReader(data)); err == nil || !strings.Contains(err.Error(), "model") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestParsePreservesExplicitFalseAutoRetirement(t *testing.T) {
 	got, err := Parse(strings.NewReader(`{"ghesHost":"https://github.example.test","autoRetireCompletedSessions":false,"herdrWorktreeRoot":"./managed-worktrees","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`))
 	if err != nil {

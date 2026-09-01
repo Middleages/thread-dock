@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"thread-dock/internal/opencodeagent"
 )
 
 const (
@@ -41,6 +43,14 @@ type Config struct {
 	ProjectID                   string            `json:"projectId"`
 	ProjectStatusFieldID        string            `json:"projectStatusFieldId"`
 	ProjectStatusOptions        map[string]string `json:"projectStatusOptions"`
+	OpenCodeAgents              OpenCodeAgents    `json:"openCodeAgents"`
+}
+
+// OpenCodeAgents contains the optional OpenCode Agent names used for each
+// routed role. Empty names preserve OpenCode's default Agent behavior.
+type OpenCodeAgents struct {
+	Builder  string `json:"builder"`
+	Reviewer string `json:"reviewer"`
 }
 
 // Load reads and validates a JSON configuration file.
@@ -139,6 +149,7 @@ func Parse(r io.Reader) (Config, error) {
 		ProjectID:                   strings.TrimSpace(raw.ProjectID),
 		ProjectStatusFieldID:        strings.TrimSpace(raw.ProjectStatusFieldID),
 		ProjectStatusOptions:        cloneOptions(raw.ProjectStatusOptions),
+		OpenCodeAgents:              raw.OpenCodeAgents,
 	}
 	if err := validate(c); err != nil {
 		return Config{}, err
@@ -161,6 +172,7 @@ type configJSON struct {
 	ProjectID                   string            `json:"projectId"`
 	ProjectStatusFieldID        string            `json:"projectStatusFieldId"`
 	ProjectStatusOptions        map[string]string `json:"projectStatusOptions"`
+	OpenCodeAgents              OpenCodeAgents    `json:"openCodeAgents"`
 }
 
 func decodeDuration(data json.RawMessage) (time.Duration, error) {
@@ -223,6 +235,12 @@ func validate(c Config) error {
 		if strings.TrimSpace(c.ProjectStatusOptions[status]) == "" {
 			return fmt.Errorf("projectStatusOptions.%s is required", status)
 		}
+	}
+	if c.OpenCodeAgents.Builder != "" && !opencodeagent.ValidName(c.OpenCodeAgents.Builder) {
+		return errors.New("openCodeAgents.builder is invalid")
+	}
+	if c.OpenCodeAgents.Reviewer != "" && !opencodeagent.ValidName(c.OpenCodeAgents.Reviewer) {
+		return errors.New("openCodeAgents.reviewer is invalid")
 	}
 	return nil
 }
