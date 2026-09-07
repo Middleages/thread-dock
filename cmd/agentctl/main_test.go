@@ -11,6 +11,8 @@ import (
 	"thread-dock/internal/cli"
 	"thread-dock/internal/config"
 	"thread-dock/internal/contract"
+	contractv2 "thread-dock/internal/contract/v2"
+	"thread-dock/internal/registry"
 	"thread-dock/internal/runner"
 	"thread-dock/internal/state"
 )
@@ -136,5 +138,29 @@ func TestProductionDependenciesUseSnapshotRepositoryAndCompositeRetirementRoots(
 	wantManaged := filepath.Join(stateDir, "worktrees")
 	if runtime.RepositoryPath != snapshot.RepositoryPath || runtime.ManagedRoot != wantManaged || runtime.HerdrRoot != filepath.Clean(herdrRoot) || !runtime.Composite {
 		t.Fatalf("runtime=%#v want repo=%q managed=%q herdr=%q composite=true", runtime, snapshot.RepositoryPath, wantManaged, herdrRoot)
+	}
+}
+
+func TestProductionWorkflowDependenciesUseStateDirWithoutLegacySetup(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("THREADDOCK_STATE_DIR", stateDir)
+	t.Setenv("THREADDOCK_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
+	deps, err := productionWorkflowDependencies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps.Workflow == nil || deps.Runs != nil || deps.Confirmer != nil || deps.Reverter != nil {
+		t.Fatalf("workflow deps=%#v", deps)
+	}
+	project := registry.Project{ProjectID: "project-1", Name: "Project", PrimaryRepoKey: "app", Repositories: map[contractv2.RepoKey]contractv2.RepositoryIdentity{"app": {Host: "github.com", Owner: "acme", Name: "app", DefaultBranch: "main"}}}
+	if _, err := deps.Workflow.RegisterProject(context.Background(), project, 0, "request-project"); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := deps.Workflow.ListProjects(context.Background())
+	if err != nil || len(projects) != 1 || projects[0].ProjectID != project.ProjectID {
+		t.Fatalf("projects=%#v err=%v", projects, err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "v2", "projects", "project-1.json")); err != nil {
+		t.Fatalf("v2 project state was not written under THREADDOCK_STATE_DIR: %v", err)
 	}
 }

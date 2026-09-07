@@ -1,155 +1,256 @@
 # ThreadDock
 
-개발자의 초기 요청을 구체적인 작업으로 정제하고, GitHub에 기록하며, 로컬 에이전트가 구현과 검증을 수행하는 개발 운영 문맥이다. 배포·관측 체계는 후속 범위이며 개인 비서 체계는 이 문맥에 포함하지 않는다.
+여러 프로젝트의 요청, 결정, 구현, 검증과 문서를 Git/GitHub에 연결하고,
+어느 프로젝트로 돌아와도 현재 상태와 다음 행동을 회수하는 개발 운영 문맥이다.
+현재 제품 정책은 [Project Workflow MVP 설계](docs/superpowers/specs/2026-09-07-project-workflow-mvp-design.md)를 따른다.
+이 용어 모델은 새 MVP의 기준이며 기존 Go 코드의 v1 타입과 일대일 대응하지 않는다.
 
-## Language
+## 사람과 업무
 
 **Operator**:
-깊은 Git·인프라 지식을 전제로 하지 않고 작업 인터뷰 승인, 실행 관찰과 production 배포 결정을 수행하는 사용자.
+여러 프로젝트를 진행하며 요청, 범위와 중요한 결정을 승인하고 GitHub에서 PR을 병합하는 사용자.
 _Avoid_: 시스템 관리자, Agent
 
+**Project**:
+사람이 하나의 제품·시스템으로 관리하는 단위. 하나 이상의 Repository와 대표 저장소·Wiki를 가진다.
+_Avoid_: Repository, GitHub Projects 보드, Run
+
+**Repository**:
+정확한 GitHub host와 owner/name, default branch로 식별되는 코드 저장소.
+_Avoid_: Project, 로컬 Worktree 경로
+
+**대표 저장소 (Primary Repository)**:
+Project 전체 Parent Issue와 Wiki를 두는 기본 저장소.
+_Avoid_: main branch, 유일한 코드 저장소
+
 **개발 요청 (Development Request)**:
-개발자가 구현하려는 기능이나 수정하려는 버그를 아직 정제하지 않은 형태로 설명한 것.
-_Avoid_: Task, Issue, 요구사항
+구현하려는 기능, 수정할 문제 또는 정리할 문서를 아직 계약으로 정제하지 않은 설명.
+_Avoid_: Task, Issue, Contract
 
 **작업 인터뷰 (Work Interview)**:
-에이전트가 개발 요청의 목적, 범위, 수용 조건과 위험을 사용자와 함께 명확하게 만드는 대화.
-_Avoid_: 프롬프트 보완, 요구사항 입력
+요청의 배경, 목적, 범위, 완료 조건과 중요한 선택을 사용자와 명확하게 만드는 대화.
+_Avoid_: 프롬프트 보완, 실행 상태 조회
 
-**업무 기록 (Work Record)**:
-작업의 목적, 결정, 진행 상태와 결과를 GitHub Issue와 Pull Request에 지속적으로 남긴 기록.
-_Avoid_: 실행 상태, 에이전트 상태
-
-**실행 세션 (Execution Session)**:
-개발자 PC에서 특정 작업을 수행하는 에이전트 프로세스와 격리된 작업 공간의 일시적인 실행 단위.
-_Avoid_: 업무 상태, Issue
-
-**실행 세션 은퇴 (Execution Session Retirement)**:
-수정이나 복구가 더 필요하지 않은 RUN에서 에이전트 프로세스와 terminal workspace를 닫되 Worktree, 실행 근거와 업무 기록은 보존하는 lifecycle 전환.
-_Avoid_: cleanup, Issue 종료, Worktree 삭제
-
-**실행 근거 정리 (Execution Artifact Cleanup)**:
-보존 기간이 지난 완료 RUN의 clean Worktree와 로컬 실행 상태를 명시적으로 제거하는 운영 행위.
-_Avoid_: 실행 세션 은퇴, Agent 종료, 자동 삭제
-
-**감독형 자율 실행 (Supervised Autonomous Run)**:
-사용자가 작업 인터뷰 결과와 Issue 묶음을 승인하면 에이전트가 구현, 검증, 리뷰와 main 병합까지 수행하고 사용자가 사후에 결과를 확인하는 실행 방식.
-_Avoid_: 완전 무인 운영, 수동 실행
-
-## Work Structure
+**업무 (Work Item)**:
+한 Project에 속하는 승인 대상 업무. 여러 Repository Run과 PR을 묶고 전체 완료 조건을 가진다.
+_Avoid_: Task, Repository Run, PR 하나
 
 **Parent Issue**:
-하나의 개발 요청이 의도한 전체 결과와 공통 수용 조건을 보존하는 최상위 업무 기록. 최종 Pull Request 하나와 대응한다.
-_Avoid_: Epic, 실행 Task
+Work Item의 배경, 전체 완료 조건, 최근 handoff와 관련 결정·저장소·PR을 연결하는 대표 업무 기록.
+저장소별 PR이 여러 개일 수 있으며 첫 PR 병합으로 자동 종료하지 않는다.
+_Avoid_: 실행 Task, 최종 PR 하나와의 일대일 대응
 
 **Child Issue**:
-Parent Issue의 결과를 위해 독립적으로 구현하고 검증할 수 있으며 별도 추적 가치가 있는 작업 단위.
-_Avoid_: 세부 실행 단계, 체크리스트 항목
+별도 추적 가치가 있는 저장소별 작업을 보존하고 Parent Issue에 연결하는 기록.
+_Avoid_: 모든 실행 Task, 체크리스트 항목
 
-## Agent Roles
+**Task**:
+하나의 저장소에서 허용 경로·완료 조건·검증 명령을 가진 실행 단위.
+의존 관계는 같은 저장소 또는 다른 저장소 Task를 가리킬 수 있다.
+_Avoid_: Work Item, 반드시 별도 Issue가 필요한 단위
 
-**Orchestrator**:
-작업 인터뷰 결과를 Issue 구조와 실행 순서로 만들고 각 실행 세션에 작업을 배정하는 역할.
-_Avoid_: Control Agent, Builder
+**Contract v2**:
+Work Item의 저장소별 계획, Task DAG, interface 합의, 문서 대상과 논리 프로필을 담은 immutable 실행 계약.
+범위 변경은 승인 근거와 함께 새 revision으로 남긴다.
+_Avoid_: 대화 transcript, 모델 설정, GitHub Issue 번호의 저장소
+
+## 기록과 문맥 회수
+
+**업무 기록 (Work Record)**:
+요청부터 결정·실행·검토·완료까지 GitHub Issue, PR, 설계 문서와 Wiki에 연결해 남긴 기록.
+_Avoid_: raw terminal output, local process state
+
+**Decision Record**:
+질문, 선택, 이유, 주요 대안과 승인 근거를 남기는 결정 기록.
+proposed와 accepted를 구분하고 변경된 결정은 supersedes 관계로 연결한다.
+_Avoid_: 모든 대화 요약, 승인되지 않은 제안의 확정
+
+**Handoff**:
+업무 목적, 검증된 완료 내용, 현재 단계, 최근 결정, blocker와 nextAction을 근거·시각과 함께 묶은 재개 요약.
+_Avoid_: 전체 transcript, 근거 없이 생성된 진행률
+
+**GitHub Projects**:
+Issue·PR을 모아 프로젝트별 업무 상태와 우선순위를 표시하는 GitHub 보드.
+원본 결정 본문은 Issue·문서에 두며 실행 프로세스 상태를 직접 소유하지 않는다.
+_Avoid_: ThreadDock Project, local state database
+
+**Wiki**:
+Project 전체 사용법, 구조, 런북과 재사용할 장애 대응 지식의 기본 발행 위치.
+코드 저장소와 별도 Git history를 가지며 코드 PR 병합을 Wiki 발행으로 간주하지 않는다.
+_Avoid_: Task output, 미병합 구현의 확정된 사용법
+
+**Runbook**:
+특정 운영 작업이나 장애 상황의 확인·조치·검증 절차를 재사용할 수 있도록 정리한 Wiki 문서.
+_Avoid_: 단일 장애 사건의 전체 경과, 구현 계획
+
+**Audit Comment**:
+Decision, Dispatch, Review, Verification, Blocker, Integration 범주의 요약과 근거 링크를 남기는 업무 comment.
+_Avoid_: transcript, token·secret, polling마다 생성하는 comment
+
+## 실행과 역할
+
+**Repository Run**:
+한 Work Item이 한 Repository에서 진행하는 변경 실행. Task Worktree와 Integration Branch를 소유한다.
+_Avoid_: Work Item 전체, 영속 모델 대화
+
+**Agent Invocation**:
+한 역할 packet을 한 번 실행해 구조화된 Artifact를 반환하는 호출.
+재시도는 새 requestId를 가진다. Codex 호출은 ephemeral이다.
+_Avoid_: Task, Work Item, 영구 대화 세션
+
+**Execution Profile**:
+역할별 실행 정책의 논리 ID. 로컬 설정이 Runtime·nativeProfile을 해석하고 snapshot이 실행 정책을 고정한다.
+_Avoid_: 모델 이름, agent identity
+
+**Agent Runtime**:
+Invocation을 실행하고 결과·취소·종료를 처리하는 adapter. Codex와 OpenCode가 같은 역할 계약을 구현한다.
+_Avoid_: Orchestrator, 모델
+
+**Main Agent**:
+사용자와 인터뷰하고 결정·handoff를 기록하며 Planner와 Go 명령을 호출하는 대화 역할.
+승인된 범위에서 publication 명령을 호출할 수 있는 유일한 Agent 역할이다.
+대화가 닫혀도 Go Publisher는 승인된 단계 전환과 발행 재시도를 계속할 수 있다.
+
+**Go Publisher**:
+승인된 계약·대상·검토 결과를 확인하고 GitHub/Wiki 쓰기 및 receipt를 소유하는 Go 구성 요소.
+Main Agent 요청과 background coordinator 요청에 같은 검증·멱등성 규칙을 적용한다.
+_Avoid_: 별도 의사결정 Agent, 무제한 GitHub 쓰기 권한
+_Avoid_: 상태 JSON 직접 편집자, GitHub 자동 병합 Agent
+
+**Planner**:
+요청과 필요한 근거에서 Work Item 계약, Task DAG와 interface 합의 초안을 만드는 역할.
+_Avoid_: Orchestrator, Builder
+
+**Scout**:
+Planner의 구체적인 질문에 필요한 경로·symbol·의존성·위험을 제한된 CodeMap으로 반환하는 읽기 전용 역할.
+_Avoid_: 전체 저장소 덤프, 구현 Agent
+
+**CodeMap**:
+Scout의 질문 범위에 해당하는 탐색 Artifact.
+_Avoid_: 전체 코드베이스 요약, 승인된 실행 계획
 
 **Builder**:
-할당된 Child Issue 또는 실행 작업의 수용 조건을 구현하고 검증 근거를 만드는 역할.
-_Avoid_: Orchestrator, Reviewer
+할당 Worktree의 허용 경로를 수정하는 역할. 변경의 commit·통합과 authoritative 검증은 Go가 소유한다.
+_Avoid_: GitHub writer, default branch merger
 
 **Reviewer**:
-구현 세션과 분리된 문맥에서 변경 결과와 검증 근거를 독립적으로 판단하는 역할.
-_Avoid_: Builder, 사람 승인자
+Builder 대화 없이 고정된 SHA·diff·조건·검증 근거를 읽고 accept/block을 반환하는 fresh 읽기 전용 역할.
+Task 리뷰와 최종 전체 업무 리뷰에 사용한다.
+_Avoid_: Builder 자기평가, 사용자 승인자
 
-## Integration
+**Documenter**:
+승인된 결정·Integration Summary·관련 문서를 입력받아 repository docs 또는 Wiki 변경안을 만드는 역할.
+_Avoid_: Publisher, 전체 대화 요약기
 
-**Integration Branch**:
-한 Parent Issue에 속한 여러 Builder 결과를 모아 전체 수용 조건과 회귀를 검증하는 임시 변경선.
-_Avoid_: main, Builder branch
-
-**Merge Gate**:
-최종 Pull Request가 main에 자동 병합되기 전에 반드시 만족해야 하는 수용 조건, 독립 리뷰, 최신 HEAD 검증과 저장소 보호 규칙의 집합.
-_Avoid_: 권고사항, 프롬프트 체크리스트
-
-**Protected Change**:
-데이터 손실, 인증·권한, 배포, 공급망 또는 공개 계약에 중대한 영향을 줄 수 있어 Merge Gate를 통과해도 사람의 병합 확인이 필요한 변경.
-_Avoid_: 일반 변경, 테스트 실패
-
-**Blocked Run**:
-두 번의 자동 수정으로도 Reviewer의 차단 의견을 해소하지 못했거나 작업 계약의 재승인이 필요해 자동 진행을 종료한 감독형 자율 실행.
-_Avoid_: 실패한 Issue, 일시 정지
-
-**Repair Round**:
-Reviewer 또는 CI가 발견한 변경 결함을 Builder가 고치는 한 번의 자동 수정 주기. 한 실행에서 합계 두 번까지만 허용한다.
-_Avoid_: Recovery Attempt, 최초 구현
-
-**Recovery Attempt**:
-미완료 작업의 Agent가 예기치 않게 idle·done 상태가 되거나 종료됐을 때 계속 지시 또는 session 재개로 실행을 되살리는 시도. 실제 진전이 생기면 횟수를 초기화하며 연속 세 번 실패하면 Blocked Run이 된다.
-_Avoid_: Repair Round, 재구현
-
-**ThreadDock Monitor**:
-감독형 자율 실행의 Issue 관계, 단계, Agent 활동, 변경선, 검증·병합 결과와 연결된 CI/CD 상태를 보여주며 중단·재개·재시도만 제공하는 관찰 화면.
-_Avoid_: Orchestrator, 작업 인터뷰 UI, terminal transcript
-
-**Local Orchestrator**:
-WSL에서 작업 계약, 실행 상태와 정책을 소유하고 Herdr·OpenCode·GitHub Enterprise Server를 연결하는 실행 모듈.
-_Avoid_: Run Monitor, Agent, GitHub Project
+**Orchestrator / Local Orchestrator**:
+WSL에서 계약, DAG, Git, 실제 검증, 실행 한도와 상태 전이를 결정적으로 관리하는 Go 모듈.
+_Avoid_: Planner, Main Agent, Monitor
 
 **Conversation Interface**:
-Operator가 OpenCode와 자연어로 개발 요청을 구체화하고 Issue 묶음을 승인하는 사람용 interface.
-_Avoid_: Orchestrator CLI, Run Monitor
+기존 Codex/OpenCode 등 Main Agent 대화에서 요청·승인·범위 변경을 처리하는 interface.
+_Avoid_: Monitor의 새 채팅 제품
 
 **Orchestrator CLI**:
-Local Orchestrator의 시작, 상태 조회, 중단, 재개와 재시도를 결정적 명령과 구조화된 결과로 제공하는 interface. OpenCode와 Run Monitor가 함께 사용한다.
-_Avoid_: OpenCode 대화, terminal transcript, 별도 HTTP 서버
+Main Agent, Monitor와 사람이 동일한 구조화된 명령으로 상태를 읽고 작업을 제어하는 interface.
+_Avoid_: 상태 파일 직접 수정, raw terminal protocol
 
-**CI Run**:
-특정 commit 또는 Pull Request의 변경을 검증하고 그 결과를 업무 기록에 연결하는 GitHub Actions 실행.
-_Avoid_: Agent 로컬 검증, Deployment
+## 검증·병합·완료
+
+**Integration Branch**:
+한 Repository Run의 승인된 Task와 repository docs를 모으는 임시 변경선.
+_Avoid_: main, Work Item 전체를 대표하는 단일 branch
+
+**Integration Summary**:
+문서 작성 전에 확보한 코드 통합 결과·행동 변화·결정·근거 묶음.
+_Avoid_: 아직 생성되지 않은 Final Manifest
 
 **Focused Verification**:
-구현 loop에서 변경된 범위와 직접 관련된 package를 대상으로 수행하는 빠른 검증.
+변경한 범위의 빠른 구현 검증.
 _Avoid_: Full Suite
 
 **Task Gate**:
-작업을 다음 단계로 넘기기 전에 Task verification과 관련 static check를 확인하는 검증 관문.
-_Avoid_: Merge Gate, Reviewer 판단
+후보 commit에 대해 Go가 실행한 Task 검증·관련 static check와 변경 범위 확인.
+_Avoid_: Agent가 주장한 passed JSON, 최종 전체 업무 리뷰
 
 **Full Suite**:
-저장소 전체에 적용되는 test와 static check의 검증 묶음.
-_Avoid_: Focused Verification
+repository docs까지 반영한 저장소 최종 HEAD의 전체 test·static check 묶음.
+_Avoid_: Task 검사만의 합계
 
-**Wave End Verification**:
-여러 Task를 한 실행 wave에서 통합한 뒤 Full Suite를 수행하는 검증 시점.
-_Avoid_: Task Gate
+**Cross-repository Verification**:
+고정된 저장소별 HEAD 묶음이 전체 업무 조건과 interface 합의를 만족하는지 확인하는 검증.
+_Avoid_: 개별 저장소 test의 단순 합계
 
-**Audit Comment**:
-Issue·Pull Request에 결정과 실행 결과를 요약하고 근거를 연결하는 범주화된 업무 기록.
-_Avoid_: terminal transcript
+**Merge Gate**:
+최신 PR HEAD/base와 필수 CI, Task·전체 리뷰, 전체 조건의 근거를 확인해 mergeReady를 결정하는 규칙.
+_Avoid_: 자동 병합 권한, Projects의 Review 상태만으로 내리는 판정
 
-**Production Deployment**:
-사용자가 Run Monitor의 명시적 버튼이나 GHES 화면에서 제품 저장소의 GitHub Actions workflow를 dispatch하여 main의 검증된 변경을 production 환경에 적용하는 운영 행위.
-_Avoid_: main 병합, 로컬 실행, 자동 배포
+**Protected Change**:
+데이터·인증·권한·공개 계약 등에 중요한 영향을 주어 더 명확한 사전 결정과 검토가 필요한 변경.
+모든 PR은 변경 종류와 관계없이 사람이 병합한다.
+_Avoid_: 일반 변경에 자동 병합을 허용하기 위한 구분
 
-**CD Run**:
-제품 저장소에서 사용자가 시작한 Production Deployment의 진행과 결과를 보존하는 GitHub Actions 실행.
-_Avoid_: CI Run, Agent 실행
+**Final Manifest**:
+Work Item의 저장소별 최종 HEAD/base·검증·리뷰·PR·문서 patch와 병합 순서를 고정한 Artifact.
+_Avoid_: PR 하나, terminal transcript
+
+**Partial Merge**:
+필수 PR 중 일부만 병합된 상태. 앞선 병합을 보존하고 전체 업무를 완료 처리하지 않는다.
+_Avoid_: completed, 여러 저장소 원자적 병합
+
+**Finalize**:
+실제 PR·병합 관계를 검증하고 필수 Wiki·Issue·Projects 발행까지 수행하는 후속 단계.
+Integration HEAD와 실제 merge SHA의 단순 동일 비교를 사용하지 않는다.
+_Avoid_: main 병합, 자동 rollback, 실행 근거 삭제
+
+**Publication Pending**:
+코드 병합 또는 문서 업무 검토 후 필수 기록·Wiki 발행이 남은 상태.
+실행 중의 일시적 동기화 실패는 별도 syncStatus로 표시한다.
+_Avoid_: 코드 재실행 필요, completed
+
+## 재개·관찰·신뢰
+
+**Repair Round**:
+검사 실패나 리뷰 지적을 고치는 호출. Work Item revision의 Task별 자동 수정 합계는 기본 2회다.
+pause/resume과 일시적 runtime 재시도로 한도를 초기화하지 않는다.
+_Avoid_: 최초 구현, Recovery Attempt
+
+**Recovery Attempt**:
+확실한 일시적 호출 실패 후 종료를 확인하고 같은 논리 호출을 새 requestId로 재시도하는 행위.
+기본 자동 재시도는 최대 1회다. 세션 보존을 공통 보장으로 삼지 않는다.
+_Avoid_: 코드 결함 수정, 무제한 continuation
+
+**Work Resume**:
+저장된 계약·Git·검증·handoff를 확인해 완료 Task를 반복하지 않고 미완료 작업을 이어가는 행위.
+_Avoid_: 항상 같은 모델 세션 복원, 처음부터 재실행
+
+**Needs Operator**:
+반복 실패, 범위 변경, 충돌 또는 불명확한 실행 정체성으로 사람의 조치가 필요한 상태.
+현재 변경과 근거를 보존하고 필요한 다음 행동을 함께 보여준다.
+_Avoid_: 모든 일시적 실패, 전체 업무 삭제
+
+**ThreadDock Monitor**:
+여러 Project의 목적·최근 완료·현재 상태·결정·다음 행동·freshness와 GitHub 링크를 보여주는 Windows 화면.
+pause/resume/retry는 같은 Go 명령을 사용하고 PR 병합은 GitHub에서 수행한다.
+_Avoid_: 원본 상태 저장소, 새 채팅 제품, production 배포 콘솔
 
 **Trusted Workstation**:
-한 Operator가 소유하는 Windows PC와 그 WSL 환경을 하나의 신뢰 경계로 취급하는 실행 환경. 같은 환경 안의 프로세스 사이에 다중 사용자용 보안 격리를 제공하지 않는다.
-_Avoid_: 보안 sandbox, 공용 실행 호스트
-
-**Builder Sandbox**:
-Builder가 할당된 Worktree와 필요한 내부 서비스에만 접근하도록 실행 범위를 제한하는 격리 환경.
-_Avoid_: Worktree, 다중 사용자 계정, Herdr session
+한 Operator의 PC·WSL을 신뢰 경계로 삼는 환경. 같은 사용자 프로세스 사이의 완전한 보안 격리를 보장하지 않는다.
+_Avoid_: 다중 사용자 sandbox
 
 **Worktree Isolation**:
-Builder마다 별도 Worktree와 branch를 배정해 변경 충돌을 막는 v0.1의 기본 실행 분리 방식. 프로세스의 파일·자격증명 접근을 차단하는 보안 sandbox는 아니다.
-_Avoid_: Builder Sandbox, 보안 격리
+Task마다 Worktree를 배정해 파일 변경을 분리하는 방식.
+_Avoid_: credential 접근 차단, 프로세스 보안 격리
 
-**Workflow Catalog**:
-등록된 제품 저장소에서 Run Monitor가 발견해 상태와 수동 실행 진입점을 보여주는 GitHub Actions workflow 전체 목록.
-_Avoid_: production workflow 하나, 외부 pipeline
+**Runtime Permission Policy**:
+runtime에서 read-only/workspace-write intent와 도구 접근을 적용하는 정책.
+적용 불가능하면 실행을 거부한다. prompt의 금지 문구만으로 보장을 주장하지 않는다.
+_Avoid_: Worktree 경로 지정만으로 얻는 sandbox
 
-**Organization Project**:
-여러 제품 저장소의 개발 요청, Pull Request, CI와 Production Deployment 결과를 함께 추적하는 조직 공용 GitHub Project.
-_Avoid_: devops-control 저장소, Local Orchestrator 상태
+## 기존 코드와 후속 범위의 용어
+
+기존 v1 코드의 Run, Execution Session Retirement, Blocked Run과 PhaseMerging은
+이전 구현의 식별자다. 새 업무 정책의 원본으로 해석하지 않는다.
+기존 자료는 Git 이력과 legacy 운영 문서를 통해 참고한다.
+
+CI Run은 PR의 검사 실행이다. Production Deployment, CD Run과 Workflow Catalog는
+후속 범위이며 이번 Monitor의 인수 조건에 포함하지 않는다.

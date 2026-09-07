@@ -25,6 +25,8 @@ func RunWithDependencies(ctx context.Context, args []string, stdout, stderr io.W
 	}
 	if len(args) > 0 {
 		switch args[0] {
+		case "project", "work":
+			return runProjectWork(ctx, args, stdout, stderr, deps.Workflow)
 		case "start", "status", "stop", "resume", "cleanup":
 			return runCommand(ctx, args, stdout, stderr, deps.Runs)
 		case "retire":
@@ -46,5 +48,5 @@ func RunWithDependencies(ctx context.Context, args []string, stdout, stderr io.W
 }
 
 func printUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "사용법: agentctl version | contract <validate|preview> <file> | start CONTRACT | status [RUN] [--json] | stop RUN | resume RUN | retire RUN [--blocked] | cleanup RUN | confirm RUN protected-change | create-revert RUN --reason TEXT")
+	fmt.Fprintln(stderr, "사용법: agentctl version | contract <validate|preview> <file> | project register PROJECT.json --expected-revision 0 --request-id ID | project list --json | project status --all --json | work plan CONTRACT.json --expected-revision 0 --request-id ID | work approve WORK --expected-revision N --request-id ID | work status WORK --json | start CONTRACT | status [RUN] [--json] | stop RUN | resume RUN | retire RUN [--blocked] | cleanup RUN | confirm RUN protected-change | create-revert RUN --reason TEXT")
 }
