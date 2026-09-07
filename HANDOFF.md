@@ -79,7 +79,8 @@ GitHub 수동 편집은 원격 업무 기록과 실행 계약을 구분하고 �
 - `internal/runtime`: provider-neutral Invocation/Artifact envelope와 identity/schema 검증.
 - `internal/monitor`: CLI와 이후 Wails가 함께 사용할 aggregate snapshot wire.
 - `internal/registry`, `internal/state/v2`: 별도 v2 경로, immutable contract, process lease,
-  atomic persistence, revision CAS와 requestId/payload idempotency.
+  atomic persistence, revision CAS와 requestId/payload idempotency. 생성도
+  `expectedRevision=0`과 requestId를 사용하며 replay 결과는 중첩되지 않는 bounded projection이다.
 - `internal/workflow`: project 등록, work plan→approve→status와 aggregate snapshot.
 - `internal/cli`, `cmd/agentctl`: `project register/list/status`, `work plan/approve/status`와
   기존 GHES/Herdr 초기화에서 분리된 v2 dependency 경로.
@@ -88,7 +89,8 @@ GitHub 수동 편집은 원격 업무 기록과 실행 계약을 구분하고 �
 현재 orchestration metadata가 실제 resolved model·reasoning effort를 노출하지 않아 역할 실행은
 `unverified`로 기록했다. Reviewer 지적은 Luna 수정 후 scoped Sol 재검토를 거쳤다.
 
-통합 코드 HEAD `b182ef7d202a7125057e074360fb2737094682a3`에서 아래 focused 검사가 통과했다.
+통합 코드 HEAD `ae5034536969fc8e84463dc6c29e479814f27454`에서 아래 focused 검사와
+repository 전체 gate가 통과했다.
 
 ```bash
 docker run --rm -v "$PWD":/src -w /src golang:1.27 go test -count=1 \
@@ -97,9 +99,13 @@ docker run --rm -v "$PWD":/src -w /src golang:1.27 go test -count=1 \
 docker run --rm -v "$PWD":/src -w /src golang:1.27 go vet \
   ./internal/contract/v2 ./internal/runtime ./internal/monitor ./internal/registry \
   ./internal/state/v2 ./internal/workflow ./internal/cli ./cmd/agentctl
+docker run --rm -v "$PWD":/src -w /src golang:1.27 make check
 ```
 
-전체 `make check`는 최종 code PR gate 전까지 실행하지 않는 정책에 따라 아직 실행하지 않았다.
+첫 `make check`는 다른 repository의 동시 Docker 검증 부하 중 기존 orchestrator 1초 대기 테스트가
+실패했고, 같은 테스트를 단독 실행했을 때 0.24초에 통과했다. 해당 자원 집약 검증이 끝난 뒤 허용된
+전체 gate 재실행이 통과했다. final whole-branch review가 찾은 생성 멱등성, 원래 결과 replay와
+immutable contract/hash 대조 문제를 수정·재검토한 뒤, 변경으로 무효화된 전체 gate도 다시 통과했다.
 WSL native Go, Windows Go/Wails/WSL bridge, 실제 Codex invocation, GitHub Projects와 Wiki 쓰기도
 아직 검증하지 않았다. 현재 GitHub token은 `read:project` scope가 없고 대상 저장소 Wiki는
 비활성화 상태이므로 live publication은 진행하지 않았다.
