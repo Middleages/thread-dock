@@ -91,7 +91,17 @@ func (s *Service) PlanWork(ctx context.Context, source string, r io.Reader, expe
 		return statev2.WorkSnapshot{}, err
 	}
 	sum := sha256.Sum256(canonical.Bytes())
-	snapshot := statev2.WorkSnapshot{SchemaVersion: 2, ProjectID: c.ProjectID, WorkID: c.WorkID, Revision: 1, State: statev2.StateAwaitingApproval, ContractHash: hex.EncodeToString(sum[:]), Contract: c, SyncStatus: "local", NextAction: "approve", EvidenceRefs: []string{}, Receipts: map[contractv2.RequestID]statev2.Receipt{}}
+	taskStates := make(map[contractv2.TaskID]statev2.TaskExecutionState, len(c.Tasks))
+	for _, task := range c.Tasks {
+		taskStates[task.TaskID] = statev2.TaskExecutionState{
+			TaskID:        task.TaskID,
+			Status:        statev2.TaskPending,
+			RepairLimit:   statev2.DefaultRepairLimit,
+			RecoveryLimit: statev2.DefaultRecoveryLimit,
+			PriorAttempts: []statev2.AttemptSummary{},
+		}
+	}
+	snapshot := statev2.WorkSnapshot{SchemaVersion: 2, ProjectID: c.ProjectID, WorkID: c.WorkID, Revision: 1, State: statev2.StateAwaitingApproval, ContractHash: hex.EncodeToString(sum[:]), Contract: c, SyncStatus: "local", NextAction: "approve", EvidenceRefs: []string{}, Receipts: map[contractv2.RequestID]statev2.Receipt{}, Control: statev2.WorkControl{}, TaskStates: taskStates, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}}
 	action, err := json.Marshal(struct {
 		WorkID           contractv2.WorkID   `json:"workId"`
 		ExpectedRevision contractv2.Revision `json:"expectedRevision"`

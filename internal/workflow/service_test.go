@@ -91,6 +91,18 @@ func TestPlanCreationPassesExpectedRevisionRequestAndCanonicalActionHash(t *test
 	if _, err := s.PlanWork(context.Background(), "contract.json", strings.NewReader(input.String()), 0, "request-plan"); err != nil {
 		t.Fatal(err)
 	}
+	if works.snapshot.Control != (statev2.WorkControl{}) || works.snapshot.Publications == nil || len(works.snapshot.Publications) != 0 {
+		t.Fatalf("creation typed control/publications = %#v %#v", works.snapshot.Control, works.snapshot.Publications)
+	}
+	if len(works.snapshot.TaskStates) != len(validContract().Tasks) {
+		t.Fatalf("creation task states = %#v", works.snapshot.TaskStates)
+	}
+	for _, task := range validContract().Tasks {
+		state, ok := works.snapshot.TaskStates[task.TaskID]
+		if !ok || state.TaskID != task.TaskID || state.Status != statev2.TaskPending || state.RepairLimit != statev2.DefaultRepairLimit || state.RecoveryLimit != statev2.DefaultRecoveryLimit || state.PriorAttempts == nil {
+			t.Fatalf("creation task state %q = %#v", task.TaskID, state)
+		}
+	}
 	var canonical bytes.Buffer
 	if err := contractv2.Write(&canonical, validContract()); err != nil {
 		t.Fatal(err)
@@ -124,12 +136,14 @@ func (s *recordingProjectStore) List(context.Context) ([]registry.Project, error
 }
 
 type recordingWorkStore struct {
+	snapshot         statev2.WorkSnapshot
 	requestID        contractv2.RequestID
 	expectedRevision contractv2.Revision
 	payloadHash      string
 }
 
-func (s *recordingWorkStore) CreatePlan(_ context.Context, _ statev2.WorkSnapshot, requestID contractv2.RequestID, payloadHash string) (statev2.WorkSnapshot, error) {
+func (s *recordingWorkStore) CreatePlan(_ context.Context, snapshot statev2.WorkSnapshot, requestID contractv2.RequestID, payloadHash string) (statev2.WorkSnapshot, error) {
+	s.snapshot = snapshot
 	s.requestID, s.expectedRevision, s.payloadHash = requestID, 0, payloadHash
 	return statev2.WorkSnapshot{}, nil
 }

@@ -31,17 +31,20 @@ type Receipt struct {
 	Result      json.RawMessage      `json:"result,omitempty"`
 }
 type WorkSnapshot struct {
-	SchemaVersion int                              `json:"schemaVersion"`
-	ProjectID     contractv2.ProjectID             `json:"projectId"`
-	WorkID        contractv2.WorkID                `json:"workId"`
-	Revision      contractv2.Revision              `json:"revision"`
-	State         WorkState                        `json:"state"`
-	ContractHash  string                           `json:"contractHash"`
-	Contract      contractv2.WorkItemContract      `json:"contract"`
-	SyncStatus    string                           `json:"syncStatus"`
-	NextAction    string                           `json:"nextAction"`
-	EvidenceRefs  []string                         `json:"evidenceRefs"`
-	Receipts      map[contractv2.RequestID]Receipt `json:"receipts"`
+	SchemaVersion int                                      `json:"schemaVersion"`
+	ProjectID     contractv2.ProjectID                     `json:"projectId"`
+	WorkID        contractv2.WorkID                        `json:"workId"`
+	Revision      contractv2.Revision                      `json:"revision"`
+	State         WorkState                                `json:"state"`
+	ContractHash  string                                   `json:"contractHash"`
+	Contract      contractv2.WorkItemContract              `json:"contract"`
+	SyncStatus    string                                   `json:"syncStatus"`
+	NextAction    string                                   `json:"nextAction"`
+	EvidenceRefs  []string                                 `json:"evidenceRefs"`
+	Receipts      map[contractv2.RequestID]Receipt         `json:"receipts"`
+	Control       WorkControl                              `json:"control"`
+	TaskStates    map[contractv2.TaskID]TaskExecutionState `json:"taskStates"`
+	Publications  map[PublicationIntentID]PublicationState `json:"publications"`
 }
 type Mutation struct {
 	WorkID           contractv2.WorkID
