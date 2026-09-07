@@ -33,7 +33,8 @@
 |---|---|---|---|
 | 1 | `internal/contract/v2`, `internal/runtime`, aggregate wire | none | 반드시 단독 직렬 |
 | 2 | `internal/registry`, `internal/state/v2`, workflow plan/approve | 1 | 반드시 직렬 |
-| 3 | `internal/cli`, `cmd/agentctl` v2 routing | 2 | 반드시 직렬 |
+| 2A | state listing and aggregate monitor snapshot | 2 | 반드시 직렬 |
+| 3 | `internal/cli`, `cmd/agentctl` v2 routing | 2A | 반드시 직렬 |
 | 4 | Issue/Projects Publisher | 2 | 3 이후 Task 5와 병렬 가능 |
 | 5 | runtime/Git/task gate/review/integration | 2 | 3 이후 Task 4와 병렬 가능 |
 | 6 | docs/final manifest | 4, 5 | 직렬 integration |
@@ -181,6 +182,37 @@ type Mutation struct { WorkID contractv2.WorkID; ExpectedRevision contractv2.Rev
 - [ ] Implement 0700 directories, 0600 files, temp+fsync+rename, process lease, CAS and receipt-before-side-effect schema. State root is `<root>/v2`, never `<root>/runs`.
 - [ ] Run focused tests and vet for the three packages, then commit `feat: add revisioned project workflow state`.
 
+## Task 2A: Aggregate workflow snapshot seam
+
+**Files:**
+
+- Modify: `internal/state/v2/types.go`, `internal/state/v2/store.go`, `internal/state/v2/store_test.go`
+- Modify: `internal/workflow/service.go`, `internal/workflow/service_test.go`
+
+**Interfaces:**
+
+- Consumes: reviewed Task 1 `monitor.Snapshot` wire and Task 2 registry/work state.
+- Produces:
+
+```go
+// internal/state/v2
+type Store interface {
+    CreatePlan(context.Context, WorkSnapshot) (WorkSnapshot, error)
+    Load(context.Context, contractv2.WorkID) (WorkSnapshot, error)
+    List(context.Context) ([]WorkSnapshot, error)
+    Mutate(context.Context, Mutation) (WorkSnapshot, error)
+}
+
+// internal/workflow
+func (s *Service) Snapshot(context.Context, time.Time) (monitor.Snapshot, error)
+```
+
+- [ ] Write failing real-store tests that `List` includes completed and needs-operator work, ignores non-directory/temp entries, rejects corrupt snapshots, and sorts deterministically by WorkID.
+- [ ] Write a failing workflow test that one aggregate call maps registered Project/Work/Task identity, state, sync status, next action and evidence refs into the Task 1 Monitor wire without invoking a scheduler or external adapter.
+- [ ] Verify RED with the focused Go 1.27 Docker command for `./internal/state/v2 ./internal/workflow`.
+- [ ] Implement `List` through strict `Load`; implement the aggregate mapping inside `workflow.Service` so CLI and Wails consume the same deep module interface and never read state files directly.
+- [ ] Verify GREEN and vet for the two packages, then commit `feat: expose aggregate project workflow status`.
+
 ## Task 3: `project` and `work` CLI vertical slice
 
 **Files:**
@@ -307,4 +339,3 @@ docker run --rm -v "$PWD":/src -w /src golang:1.27 make check
 ```
 
 - [ ] Record exact SHA/commands/outcomes, fresh final Sol review, live GitHub/Wiki/Wails checks as passed/failed/unverified, and commit `docs: hand off single repository workflow`.
-
