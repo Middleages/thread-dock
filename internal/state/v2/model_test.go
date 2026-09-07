@@ -109,6 +109,50 @@ func TestDecodeSnapshotNormalizesOnlyUnstartedFoundationSnapshots(t *testing.T) 
 	}
 }
 
+func TestDecodeSnapshotRejectsModernMapsWithoutControl(t *testing.T) {
+	snapshot := validSnapshot()
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "control")
+	modern, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeSnapshot(bytes.NewReader(modern)); err == nil {
+		t.Fatal("decodeSnapshot accepted modern maps without control")
+	}
+}
+
+func TestValidateSnapshotRejectsUnknownInvocationReturnStage(t *testing.T) {
+	snapshot := validSnapshot()
+	state := snapshot.TaskStates["task-1"]
+	state.Invocation = &InvocationState{ReturnStage: TaskStatus("unknown")}
+	snapshot.TaskStates["task-1"] = state
+	if err := validateSnapshot(snapshot); err == nil {
+		t.Fatal("validateSnapshot accepted unknown invocation return stage")
+	}
+}
+
+func TestValidateSnapshotAcceptsSupportedInvocationReturnStages(t *testing.T) {
+	for _, stage := range []TaskStatus{TaskPending, TaskGateFailed, TaskReviewBlocked, TaskGatePassed} {
+		t.Run(string(stage), func(t *testing.T) {
+			snapshot := validSnapshot()
+			state := snapshot.TaskStates["task-1"]
+			state.Invocation = &InvocationState{ReturnStage: stage}
+			snapshot.TaskStates["task-1"] = state
+			if err := validateSnapshot(snapshot); err != nil {
+				t.Fatalf("supported invocation return stage rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestDecodeSnapshotRejectsPartialOrStartedMissingMaps(t *testing.T) {
 	base := validSnapshot()
 	base.TaskStates = nil

@@ -153,6 +153,9 @@ func validateTaskStates(s WorkSnapshot) error {
 }
 
 func validateTaskEvidence(task TaskExecutionState) error {
+	if task.Invocation != nil && !validTaskStatus(task.Invocation.ReturnStage) {
+		return fmt.Errorf("unknown invocation return stage %q", task.Invocation.ReturnStage)
+	}
 	if task.Candidate != nil {
 		if err := validateDiagnostic(task.Candidate.Diagnostic); err != nil {
 			return err

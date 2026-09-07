@@ -289,7 +289,8 @@ func decodeReceiptResult(receipt Receipt, contract contractv2.WorkItemContract, 
 	if normalizeErr != nil {
 		return WorkSnapshot{}, normalizeErr
 	}
-	if err := validateSnapshot(result); err != nil {
+	legacy := !fieldsPresent(fields, "taskStates") && !fieldsPresent(fields, "publications") && !fieldsPresent(fields, "control")
+	if err := validateDecodedSnapshot(result, fieldsPresent(fields, "control"), legacy); err != nil {
 		return WorkSnapshot{}, err
 	}
 	if len(result.Receipts) != 0 {
@@ -369,6 +370,13 @@ func validateSnapshot(s WorkSnapshot) error {
 	}
 	return validateTaskStates(s)
 }
+
+func validateDecodedSnapshot(s WorkSnapshot, controlPresent, legacy bool) error {
+	if !legacy && !controlPresent {
+		return errors.New("control field is required")
+	}
+	return validateSnapshot(s)
+}
 func (s *store) workDir(id contractv2.WorkID) string { return filepath.Join(s.root, string(id)) }
 func validID(v string) error {
 	if v == "" || v != strings.TrimSpace(v) || strings.ContainsAny(v, "/\\:\r\n\t ") {
@@ -402,7 +410,8 @@ func decodeSnapshot(r io.Reader) (WorkSnapshot, error) {
 	if err != nil {
 		return WorkSnapshot{}, err
 	}
-	if err := validateSnapshot(s); err != nil {
+	legacy := !taskStatesPresent && !publicationsPresent && !controlPresent
+	if err := validateDecodedSnapshot(s, controlPresent, legacy); err != nil {
 		return WorkSnapshot{}, err
 	}
 	return s, nil
