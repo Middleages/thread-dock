@@ -1,6 +1,6 @@
 # Implementation Readiness Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to perform this preparation task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** 준비는 Sol medium이 수행하고, 코드 구현 계획 작성 후 superpowers:subagent-driven-development를 사용한다. 구현·수정은 Luna high에 배정한다. 사용자 지정 모델과 독립 Task 병렬 실행은 skill의 기본 모델 선택·순차 실행 지침보다 우선한다. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** GitHub 기반 1차 MVP의 실제 개발 환경을 확인하고, 단일 저장소 업무 하나를 끝까지 구현할 수 있는 착수 자료를 만든다.
 
@@ -22,6 +22,14 @@
 - 현재 Wails는 선택된 설계 방향이다. 구현된 Monitor 앱이 이미 존재한다고 가정하지 않는다.
 - 준비 단계의 명령은 실제 지원되는 명령만 사용한다. 설계상의 `agentctl project`와 `agentctl work`는 아직 구현 대상이다.
 - 검증되지 않은 환경·권한은 `unverified`로 기록한다. 버전 확인만으로 runtime capability나 외부 쓰기가 검증됐다고 표시하지 않는다.
+
+## 개발 세션의 역할
+
+[저장소 실행 지침](../../../AGENTS.md)과 [Codex 설정](../../../.codex/config.toml)을 따른다.
+Sol medium이 계획·분배·검토, Luna high가 구현·테스트·수정을 맡는다.
+공유 타입·인터페이스를 먼저 정하고 독립 Task는 별도 worktree에서 병렬 구현한다.
+동시 구현 worker는 전체 트리에서 최대 3개다. Sol 하위 조정자가 배정한 worker도 이 한도에 포함한다.
+제품 내부의 전역 Agent 호출 한도 2와 이 개발 세션의 worker 한도를 혼동하지 않는다.
 
 ## 범위와 산출물
 
@@ -209,8 +217,13 @@ make vet-focused PKGS="./internal/contract ./internal/state ./internal/cli"
 ```
 
 위 package 집합은 착수 시 현재 코드를 확인하는 예다. 실제 변경한 package를 명시하여
-focused 검사한다. 실패는 재현 가능한 원인과 함께 기록한다. 코드 PR 완료 시
-`make check`를 한 번 수행하고 결과를 보고한다. 기존 suite가 무거워도 성공으로 보이게
+focused 검사한다. 수정 후에는 영향받는 covering 검사만 실행한다.
+Sol 검토자는 동일 SHA·명령·환경에서 이미 통과한 테스트를 재실행하지 않는다.
+각 worker의 full suite 실행은 금지한다. 실패는 재현 가능한 원인과 함께 기록한다.
+통합된 코드 PR의 최종 검증 때 `make check`를 한 번 수행하고 결과를 보고한다.
+전체 재실행은 필수 gate 또는 이전 결과를 무효화한 구체적 변경 근거가 있을 때만 한다.
+Sol은 병렬 worker의 중복 검증을 제거하고 무거운 검사는 동시 실행 수를 낮춘다.
+문서·설정만 바뀐 경우에는 링크·구문 검증을 수행하며 Go 전체 suite를 실행하지 않는다. 기존 suite가 무거워도 성공으로 보이게
 검사를 제외하지 않으며, 더 이상 제품에 맞지 않는 검사는 해당 변경 이유를 설명해 정리한다.
 
 - [ ] 첫 실제 흐름을 시연하고 아래 근거를 기록한다.
