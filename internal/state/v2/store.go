@@ -106,8 +106,7 @@ func (s *store) CreatePlan(ctx context.Context, snapshot WorkSnapshot, requestID
 	} else {
 		return WorkSnapshot{}, err
 	}
-	clientResult := snapshot
-	clientResult.Receipts = cloneReceipts(snapshot.Receipts)
+	clientResult := clientResultProjection(snapshot)
 	if snapshot.Receipts == nil {
 		snapshot.Receipts = map[contractv2.RequestID]Receipt{}
 	} else {
@@ -252,8 +251,7 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 	if err := validateSnapshot(snapshot); err != nil {
 		return WorkSnapshot{}, err
 	}
-	clientResult := snapshot
-	clientResult.Receipts = cloneReceipts(snapshot.Receipts)
+	clientResult := clientResultProjection(snapshot)
 	result, err := json.Marshal(clientResult)
 	if err != nil {
 		return WorkSnapshot{}, err
@@ -272,22 +270,50 @@ func decodeReceiptResult(receipt Receipt, contract contractv2.WorkItemContract) 
 	if receipt.Status != "committed" || len(receipt.Result) == 0 {
 		return WorkSnapshot{}, errors.New("invalid request receipt")
 	}
+	decoder := json.NewDecoder(bytes.NewReader(receipt.Result))
+	decoder.DisallowUnknownFields()
 	var result WorkSnapshot
-	if err := json.Unmarshal(receipt.Result, &result); err != nil {
+	if err := decoder.Decode(&result); err != nil {
 		return WorkSnapshot{}, fmt.Errorf("decode request receipt: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return WorkSnapshot{}, errors.New("decode request receipt: trailing JSON")
 	}
 	if err := validateSnapshot(result); err != nil {
 		return WorkSnapshot{}, err
 	}
-	if !sameCanonicalContract(result.Contract, mustCanonicalContract(contract)) {
+	if len(result.Receipts) != 0 {
+		return WorkSnapshot{}, errors.New("request receipt result must have empty receipts")
+	}
+	currentCanonical, err := canonicalContract(contract)
+	if err != nil {
+		return WorkSnapshot{}, err
+	}
+	resultCanonical, err := canonicalContract(result.Contract)
+	if err != nil || !bytes.Equal(resultCanonical, currentCanonical) {
 		return WorkSnapshot{}, errors.New("request receipt contract mismatch")
+	}
+	sum := sha256.Sum256(currentCanonical)
+	hash := hex.EncodeToString(sum[:])
+	if result.ContractHash != hash || contractHash(contract) != hash {
+		return WorkSnapshot{}, errors.New("request receipt contract hash mismatch")
 	}
 	return result, nil
 }
 
-func mustCanonicalContract(c contractv2.WorkItemContract) []byte {
-	data, _ := canonicalContract(c)
-	return data
+func clientResultProjection(snapshot WorkSnapshot) WorkSnapshot {
+	snapshot.Receipts = map[contractv2.RequestID]Receipt{}
+	return snapshot
+}
+
+func contractHash(contract contractv2.WorkItemContract) string {
+	canonical, err := canonicalContract(contract)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:])
 }
 
 func verifyContractFile(dir string, snapshot WorkSnapshot) error {

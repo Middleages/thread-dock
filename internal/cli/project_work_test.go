@@ -273,6 +273,22 @@ func TestCreationCommandsRequireExpectedRevisionZeroAndRequestID(t *testing.T) {
 	}
 }
 
+func TestOldCreationFormsExitTwoAndUsageNamesBothRequiredFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"project", "register", "PROJECT.json"},
+		{"work", "plan", "CONTRACT.json"},
+	} {
+		service := &fakeWorkflowService{}
+		code, out, errOut := runWorkflow(t, service, args)
+		if code != 2 || out != "" || len(service.calls) != 0 {
+			t.Fatalf("args=%v code=%d stdout=%q calls=%v", args, code, out, service.calls)
+		}
+		if !strings.Contains(errOut, "--expected-revision 0") || !strings.Contains(errOut, "--request-id ID") {
+			t.Fatalf("args=%v usage=%q", args, errOut)
+		}
+	}
+}
+
 func mustJSON(value any) string {
 	data, err := json.Marshal(value)
 	if err != nil {

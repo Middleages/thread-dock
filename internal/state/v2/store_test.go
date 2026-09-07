@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -436,6 +437,141 @@ func TestLoadAndMutateRejectEmbeddedContractAndHashTampering(t *testing.T) {
 				return nil
 			}}); err == nil {
 				t.Fatal("Mutate accepted tampered snapshot")
+			}
+		})
+	}
+}
+
+func TestSequentialMutationReceiptsUseBoundedEmptyProjection(t *testing.T) {
+	root := t.TempDir()
+	s := NewStore(root)
+	ctx := context.Background()
+	if _, err := s.CreatePlan(ctx, validSnapshot(), "create-plan", "create-payload"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", PayloadHash: "payload-a", Transition: func(next *WorkSnapshot) error {
+		next.State = StateQueued
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 2, RequestID: "request-b", PayloadHash: "payload-b", Transition: func(next *WorkSnapshot) error {
+		next.State = StateRunning
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Receipts == nil || len(first.Receipts) != 0 || second.Receipts == nil || len(second.Receipts) != 0 {
+		t.Fatalf("client projections first=%#v second=%#v", first.Receipts, second.Receipts)
+	}
+	persisted, err := s.Load(ctx, "work-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []contractv2.RequestID{"request-a", "request-b"} {
+		receipt := persisted.Receipts[id]
+		if len(receipt.Result) == 0 || bytes.Contains(receipt.Result, []byte(`"request-a"`)) || bytes.Contains(receipt.Result, []byte(`"request-b"`)) || bytes.Contains(receipt.Result, []byte(`"receipts":{"`)) {
+			t.Fatalf("receipt %q is nested or missing: %s", id, receipt.Result)
+		}
+	}
+	replay, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", PayloadHash: "payload-a", Transition: func(next *WorkSnapshot) error {
+		next.State = StateQueued
+		return nil
+	}})
+	if err != nil || !reflect.DeepEqual(replay, first) {
+		t.Fatalf("replay=%#v first=%#v err=%v", replay, first, err)
+	}
+	if len(persisted.Receipts["request-b"].Result) > len(persisted.Receipts["request-a"].Result)*2 {
+		t.Fatalf("receipt result grew unexpectedly: a=%d b=%d", len(persisted.Receipts["request-a"].Result), len(persisted.Receipts["request-b"].Result))
+	}
+}
+
+func TestReceiptReplayRejectsMalformedResultWithoutWriting(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func([]byte) []byte
+	}{
+		{name: "unknown field", mutate: func(raw []byte) []byte {
+			return append(bytes.TrimSpace(raw[:len(raw)-1]), []byte(`,"unexpected":true}`)...)
+		}},
+		{name: "trailing JSON", mutate: func(raw []byte) []byte {
+			return append(raw, []byte(` {}`)...)
+		}},
+		{name: "nested receipts", mutate: func(raw []byte) []byte {
+			var result WorkSnapshot
+			if err := json.Unmarshal(raw, &result); err != nil {
+				panic(err)
+			}
+			result.Receipts = map[contractv2.RequestID]Receipt{"nested": {RequestID: "nested", PayloadHash: "nested", Status: "committed"}}
+			encoded, _ := json.Marshal(result)
+			return encoded
+		}},
+		{name: "changed contract", mutate: func(raw []byte) []byte {
+			var result WorkSnapshot
+			if err := json.Unmarshal(raw, &result); err != nil {
+				panic(err)
+			}
+			result.Contract.Request = "changed"
+			encoded, _ := json.Marshal(result)
+			return encoded
+		}},
+		{name: "bad contract hash", mutate: func(raw []byte) []byte {
+			var result WorkSnapshot
+			if err := json.Unmarshal(raw, &result); err != nil {
+				panic(err)
+			}
+			result.ContractHash = strings.Repeat("f", 64)
+			encoded, _ := json.Marshal(result)
+			return encoded
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			s := NewStore(root)
+			ctx := context.Background()
+			if _, err := s.CreatePlan(ctx, validSnapshot(), "create-plan", "create-payload"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", PayloadHash: "payload-a", Transition: func(next *WorkSnapshot) error {
+				next.State = StateQueued
+				return nil
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "v2", "work", "work-1", "work.json")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var snapshot WorkSnapshot
+			if err := json.Unmarshal(data, &snapshot); err != nil {
+				t.Fatal(err)
+			}
+			receipt := snapshot.Receipts["request-a"]
+			originalResult := append([]byte(nil), receipt.Result...)
+			receipt.Result = tc.mutate(receipt.Result)
+			snapshot.Receipts["request-a"] = receipt
+			tampered, err := json.Marshal(snapshot)
+			if err != nil {
+				tampered = bytes.Replace(data, originalResult, receipt.Result, 1)
+			}
+			if err := os.WriteFile(path, tampered, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", PayloadHash: "payload-a", Transition: func(next *WorkSnapshot) error {
+				t.Fatal("tampered replay invoked transition")
+				return nil
+			}}); err == nil {
+				t.Fatal("replay accepted malformed receipt result")
+			}
+			persisted, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(persisted, tampered) {
+				t.Fatal("replay changed persisted state")
 			}
 		})
 	}
