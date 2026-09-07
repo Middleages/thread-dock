@@ -151,7 +151,7 @@ func (s *recordingWorkStore) Load(context.Context, contractv2.WorkID) (statev2.W
 	return statev2.WorkSnapshot{}, nil
 }
 func (s *recordingWorkStore) List(context.Context) ([]statev2.WorkSnapshot, error) { return nil, nil }
-func (s *recordingWorkStore) Mutate(context.Context, statev2.Mutation) (statev2.WorkSnapshot, error) {
+func (s *recordingWorkStore) Apply(context.Context, statev2.TransitionRequest) (statev2.WorkSnapshot, error) {
 	return statev2.WorkSnapshot{}, nil
 }
 
@@ -186,8 +186,8 @@ func (f *countingWorkStore) List(context.Context) ([]statev2.WorkSnapshot, error
 	f.listCall++
 	return append([]statev2.WorkSnapshot(nil), f.works...), nil
 }
-func (f *countingWorkStore) Mutate(context.Context, statev2.Mutation) (statev2.WorkSnapshot, error) {
-	panic("unexpected Mutate")
+func (f *countingWorkStore) Apply(context.Context, statev2.TransitionRequest) (statev2.WorkSnapshot, error) {
+	panic("unexpected Apply")
 }
 
 func TestSnapshotAggregatesRegisteredProjectAndWorkWithoutSideEffects(t *testing.T) {

@@ -46,19 +46,11 @@ type WorkSnapshot struct {
 	TaskStates    map[contractv2.TaskID]TaskExecutionState `json:"taskStates"`
 	Publications  map[PublicationIntentID]PublicationState `json:"publications"`
 }
-type Mutation struct {
-	WorkID           contractv2.WorkID
-	ExpectedRevision contractv2.Revision
-	RequestID        contractv2.RequestID
-	PayloadHash      string
-	Transition       Transition
-}
-type Transition func(*WorkSnapshot) error
 type Store interface {
 	CreatePlan(context.Context, WorkSnapshot, contractv2.RequestID, string) (WorkSnapshot, error)
 	Load(context.Context, contractv2.WorkID) (WorkSnapshot, error)
 	List(context.Context) ([]WorkSnapshot, error)
-	Mutate(context.Context, Mutation) (WorkSnapshot, error)
+	Apply(context.Context, TransitionRequest) (WorkSnapshot, error)
 }
 
 type StaleRevisionError struct {

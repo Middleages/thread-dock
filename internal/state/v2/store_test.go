@@ -58,86 +58,6 @@ func TestCreatePlanStoresImmutableContractRevisionOne(t *testing.T) {
 	}
 }
 
-func TestMutateCASReplayConflictAndStale(t *testing.T) {
-	s := NewStore(t.TempDir())
-	ctx := context.Background()
-	if _, err := createPlan(s, ctx, validSnapshot()); err != nil {
-		t.Fatal(err)
-	}
-	transition := func(s *WorkSnapshot) error { s.State = StateQueued; s.NextAction = "run"; return nil }
-	m := Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-1", PayloadHash: "payload-1", Transition: transition}
-	got, err := s.Mutate(ctx, m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Revision != 2 || got.State != StateQueued {
-		t.Fatalf("mutation = %#v", got)
-	}
-	replay, err := s.Mutate(ctx, m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replay.Revision != 2 || replay.State != StateQueued {
-		t.Fatalf("replay = %#v", replay)
-	}
-	m.PayloadHash = "payload-2"
-	if _, err := s.Mutate(ctx, m); !errors.Is(err, ErrConflict) {
-		t.Fatalf("different payload error = %v", err)
-	}
-	stale := Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-2", PayloadHash: "payload-3", Transition: transition}
-	var staleErr *StaleRevisionError
-	if _, err := s.Mutate(ctx, stale); !errors.As(err, &staleErr) || staleErr.CurrentRevision != 2 || staleErr.CurrentState != StateQueued {
-		t.Fatalf("stale error = %v", err)
-	}
-}
-
-func TestMutateRejectsTransitionThatChangesImmutableFieldsOrReceipts(t *testing.T) {
-	mutations := []struct {
-		name   string
-		change func(*WorkSnapshot)
-	}{
-		{"project", func(s *WorkSnapshot) { s.ProjectID = "other-project" }},
-		{"schema", func(s *WorkSnapshot) { s.SchemaVersion = 99 }},
-		{"hash", func(s *WorkSnapshot) { s.ContractHash = "other-hash" }},
-		{"contract", func(s *WorkSnapshot) { s.Contract.Request = "changed" }},
-		{"receipts", func(s *WorkSnapshot) {
-			s.Receipts["foreign"] = Receipt{RequestID: "foreign", PayloadHash: "foreign", Status: "committed"}
-		}},
-	}
-	for _, tc := range mutations {
-		t.Run(tc.name, func(t *testing.T) {
-			s := NewStore(t.TempDir())
-			before := validSnapshot()
-			if _, err := createPlan(s, context.Background(), before); err != nil {
-				t.Fatal(err)
-			}
-			_, err := s.Mutate(context.Background(), Mutation{WorkID: before.WorkID, ExpectedRevision: 1, RequestID: "request-immutable", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error { tc.change(next); return nil }})
-			if err == nil {
-				t.Fatal("mutation accepted changes to immutable snapshot fields")
-			}
-			got, loadErr := s.Load(context.Background(), before.WorkID)
-			if loadErr != nil {
-				t.Fatal(loadErr)
-			}
-			if got.Revision != before.Revision || got.State != before.State || !reflect.DeepEqual(got.Contract, before.Contract) || len(got.Receipts) != 1 {
-				t.Fatalf("failed mutation changed persisted snapshot: %#v", got)
-			}
-		})
-	}
-}
-
-func TestMutateRejectsUnknownWorkflowState(t *testing.T) {
-	s := NewStore(t.TempDir())
-	before := validSnapshot()
-	if _, err := createPlan(s, context.Background(), before); err != nil {
-		t.Fatal(err)
-	}
-	_, err := s.Mutate(context.Background(), Mutation{WorkID: before.WorkID, ExpectedRevision: 1, RequestID: "request-state", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error { next.State = WorkState("made_up"); return nil }})
-	if err == nil {
-		t.Fatal("mutation accepted unknown workflow state")
-	}
-}
-
 func TestCreatePlanRecoversCommittedContractWhenSnapshotPublicationIsInterrupted(t *testing.T) {
 	root := t.TempDir()
 	s := NewStore(root)
@@ -231,25 +151,19 @@ func TestCreatePlanHardensPreexistingDirectoriesAndTemporaryFiles(t *testing.T) 
 	}
 }
 
-func TestListIncludesTerminalAndOperatorStatesInWorkIDOrder(t *testing.T) {
+func TestListIncludesWorkInWorkIDOrder(t *testing.T) {
 	root := t.TempDir()
 	s := NewStore(root)
 	ctx := context.Background()
-	for i, target := range []struct {
+	for _, target := range []struct {
 		id    contractv2.WorkID
 		state WorkState
 	}{
-		{"work-z", StateCompleted},
-		{"work-a", StateNeedsOperator},
+		{"work-z", StateAwaitingApproval},
+		{"work-a", StateAwaitingApproval},
 	} {
 		snapshot := snapshotForWork(target.id, StateAwaitingApproval)
 		if _, err := createPlan(s, ctx, snapshot); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.Mutate(ctx, Mutation{WorkID: target.id, ExpectedRevision: 1, RequestID: contractv2.RequestID("request-") + contractv2.RequestID(string(rune('a'+i))), PayloadHash: "payload", Transition: func(next *WorkSnapshot) error {
-			next.State = target.state
-			return nil
-		}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -270,7 +184,7 @@ func TestListIncludesTerminalAndOperatorStatesInWorkIDOrder(t *testing.T) {
 	if got == nil || len(got) != 2 {
 		t.Fatalf("listed snapshots = %#v", got)
 	}
-	if got[0].WorkID != "work-a" || got[0].State != StateNeedsOperator || got[1].WorkID != "work-z" || got[1].State != StateCompleted {
+	if got[0].WorkID != "work-a" || got[0].State != StateAwaitingApproval || got[1].WorkID != "work-z" || got[1].State != StateAwaitingApproval {
 		t.Fatalf("listed snapshots = %#v", got)
 	}
 }
@@ -280,12 +194,6 @@ func TestListRejectsCorruptDirectChildSnapshot(t *testing.T) {
 	s := NewStore(root)
 	ctx := context.Background()
 	if _, err := createPlan(s, ctx, snapshotForWork("work-valid", StateAwaitingApproval)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Mutate(ctx, Mutation{WorkID: "work-valid", ExpectedRevision: 1, RequestID: "request-valid", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error {
-		next.State = StateCompleted
-		return nil
-	}}); err != nil {
 		t.Fatal(err)
 	}
 	corruptDir := filepath.Join(root, "v2", "work", "work-corrupt")
@@ -337,29 +245,22 @@ func TestCreatePlanIsIdempotentByRequestAndPersistsCreationReceipt(t *testing.T)
 	}
 }
 
-func TestMutationReplayReturnsOriginalResultAfterLaterMutation(t *testing.T) {
+func TestApplyReplayReturnsOriginalResult(t *testing.T) {
 	s := NewStore(t.TempDir())
 	ctx := context.Background()
 	if _, err := s.CreatePlan(ctx, validSnapshot(), "create-plan", "create-payload"); err != nil {
 		t.Fatal(err)
 	}
-	approve := Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", PayloadHash: "payload-a", Transition: func(next *WorkSnapshot) error {
-		next.State = StateQueued
-		next.NextAction = "run"
-		return nil
-	}}
-	original, err := s.Mutate(ctx, approve)
+	before, err := s.Load(ctx, "work-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 2, RequestID: "request-b", PayloadHash: "payload-b", Transition: func(next *WorkSnapshot) error {
-		next.State = StateRunning
-		next.NextAction = "monitor"
-		return nil
-	}}); err != nil {
+	approve := transitionRequest(t, before, "request-a", WorkTransition{Action: WorkApprove, ApprovalRef: "approval", ContractHash: before.ContractHash})
+	original, err := s.Apply(ctx, approve)
+	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := s.Mutate(ctx, approve)
+	replay, err := s.Apply(ctx, approve)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,12 +271,12 @@ func TestMutationReplayReturnsOriginalResultAfterLaterMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.Revision != 3 || current.State != StateRunning {
+	if current.Revision != 2 || current.State != StateQueued {
 		t.Fatalf("current=%#v", current)
 	}
 }
 
-func TestLoadAndMutateRejectContractTampering(t *testing.T) {
+func TestLoadAndApplyRejectContractTampering(t *testing.T) {
 	root := t.TempDir()
 	s := NewStore(root)
 	ctx := context.Background()
@@ -394,15 +295,12 @@ func TestLoadAndMutateRejectContractTampering(t *testing.T) {
 	if _, err := s.Load(ctx, "work-1"); err == nil {
 		t.Fatal("Load accepted tampered contract file")
 	}
-	if _, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-after-tamper", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error {
-		next.State = StateQueued
-		return nil
-	}}); err == nil {
-		t.Fatal("Mutate accepted tampered contract file")
+	if _, err := s.Apply(ctx, TransitionRequest{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-after-tamper", PayloadHash: "invalid", Work: &WorkTransition{Action: WorkPause}}); err == nil {
+		t.Fatal("Apply accepted tampered contract file")
 	}
 }
 
-func TestLoadAndMutateRejectEmbeddedContractAndHashTampering(t *testing.T) {
+func TestLoadAndApplyRejectEmbeddedContractAndHashTampering(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		mutate func([]byte) []byte
@@ -432,34 +330,33 @@ func TestLoadAndMutateRejectEmbeddedContractAndHashTampering(t *testing.T) {
 			if _, err := s.Load(ctx, "work-1"); err == nil {
 				t.Fatal("Load accepted tampered snapshot")
 			}
-			if _, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-after-tamper", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error {
-				next.State = StateQueued
-				return nil
-			}}); err == nil {
-				t.Fatal("Mutate accepted tampered snapshot")
+			if _, err := s.Apply(ctx, TransitionRequest{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-after-tamper", PayloadHash: "invalid", Work: &WorkTransition{Action: WorkPause}}); err == nil {
+				t.Fatal("Apply accepted tampered snapshot")
 			}
 		})
 	}
 }
 
-func TestSequentialMutationReceiptsUseBoundedEmptyProjection(t *testing.T) {
+func TestSequentialApplyReceiptsUseBoundedEmptyProjection(t *testing.T) {
 	root := t.TempDir()
 	s := NewStore(root)
 	ctx := context.Background()
 	if _, err := s.CreatePlan(ctx, validSnapshot(), "create-plan", "create-payload"); err != nil {
 		t.Fatal(err)
 	}
-	first, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", PayloadHash: "payload-a", Transition: func(next *WorkSnapshot) error {
-		next.State = StateQueued
-		return nil
-	}})
+	before, err := s.Load(ctx, "work-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 2, RequestID: "request-b", PayloadHash: "payload-b", Transition: func(next *WorkSnapshot) error {
-		next.State = StateRunning
-		return nil
-	}})
+	first, err := s.Apply(ctx, transitionRequest(t, before, "request-a", WorkTransition{Action: WorkApprove, ApprovalRef: "approval", ContractHash: before.ContractHash}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.Apply(ctx, TransitionRequest{WorkID: "work-1", ExpectedRevision: 2, RequestID: "request-b", PayloadHash: func() string {
+		req := TransitionRequest{Work: &WorkTransition{Action: WorkPause}}
+		hash, _ := TransitionPayloadHash(req)
+		return hash
+	}(), Work: &WorkTransition{Action: WorkPause}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,10 +373,7 @@ func TestSequentialMutationReceiptsUseBoundedEmptyProjection(t *testing.T) {
 			t.Fatalf("receipt %q is nested or missing: %s", id, receipt.Result)
 		}
 	}
-	replay, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", PayloadHash: "payload-a", Transition: func(next *WorkSnapshot) error {
-		next.State = StateQueued
-		return nil
-	}})
+	replay, err := s.Apply(ctx, transitionRequest(t, before, "request-a", WorkTransition{Action: WorkApprove, ApprovalRef: "approval", ContractHash: before.ContractHash}))
 	if err != nil || !reflect.DeepEqual(replay, first) {
 		t.Fatalf("replay=%#v first=%#v err=%v", replay, first, err)
 	}
@@ -534,10 +428,9 @@ func TestReceiptReplayRejectsMalformedResultWithoutWriting(t *testing.T) {
 			if _, err := s.CreatePlan(ctx, validSnapshot(), "create-plan", "create-payload"); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", PayloadHash: "payload-a", Transition: func(next *WorkSnapshot) error {
-				next.State = StateQueued
-				return nil
-			}}); err != nil {
+			request := TransitionRequest{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", Work: &WorkTransition{Action: WorkApprove, ApprovalRef: "approval", ContractHash: validSnapshot().ContractHash}}
+			request.PayloadHash, _ = TransitionPayloadHash(request)
+			if _, err := s.Apply(ctx, request); err != nil {
 				t.Fatal(err)
 			}
 			path := filepath.Join(root, "v2", "work", "work-1", "work.json")
@@ -560,10 +453,7 @@ func TestReceiptReplayRejectsMalformedResultWithoutWriting(t *testing.T) {
 			if err := os.WriteFile(path, tampered, 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", PayloadHash: "payload-a", Transition: func(next *WorkSnapshot) error {
-				t.Fatal("tampered replay invoked transition")
-				return nil
-			}}); err == nil {
+			if _, err := s.Apply(ctx, request); err == nil {
 				t.Fatal("replay accepted malformed receipt result")
 			}
 			persisted, err := os.ReadFile(path)

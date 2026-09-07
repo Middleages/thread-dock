@@ -119,23 +119,17 @@ func (s *Service) ApproveWork(ctx context.Context, id contractv2.WorkID, expecte
 	if request == "" {
 		return statev2.WorkSnapshot{}, errors.New("request ID is required")
 	}
-	payload, err := json.Marshal(struct {
-		WorkID   contractv2.WorkID   `json:"workId"`
-		Expected contractv2.Revision `json:"expectedRevision"`
-		Action   string              `json:"action"`
-	}{id, expected, "approve"})
+	snapshot, err := s.works.Load(ctx, id)
 	if err != nil {
 		return statev2.WorkSnapshot{}, err
 	}
-	sum := sha256.Sum256(payload)
-	return s.works.Mutate(ctx, statev2.Mutation{WorkID: id, ExpectedRevision: expected, RequestID: request, PayloadHash: hex.EncodeToString(sum[:]), Transition: func(s *statev2.WorkSnapshot) error {
-		if s.State != statev2.StateAwaitingApproval {
-			return errors.New("work is not awaiting approval")
-		}
-		s.State = statev2.StateQueued
-		s.NextAction = "run"
-		return nil
-	}})
+	transition := statev2.WorkTransition{Action: statev2.WorkApprove, ApprovalRef: string(request), ContractHash: snapshot.ContractHash}
+	apply := statev2.TransitionRequest{WorkID: id, ExpectedRevision: expected, RequestID: request, Work: &transition}
+	apply.PayloadHash, err = statev2.TransitionPayloadHash(apply)
+	if err != nil {
+		return statev2.WorkSnapshot{}, err
+	}
+	return s.works.Apply(ctx, apply)
 }
 func (s *Service) Status(ctx context.Context, id contractv2.WorkID) (statev2.WorkSnapshot, error) {
 	return s.works.Load(ctx, id)

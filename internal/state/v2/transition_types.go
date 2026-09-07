@@ -172,6 +172,15 @@ const (
 	ResolvePublicationReconciled ResolveKind = "publication_reconciled"
 )
 
+type BudgetKind string
+
+const (
+	BudgetKindRepair   BudgetKind = "repair"
+	BudgetKindRecovery BudgetKind = "recovery"
+	BudgetRepair                  = BudgetKindRepair
+	BudgetRecovery                = BudgetKindRecovery
+)
+
 type WorkTransition struct {
 	Action       WorkAction      `json:"action"`
 	ApprovalRef  string          `json:"approvalRef,omitempty"`
@@ -186,6 +195,7 @@ type ResolvePayload struct {
 	InvocationID InvocationID        `json:"invocationId,omitempty"`
 	IntentID     PublicationIntentID `json:"intentId,omitempty"`
 	Evidence     *ResolutionEvidence `json:"evidence,omitempty"`
+	Budget       BudgetKind          `json:"budget,omitempty"`
 	NewLimit     uint32              `json:"newLimit,omitempty"`
 }
 
