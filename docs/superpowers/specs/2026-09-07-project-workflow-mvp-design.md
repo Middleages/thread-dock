@@ -99,9 +99,13 @@ Project 등록 정보가 바뀌어도 승인된 Work Item의 저장소 대상을
 | Local state | 호출·Task·Run 상태, Git 근거, 동기화 receipt와 handoff | Orchestrator의 상태 전환 시 |
 | GitHub Projects | 업무 상태·우선순위·프로젝트 분류와 관련 Issue/PR | 원본 업무 상태를 발행·동기화할 때 |
 
-Main Agent가 기록 내용과 대화를 관리하고, Go 명령이 구조·대상·진행 조건을 검증한다.
-GitHub 쓰기는 승인된 업무 범위에서 Main Agent가 호출하는 publication 명령으로만
-진행한다. 이 명령이 gh를 사용하며 receipt를 Go 상태 저장소에 돌려준다.
+Main Agent가 기록 내용과 대화를 관리하고, Go Publisher가 구조·대상·진행 조건을 검증한다.
+GitHub 쓰기는 Go Publisher가 gh와 Wiki Git 경로로 수행하고 receipt를 상태 저장소에 남긴다.
+Main Agent는 승인된 publication을 요청할 수 있으며 백그라운드 coordinator도 승인된
+계약·문서 patch·대상 안에서 단계 요약, PR 준비, 병합 확인과 발행 재시도를 진행한다.
+대화가 닫혀도 새 정책 판단 없이 가능한 진행은 계속한다. 승인되지 않은 결정·범위 확장,
+새 repository/board 대상이나 검토되지 않은 문서 본문은 자동 발행하지 않는다.
+설명 생성이 불가능하면 근거 기반 구조화 요약을 발행하고 새 결정을 만들어내지 않는다.
 Builder, Reviewer, Scout, Documenter와 Monitor는 GitHub를 직접 변경하지 않는다.
 
 공용 Projects 보드 하나에 프로젝트별 보기와 업무 상태를 둔다. 기본 필드는
@@ -113,6 +117,26 @@ GitHub.com/GHES의 host와 Projects/Wiki 지원 및 접근 권한을 등록 때 
 공용 보드의 node ID, 필드 ID, option ID를 저장한다. 호환되지 않는 endpoint를
 조용히 무시하거나 임의의 보드를 새로 만들지 않고 설정 문제를 보여준다.
 여러 host의 업무는 Monitor에서 모으되 공용 보드 매핑은 host마다 별도로 둔다.
+
+### GitHub에서 사람이 변경했을 때
+
+GitHub는 업무 기록의 원본이며 local state는 실제 실행의 원본이다. 둘의 revision을 구분한다.
+Publisher는 자신이 관리하는 marker 영역과 필드만 갱신하고 사람이 작성한 본문을 보존한다.
+원격 내용을 읽고 쓰는 사이 변경될 수 있으므로 API가 conditional update를 지원하면 사용한다.
+지원하지 않는 본문 쓰기는 append-only milestone comment를 우선하고, 불명확한 충돌은
+syncStatus=conflict로 남긴다. read-then-write만으로 동시 편집을 안전하게 보존한다고 주장하지 않는다.
+
+| 수동 변경 | 실행과 동기화 처리 |
+|---|---|
+| 제목·우선순위·참고 설명 | 원격 값을 읽어 화면에 반영하고 실행 계약은 유지 |
+| 범위·완료 조건·검증 명령 | scope_change_pending 표시, 새 Task 시작·PR 발행을 막고 계약 revision 재승인 |
+| Projects Status 또는 Issue 닫기 | 사용자 표시와 실행 상태를 각각 보존; Done으로 실행 완료를 추론하지 않음 |
+| PR HEAD/base | 관련 검증·리뷰·mergeReady 무효화; 실제 SHA 기준으로 다시 확인 |
+| Wiki 본문 | 최신 base에서 변경안 재작성·검증·리뷰; 덮어쓰기나 force push 금지 |
+
+업무 취소는 Issue 닫기와 별도다. 취소 요청을 Go 명령으로 적용하고 살아 있는 호출의
+종료를 확인한다. 모호한 사람이 쓴 설명을 Agent가 승인된 계약으로 자동 승격하지 않는다.
+상태 불일치는 사용자에게 보이고 명시적인 refresh/reconcile로 해결한다.
 
 ### 결정 기록
 
@@ -139,6 +163,12 @@ GitHub에는 milestone 요약을 남기며 polling마다 comment를 만들지 �
 
 기존 Windows Wails + React/TypeScript, WSL Go CLI 방향을 유지한다.
 새 UI framework나 HTTP 서버를 도입하는 일은 MVP 요구가 아니다.
+
+2026-09-07 추가 결정: 1차는 GitHub Projects·Issue·PR·Wiki를 기반으로 진행하고,
+Monitor는 기존 Wails 방향을 유지한다. DXHub 프로젝트 메뉴·MCP 연동과 공유 실행 제어는
+후속 범위다. GitHub에서 다른 사람이 검토·병합·업무 편집을 해도 이번 실행기는 한 운영자의
+Trusted Workstation이 소유한다. 보드 담당자 변경을 다른 PC로의 실행 소유권 이전으로
+간주하지 않으며, 여러 PC가 같은 업무를 동시에 실행하는 기능은 제공하지 않는다.
 
 ### 프로젝트 목록
 
@@ -206,6 +236,27 @@ Run snapshot에 고정한다. 생성된 GitHub 번호와 로컬 경로는 Run st
 필요한 저장소가 등록되지 않았거나 base가 존재하지 않으면 실행 전에 거부한다.
 계약 변경은 새 immutable revision을 만들고 영향을 받는 검증·리뷰를 무효화한다.
 
+### 저장소별 실행 환경 계약
+
+Repository의 버전 관리되는 executionProfile은 setup/checks 명령, requiredEnvNames,
+services와 verification target을 가진다. 명령은 argv, cwdRepoKey, timeoutSeconds로
+선언하고 필요한 경우 검토된 repository script를 호출한다. setup도 승인된 실행 범위다.
+실제 secret 값, 로컬 경로와 연결 자격증명은 workstation binding에만 둔다.
+검증 명령에 publication credential을 전달하지 않는 원칙은 setup과 service에도 적용한다.
+
+Service는 serviceId, start argv, readiness probe, startup timeout과 소유한 종료 대상을
+선언한다. 기존 외부 service를 이용하면 managed=false와 승인된 endpoint를 명시한다.
+관리되는 service의 port는 Run별 로컬 할당 결과를 저장하고 관련 검사에 전달한다.
+공유 고정 port가 필요하면 repository와 별도로 자원 충돌을 잠근다. 종료·재개 시에는
+자신이 시작한 프로세스 정체성을 확인하고 다른 업무의 service를 종료하지 않는다.
+서비스 종료 실패는 근거와 자원 점유를 보존한 needs_operator이며 새 실행으로 덮지 않는다.
+
+계약 승인은 executionProfile의 비밀 없는 hash를 포함한다. 검증의 의미가 달라지는
+명령·service 설정 변경은 새 revision과 관련 검증 무효화가 필요하다.
+등록·실행 전 preflight는 binary, 지원 capability, 환경 변수 존재, 저장소 경로,
+host별 Projects/Wiki 접근, probe와 충돌을 검사한다. 값과 전체 환경을 출력하지 않는다.
+read-only 점검과 실제 runtime 호출·GitHub 쓰기 확인의 결과를 구분한다.
+
 ## 7. 실행과 통합
 
 1. Main Agent가 요청을 인터뷰하고 관련 결정·Wiki·코드 근거를 읽는다.
@@ -251,7 +302,7 @@ cross-repo 검증을 stale 처리한다. 이미 병합한 결과에 영향이 �
 - Builder: 할당된 Worktree 파일 구현.
 - Reviewer: Task 및 최종 업무를 fresh context에서 독립 검토.
 - Documenter: 관련 코드 근거와 승인된 결정에 맞는 문서 변경안 작성.
-- Go Orchestrator: 식별자, 상태, Git, 검증 실행, 한도와 다음 행동 결정.
+- Go Orchestrator: 식별자, 상태, Git, 검증 실행, 한도와 다음 행동 결정. Publisher가 승인된 외부 발행을 담당한다.
 
 AgentRuntime의 역할은 Invoke(context, Invocation) → Artifact다.
 Invocation은 requestId, role, 고정 프로필, canonical Worktree, 제한된 packet,
@@ -417,13 +468,16 @@ Wiki 발행 → 업무 완료 흐름을 사용한다.
 
 | 순서 | 실제 사용할 수 있는 결과 |
 |---|---|
-| 1. 프로젝트·업무·기록 | registry, v2 상태·계약, 대표 Issue·Projects 매핑, 결정·handoff, CLI aggregate status |
-| 2. Monitor 기본 화면 | 프로젝트 목록·상세·다음 행동·링크·freshness. 아직 없는 실행 기능은 명시 |
-| 3. 저장소 실행 | Go Git/검증, Codex·OpenCode adapter, fresh 리뷰·제한 수정·pause/resume |
+| 0. 착수 확인 | 실제 호스트 preflight, 저장소 실행 profile, GitHub 보드·Wiki 연결 확인 |
+| 1. 단일 저장소 전체 흐름 | 작은 업무 하나를 요청·승인 → Issue/결정 → Builder/검증/Reviewer → docs/최종 gate → PR → 사람 병합 → Wiki/완료까지 연결. 같은 흐름을 작은 Monitor 목록·상세에 표시 |
+| 2. 중단과 수정 | 리뷰 block 수정·재검토, pause/resume, 종료 불명확·발행 실패 복구. 완료 Task와 budget 보존 |
+| 3. 여러 프로젝트와 runtime | 전역 슬롯·물리 저장소 충돌·프로젝트 전환, Codex/OpenCode 공통 계약 확인 |
 | 4. 다중 저장소 업무 | 의존 Task·interface 합의, cross-repo 검증, 저장소별 PR과 부분 병합 |
-| 5. 문서와 전체 완료 | repository docs 최종 gate, Wiki 검토·발행·재시도, 전체 Finalize |
 
 이는 한 MVP 안의 개발 순서다. Monitor와 Projects/Wiki는 후속 버전으로 미루지 않는다.
+단계 1은 선택한 runtime 하나와 저장소 하나로 전체 흐름을 먼저 확인한다.
+상태 저장의 revision·멱등성과 종료 확인은 처음부터 적용하고 단계 2에서 복구 시나리오를 확장한다.
+착수 절차와 단계별 인수 근거는 [준비 계획](../plans/2026-09-07-implementation-readiness.md)에 둔다.
 새 v2 state directory를 사용하고 v1 자료는 수정 없이 보존한다.
 v1을 입력하면 unsupported_legacy 설명과 기존 기록 위치를 반환하고 실행하지 않는다.
 기존 CLI를 사용해야 하는 역사 자료는 고정된 옛 버전에서만 참고한다.

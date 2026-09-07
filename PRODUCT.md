@@ -36,6 +36,9 @@ Main Agent가 사용자의 결정과 결과를 이해할 수 있는 문장으로
 
 ## Operating Context
 
+1차는 GitHub Projects·Issue·PR·Wiki와 기존 Wails Monitor를 사용한다.
+DXHub 프로젝트 메뉴·MCP 연동과 여러 사용자의 공유 실행 제어는 후속 범위다.
+
 - 기존 Main Agent 대화에서 요청, 범위와 중요한 결정을 승인한다.
 - Project는 여러 Repository를 묶고 대표 저장소에 Parent Issue와 기본 Wiki를 둔다.
 - Work Item은 저장소별 Task·PR과 전체 완료 조건을 연결한다.

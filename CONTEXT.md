@@ -109,6 +109,12 @@ _Avoid_: Orchestrator, 모델
 **Main Agent**:
 사용자와 인터뷰하고 결정·handoff를 기록하며 Planner와 Go 명령을 호출하는 대화 역할.
 승인된 범위에서 publication 명령을 호출할 수 있는 유일한 Agent 역할이다.
+대화가 닫혀도 Go Publisher는 승인된 단계 전환과 발행 재시도를 계속할 수 있다.
+
+**Go Publisher**:
+승인된 계약·대상·검토 결과를 확인하고 GitHub/Wiki 쓰기 및 receipt를 소유하는 Go 구성 요소.
+Main Agent 요청과 background coordinator 요청에 같은 검증·멱등성 규칙을 적용한다.
+_Avoid_: 별도 의사결정 Agent, 무제한 GitHub 쓰기 권한
 _Avoid_: 상태 JSON 직접 편집자, GitHub 자동 병합 Agent
 
 **Planner**:

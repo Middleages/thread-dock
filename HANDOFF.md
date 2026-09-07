@@ -9,6 +9,7 @@
 - [제품 범위](PRODUCT.md)
 - [용어 모델](CONTEXT.md)
 - [전환 결정 ADR 0006](docs/adr/0006-project-workflow-mvp.md)
+- [구현 준비 계획](docs/superpowers/plans/2026-09-07-implementation-readiness.md)
 
 ## 기준선과 변경 상태
 
@@ -29,6 +30,8 @@
 - 필수 PR 일부의 병합은 전체 업무 완료가 아니다.
 - 기존 파일럿 Run을 새 MVP에서 이어갈 요구는 없다.
 - 혼동을 만드는 이전 설계·계획 파일은 현재 tree에서 제거하고 Git 이력으로 남긴다.
+- 1차는 GitHub Projects·Issue·PR·Wiki 기반이며 기존 Wails Monitor를 함께 구현한다.
+- DXHub 프로젝트 메뉴·MCP 연동과 공유 실행 제어는 후속 범위다. 1차 실행 소유자는 한 운영자다.
 
 ## 설계 기본값
 
@@ -40,13 +43,16 @@
 
 ## 다음 구현 순서
 
-1. Project/Repository/Work Item 식별자와 Contract v2, 상태 revision·CLI 계약.
-2. Issue·Projects 매핑, 결정·handoff와 Monitor 목록·상세.
-3. Go Git·검증, Runtime adapter, Task 리뷰·수정·pause/resume.
-4. 다중 저장소 의존성·검증과 PR 준비·부분 병합.
-5. repository docs 최종 gate, Wiki 발행·재시도와 전체 Finalize.
+0. 준비 계획에 따라 실제 workstation의 도구·권한·repository 실행 환경을 확인한다.
+1. 단일 저장소·runtime 하나로 Issue/결정 → 구현·검증·리뷰 → docs·최종 gate → PR → 사람 병합 → Wiki/완료를 연결한다. 작은 Monitor 목록·상세를 함께 제공한다.
+2. 제한 수정·재검토, pause/resume, 불명확한 종료·발행 실패 복구를 확인한다.
+3. 여러 프로젝트 진행, 두 runtime의 공통 계약, 물리 저장소 충돌을 검증한다.
+4. 다중 저장소 의존성·검증과 PR 준비·부분 병합을 추가한다.
 
-각 단계의 파일·명령·검증을 구체화한 구현 계획을 새 설계에 맞춰 작성한다.
+Go Publisher는 Main Agent 대화와 독립적으로 승인된 진행과 발행을 수행한다.
+GitHub 수동 편집은 원격 업무 기록과 실행 계약을 구분하고 충돌을 표시한다.
+저장소 setup/check/service 명령과 필요한 환경 변수 이름을 승인된 executionProfile에 둔다.
+구현 준비 계획은 환경 확인과 첫 구현 범위를 정한다. 전체 MVP를 한 번에 구현하라는 지시가 아니다.
 삭제된 옛 계획이나 single-run/parallel pilot 절차를 현재 실행 계획으로 되살리지 않는다.
 
 ## 재사용과 검증
