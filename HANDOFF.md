@@ -106,6 +106,9 @@ docker run --rm -v "$PWD":/src -w /src golang:1.27 make check
 실패했고, 같은 테스트를 단독 실행했을 때 0.24초에 통과했다. 해당 자원 집약 검증이 끝난 뒤 허용된
 전체 gate 재실행이 통과했다. final whole-branch review가 찾은 생성 멱등성, 원래 결과 replay와
 immutable contract/hash 대조 문제를 수정·재검토한 뒤, 변경으로 무효화된 전체 gate도 다시 통과했다.
+foundation 변경은 [PR #49](https://github.com/Middleages/thread-dock/pull/49)에 push했다.
+확인 시점의 PR HEAD는 `4e2a91fb9043f3c926382247ad4b40ea718fd7ba`이고 GitHub 판정은
+`MERGEABLE/CLEAN`이었다. main 병합은 Operator가 Create a merge commit으로 수행한다.
 WSL native Go, Windows Go/Wails/WSL bridge, 실제 Codex invocation, GitHub Projects와 Wiki 쓰기도
 아직 검증하지 않았다. 현재 GitHub token은 `read:project` scope가 없고 대상 저장소 Wiki는
 비활성화 상태이므로 live publication은 진행하지 않았다.
