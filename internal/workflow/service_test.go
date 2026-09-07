@@ -1,7 +1,11 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -17,19 +21,27 @@ func validContract() contractv2.WorkItemContract {
 	return contractv2.WorkItemContract{Version: 2, WorkID: "work-1", ProjectID: "project-1", Revision: 1, Request: "ship it", AcceptanceCriteria: []string{"works"}, RepositoryPlans: []contractv2.RepositoryPlan{{RepoKey: "app", BaseSHA: "0123456789012345678901234567890123456789", TargetBranch: "main"}}, Tasks: []contractv2.Task{{TaskID: "task-1", RepoKey: "app", AllowedPaths: []string{"internal"}, AcceptanceCriteria: []string{"works"}}}, Documentation: contractv2.DocumentationPlan{Required: false, Reason: "not required"}, ExecutionProfiles: contractv2.ExecutionProfiles{Builder: "builder", Reviewer: "reviewer", Documenter: "documenter"}}
 }
 
+func registerTestProject(t *testing.T, projects registry.Store) {
+	t.Helper()
+	project := registry.Project{ProjectID: "project-1", Name: "Project", PrimaryRepoKey: "app", Repositories: map[contractv2.RepoKey]contractv2.RepositoryIdentity{"app": {Host: "github.com", Owner: "acme", Name: "app", DefaultBranch: "main"}}}
+	payload, _ := json.Marshal(project)
+	sum := sha256.Sum256(payload)
+	if _, err := projects.Create(context.Background(), project, 0, "request-project", hex.EncodeToString(sum[:])); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPlanApproveStatus(t *testing.T) {
 	root := t.TempDir()
 	projects := registry.NewStore(root)
 	works := statev2.NewStore(root)
-	if _, err := projects.Create(context.Background(), registry.Project{ProjectID: "project-1", Name: "Project", PrimaryRepoKey: "app", Repositories: map[contractv2.RepoKey]contractv2.RepositoryIdentity{"app": {Host: "github.com", Owner: "acme", Name: "app", DefaultBranch: "main"}}}); err != nil {
-		t.Fatal(err)
-	}
+	registerTestProject(t, projects)
 	s := New(projects, works)
 	var input strings.Builder
 	if err := contractv2.Write(&input, validContract()); err != nil {
 		t.Fatal(err)
 	}
-	planned, err := s.PlanWork(context.Background(), "request.json", strings.NewReader(input.String()))
+	planned, err := s.PlanWork(context.Background(), "request.json", strings.NewReader(input.String()), 0, "request-plan")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,12 +68,10 @@ func TestPlanRejectsLegacyWithoutWritesAndPreservesSource(t *testing.T) {
 	root := t.TempDir()
 	projects := registry.NewStore(root)
 	works := statev2.NewStore(root)
-	if _, err := projects.Create(context.Background(), registry.Project{ProjectID: "project-1", Name: "Project", PrimaryRepoKey: "app", Repositories: map[contractv2.RepoKey]contractv2.RepositoryIdentity{"app": {Host: "github.com", Owner: "acme", Name: "app", DefaultBranch: "main"}}}); err != nil {
-		t.Fatal(err)
-	}
+	registerTestProject(t, projects)
 	s := New(projects, works)
 	var legacy *UnsupportedLegacyError
-	_, err := s.PlanWork(context.Background(), "legacy.json", strings.NewReader(`{"version":1,"projectId":"project-1"}`))
+	_, err := s.PlanWork(context.Background(), "legacy.json", strings.NewReader(`{"version":1,"projectId":"project-1"}`), 0, "request-legacy")
 	if !errors.As(err, &legacy) || legacy.Code != "unsupported_legacy" || legacy.Source != "legacy.json" {
 		t.Fatalf("legacy error = %v", err)
 	}
@@ -70,12 +80,73 @@ func TestPlanRejectsLegacyWithoutWritesAndPreservesSource(t *testing.T) {
 	}
 }
 
+func TestPlanCreationPassesExpectedRevisionRequestAndCanonicalActionHash(t *testing.T) {
+	projects := &recordingProjectStore{project: registry.Project{ProjectID: "project-1", Name: "Project", PrimaryRepoKey: "app", Repositories: map[contractv2.RepoKey]contractv2.RepositoryIdentity{"app": {Host: "github.com", Owner: "acme", Name: "app", DefaultBranch: "main"}}}}
+	works := &recordingWorkStore{}
+	s := New(projects, works)
+	var input strings.Builder
+	if err := contractv2.Write(&input, validContract()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PlanWork(context.Background(), "contract.json", strings.NewReader(input.String()), 0, "request-plan"); err != nil {
+		t.Fatal(err)
+	}
+	var canonical bytes.Buffer
+	if err := contractv2.Write(&canonical, validContract()); err != nil {
+		t.Fatal(err)
+	}
+	contractSum := sha256.Sum256(canonical.Bytes())
+	action, err := json.Marshal(struct {
+		WorkID           contractv2.WorkID   `json:"workId"`
+		ExpectedRevision contractv2.Revision `json:"expectedRevision"`
+		Action           string              `json:"action"`
+		ContractHash     string              `json:"contractHash"`
+	}{"work-1", 0, "plan", hex.EncodeToString(contractSum[:])})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actionSum := sha256.Sum256(action)
+	if works.requestID != "request-plan" || works.expectedRevision != 0 || works.payloadHash != hex.EncodeToString(actionSum[:]) {
+		t.Fatalf("creation args revision=%d request=%q hash=%q", works.expectedRevision, works.requestID, works.payloadHash)
+	}
+}
+
+type recordingProjectStore struct{ project registry.Project }
+
+func (s *recordingProjectStore) Create(context.Context, registry.Project, contractv2.Revision, contractv2.RequestID, string) (registry.Project, error) {
+	return s.project, nil
+}
+func (s *recordingProjectStore) Load(context.Context, contractv2.ProjectID) (registry.Project, error) {
+	return s.project, nil
+}
+func (s *recordingProjectStore) List(context.Context) ([]registry.Project, error) {
+	return []registry.Project{s.project}, nil
+}
+
+type recordingWorkStore struct {
+	requestID        contractv2.RequestID
+	expectedRevision contractv2.Revision
+	payloadHash      string
+}
+
+func (s *recordingWorkStore) CreatePlan(_ context.Context, _ statev2.WorkSnapshot, requestID contractv2.RequestID, payloadHash string) (statev2.WorkSnapshot, error) {
+	s.requestID, s.expectedRevision, s.payloadHash = requestID, 0, payloadHash
+	return statev2.WorkSnapshot{}, nil
+}
+func (s *recordingWorkStore) Load(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error) {
+	return statev2.WorkSnapshot{}, nil
+}
+func (s *recordingWorkStore) List(context.Context) ([]statev2.WorkSnapshot, error) { return nil, nil }
+func (s *recordingWorkStore) Mutate(context.Context, statev2.Mutation) (statev2.WorkSnapshot, error) {
+	return statev2.WorkSnapshot{}, nil
+}
+
 type countingProjectStore struct {
 	projects []registry.Project
 	listCall int
 }
 
-func (f *countingProjectStore) Create(context.Context, registry.Project) (registry.Project, error) {
+func (f *countingProjectStore) Create(context.Context, registry.Project, contractv2.Revision, contractv2.RequestID, string) (registry.Project, error) {
 	panic("unexpected Create")
 }
 func (f *countingProjectStore) Load(context.Context, contractv2.ProjectID) (registry.Project, error) {
@@ -91,7 +162,7 @@ type countingWorkStore struct {
 	listCall int
 }
 
-func (f *countingWorkStore) CreatePlan(context.Context, statev2.WorkSnapshot) (statev2.WorkSnapshot, error) {
+func (f *countingWorkStore) CreatePlan(context.Context, statev2.WorkSnapshot, contractv2.RequestID, string) (statev2.WorkSnapshot, error) {
 	panic("unexpected CreatePlan")
 }
 func (f *countingWorkStore) Load(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error) {

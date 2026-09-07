@@ -21,6 +21,27 @@ var (
 	ErrNotFound = errors.New("registry project not found")
 )
 
+type RequestConflictError struct {
+	RequestID                 contractv2.RequestID
+	ExistingHash, PayloadHash string
+}
+
+func (e *RequestConflictError) Error() string {
+	return fmt.Sprintf("request %q was already used with a different payload", e.RequestID)
+}
+
+type receipt struct {
+	RequestID   contractv2.RequestID `json:"requestId"`
+	PayloadHash string               `json:"payloadHash"`
+	Status      string               `json:"status"`
+}
+
+type record struct {
+	Project  Project             `json:"project"`
+	Revision contractv2.Revision `json:"revision"`
+	Receipt  receipt             `json:"receipt"`
+}
+
 type store struct {
 	root string
 	mu   sync.Mutex
@@ -28,12 +49,18 @@ type store struct {
 
 func NewStore(root string) Store { return &store{root: filepath.Join(root, "v2", "projects")} }
 
-func (s *store) Create(ctx context.Context, project Project) (Project, error) {
+func (s *store) Create(ctx context.Context, project Project, expectedRevision contractv2.Revision, requestID contractv2.RequestID, payloadHash string) (Project, error) {
 	if err := contextErr(ctx); err != nil {
 		return Project{}, err
 	}
 	if err := validateProject(project); err != nil {
 		return Project{}, err
+	}
+	if expectedRevision != 0 {
+		return Project{}, errors.New("project creation expected revision must be 0")
+	}
+	if requestID == "" || strings.TrimSpace(payloadHash) == "" {
+		return Project{}, errors.New("request ID and payload hash are required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -50,11 +77,24 @@ func (s *store) Create(ctx context.Context, project Project) (Project, error) {
 	defer lease.release()
 	path := filepath.Join(s.root, string(project.ProjectID)+".json")
 	if _, err := os.Stat(path); err == nil {
+		existing, readErr := readRecord(path)
+		if readErr != nil {
+			return Project{}, readErr
+		}
+		if err := validateRecord(existing); err != nil {
+			return Project{}, err
+		}
+		if existing.Receipt.RequestID == requestID {
+			if existing.Receipt.PayloadHash == payloadHash {
+				return existing.Project, nil
+			}
+			return Project{}, fmt.Errorf("%w: %w", ErrConflict, &RequestConflictError{RequestID: requestID, ExistingHash: existing.Receipt.PayloadHash, PayloadHash: payloadHash})
+		}
 		return Project{}, fmt.Errorf("%w: project %q already exists", ErrConflict, project.ProjectID)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Project{}, fmt.Errorf("check project: %w", err)
 	}
-	if err := writeAtomic(path, project); err != nil {
+	if err := writeAtomic(path, record{Project: project, Revision: 1, Receipt: receipt{RequestID: requestID, PayloadHash: payloadHash, Status: "committed"}}); err != nil {
 		return Project{}, err
 	}
 	return project, nil
@@ -102,6 +142,9 @@ func (s *store) Load(ctx context.Context, id contractv2.ProjectID) (Project, err
 			return Project{}, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
 		return Project{}, err
+	}
+	if project.ProjectID != id {
+		return Project{}, fmt.Errorf("project ID %q does not match requested ID %q", project.ProjectID, id)
 	}
 	return project, nil
 }
@@ -178,28 +221,46 @@ func validateID(value string) error {
 }
 
 func readProject(path string) (Project, error) {
-	f, err := os.Open(path)
+	stored, err := readRecord(path)
 	if err != nil {
 		return Project{}, err
+	}
+	if err := validateRecord(stored); err != nil {
+		return Project{}, err
+	}
+	return stored.Project, nil
+}
+
+func validateRecord(stored record) error {
+	if stored.Revision != 1 || stored.Receipt.RequestID == "" || strings.TrimSpace(stored.Receipt.PayloadHash) == "" || stored.Receipt.Status != "committed" {
+		return errors.New("invalid project record")
+	}
+	if err := validateProject(stored.Project); err != nil {
+		return fmt.Errorf("invalid project: %w", err)
+	}
+	return nil
+}
+
+func readRecord(path string) (record, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return record{}, err
 	}
 	defer f.Close()
 	dec := json.NewDecoder(f)
 	dec.DisallowUnknownFields()
-	var p Project
-	if err := dec.Decode(&p); err != nil {
-		return Project{}, fmt.Errorf("decode project: %w", err)
+	var stored record
+	if err := dec.Decode(&stored); err != nil {
+		return record{}, fmt.Errorf("decode project: %w", err)
 	}
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
-		return Project{}, errors.New("decode project: trailing JSON")
+		return record{}, errors.New("decode project: trailing JSON")
 	}
-	if err := validateProject(p); err != nil {
-		return Project{}, fmt.Errorf("invalid project: %w", err)
-	}
-	return p, nil
+	return stored, nil
 }
 
-func writeAtomic(path string, value Project) error {
+func writeAtomic(path string, value record) error {
 	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("open temporary project: %w", err)

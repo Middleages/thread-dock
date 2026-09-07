@@ -27,8 +27,19 @@ type Service struct {
 func New(projects registry.Store, works statev2.Store) *Service {
 	return &Service{projects: projects, works: works}
 }
-func (s *Service) RegisterProject(ctx context.Context, p registry.Project) (registry.Project, error) {
-	return s.projects.Create(ctx, p)
+func (s *Service) RegisterProject(ctx context.Context, p registry.Project, expected contractv2.Revision, request contractv2.RequestID) (registry.Project, error) {
+	if expected != 0 {
+		return registry.Project{}, errors.New("project creation expected revision must be 0")
+	}
+	if request == "" {
+		return registry.Project{}, errors.New("request ID is required")
+	}
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return registry.Project{}, err
+	}
+	sum := sha256.Sum256(payload)
+	return s.projects.Create(ctx, p, expected, request, hex.EncodeToString(sum[:]))
 }
 func (s *Service) ListProjects(ctx context.Context) ([]registry.Project, error) {
 	return s.projects.List(ctx)
@@ -42,7 +53,13 @@ type UnsupportedLegacyError struct {
 
 func (e *UnsupportedLegacyError) Error() string { return fmt.Sprintf("%s: %s", e.Code, e.Location) }
 
-func (s *Service) PlanWork(ctx context.Context, source string, r io.Reader) (statev2.WorkSnapshot, error) {
+func (s *Service) PlanWork(ctx context.Context, source string, r io.Reader, expected contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {
+	if expected != 0 {
+		return statev2.WorkSnapshot{}, errors.New("plan creation expected revision must be 0")
+	}
+	if request == "" {
+		return statev2.WorkSnapshot{}, errors.New("request ID is required")
+	}
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return statev2.WorkSnapshot{}, err
@@ -75,7 +92,17 @@ func (s *Service) PlanWork(ctx context.Context, source string, r io.Reader) (sta
 	}
 	sum := sha256.Sum256(canonical.Bytes())
 	snapshot := statev2.WorkSnapshot{SchemaVersion: 2, ProjectID: c.ProjectID, WorkID: c.WorkID, Revision: 1, State: statev2.StateAwaitingApproval, ContractHash: hex.EncodeToString(sum[:]), Contract: c, SyncStatus: "local", NextAction: "approve", EvidenceRefs: []string{}, Receipts: map[contractv2.RequestID]statev2.Receipt{}}
-	return s.works.CreatePlan(ctx, snapshot)
+	action, err := json.Marshal(struct {
+		WorkID           contractv2.WorkID   `json:"workId"`
+		ExpectedRevision contractv2.Revision `json:"expectedRevision"`
+		Action           string              `json:"action"`
+		ContractHash     string              `json:"contractHash"`
+	}{c.WorkID, expected, "plan", hex.EncodeToString(sum[:])})
+	if err != nil {
+		return statev2.WorkSnapshot{}, err
+	}
+	actionSum := sha256.Sum256(action)
+	return s.works.CreatePlan(ctx, snapshot, request, hex.EncodeToString(actionSum[:]))
 }
 
 func (s *Service) ApproveWork(ctx context.Context, id contractv2.WorkID, expected contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {

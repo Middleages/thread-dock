@@ -15,7 +15,7 @@ type Project struct {
 }
 
 type Store interface {
-	Create(context.Context, Project) (Project, error)
+	Create(context.Context, Project, contractv2.Revision, contractv2.RequestID, string) (Project, error)
 	Load(context.Context, contractv2.ProjectID) (Project, error)
 	List(context.Context) ([]Project, error)
 }

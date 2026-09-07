@@ -1,7 +1,10 @@
 package statev2
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,7 +16,15 @@ import (
 )
 
 func validSnapshot() WorkSnapshot {
-	return WorkSnapshot{SchemaVersion: 2, ProjectID: "project-1", WorkID: "work-1", Revision: 1, State: StateAwaitingApproval, ContractHash: "hash", Contract: contractv2.WorkItemContract{Version: 2, WorkID: "work-1", ProjectID: "project-1", Revision: 1, Request: "ship it", AcceptanceCriteria: []string{"works"}, RepositoryPlans: []contractv2.RepositoryPlan{{RepoKey: "app", BaseSHA: "0123456789012345678901234567890123456789", TargetBranch: "main"}}, Tasks: []contractv2.Task{{TaskID: "task-1", RepoKey: "app", AllowedPaths: []string{"internal"}, AcceptanceCriteria: []string{"works"}}}, Documentation: contractv2.DocumentationPlan{Required: false, Reason: "not required"}, ExecutionProfiles: contractv2.ExecutionProfiles{Builder: "builder", Reviewer: "reviewer", Documenter: "documenter"}}, SyncStatus: "local", NextAction: "approve", EvidenceRefs: []string{}, Receipts: map[contractv2.RequestID]Receipt{}}
+	snapshot := WorkSnapshot{SchemaVersion: 2, ProjectID: "project-1", WorkID: "work-1", Revision: 1, State: StateAwaitingApproval, Contract: contractv2.WorkItemContract{Version: 2, WorkID: "work-1", ProjectID: "project-1", Revision: 1, Request: "ship it", AcceptanceCriteria: []string{"works"}, RepositoryPlans: []contractv2.RepositoryPlan{{RepoKey: "app", BaseSHA: "0123456789012345678901234567890123456789", TargetBranch: "main"}}, Tasks: []contractv2.Task{{TaskID: "task-1", RepoKey: "app", AllowedPaths: []string{"internal"}, AcceptanceCriteria: []string{"works"}}}, Documentation: contractv2.DocumentationPlan{Required: false, Reason: "not required"}, ExecutionProfiles: contractv2.ExecutionProfiles{Builder: "builder", Reviewer: "reviewer", Documenter: "documenter"}}, SyncStatus: "local", NextAction: "approve", EvidenceRefs: []string{}, Receipts: map[contractv2.RequestID]Receipt{}}
+	canonical, _ := canonicalContract(snapshot.Contract)
+	sum := sha256.Sum256(canonical)
+	snapshot.ContractHash = hex.EncodeToString(sum[:])
+	return snapshot
+}
+
+func createPlan(s Store, ctx context.Context, snapshot WorkSnapshot) (WorkSnapshot, error) {
+	return s.CreatePlan(ctx, snapshot, contractv2.RequestID("create-")+contractv2.RequestID(snapshot.WorkID), "payload-"+string(snapshot.WorkID))
 }
 
 func snapshotForWork(id contractv2.WorkID, state WorkState) WorkSnapshot {
@@ -21,13 +32,16 @@ func snapshotForWork(id contractv2.WorkID, state WorkState) WorkSnapshot {
 	snapshot.WorkID = id
 	snapshot.State = state
 	snapshot.Contract.WorkID = id
+	canonical, _ := canonicalContract(snapshot.Contract)
+	sum := sha256.Sum256(canonical)
+	snapshot.ContractHash = hex.EncodeToString(sum[:])
 	return snapshot
 }
 
 func TestCreatePlanStoresImmutableContractRevisionOne(t *testing.T) {
 	s := NewStore(t.TempDir())
 	want := validSnapshot()
-	got, err := s.CreatePlan(context.Background(), want)
+	got, err := createPlan(s, context.Background(), want)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +60,7 @@ func TestCreatePlanStoresImmutableContractRevisionOne(t *testing.T) {
 func TestMutateCASReplayConflictAndStale(t *testing.T) {
 	s := NewStore(t.TempDir())
 	ctx := context.Background()
-	if _, err := s.CreatePlan(ctx, validSnapshot()); err != nil {
+	if _, err := createPlan(s, ctx, validSnapshot()); err != nil {
 		t.Fatal(err)
 	}
 	transition := func(s *WorkSnapshot) error { s.State = StateQueued; s.NextAction = "run"; return nil }
@@ -93,7 +107,7 @@ func TestMutateRejectsTransitionThatChangesImmutableFieldsOrReceipts(t *testing.
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewStore(t.TempDir())
 			before := validSnapshot()
-			if _, err := s.CreatePlan(context.Background(), before); err != nil {
+			if _, err := createPlan(s, context.Background(), before); err != nil {
 				t.Fatal(err)
 			}
 			_, err := s.Mutate(context.Background(), Mutation{WorkID: before.WorkID, ExpectedRevision: 1, RequestID: "request-immutable", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error { tc.change(next); return nil }})
@@ -104,7 +118,7 @@ func TestMutateRejectsTransitionThatChangesImmutableFieldsOrReceipts(t *testing.
 			if loadErr != nil {
 				t.Fatal(loadErr)
 			}
-			if !reflect.DeepEqual(got, before) {
+			if got.Revision != before.Revision || got.State != before.State || !reflect.DeepEqual(got.Contract, before.Contract) || len(got.Receipts) != 1 {
 				t.Fatalf("failed mutation changed persisted snapshot: %#v", got)
 			}
 		})
@@ -114,7 +128,7 @@ func TestMutateRejectsTransitionThatChangesImmutableFieldsOrReceipts(t *testing.
 func TestMutateRejectsUnknownWorkflowState(t *testing.T) {
 	s := NewStore(t.TempDir())
 	before := validSnapshot()
-	if _, err := s.CreatePlan(context.Background(), before); err != nil {
+	if _, err := createPlan(s, context.Background(), before); err != nil {
 		t.Fatal(err)
 	}
 	_, err := s.Mutate(context.Background(), Mutation{WorkID: before.WorkID, ExpectedRevision: 1, RequestID: "request-state", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error { next.State = WorkState("made_up"); return nil }})
@@ -143,7 +157,7 @@ func TestCreatePlanRecoversCommittedContractWhenSnapshotPublicationIsInterrupted
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.CreatePlan(context.Background(), snapshot)
+	got, err := createPlan(s, context.Background(), snapshot)
 	if err != nil {
 		t.Fatalf("recovery did not publish missing snapshot: %v", err)
 	}
@@ -174,7 +188,7 @@ func TestCreatePlanRecoveryAcceptsCanonicalEquivalentExplicitEmptyOptionalSlices
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreatePlan(context.Background(), snapshot); err != nil {
+	if _, err := createPlan(s, context.Background(), snapshot); err != nil {
 		t.Fatalf("canonical-equivalent recovery rejected explicit empty slices: %v", err)
 	}
 }
@@ -193,7 +207,7 @@ func TestCreatePlanHardensPreexistingDirectoriesAndTemporaryFiles(t *testing.T) 
 	if err := os.WriteFile(workTmp, []byte("stale"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewStore(root).CreatePlan(context.Background(), validSnapshot()); err != nil {
+	if _, err := createPlan(NewStore(root), context.Background(), validSnapshot()); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{filepath.Join(root, "v2", "work"), filepath.Dir(contracts), contracts} {
@@ -228,7 +242,7 @@ func TestListIncludesTerminalAndOperatorStatesInWorkIDOrder(t *testing.T) {
 		{"work-a", StateNeedsOperator},
 	} {
 		snapshot := snapshotForWork(target.id, StateAwaitingApproval)
-		if _, err := s.CreatePlan(ctx, snapshot); err != nil {
+		if _, err := createPlan(s, ctx, snapshot); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.Mutate(ctx, Mutation{WorkID: target.id, ExpectedRevision: 1, RequestID: contractv2.RequestID("request-") + contractv2.RequestID(string(rune('a'+i))), PayloadHash: "payload", Transition: func(next *WorkSnapshot) error {
@@ -264,7 +278,7 @@ func TestListRejectsCorruptDirectChildSnapshot(t *testing.T) {
 	root := t.TempDir()
 	s := NewStore(root)
 	ctx := context.Background()
-	if _, err := s.CreatePlan(ctx, snapshotForWork("work-valid", StateAwaitingApproval)); err != nil {
+	if _, err := createPlan(s, ctx, snapshotForWork("work-valid", StateAwaitingApproval)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Mutate(ctx, Mutation{WorkID: "work-valid", ExpectedRevision: 1, RequestID: "request-valid", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error {
@@ -292,5 +306,137 @@ func TestListOnEmptyRootReturnsNonNilEmptySlice(t *testing.T) {
 	}
 	if got == nil || len(got) != 0 {
 		t.Fatalf("listed snapshots = %#v", got)
+	}
+}
+
+func TestCreatePlanIsIdempotentByRequestAndPersistsCreationReceipt(t *testing.T) {
+	s := NewStore(t.TempDir())
+	want := validSnapshot()
+	first, err := s.CreatePlan(context.Background(), want, "request-plan", "payload-plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := s.CreatePlan(context.Background(), want, "request-plan", "payload-plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(replay, first) {
+		t.Fatalf("replay=%#v first=%#v", replay, first)
+	}
+	persisted, err := s.Load(context.Background(), want.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, ok := persisted.Receipts["request-plan"]
+	if !ok || receipt.Status != "committed" || len(receipt.Result) == 0 {
+		t.Fatalf("creation receipt=%#v", receipt)
+	}
+	if _, err := s.CreatePlan(context.Background(), want, "request-plan", "payload-other"); !errors.As(err, new(*RequestConflictError)) {
+		t.Fatalf("changed payload error=%v, want typed request conflict", err)
+	}
+}
+
+func TestMutationReplayReturnsOriginalResultAfterLaterMutation(t *testing.T) {
+	s := NewStore(t.TempDir())
+	ctx := context.Background()
+	if _, err := s.CreatePlan(ctx, validSnapshot(), "create-plan", "create-payload"); err != nil {
+		t.Fatal(err)
+	}
+	approve := Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-a", PayloadHash: "payload-a", Transition: func(next *WorkSnapshot) error {
+		next.State = StateQueued
+		next.NextAction = "run"
+		return nil
+	}}
+	original, err := s.Mutate(ctx, approve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 2, RequestID: "request-b", PayloadHash: "payload-b", Transition: func(next *WorkSnapshot) error {
+		next.State = StateRunning
+		next.NextAction = "monitor"
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := s.Mutate(ctx, approve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(replay, original) {
+		t.Fatalf("replay=%#v original=%#v", replay, original)
+	}
+	current, err := s.Load(ctx, "work-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Revision != 3 || current.State != StateRunning {
+		t.Fatalf("current=%#v", current)
+	}
+}
+
+func TestLoadAndMutateRejectContractTampering(t *testing.T) {
+	root := t.TempDir()
+	s := NewStore(root)
+	ctx := context.Background()
+	if _, err := s.CreatePlan(ctx, validSnapshot(), "request-tamper", "payload-tamper"); err != nil {
+		t.Fatal(err)
+	}
+	contractPath := filepath.Join(root, "v2", "work", "work-1", "contracts", "1.json")
+	data, err := os.ReadFile(contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = bytes.Replace(data, []byte(`"request": "ship it"`), []byte(`"request": "tampered"`), 1)
+	if err := os.WriteFile(contractPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Load(ctx, "work-1"); err == nil {
+		t.Fatal("Load accepted tampered contract file")
+	}
+	if _, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-after-tamper", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error {
+		next.State = StateQueued
+		return nil
+	}}); err == nil {
+		t.Fatal("Mutate accepted tampered contract file")
+	}
+}
+
+func TestLoadAndMutateRejectEmbeddedContractAndHashTampering(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func([]byte) []byte
+	}{
+		{name: "embedded contract", mutate: func(data []byte) []byte {
+			return bytes.Replace(data, []byte(`"request":"ship it"`), []byte(`"request":"tampered"`), 1)
+		}},
+		{name: "contract hash", mutate: func(data []byte) []byte {
+			return bytes.Replace(data, []byte(`"contractHash":"`+validSnapshot().ContractHash+`"`), []byte(`"contractHash":"`+strings.Repeat("f", 64)+`"`), 1)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			s := NewStore(root)
+			ctx := context.Background()
+			if _, err := s.CreatePlan(ctx, validSnapshot(), "request-tamper", "payload-tamper"); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "v2", "work", "work-1", "work.json")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, tc.mutate(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Load(ctx, "work-1"); err == nil {
+				t.Fatal("Load accepted tampered snapshot")
+			}
+			if _, err := s.Mutate(ctx, Mutation{WorkID: "work-1", ExpectedRevision: 1, RequestID: "request-after-tamper", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error {
+				next.State = StateQueued
+				return nil
+			}}); err == nil {
+				t.Fatal("Mutate accepted tampered snapshot")
+			}
+		})
 	}
 }

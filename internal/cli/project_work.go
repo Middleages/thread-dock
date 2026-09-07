@@ -36,13 +36,23 @@ func runProjectWork(ctx context.Context, args []string, stdout, stderr io.Writer
 	)
 	switch {
 	case args[0] == "project" && args[1] == "register":
-		value, err = workflowRegister(ctx, args[2], service)
+		path, revision, request, ok := parseWorkflowCreateArgs(args[2:])
+		if !ok {
+			printUsage(stderr)
+			return 2
+		}
+		value, err = workflowRegister(ctx, path, revision, request, service)
 	case args[0] == "project" && args[1] == "list":
 		value, err = workflowList(ctx, service)
 	case args[0] == "project" && args[1] == "status":
 		value, err = service.Snapshot(ctx, time.Now().UTC())
 	case args[0] == "work" && args[1] == "plan":
-		value, err = workflowPlan(ctx, args[2], service)
+		path, revision, request, ok := parseWorkflowCreateArgs(args[2:])
+		if !ok {
+			printUsage(stderr)
+			return 2
+		}
+		value, err = workflowPlan(ctx, path, revision, request, service)
 	case args[0] == "work" && args[1] == "approve":
 		id, revision, request, ok := parseWorkflowApproveArgs(args[2:])
 		if !ok {
@@ -62,7 +72,7 @@ func runProjectWork(ctx context.Context, args []string, stdout, stderr io.Writer
 	return 0
 }
 
-func workflowRegister(ctx context.Context, path string, service WorkflowService) (registry.Project, error) {
+func workflowRegister(ctx context.Context, path string, revision contractv2.Revision, request contractv2.RequestID, service WorkflowService) (registry.Project, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return registry.Project{}, err
@@ -89,7 +99,7 @@ func workflowRegister(ctx context.Context, path string, service WorkflowService)
 		}
 		return registry.Project{}, err
 	}
-	return service.RegisterProject(ctx, project)
+	return service.RegisterProject(ctx, project, revision, request)
 }
 
 func workflowList(ctx context.Context, service WorkflowService) (any, error) {
@@ -106,13 +116,24 @@ func workflowList(ctx context.Context, service WorkflowService) (any, error) {
 	}{SchemaVersion: 2, Projects: projects}, nil
 }
 
-func workflowPlan(ctx context.Context, path string, service WorkflowService) (statev2.WorkSnapshot, error) {
+func workflowPlan(ctx context.Context, path string, revision contractv2.Revision, request contractv2.RequestID, service WorkflowService) (statev2.WorkSnapshot, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return statev2.WorkSnapshot{}, err
 	}
 	defer file.Close()
-	return service.PlanWork(ctx, path, file)
+	return service.PlanWork(ctx, path, file, revision, request)
+}
+
+func parseWorkflowCreateArgs(args []string) (string, contractv2.Revision, contractv2.RequestID, bool) {
+	if len(args) != 5 || !nonFlagArg(args[0]) || args[1] != "--expected-revision" || args[3] != "--request-id" || !nonFlagArg(args[4]) {
+		return "", 0, "", false
+	}
+	revision, err := strconv.ParseUint(args[2], 10, 64)
+	if err != nil || revision != 0 {
+		return "", 0, "", false
+	}
+	return args[0], contractv2.Revision(revision), contractv2.RequestID(args[4]), true
 }
 
 func parseWorkflowApproveArgs(args []string) (contractv2.WorkID, contractv2.Revision, contractv2.RequestID, bool) {

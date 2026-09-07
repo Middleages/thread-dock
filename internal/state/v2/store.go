@@ -3,6 +3,8 @@ package statev2
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,12 +36,23 @@ type lease struct{ f *os.File }
 
 func NewStore(root string) Store { return &store{root: filepath.Join(root, "v2", "work")} }
 
-func (s *store) CreatePlan(ctx context.Context, snapshot WorkSnapshot) (WorkSnapshot, error) {
+func (s *store) CreatePlan(ctx context.Context, snapshot WorkSnapshot, requestID contractv2.RequestID, payloadHash string) (WorkSnapshot, error) {
 	if err := contextErr(ctx); err != nil {
 		return WorkSnapshot{}, err
 	}
 	if err := validatePlan(snapshot); err != nil {
 		return WorkSnapshot{}, err
+	}
+	canonical, err := canonicalContract(snapshot.Contract)
+	if err != nil {
+		return WorkSnapshot{}, err
+	}
+	sum := sha256.Sum256(canonical)
+	if snapshot.ContractHash != hex.EncodeToString(sum[:]) {
+		return WorkSnapshot{}, errors.New("contract hash mismatch")
+	}
+	if requestID == "" || strings.TrimSpace(payloadHash) == "" {
+		return WorkSnapshot{}, errors.New("request ID and payload hash are required")
 	}
 	dir := s.workDir(snapshot.WorkID)
 	if err := ensureDir(filepath.Dir(s.root)); err != nil {
@@ -59,7 +72,18 @@ func (s *store) CreatePlan(ctx context.Context, snapshot WorkSnapshot) (WorkSnap
 		return WorkSnapshot{}, err
 	}
 	defer l.release()
-	if _, err := os.Stat(filepath.Join(dir, "work.json")); err == nil {
+	workPath := filepath.Join(dir, "work.json")
+	if _, err := os.Stat(workPath); err == nil {
+		existing, loadErr := s.loadVerified(ctx, snapshot.WorkID)
+		if loadErr != nil {
+			return WorkSnapshot{}, loadErr
+		}
+		if receipt, ok := existing.Receipts[requestID]; ok {
+			if receipt.PayloadHash != payloadHash {
+				return WorkSnapshot{}, fmt.Errorf("%w: %w", ErrConflict, &RequestConflictError{RequestID: requestID, ExistingHash: receipt.PayloadHash, PayloadHash: payloadHash})
+			}
+			return decodeReceiptResult(receipt, existing.Contract)
+		}
 		return WorkSnapshot{}, fmt.Errorf("%w: work %q already exists", ErrConflict, snapshot.WorkID)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return WorkSnapshot{}, err
@@ -82,10 +106,22 @@ func (s *store) CreatePlan(ctx context.Context, snapshot WorkSnapshot) (WorkSnap
 	} else {
 		return WorkSnapshot{}, err
 	}
-	if err := writeSnapshot(filepath.Join(dir, "work.json"), snapshot); err != nil {
+	clientResult := snapshot
+	clientResult.Receipts = cloneReceipts(snapshot.Receipts)
+	if snapshot.Receipts == nil {
+		snapshot.Receipts = map[contractv2.RequestID]Receipt{}
+	} else {
+		snapshot.Receipts = cloneReceipts(snapshot.Receipts)
+	}
+	result, err := json.Marshal(clientResult)
+	if err != nil {
 		return WorkSnapshot{}, err
 	}
-	return snapshot, nil
+	snapshot.Receipts[requestID] = Receipt{RequestID: requestID, PayloadHash: payloadHash, Status: "committed", Result: result}
+	if err := writeSnapshot(workPath, snapshot); err != nil {
+		return WorkSnapshot{}, err
+	}
+	return clientResult, nil
 }
 
 func (s *store) Load(ctx context.Context, id contractv2.WorkID) (WorkSnapshot, error) {
@@ -93,6 +129,13 @@ func (s *store) Load(ctx context.Context, id contractv2.WorkID) (WorkSnapshot, e
 		return WorkSnapshot{}, err
 	}
 	if err := validID(string(id)); err != nil {
+		return WorkSnapshot{}, err
+	}
+	return s.loadVerified(ctx, id)
+}
+
+func (s *store) loadVerified(ctx context.Context, id contractv2.WorkID) (WorkSnapshot, error) {
+	if err := contextErr(ctx); err != nil {
 		return WorkSnapshot{}, err
 	}
 	f, err := os.Open(filepath.Join(s.workDir(id), "work.json"))
@@ -103,7 +146,15 @@ func (s *store) Load(ctx context.Context, id contractv2.WorkID) (WorkSnapshot, e
 		return WorkSnapshot{}, err
 	}
 	defer f.Close()
-	return decodeSnapshot(f)
+	snapshot, err := decodeSnapshot(f)
+	_ = f.Close()
+	if err != nil {
+		return WorkSnapshot{}, err
+	}
+	if err := verifyContractFile(s.workDir(id), snapshot); err != nil {
+		return WorkSnapshot{}, err
+	}
+	return snapshot, nil
 }
 
 func (s *store) List(ctx context.Context) ([]WorkSnapshot, error) {
@@ -167,9 +218,12 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 	if err != nil {
 		return WorkSnapshot{}, err
 	}
+	if err := verifyContractFile(dir, snapshot); err != nil {
+		return WorkSnapshot{}, err
+	}
 	if receipt, ok := snapshot.Receipts[mutation.RequestID]; ok {
 		if receipt.PayloadHash == mutation.PayloadHash {
-			return snapshot, nil
+			return decodeReceiptResult(receipt, snapshot.Contract)
 		}
 		return WorkSnapshot{}, fmt.Errorf("%w: %w", ErrConflict, &RequestConflictError{RequestID: mutation.RequestID, ExistingHash: receipt.PayloadHash, PayloadHash: mutation.PayloadHash})
 	}
@@ -198,7 +252,9 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 	if err := validateSnapshot(snapshot); err != nil {
 		return WorkSnapshot{}, err
 	}
-	result, err := json.Marshal(snapshot)
+	clientResult := snapshot
+	clientResult.Receipts = cloneReceipts(snapshot.Receipts)
+	result, err := json.Marshal(clientResult)
 	if err != nil {
 		return WorkSnapshot{}, err
 	}
@@ -209,7 +265,49 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 	if err := writeSnapshot(filepath.Join(dir, "work.json"), snapshot); err != nil {
 		return WorkSnapshot{}, err
 	}
-	return snapshot, nil
+	return clientResult, nil
+}
+
+func decodeReceiptResult(receipt Receipt, contract contractv2.WorkItemContract) (WorkSnapshot, error) {
+	if receipt.Status != "committed" || len(receipt.Result) == 0 {
+		return WorkSnapshot{}, errors.New("invalid request receipt")
+	}
+	var result WorkSnapshot
+	if err := json.Unmarshal(receipt.Result, &result); err != nil {
+		return WorkSnapshot{}, fmt.Errorf("decode request receipt: %w", err)
+	}
+	if err := validateSnapshot(result); err != nil {
+		return WorkSnapshot{}, err
+	}
+	if !sameCanonicalContract(result.Contract, mustCanonicalContract(contract)) {
+		return WorkSnapshot{}, errors.New("request receipt contract mismatch")
+	}
+	return result, nil
+}
+
+func mustCanonicalContract(c contractv2.WorkItemContract) []byte {
+	data, _ := canonicalContract(c)
+	return data
+}
+
+func verifyContractFile(dir string, snapshot WorkSnapshot) error {
+	stored, err := readContract(filepath.Join(dir, "contracts", "1.json"))
+	if err != nil {
+		return fmt.Errorf("read contract revision 1: %w", err)
+	}
+	external, err := canonicalContract(stored)
+	if err != nil {
+		return err
+	}
+	embedded, err := canonicalContract(snapshot.Contract)
+	if err != nil || !bytes.Equal(external, embedded) {
+		return errors.New("embedded contract does not match contract revision 1")
+	}
+	sum := sha256.Sum256(external)
+	if snapshot.ContractHash != hex.EncodeToString(sum[:]) {
+		return errors.New("contract hash mismatch")
+	}
+	return nil
 }
 
 func validatePlan(s WorkSnapshot) error {

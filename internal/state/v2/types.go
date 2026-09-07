@@ -52,7 +52,7 @@ type Mutation struct {
 }
 type Transition func(*WorkSnapshot) error
 type Store interface {
-	CreatePlan(context.Context, WorkSnapshot) (WorkSnapshot, error)
+	CreatePlan(context.Context, WorkSnapshot, contractv2.RequestID, string) (WorkSnapshot, error)
 	Load(context.Context, contractv2.WorkID) (WorkSnapshot, error)
 	List(context.Context) ([]WorkSnapshot, error)
 	Mutate(context.Context, Mutation) (WorkSnapshot, error)

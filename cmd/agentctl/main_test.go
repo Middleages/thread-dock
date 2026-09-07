@@ -153,7 +153,7 @@ func TestProductionWorkflowDependenciesUseStateDirWithoutLegacySetup(t *testing.
 		t.Fatalf("workflow deps=%#v", deps)
 	}
 	project := registry.Project{ProjectID: "project-1", Name: "Project", PrimaryRepoKey: "app", Repositories: map[contractv2.RepoKey]contractv2.RepositoryIdentity{"app": {Host: "github.com", Owner: "acme", Name: "app", DefaultBranch: "main"}}}
-	if _, err := deps.Workflow.RegisterProject(context.Background(), project); err != nil {
+	if _, err := deps.Workflow.RegisterProject(context.Background(), project, 0, "request-project"); err != nil {
 		t.Fatal(err)
 	}
 	projects, err := deps.Workflow.ListProjects(context.Background())

@@ -37,9 +37,9 @@ type RunService interface {
 // It intentionally exposes only local registry, state and aggregate snapshot
 // operations; provider adapters are not part of the CLI contract.
 type WorkflowService interface {
-	RegisterProject(context.Context, registry.Project) (registry.Project, error)
+	RegisterProject(context.Context, registry.Project, contractv2.Revision, contractv2.RequestID) (registry.Project, error)
 	ListProjects(context.Context) ([]registry.Project, error)
-	PlanWork(context.Context, string, io.Reader) (statev2.WorkSnapshot, error)
+	PlanWork(context.Context, string, io.Reader, contractv2.Revision, contractv2.RequestID) (statev2.WorkSnapshot, error)
 	ApproveWork(context.Context, contractv2.WorkID, contractv2.Revision, contractv2.RequestID) (statev2.WorkSnapshot, error)
 	Status(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error)
 	Snapshot(context.Context, time.Time) (monitor.Snapshot, error)
@@ -74,7 +74,8 @@ func NeedsWorkflowDependencies(args []string) bool {
 	case "project":
 		switch args[1] {
 		case "register":
-			return len(args) == 3 && nonFlagArg(args[2])
+			_, _, _, ok := parseWorkflowCreateArgs(args[2:])
+			return ok
 		case "list":
 			return len(args) == 3 && args[2] == "--json"
 		case "status":
@@ -83,7 +84,8 @@ func NeedsWorkflowDependencies(args []string) bool {
 	case "work":
 		switch args[1] {
 		case "plan":
-			return len(args) == 3 && nonFlagArg(args[2])
+			_, _, _, ok := parseWorkflowCreateArgs(args[2:])
+			return ok
 		case "approve":
 			_, _, _, ok := parseWorkflowApproveArgs(args[2:])
 			return ok
