@@ -83,3 +83,34 @@ func TestCreateRejectsMissingPrimaryAndInvalidRepository(t *testing.T) {
 		t.Fatal("accepted invalid repository")
 	}
 }
+
+func TestCreateHardensPreexistingDirectoryAndTemporaryFileModes(t *testing.T) {
+	root := t.TempDir()
+	projectsDir := filepath.Join(root, "v2", "projects")
+	if err := os.MkdirAll(projectsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(projectsDir, "project-1.json.tmp")
+	if err := os.WriteFile(tmp, []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(root).Create(context.Background(), validProject()); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(root, "v2"), projectsDir} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0700 {
+			t.Fatalf("%s mode = %o, want 700", path, info.Mode().Perm())
+		}
+	}
+	info, err := os.Stat(filepath.Join(projectsDir, "project-1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("project mode = %o, want 600", info.Mode().Perm())
+	}
+}

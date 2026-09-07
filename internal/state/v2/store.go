@@ -1,6 +1,7 @@
 package statev2
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -39,7 +41,16 @@ func (s *store) CreatePlan(ctx context.Context, snapshot WorkSnapshot) (WorkSnap
 		return WorkSnapshot{}, err
 	}
 	dir := s.workDir(snapshot.WorkID)
-	if err := os.MkdirAll(filepath.Join(dir, "contracts"), 0700); err != nil {
+	if err := ensureDir(filepath.Dir(s.root)); err != nil {
+		return WorkSnapshot{}, fmt.Errorf("create v2 directory: %w", err)
+	}
+	if err := ensureDir(s.root); err != nil {
+		return WorkSnapshot{}, fmt.Errorf("create work directory: %w", err)
+	}
+	if err := ensureDir(dir); err != nil {
+		return WorkSnapshot{}, fmt.Errorf("create work directory: %w", err)
+	}
+	if err := ensureDir(filepath.Join(dir, "contracts")); err != nil {
 		return WorkSnapshot{}, fmt.Errorf("create work directory: %w", err)
 	}
 	l, err := acquireLease(dir)
@@ -52,7 +63,20 @@ func (s *store) CreatePlan(ctx context.Context, snapshot WorkSnapshot) (WorkSnap
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return WorkSnapshot{}, err
 	}
-	if err := writeContract(filepath.Join(dir, "contracts", "1.json"), snapshot.Contract); err != nil {
+	contractPath := filepath.Join(dir, "contracts", "1.json")
+	if _, err := os.Stat(contractPath); err == nil {
+		existing, readErr := readContract(contractPath)
+		if readErr != nil || !reflect.DeepEqual(existing, snapshot.Contract) {
+			return WorkSnapshot{}, fmt.Errorf("%w: contract revision already exists", ErrConflict)
+		}
+		if err := os.Chmod(contractPath, 0600); err != nil {
+			return WorkSnapshot{}, fmt.Errorf("harden contract: %w", err)
+		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		if err := writeContract(contractPath, snapshot.Contract); err != nil {
+			return WorkSnapshot{}, err
+		}
+	} else {
 		return WorkSnapshot{}, err
 	}
 	if err := writeSnapshot(filepath.Join(dir, "work.json"), snapshot); err != nil {
@@ -119,10 +143,19 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 	if mutation.Transition == nil {
 		return WorkSnapshot{}, errors.New("transition is required")
 	}
+	immutable := snapshot
+	immutableContract, err := canonicalContract(snapshot.Contract)
+	if err != nil {
+		return WorkSnapshot{}, err
+	}
+	immutable.Receipts = cloneReceipts(snapshot.Receipts)
 	if err := mutation.Transition(&snapshot); err != nil {
 		return WorkSnapshot{}, err
 	}
-	if snapshot.WorkID != mutation.WorkID || snapshot.Revision != mutation.ExpectedRevision {
+	if snapshot.WorkID != mutation.WorkID || snapshot.Revision != mutation.ExpectedRevision ||
+		snapshot.SchemaVersion != immutable.SchemaVersion || snapshot.ProjectID != immutable.ProjectID ||
+		snapshot.ContractHash != immutable.ContractHash || !sameCanonicalContract(snapshot.Contract, immutableContract) ||
+		!reflect.DeepEqual(snapshot.Receipts, immutable.Receipts) {
 		return WorkSnapshot{}, errors.New("transition may not change work identity or revision")
 	}
 	snapshot.Revision++
@@ -165,6 +198,9 @@ func validateSnapshot(s WorkSnapshot) error {
 	if s.Contract.WorkID != s.WorkID || s.Contract.ProjectID != s.ProjectID || s.Contract.Revision != 1 {
 		return errors.New("snapshot contract mismatch")
 	}
+	if !validState(s.State) {
+		return fmt.Errorf("unknown workflow state %q", s.State)
+	}
 	if s.Receipts == nil {
 		return errors.New("receipts map is required")
 	}
@@ -199,9 +235,14 @@ func writeContract(path string, c contractv2.WorkItemContract) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
 		return err
 	}
 	encErr := contractv2.Write(f, c)
@@ -210,23 +251,25 @@ func writeContract(path string, c contractv2.WorkItemContract) error {
 	}
 	closeErr := f.Close()
 	if encErr != nil {
-		_ = os.Remove(tmp)
 		return encErr
 	}
 	if closeErr != nil {
-		_ = os.Remove(tmp)
 		return closeErr
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
 		return err
 	}
 	return syncDir(filepath.Dir(path))
 }
 func writeSnapshot(path string, s WorkSnapshot) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
 		return err
 	}
 	encErr := json.NewEncoder(f).Encode(s)
@@ -235,15 +278,12 @@ func writeSnapshot(path string, s WorkSnapshot) error {
 	}
 	closeErr := f.Close()
 	if encErr != nil {
-		_ = os.Remove(tmp)
 		return encErr
 	}
 	if closeErr != nil {
-		_ = os.Remove(tmp)
 		return closeErr
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
 		return err
 	}
 	return syncDir(filepath.Dir(path))
@@ -251,6 +291,10 @@ func writeSnapshot(path string, s WorkSnapshot) error {
 func acquireLease(dir string) (*lease, error) {
 	f, err := os.OpenFile(filepath.Join(dir, "lease.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
+		return nil, err
+	}
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
@@ -275,6 +319,53 @@ func syncDir(path string) error {
 	}
 	defer f.Close()
 	return f.Sync()
+}
+
+func readContract(path string) (contractv2.WorkItemContract, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return contractv2.WorkItemContract{}, err
+	}
+	defer f.Close()
+	return contractv2.Read(f)
+}
+
+func canonicalContract(c contractv2.WorkItemContract) ([]byte, error) {
+	var data bytes.Buffer
+	if err := contractv2.Write(&data, c); err != nil {
+		return nil, err
+	}
+	return data.Bytes(), nil
+}
+
+func sameCanonicalContract(c contractv2.WorkItemContract, expected []byte) bool {
+	data, err := canonicalContract(c)
+	return err == nil && bytes.Equal(data, expected)
+}
+
+func cloneReceipts(receipts map[contractv2.RequestID]Receipt) map[contractv2.RequestID]Receipt {
+	clone := make(map[contractv2.RequestID]Receipt, len(receipts))
+	for id, receipt := range receipts {
+		receipt.Result = append(json.RawMessage(nil), receipt.Result...)
+		clone[id] = receipt
+	}
+	return clone
+}
+
+func validState(state WorkState) bool {
+	switch state {
+	case StateDraft, StateAwaitingApproval, StateQueued, StateRunning, StatePaused, StateNeedsOperator, StateReadyForPR, StateReview, StatePartiallyMerged, StatePublicationPending, StateCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
+func ensureDir(path string) error {
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0700)
 }
 func contextErr(ctx context.Context) error {
 	select {

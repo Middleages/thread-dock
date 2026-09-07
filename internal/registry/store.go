@@ -37,7 +37,10 @@ func (s *store) Create(ctx context.Context, project Project) (Project, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.root, 0700); err != nil {
+	if err := ensureDir(filepath.Dir(s.root)); err != nil {
+		return Project{}, fmt.Errorf("create v2 directory: %w", err)
+	}
+	if err := ensureDir(s.root); err != nil {
 		return Project{}, fmt.Errorf("create projects directory: %w", err)
 	}
 	lease, err := acquireLease(s.root)
@@ -63,6 +66,10 @@ func acquireLease(dir string) (*lease, error) {
 	f, err := os.OpenFile(filepath.Join(dir, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("open registry lease: %w", err)
+	}
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("harden registry lease: %w", err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
@@ -193,10 +200,15 @@ func readProject(path string) (Project, error) {
 }
 
 func writeAtomic(path string, value Project) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("open temporary project: %w", err)
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("harden temporary project: %w", err)
 	}
 	encErr := json.NewEncoder(f).Encode(value)
 	if encErr == nil {
@@ -204,18 +216,22 @@ func writeAtomic(path string, value Project) error {
 	}
 	closeErr := f.Close()
 	if encErr != nil {
-		_ = os.Remove(tmp)
 		return fmt.Errorf("write project: %w", encErr)
 	}
 	if closeErr != nil {
-		_ = os.Remove(tmp)
 		return fmt.Errorf("close project: %w", closeErr)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
 		return fmt.Errorf("commit project: %w", err)
 	}
 	return syncDir(filepath.Dir(path))
+}
+
+func ensureDir(path string) error {
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0700)
 }
 
 func contextErr(ctx context.Context) error {
