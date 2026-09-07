@@ -13,10 +13,14 @@ import (
 	"time"
 
 	"thread-dock/internal/contract"
+	contractv2 "thread-dock/internal/contract/v2"
 	"thread-dock/internal/herdr"
+	"thread-dock/internal/monitor"
 	"thread-dock/internal/orchestrator"
+	"thread-dock/internal/registry"
 	"thread-dock/internal/runner"
 	"thread-dock/internal/state"
+	statev2 "thread-dock/internal/state/v2"
 	"thread-dock/internal/worktree"
 )
 
@@ -27,6 +31,18 @@ type RunService interface {
 	Stop(context.Context, contract.RunID) error
 	Resume(context.Context, contract.RunID) error
 	Cleanup(context.Context, contract.RunID) error
+}
+
+// WorkflowService is the provider-neutral v2 project/work command boundary.
+// It intentionally exposes only local registry, state and aggregate snapshot
+// operations; provider adapters are not part of the CLI contract.
+type WorkflowService interface {
+	RegisterProject(context.Context, registry.Project) (registry.Project, error)
+	ListProjects(context.Context) ([]registry.Project, error)
+	PlanWork(context.Context, string, io.Reader) (statev2.WorkSnapshot, error)
+	ApproveWork(context.Context, contractv2.WorkID, contractv2.Revision, contractv2.RequestID) (statev2.WorkSnapshot, error)
+	Status(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error)
+	Snapshot(context.Context, time.Time) (monitor.Snapshot, error)
 }
 
 // RetirementService is the narrow command boundary for explicit session
@@ -41,9 +57,45 @@ type RetirementService interface {
 // not require Runs, preserving the original agentctl contract interface.
 type Dependencies struct {
 	Runs       RunService
+	Workflow   WorkflowService
 	Retirement RetirementService
 	Confirmer  ProtectedChangeConfirmer
 	Reverter   RevertRunService
+}
+
+// NeedsWorkflowDependencies is true only for the six accepted v2 command
+// shapes. Malformed and unknown invocations remain dependency-free so they
+// can print usage without loading configuration or provider adapters.
+func NeedsWorkflowDependencies(args []string) bool {
+	if len(args) < 2 {
+		return false
+	}
+	switch args[0] {
+	case "project":
+		switch args[1] {
+		case "register":
+			return len(args) == 3 && nonFlagArg(args[2])
+		case "list":
+			return len(args) == 3 && args[2] == "--json"
+		case "status":
+			return len(args) == 4 && args[2] == "--all" && args[3] == "--json"
+		}
+	case "work":
+		switch args[1] {
+		case "plan":
+			return len(args) == 3 && nonFlagArg(args[2])
+		case "approve":
+			_, _, _, ok := parseWorkflowApproveArgs(args[2:])
+			return ok
+		case "status":
+			return len(args) == 4 && nonFlagArg(args[2]) && args[3] == "--json"
+		}
+	}
+	return false
+}
+
+func nonFlagArg(value string) bool {
+	return strings.TrimSpace(value) != "" && !strings.HasPrefix(value, "-")
 }
 
 var errRunServiceMissing = errors.New("실행 서비스가 구성되지 않았습니다")

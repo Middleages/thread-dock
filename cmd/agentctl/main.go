@@ -14,14 +14,25 @@ import (
 	"thread-dock/internal/github"
 	"thread-dock/internal/herdr"
 	"thread-dock/internal/orchestrator"
+	"thread-dock/internal/registry"
 	"thread-dock/internal/revert"
 	"thread-dock/internal/runner"
 	"thread-dock/internal/state"
+	statev2 "thread-dock/internal/state/v2"
+	"thread-dock/internal/workflow"
 	"thread-dock/internal/worktree"
 )
 
 func main() {
 	args := os.Args[1:]
+	if cli.NeedsWorkflowDependencies(args) {
+		deps, err := productionWorkflowDependencies()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "agentctl 워크플로 저장소를 준비하지 못했습니다")
+			os.Exit(1)
+		}
+		os.Exit(cli.RunWithDependencies(context.Background(), args, os.Stdout, os.Stderr, deps))
+	}
 	// These commands and malformed/unknown invocations are deliberately
 	// dependency-free. This preserves usage and the foundation contract
 	// interface on a machine not configured for GHES.
@@ -35,6 +46,23 @@ func main() {
 		os.Exit(1)
 	}
 	os.Exit(cli.RunWithDependencies(context.Background(), args, os.Stdout, os.Stderr, deps))
+}
+
+// productionWorkflowDependencies wires only the provider-neutral v2 stores
+// and workflow service. Project/work commands must remain usable without a
+// legacy config file, Git checkout, credentials, or runtime adapters.
+func productionWorkflowDependencies() (cli.Dependencies, error) {
+	root := os.Getenv("THREADDOCK_STATE_DIR")
+	if root == "" {
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			return cli.Dependencies{}, fmt.Errorf("기본 상태 디렉터리를 확인할 수 없습니다: %w", err)
+		}
+		root = filepath.Join(configDir, "threaddock")
+	}
+	projects := registry.NewStore(root)
+	works := statev2.NewStore(root)
+	return cli.Dependencies{Workflow: workflow.New(projects, works)}, nil
 }
 
 func productionDependencies(args []string) (cli.Dependencies, error) {
