@@ -1,8 +1,6 @@
 // Package contractv2 defines the immutable, provider-neutral workflow contract.
 package contractv2
 
-import "encoding/json"
-
 const CurrentVersion = 2
 
 type ProjectID string
@@ -45,24 +43,6 @@ type Task struct {
 	DependsOn          []TaskID      `json:"dependsOn,omitempty"`
 	AcceptanceCriteria []string      `json:"acceptanceCriteria"`
 	Verification       []CommandSpec `json:"verification,omitempty"`
-
-	// ID is retained as a source-compatibility convenience for callers that
-	// used the v1 spelling. It is never encoded; TaskID is the v2 wire field.
-	ID TaskID `json:"-"`
-}
-
-// MarshalJSON accepts the v1-style ID initializer while always emitting the
-// v2 taskId wire key.
-func (t Task) MarshalJSON() ([]byte, error) {
-	id := t.TaskID
-	if id == "" {
-		id = t.ID
-	}
-	type wire Task
-	return json.Marshal(struct {
-		wire
-		TaskID TaskID `json:"taskId"`
-	}{wire: wire(t), TaskID: id})
 }
 
 type InterfaceAgreement struct {

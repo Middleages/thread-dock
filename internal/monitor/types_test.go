@@ -23,20 +23,29 @@ func TestSnapshotJSONUsesAggregateWireAndOmitsRuntimeIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"schemaVersion", "revision", "state", "syncStatus", "nextAction", "evidenceRefs"} {
-		if _, ok := wire[key]; key == "state" || key == "syncStatus" || key == "nextAction" || key == "evidenceRefs" {
-			if ok {
-				continue
-			}
-			if len(snapshot.Projects) == 0 {
-				t.Fatalf("missing %s", key)
-			}
-		} else if !ok {
+		if _, ok := wire[key]; !ok {
 			t.Fatalf("missing %s", key)
 		}
 	}
 	for _, forbidden := range []string{"providerSession", "processId", "rawTranscript", "sessionId"} {
 		if containsJSONKey(data, forbidden) {
 			t.Fatalf("forbidden key %q leaked: %s", forbidden, data)
+		}
+	}
+}
+
+func TestSnapshotJSONKeepsRequiredKeysWhenValuesAreEmpty(t *testing.T) {
+	data, err := json.Marshal(Snapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"state", "syncStatus", "nextAction", "evidenceRefs"} {
+		if _, ok := wire[key]; !ok {
+			t.Fatalf("missing required top-level key %s in %s", key, data)
 		}
 	}
 }

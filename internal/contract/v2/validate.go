@@ -62,9 +62,6 @@ func Validate(c WorkItemContract) []Violation {
 	for i, task := range c.Tasks {
 		field := fmt.Sprintf("tasks[%d]", i)
 		id := task.TaskID
-		if id == "" {
-			id = task.ID
-		}
 		if !stableID(string(id)) {
 			violations = append(violations, violation(field+".taskId", "required", "must be non-empty"))
 		}

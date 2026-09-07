@@ -48,3 +48,11 @@ func TestValidateRejectsCoreContractBreaks(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRequiresV2TaskID(t *testing.T) {
+	contract := validContract()
+	contract.Tasks[0].TaskID = ""
+	if got := Validate(contract); len(got) == 0 {
+		t.Fatal("Validate accepted a task without v2 taskId")
+	}
+}

@@ -24,10 +24,10 @@ type Snapshot struct {
 	Revision      contractv2.Revision `json:"revision"`
 	ObservedAt    time.Time           `json:"observedAt"`
 	Freshness     Freshness           `json:"freshness"`
-	State         string              `json:"state,omitempty"`
-	SyncStatus    string              `json:"syncStatus,omitempty"`
-	NextAction    string              `json:"nextAction,omitempty"`
-	EvidenceRefs  []string            `json:"evidenceRefs,omitempty"`
+	State         string              `json:"state"`
+	SyncStatus    string              `json:"syncStatus"`
+	NextAction    string              `json:"nextAction"`
+	EvidenceRefs  []string            `json:"evidenceRefs"`
 	Projects      []Project           `json:"projects"`
 }
 

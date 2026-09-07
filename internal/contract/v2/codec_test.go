@@ -27,7 +27,10 @@ func TestReadRejectsUnknownAndTrailingJSON(t *testing.T) {
 }
 
 func TestValidSingleRepositoryFixtureRoundTripsStrictly(t *testing.T) {
-	data := []byte(`{"version":2,"workId":"work-1","projectId":"project-1","revision":1,"request":"ship it","acceptanceCriteria":["works"],"repositoryPlans":[{"repoKey":"app","baseSha":"0123456789012345678901234567890123456789","targetBranch":"main"}],"tasks":[{"taskId":"task-1","repoKey":"app","allowedPaths":["internal"],"acceptanceCriteria":["works"]}],"issueDrafts":[],"interfaceAgreements":[],"crossRepoVerification":[],"documentation":{"required":false,"reason":"not required"},"executionProfiles":{"builder":"builder","reviewer":"reviewer","documenter":"documenter"},"decisionRefs":[]}`)
+	data, err := os.ReadFile("../../../testdata/contracts/v2/valid-single-repo.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	contract, err := Read(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
