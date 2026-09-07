@@ -69,6 +69,47 @@ GitHub 수동 편집은 원격 업무 기록과 실행 계약을 구분하고 �
 구현 준비 계획은 환경 확인과 첫 구현 범위를 정한다. 전체 MVP를 한 번에 구현하라는 지시가 아니다.
 삭제된 옛 계획이나 single-run/parallel pilot 절차를 현재 실행 계획으로 되살리지 않는다.
 
+## 2026-09-08 구현 착수 결과
+
+첫 단일 저장소 흐름의 상세 계획을
+[`docs/superpowers/plans/2026-09-07-single-repository-workflow.md`](docs/superpowers/plans/2026-09-07-single-repository-workflow.md)에 추가했다.
+기존 v1을 수정하지 않고 다음 직렬 foundation을 구현·통합했다.
+
+- `internal/contract/v2`: strict Contract v2 codec·validation과 단일 저장소 fixture.
+- `internal/runtime`: provider-neutral Invocation/Artifact envelope와 identity/schema 검증.
+- `internal/monitor`: CLI와 이후 Wails가 함께 사용할 aggregate snapshot wire.
+- `internal/registry`, `internal/state/v2`: 별도 v2 경로, immutable contract, process lease,
+  atomic persistence, revision CAS와 requestId/payload idempotency.
+- `internal/workflow`: project 등록, work plan→approve→status와 aggregate snapshot.
+- `internal/cli`, `cmd/agentctl`: `project register/list/status`, `work plan/approve/status`와
+  기존 GHES/Herdr 초기화에서 분리된 v2 dependency 경로.
+
+각 Task는 Luna high 요청으로 구현하고 fresh Sol medium 요청으로 검토했지만,
+현재 orchestration metadata가 실제 resolved model·reasoning effort를 노출하지 않아 역할 실행은
+`unverified`로 기록했다. Reviewer 지적은 Luna 수정 후 scoped Sol 재검토를 거쳤다.
+
+통합 코드 HEAD `b182ef7d202a7125057e074360fb2737094682a3`에서 아래 focused 검사가 통과했다.
+
+```bash
+docker run --rm -v "$PWD":/src -w /src golang:1.27 go test -count=1 \
+  ./internal/contract/v2 ./internal/runtime ./internal/monitor ./internal/registry \
+  ./internal/state/v2 ./internal/workflow ./internal/cli ./cmd/agentctl
+docker run --rm -v "$PWD":/src -w /src golang:1.27 go vet \
+  ./internal/contract/v2 ./internal/runtime ./internal/monitor ./internal/registry \
+  ./internal/state/v2 ./internal/workflow ./internal/cli ./cmd/agentctl
+```
+
+전체 `make check`는 최종 code PR gate 전까지 실행하지 않는 정책에 따라 아직 실행하지 않았다.
+WSL native Go, Windows Go/Wails/WSL bridge, 실제 Codex invocation, GitHub Projects와 Wiki 쓰기도
+아직 검증하지 않았다. 현재 GitHub token은 `read:project` scope가 없고 대상 저장소 Wiki는
+비활성화 상태이므로 live publication은 진행하지 않았다.
+
+다음 행동은 계획 Task 4·5를 바로 병렬 구현하는 것이 아니라, 먼저 공용 state interface를
+작게 재계획하는 것이다. Task 4에는 pending→completed 외부 발행 receipt lifecycle이,
+Task 5에는 Task별 invocation·termination·candidate/review evidence 상태가 필요하지만 현재
+`state/v2.WorkSnapshot`에는 아직 이 공유 구조가 없다. Sol이 이를 단독 소유 Task로 고정하고
+fresh review를 통과시킨 뒤, 경로가 분리된 Publisher와 runtime/Git 실행 Task를 병렬 배정한다.
+
 ## 재사용과 검증
 
 기존 contract, state, pathscope, worktree, integration과 Herdr의 좁은 기능을 검토해
