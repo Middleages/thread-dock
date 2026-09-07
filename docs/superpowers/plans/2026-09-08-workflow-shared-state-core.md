@@ -159,6 +159,7 @@ git commit -m "feat: 공유 워크플로 상태 모델 추가"
 - Create: `internal/state/v2/work_transition.go`
 - Create: `internal/state/v2/work_transition_test.go`
 - Create: `internal/state/v2/reducer.go`
+- Modify: `internal/state/v2/transition_types.go`
 - Modify: `internal/state/v2/types.go`
 - Modify: `internal/state/v2/store.go`
 - Modify: `internal/state/v2/store_test.go`
@@ -188,7 +189,7 @@ type Store interface {
 }
 ```
 
-`WorkAction` values are `approve`, `pause`, `resume`, `resolve`. Initial implemented resolve kinds are `retry_verified_stage` and `extend_budget`; runtime/publication-specific resolution becomes active in Tasks 3 and 5.
+`WorkAction` values are `approve`, `pause`, `resume`, `resolve`. Task 2 implements `extend_budget` with `BudgetKind` values `repair` and `recovery`; runtime-specific resolution becomes active in Task 3, evidence-derived `retry_verified_stage` in Task 4, and publication resolution in Task 5.
 
 - [ ] **Step 1: Write failing Apply invariant tests**
 
@@ -196,7 +197,7 @@ Cover exactly-one transition, canonical transition hash mismatch, replay, change
 
 - [ ] **Step 2: Write failing Work transition tests**
 
-Cover approve only from awaiting_approval with matching contract hash and nonempty approvalRef; pre-approval Task/publication rejection; pause setting `PauseRequested`; resume only when no active/unknown invocation and blocker is absent; extend_budget only with operatorRef and strictly higher ceiling; retry_verified_stage deriving rather than accepting the target WorkState.
+Cover approve only from awaiting_approval with matching contract hash and nonempty approvalRef; pre-approval Task/publication rejection; pause setting `PauseRequested`; resume only when no active/unknown invocation and blocker is absent; extend_budget only with operatorRef, TaskID, valid BudgetKind and a strictly higher ceiling.
 
 - [ ] **Step 3: Verify RED**
 
@@ -268,11 +269,14 @@ git commit -m "feat: builder reviewer 호출 lifecycle 추가"
 - Modify: `internal/state/v2/task_transition.go`
 - Modify: `internal/state/v2/reducer.go`
 - Modify: `internal/state/v2/transition_types.go`
+- Modify: `internal/state/v2/work_transition.go`
+- Modify: `internal/state/v2/work_transition_test.go`
 
 **Interfaces:**
 
 - Consumes: Task 3 terminated invocation.
 - Produces actions `record_candidate`, `record_gate`, `record_review`, `record_integration`, repair/recovery forms of `reserve_invocation`.
+- Produces evidence-derived Work resolve kind `retry_verified_stage` without accepting a caller-selected target state.
 
 - [ ] **Step 1: Write failing evidence-chain tests**
 
@@ -285,6 +289,8 @@ From gate_failed and review_blocked, repair reservation atomically increments Re
 - [ ] **Step 3: Write failing recovery tests**
 
 Only a terminated invocation explicitly marked transient can reserve recovery. It preserves role, BuilderAttempt and candidate/gate, increments RecoveryCount once and uses a new InvocationID. A second recovery records needs_operator. Pause/resume and reviewer invocation never reset or consume the wrong budget.
+
+Add `retry_verified_stage` tests that require operatorRef, matching blocker/Task and evidence, then derive the restored Task stage from current candidate/gate/review evidence. Caller input never names the restored TaskStatus; mismatched evidence is a no-write error.
 
 - [ ] **Step 4: Verify RED, implement transitions and reducer, verify GREEN**
 
