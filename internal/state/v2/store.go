@@ -82,7 +82,7 @@ func (s *store) CreatePlan(ctx context.Context, snapshot WorkSnapshot, requestID
 			if receipt.PayloadHash != payloadHash {
 				return WorkSnapshot{}, fmt.Errorf("%w: %w", ErrConflict, &RequestConflictError{RequestID: requestID, ExistingHash: receipt.PayloadHash, PayloadHash: payloadHash})
 			}
-			return decodeReceiptResult(receipt, existing.Contract)
+			return decodeReceiptResult(receipt, existing.Contract, existing.ContractHash)
 		}
 		return WorkSnapshot{}, fmt.Errorf("%w: work %q already exists", ErrConflict, snapshot.WorkID)
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -222,7 +222,7 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 	}
 	if receipt, ok := snapshot.Receipts[mutation.RequestID]; ok {
 		if receipt.PayloadHash == mutation.PayloadHash {
-			return decodeReceiptResult(receipt, snapshot.Contract)
+			return decodeReceiptResult(receipt, snapshot.Contract, snapshot.ContractHash)
 		}
 		return WorkSnapshot{}, fmt.Errorf("%w: %w", ErrConflict, &RequestConflictError{RequestID: mutation.RequestID, ExistingHash: receipt.PayloadHash, PayloadHash: mutation.PayloadHash})
 	}
@@ -266,7 +266,7 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 	return clientResult, nil
 }
 
-func decodeReceiptResult(receipt Receipt, contract contractv2.WorkItemContract) (WorkSnapshot, error) {
+func decodeReceiptResult(receipt Receipt, contract contractv2.WorkItemContract, currentContractHash string) (WorkSnapshot, error) {
 	if receipt.Status != "committed" || len(receipt.Result) == 0 {
 		return WorkSnapshot{}, errors.New("invalid request receipt")
 	}
@@ -296,7 +296,7 @@ func decodeReceiptResult(receipt Receipt, contract contractv2.WorkItemContract) 
 	}
 	sum := sha256.Sum256(currentCanonical)
 	hash := hex.EncodeToString(sum[:])
-	if result.ContractHash != hash || contractHash(contract) != hash {
+	if result.ContractHash != hash || currentContractHash != hash {
 		return WorkSnapshot{}, errors.New("request receipt contract hash mismatch")
 	}
 	return result, nil
@@ -305,15 +305,6 @@ func decodeReceiptResult(receipt Receipt, contract contractv2.WorkItemContract) 
 func clientResultProjection(snapshot WorkSnapshot) WorkSnapshot {
 	snapshot.Receipts = map[contractv2.RequestID]Receipt{}
 	return snapshot
-}
-
-func contractHash(contract contractv2.WorkItemContract) string {
-	canonical, err := canonicalContract(contract)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(canonical)
-	return hex.EncodeToString(sum[:])
 }
 
 func verifyContractFile(dir string, snapshot WorkSnapshot) error {

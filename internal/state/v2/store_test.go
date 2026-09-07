@@ -576,3 +576,15 @@ func TestReceiptReplayRejectsMalformedResultWithoutWriting(t *testing.T) {
 		})
 	}
 }
+
+func TestReceiptDecoderRejectsMismatchedCurrentContractHash(t *testing.T) {
+	snapshot := validSnapshot()
+	result, err := json.Marshal(clientResultProjection(snapshot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := Receipt{Status: "committed", Result: result}
+	if _, err := decodeReceiptResult(receipt, snapshot.Contract, strings.Repeat("f", 64)); err == nil {
+		t.Fatal("receipt decoder accepted mismatched current ContractHash")
+	}
+}
