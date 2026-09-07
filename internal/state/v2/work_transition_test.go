@@ -2,6 +2,7 @@ package statev2
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	contractv2 "thread-dock/internal/contract/v2"
@@ -76,7 +77,7 @@ func TestWorkResumeAndBudgetExtensionGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot.State = StateNeedsOperator
-	snapshot.Control.Blocker = &OperatorBlocker{Kind: "budget", OperatorRef: "operator-1", TaskID: "task-1", Diagnostic: "budget"}
+	snapshot.Control.Blocker = &OperatorBlocker{Kind: BlockerKindRepairBudgetExhausted, OperatorRef: "operator-1", TaskID: "task-1", Diagnostic: "budget"}
 	for _, tc := range []struct {
 		name      string
 		payload   *ResolvePayload
@@ -105,6 +106,66 @@ func TestWorkResumeAndBudgetExtensionGuards(t *testing.T) {
 				t.Fatalf("extended snapshot = %#v", next)
 			}
 		})
+	}
+}
+
+func TestExtendBudgetRejectsUnrelatedBlockerWithoutWrite(t *testing.T) {
+	snapshot := validSnapshot()
+	snapshot.State = StateNeedsOperator
+	snapshot.Control = WorkControl{ApprovedContractHash: snapshot.ContractHash, ApprovalRef: "approval", Blocker: &OperatorBlocker{
+		Kind: BlockerKindRecoveryBudgetExhausted, OperatorRef: "operator-1", TaskID: "task-1", Diagnostic: "recovery budget exhausted",
+	}}
+	before := snapshot
+	err := applyWorkTransition(&snapshot, WorkTransition{Action: WorkResolve, Resolve: &ResolvePayload{
+		Kind: ResolveExtendBudget, OperatorRef: "operator-1", TaskID: "task-1", Budget: BudgetKindRepair, NewLimit: 3,
+	}})
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("error = %v, want invalid transition", err)
+	}
+	if !reflect.DeepEqual(snapshot, before) {
+		t.Fatalf("unrelated blocker resolution wrote state: before=%#v after=%#v", before, snapshot)
+	}
+}
+
+func TestExtendBudgetRequiresMatchingBudgetBlockerKind(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		blockerKind string
+		budget      BudgetKind
+	}{
+		{name: "repair request against recovery blocker", blockerKind: BlockerKindRecoveryBudgetExhausted, budget: BudgetKindRepair},
+		{name: "recovery request against repair blocker", blockerKind: BlockerKindRepairBudgetExhausted, budget: BudgetKindRecovery},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := validSnapshot()
+			snapshot.State = StateNeedsOperator
+			snapshot.Control = WorkControl{ApprovedContractHash: snapshot.ContractHash, ApprovalRef: "approval", Blocker: &OperatorBlocker{
+				Kind: tc.blockerKind, OperatorRef: "operator-1", TaskID: "task-1", Diagnostic: "budget exhausted",
+			}}
+			err := applyWorkTransition(&snapshot, WorkTransition{Action: WorkResolve, Resolve: &ResolvePayload{
+				Kind: ResolveExtendBudget, OperatorRef: "operator-1", TaskID: "task-1", Budget: tc.budget, NewLimit: 3,
+			}})
+			if !errors.Is(err, ErrInvalidTransition) {
+				t.Fatalf("error = %v, want invalid transition", err)
+			}
+			if snapshot.Control.Blocker == nil || snapshot.Control.Blocker.Kind != tc.blockerKind {
+				t.Fatalf("blocker changed on mismatch: %#v", snapshot.Control.Blocker)
+			}
+		})
+	}
+}
+
+func TestPauseNeedsOperatorPersistsPauseRequest(t *testing.T) {
+	snapshot := validSnapshot()
+	snapshot.State = StateNeedsOperator
+	snapshot.Control = WorkControl{ApprovedContractHash: snapshot.ContractHash, ApprovalRef: "approval", Blocker: &OperatorBlocker{
+		Kind: "runtime_unknown", OperatorRef: "operator-1", TaskID: "task-1", Diagnostic: "runtime requires inspection",
+	}}
+	if err := applyWorkTransition(&snapshot, WorkTransition{Action: WorkPause}); err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.Control.PauseRequested || snapshot.State != StateNeedsOperator || snapshot.NextAction != "resolve" {
+		t.Fatalf("paused needs-operator snapshot = %#v", snapshot)
 	}
 }
 

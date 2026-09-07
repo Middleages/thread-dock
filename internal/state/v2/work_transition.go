@@ -6,6 +6,11 @@ import (
 	contractv2 "thread-dock/internal/contract/v2"
 )
 
+const (
+	BlockerKindRepairBudgetExhausted   = "repair_budget_exhausted"
+	BlockerKindRecoveryBudgetExhausted = "recovery_budget_exhausted"
+)
+
 func applyWorkTransition(snapshot *WorkSnapshot, transition WorkTransition) error {
 	switch transition.Action {
 	case WorkApprove:
@@ -23,7 +28,7 @@ func applyWorkTransition(snapshot *WorkSnapshot, transition WorkTransition) erro
 		reduce(snapshot)
 		return nil
 	case WorkPause:
-		if snapshot.Control.ApprovedContractHash == "" || snapshot.State == StateAwaitingApproval || snapshot.State == StatePaused || snapshot.State == StateNeedsOperator || snapshot.State == StateCompleted || snapshot.State == StateDraft {
+		if snapshot.Control.ApprovedContractHash == "" || snapshot.State == StateAwaitingApproval || snapshot.State == StatePaused || snapshot.State == StateCompleted || snapshot.State == StateDraft {
 			return invalidTransition("work cannot be paused in state %q", snapshot.State)
 		}
 		if snapshot.Control.PauseRequested {
@@ -60,7 +65,7 @@ func applyWorkResolve(snapshot *WorkSnapshot, payload *ResolvePayload) error {
 		return invalidTransition("invalid budget resolution")
 	}
 	blocker := snapshot.Control.Blocker
-	if blocker == nil || blocker.TaskID != payload.TaskID || blocker.OperatorRef != payload.OperatorRef {
+	if blocker == nil || blocker.TaskID != payload.TaskID || blocker.OperatorRef != payload.OperatorRef || blocker.Kind != budgetBlockerKind(payload.Budget) {
 		return invalidTransition("budget resolution does not match blocker")
 	}
 	task, ok := snapshot.TaskStates[payload.TaskID]
@@ -87,4 +92,11 @@ func applyWorkResolve(snapshot *WorkSnapshot, payload *ResolvePayload) error {
 
 func validBudgetKind(kind BudgetKind) bool {
 	return kind == BudgetRepair || kind == BudgetRecovery
+}
+
+func budgetBlockerKind(kind BudgetKind) string {
+	if kind == BudgetRecovery {
+		return BlockerKindRecoveryBudgetExhausted
+	}
+	return BlockerKindRepairBudgetExhausted
 }
