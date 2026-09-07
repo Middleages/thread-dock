@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	contractv2 "thread-dock/internal/contract/v2"
@@ -13,6 +14,14 @@ import (
 
 func validSnapshot() WorkSnapshot {
 	return WorkSnapshot{SchemaVersion: 2, ProjectID: "project-1", WorkID: "work-1", Revision: 1, State: StateAwaitingApproval, ContractHash: "hash", Contract: contractv2.WorkItemContract{Version: 2, WorkID: "work-1", ProjectID: "project-1", Revision: 1, Request: "ship it", AcceptanceCriteria: []string{"works"}, RepositoryPlans: []contractv2.RepositoryPlan{{RepoKey: "app", BaseSHA: "0123456789012345678901234567890123456789", TargetBranch: "main"}}, Tasks: []contractv2.Task{{TaskID: "task-1", RepoKey: "app", AllowedPaths: []string{"internal"}, AcceptanceCriteria: []string{"works"}}}, Documentation: contractv2.DocumentationPlan{Required: false, Reason: "not required"}, ExecutionProfiles: contractv2.ExecutionProfiles{Builder: "builder", Reviewer: "reviewer", Documenter: "documenter"}}, SyncStatus: "local", NextAction: "approve", EvidenceRefs: []string{}, Receipts: map[contractv2.RequestID]Receipt{}}
+}
+
+func snapshotForWork(id contractv2.WorkID, state WorkState) WorkSnapshot {
+	snapshot := validSnapshot()
+	snapshot.WorkID = id
+	snapshot.State = state
+	snapshot.Contract.WorkID = id
+	return snapshot
 }
 
 func TestCreatePlanStoresImmutableContractRevisionOne(t *testing.T) {
@@ -204,5 +213,84 @@ func TestCreatePlanHardensPreexistingDirectoriesAndTemporaryFiles(t *testing.T) 
 		if info.Mode().Perm() != 0600 {
 			t.Fatalf("%s mode = %o, want 600", path, info.Mode().Perm())
 		}
+	}
+}
+
+func TestListIncludesTerminalAndOperatorStatesInWorkIDOrder(t *testing.T) {
+	root := t.TempDir()
+	s := NewStore(root)
+	ctx := context.Background()
+	for i, target := range []struct {
+		id    contractv2.WorkID
+		state WorkState
+	}{
+		{"work-z", StateCompleted},
+		{"work-a", StateNeedsOperator},
+	} {
+		snapshot := snapshotForWork(target.id, StateAwaitingApproval)
+		if _, err := s.CreatePlan(ctx, snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Mutate(ctx, Mutation{WorkID: target.id, ExpectedRevision: 1, RequestID: contractv2.RequestID("request-") + contractv2.RequestID(string(rune('a'+i))), PayloadHash: "payload", Transition: func(next *WorkSnapshot) error {
+			next.State = target.state
+			return nil
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "v2", "work", "not-a-work-file"), []byte("ignored"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "v2", "work", "ignored.tmp"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "v2", "work", "ignored.tmp", "work.json"), []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || len(got) != 2 {
+		t.Fatalf("listed snapshots = %#v", got)
+	}
+	if got[0].WorkID != "work-a" || got[0].State != StateNeedsOperator || got[1].WorkID != "work-z" || got[1].State != StateCompleted {
+		t.Fatalf("listed snapshots = %#v", got)
+	}
+}
+
+func TestListRejectsCorruptDirectChildSnapshot(t *testing.T) {
+	root := t.TempDir()
+	s := NewStore(root)
+	ctx := context.Background()
+	if _, err := s.CreatePlan(ctx, snapshotForWork("work-valid", StateAwaitingApproval)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Mutate(ctx, Mutation{WorkID: "work-valid", ExpectedRevision: 1, RequestID: "request-valid", PayloadHash: "payload", Transition: func(next *WorkSnapshot) error {
+		next.State = StateCompleted
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	corruptDir := filepath.Join(root, "v2", "work", "work-corrupt")
+	if err := os.MkdirAll(corruptDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(corruptDir, "work.json"), []byte(strings.TrimSpace(`{"schemaVersion":2}`)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.List(ctx); err == nil {
+		t.Fatal("List accepted corrupt direct-child snapshot")
+	}
+}
+
+func TestListOnEmptyRootReturnsNonNilEmptySlice(t *testing.T) {
+	got, err := NewStore(t.TempDir()).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Fatalf("listed snapshots = %#v", got)
 	}
 }

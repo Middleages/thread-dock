@@ -3,8 +3,10 @@ package workflow
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
 	"thread-dock/internal/registry"
@@ -65,5 +67,124 @@ func TestPlanRejectsLegacyWithoutWritesAndPreservesSource(t *testing.T) {
 	}
 	if _, err := works.Load(context.Background(), "work-1"); err == nil {
 		t.Fatal("legacy plan wrote state")
+	}
+}
+
+type countingProjectStore struct {
+	projects []registry.Project
+	listCall int
+}
+
+func (f *countingProjectStore) Create(context.Context, registry.Project) (registry.Project, error) {
+	panic("unexpected Create")
+}
+func (f *countingProjectStore) Load(context.Context, contractv2.ProjectID) (registry.Project, error) {
+	panic("unexpected Load")
+}
+func (f *countingProjectStore) List(context.Context) ([]registry.Project, error) {
+	f.listCall++
+	return append([]registry.Project(nil), f.projects...), nil
+}
+
+type countingWorkStore struct {
+	works    []statev2.WorkSnapshot
+	listCall int
+}
+
+func (f *countingWorkStore) CreatePlan(context.Context, statev2.WorkSnapshot) (statev2.WorkSnapshot, error) {
+	panic("unexpected CreatePlan")
+}
+func (f *countingWorkStore) Load(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error) {
+	panic("unexpected Load")
+}
+func (f *countingWorkStore) List(context.Context) ([]statev2.WorkSnapshot, error) {
+	f.listCall++
+	return append([]statev2.WorkSnapshot(nil), f.works...), nil
+}
+func (f *countingWorkStore) Mutate(context.Context, statev2.Mutation) (statev2.WorkSnapshot, error) {
+	panic("unexpected Mutate")
+}
+
+func TestSnapshotAggregatesRegisteredProjectAndWorkWithoutSideEffects(t *testing.T) {
+	projects := &countingProjectStore{projects: []registry.Project{
+		{ProjectID: "project-z", Name: "Zed"},
+		{ProjectID: "project-a", Name: "Alpha"},
+	}}
+	work := statev2.WorkSnapshot{
+		SchemaVersion: 2,
+		ProjectID:     "project-a",
+		WorkID:        "work-1",
+		Revision:      7,
+		State:         statev2.StateNeedsOperator,
+		SyncStatus:    "pending",
+		NextAction:    "inspect",
+		EvidenceRefs:  []string{"evidence://one"},
+		Contract: func() contractv2.WorkItemContract {
+			contract := validContract()
+			contract.ProjectID = "project-a"
+			contract.IssueDrafts = []contractv2.IssueDraft{{Title: "Ship the thing"}}
+			contract.Tasks = []contractv2.Task{{TaskID: "task-2", RepoKey: "backend"}, {TaskID: "task-1", RepoKey: "app"}}
+			return contract
+		}(),
+	}
+	s := New(projects, &countingWorkStore{works: []statev2.WorkSnapshot{work}})
+	at := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	got, err := s.Snapshot(context.Background(), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projects.listCall != 1 {
+		t.Fatalf("projects.List calls = %d", projects.listCall)
+	}
+	works := s.works.(*countingWorkStore)
+	if works.listCall != 1 {
+		t.Fatalf("works.List calls = %d", works.listCall)
+	}
+	if got.SchemaVersion != 2 || !got.ObservedAt.Equal(at) || got.Revision != 7 {
+		t.Fatalf("snapshot metadata = %#v", got)
+	}
+	if got.Projects == nil || len(got.Projects) != 2 || got.Projects[0].ProjectID != "project-a" {
+		t.Fatalf("projects = %#v", got.Projects)
+	}
+	project := got.Projects[0]
+	if project.Name != "Alpha" || project.State != string(work.State) || project.SyncStatus != work.SyncStatus || project.NextAction != work.NextAction || !reflect.DeepEqual(project.EvidenceRefs, work.EvidenceRefs) {
+		t.Fatalf("project = %#v", project)
+	}
+	if len(project.WorkItems) != 1 {
+		t.Fatalf("work items = %#v", project.WorkItems)
+	}
+	item := project.WorkItems[0]
+	if item.WorkID != work.WorkID || item.Title != "Ship the thing" || item.Request != work.Contract.Request || item.State != string(work.State) || item.SyncStatus != work.SyncStatus || item.NextAction != work.NextAction || !reflect.DeepEqual(item.EvidenceRefs, work.EvidenceRefs) {
+		t.Fatalf("work item = %#v", item)
+	}
+	if len(item.Tasks) != 2 || item.Tasks[0].TaskID != "task-2" || item.Tasks[0].RepoKey != "backend" || item.Tasks[1].TaskID != "task-1" || item.Tasks[1].RepoKey != "app" {
+		t.Fatalf("tasks = %#v", item.Tasks)
+	}
+	if got.State != item.State || got.SyncStatus != item.SyncStatus || got.NextAction != item.NextAction || !reflect.DeepEqual(got.EvidenceRefs, item.EvidenceRefs) {
+		t.Fatalf("global status = %#v", got)
+	}
+	if got.Freshness.State != got.State || got.Freshness.SyncStatus != got.SyncStatus || !got.Freshness.ObservedAt.Equal(at) {
+		t.Fatalf("freshness = %#v", got.Freshness)
+	}
+}
+
+func TestSnapshotRejectsWorkForUnregisteredProject(t *testing.T) {
+	projects := &countingProjectStore{projects: []registry.Project{{ProjectID: "project-1", Name: "Project"}}}
+	works := &countingWorkStore{works: []statev2.WorkSnapshot{{ProjectID: "missing", WorkID: "work-1"}}}
+	_, err := New(projects, works).Snapshot(context.Background(), time.Now())
+	if err == nil {
+		t.Fatal("Snapshot accepted work for an unregistered project")
+	}
+}
+
+func TestSnapshotUsesWorkIDTitleFallbackAndDraftDefaults(t *testing.T) {
+	projects := &countingProjectStore{projects: []registry.Project{{ProjectID: "project-1", Name: "Project"}}}
+	works := &countingWorkStore{works: []statev2.WorkSnapshot{{ProjectID: "project-1", WorkID: "work-1", Revision: 1, State: statev2.StateDraft, Contract: contractv2.WorkItemContract{WorkID: "work-1", ProjectID: "project-1", Request: "request"}}}}
+	got, err := New(projects, works).Snapshot(context.Background(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Projects[0].State != "draft" || got.Projects[0].WorkItems[0].Title != "work-1" {
+		t.Fatalf("fallback/default mapping = %#v", got)
 	}
 }

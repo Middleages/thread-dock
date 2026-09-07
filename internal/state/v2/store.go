@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -103,6 +104,39 @@ func (s *store) Load(ctx context.Context, id contractv2.WorkID) (WorkSnapshot, e
 	}
 	defer f.Close()
 	return decodeSnapshot(f)
+}
+
+func (s *store) List(ctx context.Context) ([]WorkSnapshot, error) {
+	if err := contextErr(ctx); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(s.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return []WorkSnapshot{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list work: %w", err)
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasSuffix(entry.Name(), ".tmp") || strings.HasPrefix(entry.Name(), ".tmp-") {
+			continue
+		}
+		ids = append(ids, entry.Name())
+	}
+	work := make([]WorkSnapshot, 0, len(ids))
+	for _, id := range ids {
+		snapshot, err := s.Load(ctx, contractv2.WorkID(id))
+		if err != nil {
+			return nil, err
+		}
+		if snapshot.WorkID != contractv2.WorkID(id) {
+			return nil, fmt.Errorf("work snapshot ID %q does not match directory %q", snapshot.WorkID, id)
+		}
+		work = append(work, snapshot)
+	}
+	sort.Slice(work, func(i, j int) bool { return work[i].WorkID < work[j].WorkID })
+	return work, nil
 }
 
 func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, error) {

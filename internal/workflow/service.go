@@ -9,8 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
+	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
+	"thread-dock/internal/monitor"
 	"thread-dock/internal/registry"
 	statev2 "thread-dock/internal/state/v2"
 )
@@ -98,4 +102,91 @@ func (s *Service) ApproveWork(ctx context.Context, id contractv2.WorkID, expecte
 }
 func (s *Service) Status(ctx context.Context, id contractv2.WorkID) (statev2.WorkSnapshot, error) {
 	return s.works.Load(ctx, id)
+}
+
+func (s *Service) Snapshot(ctx context.Context, at time.Time) (monitor.Snapshot, error) {
+	projects, err := s.projects.List(ctx)
+	if err != nil {
+		return monitor.Snapshot{}, err
+	}
+	works, err := s.works.List(ctx)
+	if err != nil {
+		return monitor.Snapshot{}, err
+	}
+	sort.Slice(projects, func(i, j int) bool { return projects[i].ProjectID < projects[j].ProjectID })
+	sort.Slice(works, func(i, j int) bool { return works[i].WorkID < works[j].WorkID })
+
+	projectIndex := make(map[contractv2.ProjectID]int, len(projects))
+	resultProjects := make([]monitor.Project, len(projects))
+	for i, project := range projects {
+		projectIndex[project.ProjectID] = i
+		resultProjects[i] = monitor.Project{
+			ProjectID:    project.ProjectID,
+			Name:         project.Name,
+			State:        string(statev2.StateDraft),
+			EvidenceRefs: []string{},
+			WorkItems:    []monitor.WorkItem{},
+		}
+	}
+
+	var revision contractv2.Revision
+	for _, work := range works {
+		projectPosition, ok := projectIndex[work.ProjectID]
+		if !ok {
+			return monitor.Snapshot{}, fmt.Errorf("work %q references unregistered project %q", work.WorkID, work.ProjectID)
+		}
+		if work.Revision > revision {
+			revision = work.Revision
+		}
+		title := string(work.WorkID)
+		if len(work.Contract.IssueDrafts) > 0 && strings.TrimSpace(work.Contract.IssueDrafts[0].Title) != "" {
+			title = work.Contract.IssueDrafts[0].Title
+		}
+		tasks := make([]monitor.TaskDetail, 0, len(work.Contract.Tasks))
+		for _, task := range work.Contract.Tasks {
+			tasks = append(tasks, monitor.TaskDetail{TaskID: task.TaskID, RepoKey: task.RepoKey})
+		}
+		item := monitor.WorkItem{
+			WorkID:       work.WorkID,
+			Title:        title,
+			Request:      work.Contract.Request,
+			State:        string(work.State),
+			SyncStatus:   work.SyncStatus,
+			NextAction:   work.NextAction,
+			EvidenceRefs: append([]string{}, work.EvidenceRefs...),
+			Tasks:        tasks,
+		}
+		resultProjects[projectPosition].WorkItems = append(resultProjects[projectPosition].WorkItems, item)
+	}
+
+	result := monitor.Snapshot{
+		SchemaVersion: 2,
+		Revision:      revision,
+		ObservedAt:    at,
+		EvidenceRefs:  []string{},
+		Projects:      resultProjects,
+	}
+	for i := range resultProjects {
+		project := &resultProjects[i]
+		if len(project.WorkItems) == 0 {
+			continue
+		}
+		first := project.WorkItems[0]
+		project.State = first.State
+		project.SyncStatus = first.SyncStatus
+		project.NextAction = first.NextAction
+		project.EvidenceRefs = append([]string{}, first.EvidenceRefs...)
+		if result.State == "" {
+			result.State = first.State
+			result.SyncStatus = first.SyncStatus
+			result.NextAction = first.NextAction
+			result.EvidenceRefs = append([]string{}, first.EvidenceRefs...)
+		}
+	}
+	if result.State == "" {
+		result.State = string(statev2.StateDraft)
+	}
+	result.Freshness = monitor.Freshness{State: result.State, SyncStatus: result.SyncStatus, ObservedAt: at}
+	result.Projects = resultProjects
+	return result, nil
 }

@@ -54,6 +54,7 @@ type Transition func(*WorkSnapshot) error
 type Store interface {
 	CreatePlan(context.Context, WorkSnapshot) (WorkSnapshot, error)
 	Load(context.Context, contractv2.WorkID) (WorkSnapshot, error)
+	List(context.Context) ([]WorkSnapshot, error)
 	Mutate(context.Context, Mutation) (WorkSnapshot, error)
 }
 
