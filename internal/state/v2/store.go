@@ -66,7 +66,9 @@ func (s *store) CreatePlan(ctx context.Context, snapshot WorkSnapshot) (WorkSnap
 	contractPath := filepath.Join(dir, "contracts", "1.json")
 	if _, err := os.Stat(contractPath); err == nil {
 		existing, readErr := readContract(contractPath)
-		if readErr != nil || !reflect.DeepEqual(existing, snapshot.Contract) {
+		existingBytes, existingCanonicalErr := canonicalContract(existing)
+		expectedBytes, expectedCanonicalErr := canonicalContract(snapshot.Contract)
+		if readErr != nil || existingCanonicalErr != nil || expectedCanonicalErr != nil || !bytes.Equal(existingBytes, expectedBytes) {
 			return WorkSnapshot{}, fmt.Errorf("%w: contract revision already exists", ErrConflict)
 		}
 		if err := os.Chmod(contractPath, 0600); err != nil {

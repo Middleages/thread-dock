@@ -143,6 +143,33 @@ func TestCreatePlanRecoversCommittedContractWhenSnapshotPublicationIsInterrupted
 	}
 }
 
+func TestCreatePlanRecoveryAcceptsCanonicalEquivalentExplicitEmptyOptionalSlices(t *testing.T) {
+	root := t.TempDir()
+	s := NewStore(root)
+	snapshot := validSnapshot()
+	snapshot.Contract.RepositoryPlans[0].Verification = []contractv2.CommandSpec{}
+	snapshot.Contract.Tasks[0].DependsOn = []contractv2.TaskID{}
+	contracts := filepath.Join(root, "v2", "work", string(snapshot.WorkID), "contracts")
+	if err := os.MkdirAll(contracts, 0700); err != nil {
+		t.Fatal(err)
+	}
+	contractPath := filepath.Join(contracts, "1.json")
+	f, err := os.OpenFile(contractPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := contractv2.Write(f, snapshot.Contract); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreatePlan(context.Background(), snapshot); err != nil {
+		t.Fatalf("canonical-equivalent recovery rejected explicit empty slices: %v", err)
+	}
+}
+
 func TestCreatePlanHardensPreexistingDirectoriesAndTemporaryFiles(t *testing.T) {
 	root := t.TempDir()
 	contracts := filepath.Join(root, "v2", "work", "work-1", "contracts")
