@@ -24,6 +24,18 @@ _Avoid_: 실행 상태, 에이전트 상태
 개발자 PC에서 특정 작업을 수행하는 에이전트 프로세스와 격리된 작업 공간의 일시적인 실행 단위.
 _Avoid_: 업무 상태, Issue
 
+**에이전트 호출 (Agent Invocation)**:
+하나의 역할 packet을 하나의 Worktree에서 실행하고 구조화된 결과를 반환하는 일회성 실행. 영속 세션을 만들 수도 있지만 Codex 호출은 완료 후 세션을 남기지 않는다.
+_Avoid_: 실행 세션, RUN, Task
+
+**실행 프로필 (Execution Profile)**:
+Contract가 역할별 실행 정책을 지칭하는 논리 ID. 실제 Runtime, native profile과 모델 설정은 각 Workstation의 로컬 구성에서 해석한다.
+_Avoid_: 모델 이름, Agent 이름, provider 설정
+
+**에이전트 런타임 (Agent Runtime)**:
+역할 packet을 실행하고 구조화된 Artifact를 반환하는 로컬 실행 체계. Codex와 OpenCode는 같은 실행 interface 뒤의 서로 다른 Runtime이다.
+_Avoid_: 모델, Orchestrator, Adapter
+
 **실행 세션 은퇴 (Execution Session Retirement)**:
 수정이나 복구가 더 필요하지 않은 RUN에서 에이전트 프로세스와 terminal workspace를 닫되 Worktree, 실행 근거와 업무 기록은 보존하는 lifecycle 전환.
 _Avoid_: cleanup, Issue 종료, Worktree 삭제
@@ -33,7 +45,7 @@ _Avoid_: cleanup, Issue 종료, Worktree 삭제
 _Avoid_: 실행 세션 은퇴, Agent 종료, 자동 삭제
 
 **감독형 자율 실행 (Supervised Autonomous Run)**:
-사용자가 작업 인터뷰 결과와 Issue 묶음을 승인하면 에이전트가 구현, 검증, 리뷰와 main 병합까지 수행하고 사용자가 사후에 결과를 확인하는 실행 방식.
+사용자가 작업 인터뷰 결과와 Issue 묶음을 승인하면 에이전트가 구현, 검증, 리뷰와 Pull Request 준비까지 수행하고 사람이 main 병합을 결정하는 실행 방식.
 _Avoid_: 완전 무인 운영, 수동 실행
 
 ## Work Structure
@@ -49,8 +61,16 @@ _Avoid_: 세부 실행 단계, 체크리스트 항목
 ## Agent Roles
 
 **Orchestrator**:
-작업 인터뷰 결과를 Issue 구조와 실행 순서로 만들고 각 실행 세션에 작업을 배정하는 역할.
-_Avoid_: Control Agent, Builder
+승인된 Contract의 Task DAG, Worktree, 실행 순서, 검증과 통합 상태를 결정적으로 관리하는 역할.
+_Avoid_: Planner, Main Agent, Builder
+
+**Planner**:
+개발 요청과 필요한 CodeMap을 바탕으로 Contract와 Task DAG를 만드는 역할.
+_Avoid_: Orchestrator, Builder
+
+**Scout**:
+대규모 작업에서 Planner가 지정한 질문에 필요한 경로, symbol, 의존성과 위험만 찾아 CodeMap으로 반환하는 조건부 역할.
+_Avoid_: Planner, Builder, 전체 저장소 요약
 
 **Builder**:
 할당된 Child Issue 또는 실행 작업의 수용 조건을 구현하고 검증 근거를 만드는 역할.
@@ -60,6 +80,18 @@ _Avoid_: Orchestrator, Reviewer
 구현 세션과 분리된 문맥에서 변경 결과와 검증 근거를 독립적으로 판단하는 역할.
 _Avoid_: Builder, 사람 승인자
 
+**Documenter**:
+승인된 통합 결과와 관련 문서만 입력으로 받아 저장소 문서 또는 Wiki 변경안을 만드는 조건부 역할.
+_Avoid_: Publisher, Reviewer, 전체 대화 요약기
+
+**Main Agent**:
+Planner와 Orchestrator를 호출하고 Final Manifest를 근거로 GitHub 업무 기록과 사람용 handoff를 관리하는 대화 역할.
+_Avoid_: Orchestrator, Builder, GitHub Adapter
+
+**CodeMap**:
+Planner의 구체적인 질문에 답하는 관련 경로, symbol, 의존성과 위험의 제한된 탐색 Artifact.
+_Avoid_: 전체 코드베이스 덤프, 실행 계획
+
 ## Integration
 
 **Integration Branch**:
@@ -67,8 +99,16 @@ _Avoid_: Builder, 사람 승인자
 _Avoid_: main, Builder branch
 
 **Merge Gate**:
-최종 Pull Request가 main에 자동 병합되기 전에 반드시 만족해야 하는 수용 조건, 독립 리뷰, 최신 HEAD 검증과 저장소 보호 규칙의 집합.
+최종 Pull Request를 사람에게 병합 가능 상태로 제시하기 전에 반드시 만족해야 하는 수용 조건, 독립 리뷰, 최신 HEAD 검증과 저장소 보호 규칙의 집합.
 _Avoid_: 권고사항, 프롬프트 체크리스트
+
+**Final Manifest**:
+승인된 Task commit, review, integration commit, 검증 결과와 문서 필요 여부를 Main Agent에 전달하는 구조화된 실행 Artifact.
+_Avoid_: terminal transcript, Audit Comment, Contract
+
+**Finalize**:
+사람이 Pull Request를 병합한 뒤 Main Agent가 예상 merge SHA를 확인하고 Issue 종료, Project Done과 준비된 문서·Wiki 반영을 완료하는 후속 단계.
+_Avoid_: main 병합, 실행 세션 은퇴, cleanup
 
 **Protected Change**:
 데이터 손실, 인증·권한, 배포, 공급망 또는 공개 계약에 중대한 영향을 줄 수 있어 Merge Gate를 통과해도 사람의 병합 확인이 필요한 변경.
