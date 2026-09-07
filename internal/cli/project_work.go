@@ -69,9 +69,17 @@ func workflowRegister(ctx context.Context, path string, service WorkflowService)
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(file)
-	decoder.DisallowUnknownFields()
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return registry.Project{}, err
+	}
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] != '{' {
+		return registry.Project{}, errors.New("project JSON must be an object")
+	}
+	projectDecoder := json.NewDecoder(bytes.NewReader(raw))
+	projectDecoder.DisallowUnknownFields()
 	var project registry.Project
-	if err := decoder.Decode(&project); err != nil {
+	if err := projectDecoder.Decode(&project); err != nil {
 		return registry.Project{}, err
 	}
 	var trailing any

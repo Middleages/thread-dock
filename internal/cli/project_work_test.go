@@ -18,16 +18,19 @@ import (
 )
 
 type fakeWorkflowService struct {
-	project   registry.Project
-	projects  []registry.Project
-	plan      statev2.WorkSnapshot
-	approved  statev2.WorkSnapshot
-	status    statev2.WorkSnapshot
-	snapshot  monitor.Snapshot
-	err       error
-	calls     []string
-	planInput string
-	planPath  string
+	project         registry.Project
+	projects        []registry.Project
+	plan            statev2.WorkSnapshot
+	approved        statev2.WorkSnapshot
+	status          statev2.WorkSnapshot
+	snapshot        monitor.Snapshot
+	err             error
+	calls           []string
+	approveID       contractv2.WorkID
+	approveRevision contractv2.Revision
+	approveRequest  contractv2.RequestID
+	planInput       string
+	planPath        string
 }
 
 func (f *fakeWorkflowService) RegisterProject(_ context.Context, p registry.Project) (registry.Project, error) {
@@ -58,7 +61,10 @@ func (f *fakeWorkflowService) PlanWork(_ context.Context, path string, r io.Read
 	return f.plan, readErr
 }
 func (f *fakeWorkflowService) ApproveWork(_ context.Context, id contractv2.WorkID, revision contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {
-	f.calls = append(f.calls, "approve:"+string(id)+":"+string(rune(revision))+":"+string(request))
+	f.calls = append(f.calls, "approve")
+	f.approveID = id
+	f.approveRevision = revision
+	f.approveRequest = request
 	if f.err != nil {
 		return statev2.WorkSnapshot{}, f.err
 	}
@@ -124,7 +130,7 @@ func TestWorkflowCommandsRouteAndSerializeOneJSONDocument(t *testing.T) {
 		{name: "list", args: []string{"project", "list", "--json"}, setup: func(f *fakeWorkflowService) { f.projects = []registry.Project{workflowProject()} }, wantCall: "list", check: checkJSONKeys("schemaVersion", "projects")},
 		{name: "status", args: []string{"project", "status", "--all", "--json"}, wantCall: "snapshot:", check: checkJSONKeys("schemaVersion", "observedAt", "freshness", "state", "syncStatus", "nextAction", "evidenceRefs", "projects")},
 		{name: "plan", args: []string{"work", "plan", contractFile}, setup: func(f *fakeWorkflowService) { f.plan = workflowSnapshot() }, wantCall: "plan:" + contractFile, check: checkJSONKeys("schemaVersion", "projectId", "workId", "revision", "state", "syncStatus", "nextAction", "evidenceRefs")},
-		{name: "approve", args: []string{"work", "approve", "work-1", "--expected-revision", "1", "--request-id", "request-1"}, setup: func(f *fakeWorkflowService) { f.approved = workflowSnapshot() }, wantCall: "approve:work-1:", check: checkJSONKeys("schemaVersion", "workId", "revision", "state")},
+		{name: "approve", args: []string{"work", "approve", "work-1", "--expected-revision", "1", "--request-id", "request-1"}, setup: func(f *fakeWorkflowService) { f.approved = workflowSnapshot() }, wantCall: "approve", check: checkJSONKeys("schemaVersion", "workId", "revision", "state")},
 		{name: "work status", args: []string{"work", "status", "work-1", "--json"}, setup: func(f *fakeWorkflowService) { f.status = workflowSnapshot() }, wantCall: "status:work-1", check: checkJSONKeys("schemaVersion", "workId", "revision", "state")},
 	}
 	for _, tt := range tests {
@@ -143,7 +149,41 @@ func TestWorkflowCommandsRouteAndSerializeOneJSONDocument(t *testing.T) {
 			if len(service.calls) != 1 || !strings.HasPrefix(service.calls[0], tt.wantCall) {
 				t.Fatalf("calls=%v want prefix %q", service.calls, tt.wantCall)
 			}
+			if tt.name == "approve" {
+				if service.approveID != "work-1" || service.approveRevision != 1 || service.approveRequest != "request-1" {
+					t.Fatalf("approve args=(%q,%d,%q), want (work-1,1,request-1)", service.approveID, service.approveRevision, service.approveRequest)
+				}
+			}
 			tt.check(t, out)
+		})
+	}
+}
+
+func TestProjectRegisterRejectsNonObjectAndMalformedInputWithoutServiceCall(t *testing.T) {
+	projectData, err := json.Marshal(workflowProject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "unknown field", input: strings.TrimSuffix(string(projectData), "}") + `,"unexpected":true}`},
+		{name: "trailing value", input: string(projectData) + ` {}`},
+		{name: "null", input: "null"},
+		{name: "malformed", input: "{"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := t.TempDir() + "/project.json"
+			if err := writeTestFile(path, tt.input); err != nil {
+				t.Fatal(err)
+			}
+			service := &fakeWorkflowService{}
+			code, out, errOut := runWorkflow(t, service, []string{"project", "register", path})
+			if code != 1 || out != "" || errOut == "" || len(service.calls) != 0 {
+				t.Fatalf("code=%d stdout=%q stderr=%q calls=%v", code, out, errOut, service.calls)
+			}
 		})
 	}
 }
