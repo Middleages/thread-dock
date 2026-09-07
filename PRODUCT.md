@@ -4,77 +4,92 @@
 
 ## Platform
 
-web
+Windows desktop with WSL execution.
 
 ## Stack
 
-Go 기반 `agentctl`, Wails v2 기반 Windows 데스크톱 앱, React·TypeScript UI. Windows 앱은 `wsl.exe`를 통해 WSL의 구조화된 CLI 계약을 사용한다.
+Go 기반 agentctl, Wails v2 Windows 앱, React·TypeScript UI.
+Windows 앱은 wsl.exe를 통해 구조화된 CLI를 호출한다.
+GitHub.com/GHES의 Issues, Projects, PR과 Wiki를 업무 기록으로 사용한다.
 
 ## Users
 
-주 사용자는 깊은 Git·인프라 지식을 전제로 하지 않는 사내 개발 Operator다. 각 사용자는 자신의 Windows 11 PC와 WSL에서 한 번에 하나의 개발 요청을 감독한다.
+주 사용자는 Windows 11과 WSL에서 여러 프로젝트를 동시에 진행하는 단일 Operator다.
+프로젝트는 단일 저장소이거나 frontend/backend처럼 여러 저장소로 구성된다.
+Agent가 구현하는 동안 다른 프로젝트로 이동하고, 돌아올 때 문맥 회수에 시간과 힘을 쓴다.
 
 ## Product Purpose
 
-개발자의 자연어 요청을 작업 인터뷰로 구체화하고, GitHub Issue 묶음부터 Agent 구현·독립 리뷰·CI·main 병합까지 연결해 사람이 사후 확인할 수 있게 한다. ThreadDock Monitor는 현재 상태와 사람이 해야 할 다음 행동을 즉시 이해시키고 production GitHub Actions workflow를 명시적으로 시작할 수 있게 한다.
+어느 프로젝트로 돌아와도 무엇을 왜 시작했고, 어떤 결정을 했으며,
+어디까지 완료했고 지금 무엇을 해야 하는지 근거와 함께 알 수 있게 한다.
+에이전트의 구현·수정·검증과 프로젝트의 의사결정·문서를 연결한다.
 
-성공은 실제 Issue 5~10개에서 사람의 반복 설명, 잘못된 변경 범위와 중단 복구 부담이 줄어드는 것으로 판단한다.
+성공은 실제 업무 하나의 요청부터 문서 발행까지 이어지고,
+여러 프로젝트를 오가거나 새 대화를 시작해도 같은 설명을 반복하지 않는 것으로 판단한다.
+현재 설계는 목표이며 다중 프로젝트 UI와 새 v2 구현 완료를 주장하지 않는다.
 
 ## Positioning
 
-GitHub Enterprise Server를 영구 업무 기록으로 유지하면서, 개발자 PC의 OpenCode·Herdr·Worktree 실행을 하나의 쉬운 상태 흐름으로 연결한다. 중앙 멀티에이전트 플랫폼을 만들지 않고 로컬 실행과 GitHub 기록 사이의 간극만 메운다.
+프로젝트의 업무 기록과 로컬 실행 사이를 연결하는 개발 운영 도구다.
+GitHub를 영구 기록으로 사용하고 Go가 실행 정체성·상태·검증을 관리한다.
+Main Agent가 사용자의 결정과 결과를 이해할 수 있는 문장으로 남긴다.
 
 ## Operating Context
 
-- 작업 인터뷰와 Issue 묶음 승인은 OpenCode 대화에서 수행한다.
-- WSL의 Local Orchestrator가 `agentctl` interface로 Herdr, Builder, Reviewer와 Worktree를 관리한다.
-- Windows ThreadDock Monitor는 3~5초 간격으로 구조화된 CLI 상태를 읽고 중단·재개·재시도를 제공한다.
-- 제품 저장소의 GitHub Actions가 CI와 production CD를 수행한다.
-- 모든 workflow를 보여주되 `workflow_dispatch` workflow에만 실행 진입점을 제공한다.
-- production dispatch 권한은 Windows 앱에만 보관하며 WSL Agent에는 제공하지 않는다.
-- GHES Releases가 Windows 앱과 Linux `agentctl` binary를 함께 배포한다.
+- 기존 Main Agent 대화에서 요청, 범위와 중요한 결정을 승인한다.
+- Project는 여러 Repository를 묶고 대표 저장소에 Parent Issue와 기본 Wiki를 둔다.
+- Work Item은 저장소별 Task·PR과 전체 완료 조건을 연결한다.
+- 공용 GitHub Projects 보드의 프로젝트별 보기에서 업무 진행과 우선순위를 관리한다.
+- Monitor는 프로젝트 목록·상세·다음 행동·결정·근거 링크를 제공한다.
+- 백그라운드 실행은 UI 종료와 독립적이다. PC 재시작 뒤 reconcile하고 사용자가 resume한다.
+- GitHub PR은 사람이 Create a merge commit 방식으로 병합한다.
+- 사용법·구조·런북은 Wiki에, 코드와 함께 검토할 상세 설계는 해당 저장소에 둔다.
 
 ## Capabilities and Constraints
 
-- Parent Issue 하나와 필요한 Child Issue를 묶음 미리보기 후 등록한다.
-- Parent Issue 하나에서 Builder 최대 두 개를 Worktree로 병렬 실행한다.
-- Reviewer는 별도 context에서 실행하며 Reviewer·CI 자동 수정은 합계 두 번까지다.
-- 느리거나 중단된 Agent에는 연속 세 번까지 Recovery Attempt를 수행한다.
-- 일반 변경은 Merge Gate 통과 후 main에 자동 병합하며 Protected Change는 사람 확인을 요구한다.
-- production 배포는 Operator가 ThreadDock Monitor 또는 GHES에서 직접 시작한다.
-- v0.1은 Windows 11과 WSL, 단일 Operator, 단일 저장소 실행만 지원한다.
-- Worktree Isolation을 기본으로 사용하며 container sandbox는 프로젝트가 이미 지원할 때만 선택한다.
-- 로컬 실행 상태는 사람이 읽을 수 있는 JSON snapshot과 event log로 보존한다.
-- 구현 loop에서는 focused test를 실행하고, Task gate에서는 Task verification과 관련 static check를 실행한다. 전체 suite가 60초 이하면 Task gate에서 실행하고, 초과하면 wave end·shared-interface 변경·final PR에서 실행한다. final PR은 항상 전체 suite를 실행한다.
-- Reviewer는 검증 근거가 부족하거나 이름이 명시된 의문이 있을 때만 검증을 다시 실행한다. 근거에는 command, outcome과 duration을 남긴다.
-- Issue·PR audit comment는 Decision, Dispatch, Review, Verification, Blocker, Integration 범주를 사용하고 summary와 evidence만 남긴다. transcript, token, secret과 긴 raw terminal output은 남기지 않는다.
-- 한국어 UI만 제공하고 전체 Actions 로그와 production health metric은 앱에 저장하거나 포함하지 않는다.
-- 앱과 CLI가 과거 버전이라는 이유만으로 실행을 차단하지 않으며 명령 계약 호환성으로 기능을 판단한다.
-- 새 Release는 자동 다운로드 후 사용자가 적용 시점을 확인하고, 실패 시 직전 정상 버전으로 복구한다.
+- 여러 프로젝트 사이에서 동시에 실행한다. 전역 Agent 호출 한도는 기본 2이며 설정 가능하다.
+- 같은 Project의 변경 업무는 하나씩 실행하고 동일 물리 저장소의 중복 실행을 막는다.
+- 모니터는 목적, 최근 검증된 완료 내용, 현재 단계, 최근 결정과 필요한 다음 행동을 보여준다.
+- 실제 실행 상태와 GitHub 동기화 상태를 분리하고 관찰·발행 시각 및 stale 표시를 제공한다.
+- Task 검증·독립 리뷰와 최종 통합 검증·전체 업무 리뷰를 수행한다.
+- Task별 자동 수정 기본 2회, 확실한 일시적 호출 실패의 자동 재시도 기본 1회를 지원한다.
+- 같은 모델 세션 복원보다 계약·Git·검증·handoff를 통한 완료 작업 보존을 보장한다.
+- Codex와 OpenCode를 역할 프로필로 선택한다. Worker는 GitHub를 직접 쓰지 않는다.
+- 제안과 승인된 결정을 구분하고 새 결정이 이전 결정을 대체한 이유를 남긴다.
+- repository docs를 포함한 최종 HEAD와 Wiki 변경안을 검토한다.
+- 필수 PR 일부만 병합된 상태를 표시하고 전체 완료로 처리하지 않는다.
+- 필수 Wiki·Issue·Projects 반영 실패는 코드 재실행 없이 발행만 재시도한다.
+- 문서만 정리하는 업무도 승인·검토·Wiki 발행 과정을 지원한다.
+- 여러 저장소 원자적 병합, 자동 main 병합과 자동 rollback을 제공하지 않는다.
+- 기존 v1 Run은 새 실행 호환 대상이 아니다. 기록은 보존하고 상태 파일을 자동 변환하지 않는다.
+- production 배포·관측, 자동 업데이트, 전체 workflow catalog와 새 채팅 UI는 후속 범위다.
+- 파일럿 전용 장애 인증·대규모 fault matrix를 이번 제품 완료 조건으로 두지 않는다.
 
 ## Brand Commitments
 
-제품명은 `ThreadDock`이다. Windows 앱은 `ThreadDock Monitor`, WSL CLI는 `agentctl`로 부른다. 화면 문구는 전문 용어보다 쉬운 한국어와 구체적인 다음 행동을 우선한다.
+제품명은 ThreadDock, Windows 앱은 ThreadDock Monitor, WSL CLI는 agentctl이다.
+한국어로 목적·상태·다음 행동을 먼저 설명하고 technical identity는 상세 근거에 둔다.
+진행률을 추정해서 만들거나 오래된 상태를 현재 실행 중이라고 표시하지 않는다.
 
 ## Evidence on Hand
 
-- `gitops-agent-system-design.md`: 기존 운영체계 초안
-- `herdr-security-review.md`: Herdr v0.8.2 조건부 보안 검토
-- `herdr-implementation-guide.html`: Herdr 구현·운영 가이드
-- `CONTEXT.md`: 확정된 도메인 언어
-- `docs/adr/0001-go-wails-for-local-tools.md`: 로컬 도구 기술 선택
-
-실제 제품 UI, 브랜드 자산과 실제 저장소 pilot 결과는 아직 없다. 화면 설계에서 가상의 성과 지표나 운영 증거를 만들지 않는다.
+- [Project Workflow MVP 설계](docs/superpowers/specs/2026-09-07-project-workflow-mvp-design.md)
+- [설계 전환 결정](docs/adr/0006-project-workflow-mvp.md)
+- [용어 모델](CONTEXT.md)
+- 기존 Go 구현과 legacy 운영 문서는 재사용 검토 자료이며 새 MVP 완료 근거가 아니다.
+- 예전 파일럿 결과를 다중 프로젝트·다중 저장소·Monitor 기능의 검증 결과로 표시하지 않는다.
 
 ## Product Principles
 
-- 현재 상태와 다음 행동을 5초 안에 이해시킨다.
-- GitHub를 영구 기록으로 두고 로컬 상태는 복구를 돕는다.
-- 사람의 결정과 Agent의 자동 실행을 명확히 구분한다.
-- 한 사용자의 실제 흐름을 먼저 완성하고 확장 기능은 측정된 필요가 있을 때 추가한다.
-- 복잡한 자체 보안·플랫폼 기능은 만들지 않되 credential, 명령 실행과 production 승인 최소선은 유지한다.
-- 검증 시점을 위험과 feedback 속도에 맞춰 계층화하고, 모든 판단을 짧은 재현 가능한 근거로 남긴다.
+- 프로젝트를 다시 열었을 때 다음 행동을 5초 안에 찾게 한다.
+- 목적·결정·코드·검증·문서를 서로 연결한다.
+- 업무 상태, 실행 상태와 동기화 상태를 구분한다.
+- 일상적인 실패는 제한된 자동 수정으로 처리하고 판단이 필요한 지점에서 근거와 함께 멈춘다.
+- 실제 업무에 필요한 기능과 검증을 우선하고 검증 플랫폼 자체를 제품으로 키우지 않는다.
+- GitHub의 Issue·PR·Projects·Wiki 역할을 활용하고 동일 본문의 중복 원본을 만들지 않는다.
 
 ## Accessibility & Inclusion
 
-Windows 11의 100~200% 화면 배율, 키보드 탐색과 focus 표시를 지원한다. 상태는 색상에만 의존하지 않고 문구와 형태를 함께 사용하며, 기술 식별자는 기본 화면에서 숨기고 필요할 때 상세 보기로 제공한다.
+Windows의 100~200% 배율, 키보드 탐색과 focus 표시를 지원한다.
+상태는 색상만으로 구분하지 않고 텍스트를 함께 표시한다.
+기본 화면에는 업무와 다음 행동을, 상세에는 commit·검증·동기화 근거를 제공한다.

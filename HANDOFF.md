@@ -1,94 +1,64 @@
 # ThreadDock 다음 세션 Handoff
 
-이 문서는 다음 개발 세션의 시작점이다. 먼저 현재 상태를 검증한 뒤 후속 계획을
-실행한다. 완료된 Single-run 작업을 다시 구현하지 않는다.
+## 현재 목표
 
-## 현재 기준선
+여러 프로젝트의 요청·의사결정·구현·문서를 연결하고,
+프로젝트를 바꿔도 현재 상태와 다음 행동을 즉시 회수하는 MVP를 만든다.
 
-- Repository: `https://github.com/Middleages/thread-dock`
-- Branch: `main`
-- Single-run merge commit: `2f6ccb06791a0e6b2579af4fc13022b4bbf0062e`
-- Parent Issue: `#15` closed
-- Parent PR: `#36` merged
-- Open Issue / PR: `0 / 0`
-- Working tree: clean, `main...origin/main`
-- Post-merge gate: Go 1.27 + jq `make check` PASS
+- [현재 설계](docs/superpowers/specs/2026-09-07-project-workflow-mvp-design.md)
+- [제품 범위](PRODUCT.md)
+- [용어 모델](CONTEXT.md)
+- [전환 결정 ADR 0006](docs/adr/0006-project-workflow-mvp.md)
 
-Single-run은 GitHub.com과 GHES endpoint profile, registration outage 복구,
-중단 전·WSL 후 같은 RUN 재개, Builder/Reviewer Worktree 분리와 strict evidence
-검증까지 구현했다. 현재 단계는 Reviewer packet 전달에서 끝난다. 제품 PR 생성,
-CI, main 자동 병합과 배포는 아직 수행하지 않는다.
+## 기준선과 변경 상태
 
-## 최종 파일럿 근거
+- Repository: Middleages/thread-dock.
+- 구현 기준 main: ce42f403b0a758acf3e647394b1c04a5f2c447c7.
+- 작업 브랜치: agent/runtime-adapters-mvp.
+- 최초 runtime-adapters 설계 커밋: f669ec6008ee3ccc14d688aad83700a1da84fceb.
+- 이 handoff는 설계 전환을 기록한다. 새 MVP 구현·UI·실사용 검증은 아직 완료되지 않았다.
+- 새 세션에서는 실제 branch HEAD와 local/remote 변경을 확인하고 작업을 시작한다.
 
-- Pilot repository: `https://github.com/middleages-dev-system/thread-dock-pilot`
-- RUN: `run-1787939711953381828-1`
-- Frozen source HEAD: `4ea5ca00ed1f788280ea1aab3f53b4a9dcc880c7`
-- Result: 전체 PASS
-- Evidence:
-  `/home/appuser/.local/state/threaddock-github-com-final-pilot/pilot-results/run-1787939711953381828-1.md`
-- Frozen checkout: `/home/appuser/thread-dock-final-pilot`
-- Config: `/home/appuser/.config/threaddock/github-com-final-pilot.json`
+## 확정된 제품 방향
 
-확인된 항목은 simulated GitHub outage, 같은 RUN 회수, 실제 WSL boot 변경,
-snapshot identity 보존, Parent/Child marker count `2`, Worktree duplicate `0`,
-Builder/Reviewer terminal·workspace 분리, source SHA·checkout 불변과 evidence secret
-scan이다.
+- Project 하나에 Repository 여러 개, Work Item 하나에 저장소별 실행·PR 여러 개를 지원한다.
+- 대표 저장소에 Parent Issue와 Wiki를 두고 공용 Projects 보드에서 업무를 모은다.
+- Monitor의 목록·상세, 중간 handoff, 결정 이력과 Wiki는 MVP에 포함한다.
+- 여러 Project를 동시에 진행하고 완료 Task를 보존하며 작업을 재개한다.
+- 제한된 자동 수정·재검토를 제공하고 모든 main 병합은 사람이 한다.
+- 필수 PR 일부의 병합은 전체 업무 완료가 아니다.
+- 기존 파일럿 Run을 새 MVP에서 이어갈 요구는 없다.
+- 혼동을 만드는 이전 설계·계획 파일은 현재 tree에서 제거하고 Git 이력으로 남긴다.
 
-파일럿 RUN과 Worktree는 증거다. 현재 phase가 `reviewing`이므로 `agentctl cleanup`,
-강제 Worktree 삭제, Issue 삭제를 실행하지 않는다. 개발용 `.worktrees/issue-*`만
-이미 safe removal했다.
+## 설계 기본값
 
-## 환경 결정
+전역 호출 한도 2, Project별 변경 업무 1개, Task별 자동 수정 2회,
+확실한 일시적 호출 실패 재시도 1회를 시작 기본값으로 한다.
+이는 무제한 자동 진행을 방지하는 구현 선택이며 실제 사용 근거로 조정할 수 있다.
+권한은 Trusted Workstation과 runtime 정책 수준으로 설명하고
+완전한 credential 격리를 했다고 주장하지 않는다.
 
-- OpenCode `1.18.25`, Herdr `0.8.2`, jq `1.8.2`가 사용자 영역에 설치돼 있다.
-- OpenCode 기본 모델은
-  `/home/appuser/.config/opencode/opencode.json`에서 `opencode/big-pickle`이다.
-- MiMo 무료 provider가 live pilot 중 HTTP 404를 반환했다. 같은 terminal identity와
-  RUN에서 Big Pickle로 바꿔 작업을 회수했다.
-- GitHub.com public config는 canonical
-  `https://github.com` + `https://api.github.com`만 허용한다.
-- `--simulate-outage`는 첫 start에만 양 endpoint가
-  `http://127.0.0.1:1`인 secret-free 임시 config를 사용한다.
-- Single-run에서 ProjectV2는 사용하지 않는다. 파일럿 config의 Project ID 값은
-  validation placeholder이므로 Project 자동화를 검증한 근거로 사용하지 않는다.
+## 다음 구현 순서
 
-Herdr 0.8.2 OpenCode 응답에는 provider session ID가 없다. 이 경우
-`herdr-terminal:<terminal_id>`를 execution identity로 사용한다. 같은 terminal에서
-프로세스를 수동 교체하면 provider session보다 구분이 약해지는 trade-off는
-`herdr-security-review.md`와 Issue `#23`에 기록돼 있다.
+1. Project/Repository/Work Item 식별자와 Contract v2, 상태 revision·CLI 계약.
+2. Issue·Projects 매핑, 결정·handoff와 Monitor 목록·상세.
+3. Go Git·검증, Runtime adapter, Task 리뷰·수정·pause/resume.
+4. 다중 저장소 의존성·검증과 PR 준비·부분 병합.
+5. repository docs 최종 gate, Wiki 발행·재시도와 전체 Finalize.
 
-## 다음 목표
+각 단계의 파일·명령·검증을 구체화한 구현 계획을 새 설계에 맞춰 작성한다.
+삭제된 옛 계획이나 single-run/parallel pilot 절차를 현재 실행 계획으로 되살리지 않는다.
 
-다음 increment는
-[`docs/superpowers/plans/2026-08-28-threaddock-parallel-merge.md`](docs/superpowers/plans/2026-08-28-threaddock-parallel-merge.md)다.
-두 Builder 병렬 실행, bounded repair/recovery, Draft PR, Merge Gate와 감독형 main
-자동 병합을 구현한다.
+## 재사용과 검증
 
-첫 우선순위는 slow/stopped model recovery supervisor다. live pilot에서 provider
-404 후 사람이 모델을 바꾸고 같은 RUN을 이어야 했기 때문이다. 기존 계획의 정확한
-계속 지시, 진전 감지, 연속 3회 recovery cap을 현재 Herdr terminal identity와
-evidence parser interface에 맞춰 먼저 재검증한다.
+기존 contract, state, pathscope, worktree, integration과 Herdr의 좁은 기능을 검토해
+재사용한다. 기존 자동 병합·세션 복구 상태 기계 전체를 보존할 의무는 없다.
+기존 project-template은 v1 자료이며 새 MVP 자동 설치에 사용하기 전에 새 계약에 맞춰 정리한다.
 
-## 다음 세션 실행 순서
+구현 중에는 focused 검증을, 코드 변경 완료 시에는 make check를 실행한다.
+새 설계 문서의 인수 조건을 실제 코드 검증으로 대체하지 않는다.
+문서 변경만 수행한 세션은 링크·일관성 검사와 코드 실행 검사를 구분해 보고한다.
+실사용 파일럿과 GitHub 외부 업무 생성은 승인된 대상·범위에서만 수행한다.
 
-1. `git status --short --branch`, `git rev-parse HEAD`, GitHub open Issue/PR을 확인한다.
-2. 이 문서, `CONTEXT.md`, parallel-merge 계획, ADR
-   `docs/adr/0004-tiered-test-cycle.md`를 읽는다.
-3. 기존 parallel-merge 계획이 이번 increment에서 변경된 GitHub endpoint,
-   agent naming, terminal identity, evidence normalization interface와 일치하는지
-   점검하고 필요한 계획 수정만 한다.
-4. Main Sol이 Parent Issue와 독립 Child Issue를 등록한다. 병렬 가능한 작업만
-   별도 Worktree로 분리한다.
-5. 구현은 5.6 Luna, 각 Child와 Parent 전체 리뷰는 구현 문맥과 분리된 fresh Sol을
-   사용한다. Decision, Blocker, Review, Verification은 Issue/PR comment로 남긴다.
-6. focused test → Task gate → wave-end/full suite 순서로 실행한다. 매 Task마다 full
-   suite를 반복하지 않는다.
-7. final pilot 전에는 고정 checkout을 사용한다. 개발 중 움직인 checkout의 pilot은
-   진단 근거일 뿐 Merge Gate PASS로 사용하지 않는다.
-
-## 시작 검증
-
-호스트에 Go가 없으면 기존 방식대로 Go 1.27 Docker image에 repository를 mount하고
-jq를 임시 설치해 `make check`를 실행한다. 토큰, raw OpenCode transcript와 자격
-증명은 문서, Issue, PR 또는 evidence에 복사하지 않는다.
+예전 실행 근거가 필요하면 Git 이력의 문서와 기존 외부 기록을 확인한다.
+새 v2가 기존 v1 상태 파일을 자동 변환하거나 예전 업무를 다시 실행하게 하지 않는다.

@@ -1,35 +1,42 @@
 # ThreadDock
 
-ThreadDock은 Go `1.27.0` 표준 라이브러리로 동작하는 로컬 개발 오케스트레이터입니다.
-현재 작업 계약 버전은 `1`이며, 한 Builder와 독립 Reviewer를 사용하는 복구 가능한
-Single-run 단계까지 구현되어 있습니다.
+여러 프로젝트를 에이전트와 진행하면서 요청, 결정, 구현, 검증과 문서를 Git/GitHub에
+연결하는 로컬 개발 운영 도구입니다. 프로젝트를 다시 열었을 때 현재 상태와 다음
+행동을 빠르게 회수하는 것을 목표로 합니다.
 
-Single-run은 GHES에 Parent/Child Issue를 등록하고 격리 Worktree에서 작업한 뒤
-Reviewer에게 전달합니다. 아직 PR 생성, main 병합, CI/CD와 운영 배포는 수행하지
-않습니다.
+## 현재 설계와 구현 상태
 
-## 시작하기
+2026-09-07부터 프로젝트 중심 MVP를 기준으로 개발합니다.
+프로젝트는 저장소 하나 또는 여러 개를 묶고, 업무는 저장소별 실행·PR을 연결합니다.
+ThreadDock Monitor, GitHub Projects와 Wiki가 MVP에 포함됩니다.
 
-계약 형식만 확인하려면 [Foundation 파일럿](docs/operator/foundation-pilot.md)을,
-사내 GHES/OpenCode 복구 시험을 하려면
-[Single-run 파일럿 빠른 시작](docs/operator/single-run-pilot.md)을 따르십시오.
+이번 변경은 설계 전환과 문서 정리입니다. 현재 Go 코드는 기존 v1 구현을 포함하며
+새 다중 프로젝트 흐름·UI·Contract v2의 구현 완료를 뜻하지 않습니다.
+기존 Run을 새 MVP에서 실행하는 호환성은 목표가 아닙니다.
 
-## 문서
+## 시작 문서
 
-- [시스템 설계 명세](gitops-agent-system-design.md)
-- [ThreadDock 구현 로드맵](docs/superpowers/plans/2026-08-28-threaddock-roadmap.md)
-- [Foundation 파일럿 walkthrough](docs/operator/foundation-pilot.md)
-- [Single-run 파일럿 빠른 시작](docs/operator/single-run-pilot.md)
-- [OpenCode 역할 Agent routing 운영 절차](docs/operator/opencode-role-agents.md)
+- [현재 MVP 설계](docs/superpowers/specs/2026-09-07-project-workflow-mvp-design.md)
+- [제품 정의](PRODUCT.md)
+- [용어 모델](CONTEXT.md)
+- [현재 handoff와 구현 순서](HANDOFF.md)
+- [설계 전환 결정 ADR 0006](docs/adr/0006-project-workflow-mvp.md)
 
-검증과 미리보기의 현재 계약 구현은 `internal/contract`에 있으며, 반복 가능한
-검사 게이트는 `make check`입니다.
+충돌하는 이전 설계·계획은 현재 tree에서 삭제했고 Git 이력에서 확인할 수 있습니다.
+docs/operator와 project-template은 v1 참고 자료입니다. 새 기능은 현재 설계를 따릅니다.
 
-## 검증 정책
+## 기존 구현 참고
 
-구현 loop에서는 변경 범위에 맞는 focused 검증을 실행합니다. Task gate에서는 Task verification과 관련 static check를 실행하며, 전체 suite가 60초 이하면 이때 전체 suite도 실행합니다. 전체 suite가 60초를 초과하면 wave end, shared-interface 변경 후와 final PR에서 실행하고, final PR에서는 항상 실행합니다.
+- [Foundation 파일럿](docs/operator/foundation-pilot.md)
+- [Single-run 운영 절차](docs/operator/single-run-pilot.md)
+- [OpenCode 역할 routing](docs/operator/opencode-role-agents.md)
 
-Makefile focused target은 package를 명시적으로 받아야 합니다.
+위 절차는 기존 binary 설명이며 새 MVP의 실행 계획이나 완료 조건이 아닙니다.
+
+## 검증
+
+구현 중에는 focused 검증을, 최종 코드 변경에는 make check를 수행합니다.
+문서 변경은 링크·내용 일관성 검사와 실제 Go 검사를 구분해 보고합니다.
 
 ```sh
 make test-focused PKGS="./internal/contract"
@@ -37,6 +44,6 @@ make vet-focused PKGS="./internal/contract"
 make check
 ```
 
-`PKGS`가 비어 있으면 target은 설명과 함께 실패합니다. 검증 기록에는 command, outcome과 duration을 남깁니다. Reviewer는 근거가 부족하거나 이름이 명시된 의문이 있을 때만 재실행합니다.
-
-Issue·PR audit comment는 `Decision`, `Dispatch`, `Review`, `Verification`, `Blocker`, `Integration` 중 하나로 분류하고 summary와 evidence만 남깁니다. transcript, token, secret과 긴 raw terminal output은 기록하지 않습니다.
+PKGS가 비어 있으면 focused target은 실패합니다.
+검증 근거는 명령, 대상 commit, 결과와 소요 시간을 남깁니다.
+Issue·PR에는 결정과 근거를 요약하고 credential·환경 dump·전체 transcript는 남기지 않습니다.

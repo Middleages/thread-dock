@@ -1,3 +1,5 @@
+> **Legacy v1 참고 자료.** 기존 구현·파일럿의 절차와 관찰 기록이며 새 MVP의 실행 계획이나 완료 조건이 아닙니다. [현재 설계](../superpowers/specs/2026-09-07-project-workflow-mvp-design.md)를 먼저 따르십시오.
+
 # Foundation contract-only pilot
 
 이 절차는 ThreadDock Foundation의 첫 계약 전용 파일럿입니다. 승인 전에
