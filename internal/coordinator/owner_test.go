@@ -147,9 +147,22 @@ func TestOwnerLeaseUsesLiveFlockAndCrashUnlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stdin, err := hold.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := false
+	defer func() {
+		_ = stdin.Close()
+		if started && hold.ProcessState == nil {
+			_ = hold.Process.Kill()
+			_ = hold.Wait()
+		}
+	}()
 	if err := hold.Start(); err != nil {
 		t.Fatalf("start holding helper: %v", err)
 	}
+	started = true
 	ready, err := bufio.NewReader(stdout).ReadString('\n')
 	if err != nil || strings.TrimSpace(ready) != "ready" {
 		_ = hold.Process.Kill()
@@ -159,6 +172,7 @@ func TestOwnerLeaseUsesLiveFlockAndCrashUnlocks(t *testing.T) {
 	if err := hold.Process.Kill(); err != nil {
 		t.Fatalf("kill holding helper: %v", err)
 	}
+	_ = stdin.Close()
 	if err := hold.Wait(); err == nil {
 		t.Fatal("holding helper unexpectedly exited cleanly after kill")
 	}
