@@ -197,6 +197,56 @@ func TestSameRequestApplyReplayDoesNotDoubleReserveInvocation(t *testing.T) {
 	}
 }
 
+func TestStoreApplyRejectsFreshInvocationWhileInvocationIsActiveWithoutWrite(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(t.TempDir())
+	initial := validSnapshot()
+	task := initial.TaskStates["task-1"]
+	task.BuilderAttempt = 1
+	task.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical-1", Role: roleBuilder, BuilderAttempt: 1, Purpose: "task invocation"}
+	task.Invocation = &InvocationState{
+		InvocationID:       "inv-1",
+		LogicalWorkID:      "logical-1",
+		Role:               roleBuilder,
+		ReturnStage:        TaskPending,
+		LogicalProfile:     "builder",
+		RuntimeFingerprint: "runtime-v1",
+	}
+	task.InvocationHistory = []InvocationID{"inv-1"}
+	initial.TaskStates["task-1"] = task
+	if _, err := createPlan(store, ctx, initial); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.Load(ctx, initial.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, err := store.Apply(ctx, transitionRequest(t, snapshot, "approve", WorkTransition{Action: WorkApprove, ApprovalRef: "approval", ContractHash: snapshot.ContractHash}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = store.Load(ctx, approved.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := cloneSnapshot(t, snapshot)
+	fresh := builderReserveTransition(invocationAt(2))
+	fresh.InvocationID = "inv-2"
+	if _, err := store.Apply(ctx, taskRequest(t, snapshot, "reserve-inv-2", fresh)); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("fresh invocation while active error = %v, want invalid transition", err)
+	}
+	after, err := store.Load(ctx, snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("invalid fresh reservation changed persisted snapshot: before=%#v after=%#v", before, after)
+	}
+	if got, want := marshalSnapshot(t, after), marshalSnapshot(t, before); string(got) != string(want) {
+		t.Fatalf("invalid fresh reservation changed persisted bytes: before=%s after=%s", want, got)
+	}
+}
+
 func TestReconcileNotStartedRejectsLaunchRequestedOrInsufficientProof(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
