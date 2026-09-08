@@ -251,6 +251,10 @@ func (d *publicationDispatcher) handleRuntimeEvent(q *publicationQueue, event ru
 	if len(ops) == 0 {
 		delete(q.runtimeOps, event.key)
 	}
+	if q.ctx.Err() != nil {
+		d.resolveRuntimeWaiters(op, CommandResult{Err: ErrDispatcherClosed})
+		return
+	}
 	if event.result.InvocationID != event.key.invocationID {
 		d.resolveRuntimeWaiters(op, CommandResult{Err: ErrRuntimeStale})
 		return
@@ -304,7 +308,10 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 	case runtimeObserve:
 		switch event.observation.State {
 		case RuntimeObservationActive:
-			if strings.TrimSpace(event.observation.ProviderIdentity) == "" && !hasRuntimeProvider(invocation) {
+			if task.Status != statev2.TaskInvocationReserved && (strings.TrimSpace(event.observation.ProviderIdentity) == "" || event.observation.ProviderIdentity != invocation.ProviderIdentity) {
+				return d.runtimeUnknown(q, snapshot, event.key, "runtime active identity does not match persisted identity")
+			}
+			if task.Status == statev2.TaskInvocationReserved && strings.TrimSpace(event.observation.ProviderIdentity) == "" {
 				return d.runtimeUnknown(q, snapshot, event.key, "runtime active identity is unknown")
 			}
 			if task.Status == statev2.TaskInvocationReserved {
@@ -336,6 +343,8 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 				if err != nil {
 					return CommandResult{Snapshot: snapshot, Err: err}
 				}
+			} else if strings.TrimSpace(event.observation.ProviderIdentity) == "" || event.observation.ProviderIdentity != invocation.ProviderIdentity {
+				return d.runtimeUnknown(q, snapshot, event.key, "runtime ended identity does not match persisted identity")
 			}
 			return d.applyRuntimeAndReload(q.ctx, snapshot, task, invocation, statev2.TaskConfirmTermination, event.observation.Diagnostic)
 		case RuntimeObservationNotStarted, RuntimeObservationUnknown:
@@ -431,6 +440,9 @@ func hasRuntimeProvider(invocation *statev2.InvocationState) bool {
 
 func (d *publicationDispatcher) applyRuntimeTask(ctx context.Context, snapshot statev2.WorkSnapshot, task statev2.TaskExecutionState, invocation *statev2.InvocationState, action statev2.TaskAction, identity string) (statev2.WorkSnapshot, error) {
 	transition := runtimeTransition(task, invocation, action, identity)
+	if action == statev2.TaskNeedsOperatorAction {
+		transition.Blocker = &statev2.OperatorBlocker{Kind: statev2.BlockerKindRuntimeUnknown, OperatorRef: string(d.ownerID), TaskID: task.TaskID, InvocationID: invocation.InvocationID, Diagnostic: identity}
+	}
 	request, err := d.runtimeRequest(snapshot, transition)
 	if err != nil {
 		return snapshot, err
@@ -458,6 +470,18 @@ func runtimeTransition(task statev2.TaskExecutionState, invocation *statev2.Invo
 	}
 	if action == statev2.TaskMarkRunning {
 		transition.Invocation = &statev2.InvocationState{ProviderIdentity: identity}
+	} else if action == statev2.TaskRequestTermination || action == statev2.TaskConfirmTermination {
+		reason := strings.TrimSpace(identity)
+		if reason == "" {
+			reason = "runtime terminated"
+		}
+		if len([]byte(reason)) > statev2.MaxDiagnosticBytes {
+			reason = string([]byte(reason)[:statev2.MaxDiagnosticBytes])
+			for !utf8.ValidString(reason) {
+				reason = reason[:len(reason)-1]
+			}
+		}
+		transition.Reason = reason
 	}
 	return transition
 }
