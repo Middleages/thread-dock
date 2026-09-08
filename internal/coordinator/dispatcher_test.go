@@ -55,6 +55,80 @@ func TestDispatcherDeduplicatesPublicationAndReleasesOwner(t *testing.T) {
 	}
 }
 
+func TestDispatcherRuntimeAndPublicationShareWorkQueue(t *testing.T) {
+	st := &sharedWorkState{runtimeTestState: runtimeTestState{snapshot: runtimeTestSnapshot()}}
+	st.snapshot.Publications = map[statev2.PublicationIntentID]statev2.PublicationState{
+		"intent-1": {IntentID: "intent-1", Key: "issue:1", Generation: 1, Kind: statev2.PublicationParentIssue, Status: statev2.PublicationPending, PayloadHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PayloadRef: "artifact://one", Target: statev2.PublicationTarget{Host: "github.com", Key: "issue:1"}, CompletionRequired: true},
+	}
+	rt := &barrierRuntime{launchEntered: make(chan struct{}), launchRelease: make(chan struct{}), observeEntered: make(chan struct{}), observeRelease: make(chan struct{})}
+	allow := make(chan struct{})
+	close(allow)
+	pub := &blockingPublisher{allow: allow}
+	locker := &fakeOwnerLocker{}
+	d := NewDispatcherWithRuntime(st, pub, rt, locker, OwnerID("owner-1"), 42, time.Now().UTC())
+	runtimeResult := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
+	select {
+	case <-rt.launchEntered:
+	case <-time.After(time.Second):
+		t.Fatal("runtime launch did not enter barrier")
+	}
+	publicationResult := d.SubmitPublication(context.Background(), "work-1", "intent-1")
+	select {
+	case result := <-publicationResult:
+		if result.Err != nil {
+			t.Fatalf("publication result: %v", result.Err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("publication was blocked by runtime worker")
+	}
+	if got := len(d.(*publicationDispatcher).queues); got != 1 {
+		t.Fatalf("work queues = %d, want 1", got)
+	}
+	if locker.leases != 1 {
+		t.Fatalf("owner leases = %d, want 1", locker.leases)
+	}
+	close(rt.launchRelease)
+	select {
+	case result := <-runtimeResult:
+		if result.Err != nil {
+			t.Fatalf("runtime result: %v", result.Err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runtime result stranded")
+	}
+	if err := d.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type sharedWorkState struct{ runtimeTestState }
+
+func (s *sharedWorkState) Apply(ctx context.Context, req statev2.TransitionRequest) (statev2.WorkSnapshot, error) {
+	if req.Publication == nil {
+		return s.runtimeTestState.Apply(ctx, req)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if req.ExpectedRevision != s.snapshot.Revision {
+		return s.snapshot, statev2.ErrStaleRevision
+	}
+	hash, err := statev2.TransitionPayloadHash(req)
+	if err != nil || hash != req.PayloadHash {
+		return s.snapshot, errors.New("invalid transition hash")
+	}
+	p := s.snapshot.Publications[req.Publication.IntentID]
+	s.transitions = append(s.transitions, req)
+	if req.Publication.Action == statev2.PublicationBegin {
+		p.Status = statev2.PublicationPending
+	} else if req.Publication.Action == statev2.PublicationComplete {
+		p.Status = statev2.PublicationCompleted
+		p.Receipt = req.Publication.Receipt
+	}
+	s.snapshot.Publications[p.IntentID] = p
+	s.snapshot.Revision++
+	return s.snapshot, nil
+}
+
 func TestDispatcherSkipsPausedIntentQueuedBeforePause(t *testing.T) {
 	workID := contractv2.WorkID("work-1")
 	intentID := statev2.PublicationIntentID("intent-1")
