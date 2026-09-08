@@ -13,9 +13,33 @@ import (
 	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
+	"thread-dock/internal/coordinator"
 	"thread-dock/internal/registry"
 	statev2 "thread-dock/internal/state/v2"
 )
+
+func TestCoordinatorAwareWorkflowExposesExplicitReconcileSeam(t *testing.T) {
+	workID := contractv2.WorkID("work-1")
+	reconciler := &workflowReconcilerFake{result: coordinator.ReconcileResult{WorkID: workID, State: statev2.StatePaused, NextAction: "resume", EvidenceRefs: []string{"evidence://pause"}}}
+	service := NewWithCoordinator(nil, nil, reconciler)
+	got, err := service.ReconcileWork(context.Background(), workID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkID != workID || got.NextAction != "resume" || len(got.EvidenceRefs) != 1 || reconciler.calls != 1 {
+		t.Fatalf("result=%#v calls=%d", got, reconciler.calls)
+	}
+}
+
+type workflowReconcilerFake struct {
+	result coordinator.ReconcileResult
+	calls  int
+}
+
+func (r *workflowReconcilerFake) Reconcile(context.Context, contractv2.WorkID) (coordinator.ReconcileResult, error) {
+	r.calls++
+	return r.result, nil
+}
 
 func validContract() contractv2.WorkItemContract {
 	return contractv2.WorkItemContract{Version: 2, WorkID: "work-1", ProjectID: "project-1", Revision: 1, Request: "ship it", AcceptanceCriteria: []string{"works"}, RepositoryPlans: []contractv2.RepositoryPlan{{RepoKey: "app", BaseSHA: "0123456789012345678901234567890123456789", TargetBranch: "main"}}, Tasks: []contractv2.Task{{TaskID: "task-1", RepoKey: "app", AllowedPaths: []string{"internal"}, AcceptanceCriteria: []string{"works"}}}, Documentation: contractv2.DocumentationPlan{Required: false, Reason: "not required"}, ExecutionProfiles: contractv2.ExecutionProfiles{Builder: "builder", Reviewer: "reviewer", Documenter: "documenter"}}

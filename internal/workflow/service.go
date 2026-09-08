@@ -14,18 +14,32 @@ import (
 	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
+	"thread-dock/internal/coordinator"
 	"thread-dock/internal/monitor"
 	"thread-dock/internal/registry"
 	statev2 "thread-dock/internal/state/v2"
 )
 
 type Service struct {
-	projects registry.Store
-	works    statev2.Store
+	projects   registry.Store
+	works      statev2.Store
+	reconciler Reconciler
+}
+
+// Reconciler is the narrow coordinator port used by explicit workflow
+// recovery. Status and Snapshot never call it implicitly.
+type Reconciler interface {
+	Reconcile(context.Context, contractv2.WorkID) (coordinator.ReconcileResult, error)
 }
 
 func New(projects registry.Store, works statev2.Store) *Service {
 	return &Service{projects: projects, works: works}
+}
+
+// NewWithCoordinator preserves New's construction while allowing callers to
+// opt in to explicit pause/resume/reconcile mutations.
+func NewWithCoordinator(projects registry.Store, works statev2.Store, reconciler Reconciler) *Service {
+	return &Service{projects: projects, works: works, reconciler: reconciler}
 }
 func (s *Service) RegisterProject(ctx context.Context, p registry.Project, expected contractv2.Revision, request contractv2.RequestID) (registry.Project, error) {
 	if expected != 0 {
@@ -133,6 +147,42 @@ func (s *Service) ApproveWork(ctx context.Context, id contractv2.WorkID, expecte
 }
 func (s *Service) Status(ctx context.Context, id contractv2.WorkID) (statev2.WorkSnapshot, error) {
 	return s.works.Load(ctx, id)
+}
+
+// PauseWork records a durable pause request. It does not launch, terminate,
+// or publish; the coordinator settles already-started work on ReconcileWork.
+func (s *Service) PauseWork(ctx context.Context, id contractv2.WorkID, expected contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {
+	return s.applyControl(ctx, id, expected, request, statev2.WorkPause)
+}
+
+// ResumeWork clears a durable pause request after the coordinator has settled
+// active invocations.
+func (s *Service) ResumeWork(ctx context.Context, id contractv2.WorkID, expected contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {
+	return s.applyControl(ctx, id, expected, request, statev2.WorkResume)
+}
+
+// ReconcileWork is explicit: workflow status reads never activate recovery.
+func (s *Service) ReconcileWork(ctx context.Context, id contractv2.WorkID) (coordinator.ReconcileResult, error) {
+	if s.reconciler == nil {
+		return coordinator.ReconcileResult{WorkID: id}, errors.New("coordinator reconciler is not configured")
+	}
+	return s.reconciler.Reconcile(ctx, id)
+}
+
+func (s *Service) applyControl(ctx context.Context, id contractv2.WorkID, expected contractv2.Revision, request contractv2.RequestID, action statev2.WorkAction) (statev2.WorkSnapshot, error) {
+	if request == "" {
+		return statev2.WorkSnapshot{}, errors.New("request ID is required")
+	}
+	// Pause/resume carry no observation timestamp in the state contract; keeping
+	// this canonical payload stable makes request replay idempotent.
+	transition := statev2.WorkTransition{Action: action}
+	apply := statev2.TransitionRequest{WorkID: id, ExpectedRevision: expected, RequestID: request, Work: &transition}
+	var err error
+	apply.PayloadHash, err = statev2.TransitionPayloadHash(apply)
+	if err != nil {
+		return statev2.WorkSnapshot{}, err
+	}
+	return s.works.Apply(ctx, apply)
 }
 
 func (s *Service) Snapshot(ctx context.Context, at time.Time) (monitor.Snapshot, error) {

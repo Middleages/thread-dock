@@ -26,13 +26,18 @@ type RuntimeObservation struct {
 type Runtime interface {
 	Observe(context.Context, statev2.InvocationState) (RuntimeObservation, error)
 	Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity) (string, error)
+	// Terminate returns nil only after the provider has confirmed that this
+	// exact invocation ended. An adapter that only sends a signal or request
+	// must continue observing and return a non-nil error until confirmation.
 	Terminate(context.Context, statev2.InvocationState) error
 }
 
 type RuntimeResult struct {
 	InvocationID statev2.InvocationID
-	Artifact     json.RawMessage
-	Err          error
+	// Artifact is reserved for a future runtime-adapter/candidate-ingestion
+	// slice; the lifecycle port currently cannot produce an artifact.
+	Artifact json.RawMessage
+	Err      error
 }
 
 const (

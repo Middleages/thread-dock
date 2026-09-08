@@ -91,8 +91,8 @@ func TestPublicationObservationMatrix(t *testing.T) {
 		{name: "remote match adoption", observation: PublicationObservation{State: PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: at}}, wantStatus: statev2.PublicationCompleted, wantCalls: 0},
 		{name: "invalid match receipt conflict", observation: PublicationObservation{State: PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{NodeID: " node-1", PublishedAt: at}}, wantStatus: statev2.PublicationConflict, wantCalls: 0},
 		{name: "unknown conflict", observation: PublicationObservation{State: PublicationObservationUnknown}, wantStatus: statev2.PublicationConflict, wantCalls: 0},
-		{name: "observe error", observeErr: errors.New("provider unavailable"), wantStatus: statev2.PublicationFailed, wantCalls: 0},
-		{name: "publish error", publishErr: errors.New("provider unavailable"), wantStatus: statev2.PublicationFailed, wantCalls: 1},
+		{name: "observe error is ambiguous conflict", observeErr: errors.New("provider unavailable"), wantStatus: statev2.PublicationConflict, wantCalls: 0},
+		{name: "publish error is ambiguous conflict", publishErr: errors.New("provider unavailable"), wantStatus: statev2.PublicationConflict, wantCalls: 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -129,6 +129,23 @@ func TestPublicationMutationAfterObservePreventsPublish(t *testing.T) {
 	result := <-resultCh
 	if !errors.Is(result.Err, ErrPublicationPaused) || pub.publishes != 0 {
 		t.Fatalf("result=%v publish calls=%d", result.Err, pub.publishes)
+	}
+	_ = d.Close(context.Background())
+}
+
+func TestAmbiguousPublishErrorBlocksLaterSubmissionWithoutRepublish(t *testing.T) {
+	st := newFakeState("work-1", "intent-1", statev2.PublicationPending)
+	allow := make(chan struct{})
+	close(allow)
+	pub := &blockingPublisher{allow: allow, publishErr: errors.New("remote timeout")}
+	d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	first := <-d.SubmitPublication(context.Background(), "work-1", "intent-1")
+	if first.Err != nil || st.snapshot.Publications["intent-1"].Status != statev2.PublicationConflict {
+		t.Fatalf("first result=%v status=%q", first.Err, st.snapshot.Publications["intent-1"].Status)
+	}
+	second := <-d.SubmitPublication(context.Background(), "work-1", "intent-1")
+	if second.Err == nil || pub.publishes != 1 {
+		t.Fatalf("second result=%v publish calls=%d, want one publish and a blocked retry", second.Err, pub.publishes)
 	}
 	_ = d.Close(context.Background())
 }

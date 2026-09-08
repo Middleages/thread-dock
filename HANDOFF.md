@@ -136,6 +136,21 @@ assertion도 더 엄밀하게 만들 수 있다. final review가 찾은 실제 a
 별도 residual Task와 fresh review로 수정했다. 후속 변경이 이 영역을 건드리면 해당 parked test를
 먼저 보강하고 동일한 성공 근거로 간주하지 않는다.
 
+### Work Item coordinator 구현
+
+[`docs/superpowers/plans/2026-09-08-work-item-coordinator.md`](docs/superpowers/plans/2026-09-08-work-item-coordinator.md)의 네 단계를 작은 PR로 직렬 구현했다.
+
+- [PR #51](https://github.com/Middleages/thread-dock/pull/51): process-lifetime owner lease와 secure owner record. merge commit `8583762`.
+- [PR #52](https://github.com/Middleages/thread-dock/pull/52): Work별 publication single queue, pre-I/O 재검증, match/adopt·absent/write·unknown/conflict. merge commit `cc124b1`.
+- [PR #53](https://github.com/Middleages/thread-dock/pull/53): durable begin-launch 뒤 비동기 Launch/Observe/Terminate, queue event settlement와 cancellation/idempotence. merge commit `25f01ad`.
+- 현재 branch `agent/coordinator-restart-reconcile`: one-shot restart reconcile, workflow pause/resume/reconcile seam, owner-loss·pause·publication fake-backed integration과 atomic `Coordinator.Activate`. 최종 검토 코드 HEAD는 `6829ad51834003c1ddcdb6e252798e8ad9bd7af5`다.
+
+`Coordinator.Activate`는 한 Work owner lease를 획득하고 같은 lease를 유지한 채 restart reconcile을 끝낸 뒤 queue에 넘긴다. 활성화 전 runtime/publication submit은 거부한다. untyped Publisher `Observe`/`Publish` 오류는 원격 결과가 모호하므로 재시도 가능한 failed가 아니라 privacy-safe conflict로 기록한다. `Runtime.Terminate`의 nil은 exact invocation 종료가 provider에서 확인됐다는 port 계약이다.
+
+각 Task는 Luna high 구현과 fresh Sol medium review로 진행했지만 resolved model/effort metadata는 계속 `unverified`다. Task 2의 일부 test-only 보정과 Task 3 shutdown 보정은 사전 RED를 캡처하지 못해 audit gap으로 정직하게 남겼다. 실제 provider adapter, runtime Artifact ingestion, GitHub Projects/Wiki 쓰기, native WSL Go, Windows/Wails bridge는 아직 검증하지 않았다.
+
+다음 구현은 coordinator를 더 확장하지 않는다. 먼저 실제 runtime adapter 하나와 `RuntimeResult.Artifact`→candidate/review evidence ingestion 계약을 별도 작은 계획으로 고정하고 fake coordinator 뒤에 연결한다. 그 검토가 끝난 뒤 GitHub Publisher adapter와 실제 Projects/Wiki 권한·marker reconciliation을 별도 slice로 진행한다. 두 외부 adapter를 동시에 시작하지 않는다.
+
 기존 contract, state, pathscope, worktree, integration과 Herdr의 좁은 기능을 검토해
 재사용한다. 기존 자동 병합·세션 복구 상태 기계 전체를 보존할 의무는 없다.
 기존 project-template은 v1 자료이며 새 MVP 자동 설치에 사용하기 전에 새 계약에 맞춰 정리한다.
