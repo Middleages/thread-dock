@@ -2,6 +2,7 @@ package statev2
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -219,5 +220,97 @@ func TestReconcileNotStartedRejectsLaunchRequestedOrInsufficientProof(t *testing
 				t.Fatalf("error = %v", err)
 			}
 		})
+	}
+}
+
+func cloneSnapshot(t *testing.T, snapshot WorkSnapshot) WorkSnapshot {
+	t.Helper()
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone WorkSnapshot
+	if err := json.Unmarshal(data, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone
+}
+
+func TestReserveRejectsLifecycleMatrixWithoutWriting(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*WorkSnapshot, *TaskTransition)
+	}{
+		{name: "role mismatch", mutate: func(_ *WorkSnapshot, tr *TaskTransition) { tr.Role = "scout" }},
+		{name: "return stage mismatch", mutate: func(_ *WorkSnapshot, tr *TaskTransition) { tr.ReturnStage = TaskGateFailed }},
+		{name: "foreign task", mutate: func(_ *WorkSnapshot, tr *TaskTransition) { tr.TaskID = "foreign" }},
+		{name: "pre approval", mutate: func(s *WorkSnapshot, _ *TaskTransition) { s.Control = WorkControl{}; s.State = StateAwaitingApproval }},
+		{name: "paused", mutate: func(s *WorkSnapshot, _ *TaskTransition) { s.Control.PauseRequested = true; s.State = StatePaused }},
+		{name: "blocked", mutate: func(s *WorkSnapshot, _ *TaskTransition) {
+			s.Control.Blocker = &OperatorBlocker{Kind: BlockerKindRuntimeUnknown, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "blocked"}
+			s.State = StateNeedsOperator
+		}},
+		{name: "completed", mutate: func(s *WorkSnapshot, _ *TaskTransition) { s.State = StateCompleted }},
+		{name: "whitespace canonical path", mutate: func(_ *WorkSnapshot, tr *TaskTransition) { tr.Worktree.CanonicalPath = " \t" }},
+		{name: "whitespace git common dir", mutate: func(_ *WorkSnapshot, tr *TaskTransition) { tr.Worktree.GitCommonDir = " " }},
+		{name: "whitespace branch", mutate: func(_ *WorkSnapshot, tr *TaskTransition) { tr.Worktree.Branch = "\t" }},
+		{name: "whitespace base SHA", mutate: func(_ *WorkSnapshot, tr *TaskTransition) { tr.Worktree.BaseSHA = " \n" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := cloneSnapshot(t, invocationSnapshot())
+			reserve := builderReserveTransition(invocationAt(1))
+			tc.mutate(&snapshot, &reserve)
+			before := cloneSnapshot(t, snapshot)
+			if err := applyTransition(&snapshot, TransitionRequest{Task: &reserve}); !errors.Is(err, ErrInvalidTransition) {
+				t.Fatalf("error = %v, want invalid transition", err)
+			}
+			if got, want := marshalSnapshot(t, snapshot), marshalSnapshot(t, before); string(got) != string(want) {
+				t.Fatalf("invalid reservation wrote state: before=%s after=%s", want, got)
+			}
+		})
+	}
+}
+
+func marshalSnapshot(t *testing.T, snapshot WorkSnapshot) []byte {
+	t.Helper()
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestLifecycleRejectsMismatchedIdentityAndNextReserveBeforeTermination(t *testing.T) {
+	snapshot := invocationSnapshot()
+	reserve := builderReserveTransition(invocationAt(1))
+	if err := applyTransition(&snapshot, TransitionRequest{Task: &reserve}); err != nil {
+		t.Fatal(err)
+	}
+	before := cloneSnapshot(t, snapshot)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*TaskTransition)
+	}{
+		{name: "invocation", mutate: func(tr *TaskTransition) { tr.InvocationID = "other" }},
+		{name: "logical work", mutate: func(tr *TaskTransition) { tr.LogicalWorkID = "other" }},
+		{name: "attempt", mutate: func(tr *TaskTransition) { tr.BuilderAttempt = 2 }},
+		{name: "duplicate next reserve", mutate: func(_ *TaskTransition) {}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next := cloneSnapshot(t, before)
+			tr := reserve
+			tc.mutate(&tr)
+			if err := applyTransition(&next, TransitionRequest{Task: &tr}); !errors.Is(err, ErrInvalidTransition) {
+				t.Fatalf("error = %v", err)
+			}
+			if got, want := marshalSnapshot(t, next), marshalSnapshot(t, before); string(got) != string(want) {
+				t.Fatalf("invalid lifecycle wrote state")
+			}
+		})
+	}
+	candidate := TaskTransition{TaskID: "task-1", Action: TaskRecordCandidate, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(2)}
+	if err := applyTransition(&snapshot, TransitionRequest{Task: &candidate}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("candidate before termination error = %v", err)
 	}
 }

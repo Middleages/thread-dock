@@ -342,3 +342,56 @@ func TestRuntimeResolutionRejectsMismatchedEvidenceWithoutWrite(t *testing.T) {
 		})
 	}
 }
+
+func TestRuntimeTerminatedResolutionRejectsMismatchesWithoutWrite(t *testing.T) {
+	cases := []struct {
+		name       string
+		blocker    func(*OperatorBlocker)
+		resolution func(*ResolvePayload)
+		evidence   func(*ResolutionEvidence)
+		at         func() time.Time
+	}{
+		{name: "unknown blocker", blocker: func(b *OperatorBlocker) { b.Kind = "other" }},
+		{name: "operator mismatch", resolution: func(r *ResolvePayload) { r.OperatorRef = "other" }},
+		{name: "task mismatch", resolution: func(r *ResolvePayload) { r.TaskID = "other" }},
+		{name: "invocation mismatch", resolution: func(r *ResolvePayload) { r.InvocationID = "other" }},
+		{name: "owner not terminated", evidence: func(e *ResolutionEvidence) { e.OwnerTerminated = false }},
+		{name: "zero time", at: func() time.Time { return time.Time{} }},
+		{name: "non-UTC time", at: func() time.Time { return time.Date(2026, time.January, 2, 3, 4, 5, 0, time.FixedZone("offset", 3600)) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := invocationSnapshot()
+			state := snapshot.TaskStates["task-1"]
+			state.Status = TaskNeedsOperator
+			state.BuilderAttempt = 1
+			state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical-1", Role: roleBuilder, BuilderAttempt: 1}
+			state.Invocation = &InvocationState{InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, LogicalProfile: "builder", RuntimeFingerprint: "runtime", ProviderProcess: "pid"}
+			state.InvocationHistory = []InvocationID{"inv-1"}
+			snapshot.TaskStates["task-1"] = state
+			snapshot.State = StateNeedsOperator
+			snapshot.Control.Blocker = &OperatorBlocker{Kind: BlockerKindRuntimeUnknown, OperatorRef: "operator-1", TaskID: "task-1", InvocationID: "inv-1", Diagnostic: "unknown"}
+			payload := &ResolvePayload{Kind: ResolveRuntimeTerminated, OperatorRef: "operator-1", TaskID: "task-1", InvocationID: "inv-1", Evidence: &ResolutionEvidence{OwnerTerminated: true}}
+			if tc.blocker != nil {
+				tc.blocker(snapshot.Control.Blocker)
+			}
+			if tc.resolution != nil {
+				tc.resolution(payload)
+			}
+			if tc.evidence != nil {
+				tc.evidence(payload.Evidence)
+			}
+			at := invocationAt(7)
+			if tc.at != nil {
+				at = tc.at()
+			}
+			before := cloneSnapshot(t, snapshot)
+			if err := applyWorkTransition(&snapshot, WorkTransition{Action: WorkResolve, At: at, Resolve: payload}); !errors.Is(err, ErrInvalidTransition) {
+				t.Fatalf("error = %v, want invalid transition", err)
+			}
+			if got, want := marshalSnapshot(t, snapshot), marshalSnapshot(t, before); string(got) != string(want) {
+				t.Fatalf("invalid runtime termination wrote state: before=%s after=%s", want, got)
+			}
+		})
+	}
+}

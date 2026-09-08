@@ -144,7 +144,8 @@ func TestValidateSnapshotAcceptsSupportedInvocationReturnStages(t *testing.T) {
 		t.Run(string(stage), func(t *testing.T) {
 			snapshot := validSnapshot()
 			state := snapshot.TaskStates["task-1"]
-			state.Invocation = &InvocationState{ReturnStage: stage}
+			state.Invocation = &InvocationState{InvocationID: "invocation", ReturnStage: stage}
+			state.InvocationHistory = []InvocationID{"invocation"}
 			snapshot.TaskStates["task-1"] = state
 			if err := validateSnapshot(snapshot); err != nil {
 				t.Fatalf("supported invocation return stage rejected: %v", err)
@@ -170,6 +171,51 @@ func TestValidateSnapshotRejectsInvalidInvocationHistory(t *testing.T) {
 				t.Fatal("validateSnapshot accepted invalid invocation history")
 			}
 		})
+	}
+}
+
+func TestValidateSnapshotRejectsActiveInvocationMissingFromHistory(t *testing.T) {
+	snapshot := validSnapshot()
+	state := snapshot.TaskStates["task-1"]
+	state.BuilderAttempt = 1
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical-1", Role: roleBuilder, BuilderAttempt: 1}
+	state.Invocation = &InvocationState{InvocationID: "inv-active", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, LogicalProfile: "builder", RuntimeFingerprint: "runtime"}
+	state.InvocationHistory = nil
+	snapshot.TaskStates["task-1"] = state
+	if err := validateSnapshot(snapshot); err == nil {
+		t.Fatal("validateSnapshot accepted active invocation with missing history")
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	var taskStates map[string]json.RawMessage
+	if err := json.Unmarshal(fields["taskStates"], &taskStates); err != nil {
+		t.Fatal(err)
+	}
+	var taskFields map[string]json.RawMessage
+	if err := json.Unmarshal(taskStates["task-1"], &taskFields); err != nil {
+		t.Fatal(err)
+	}
+	delete(taskFields, "invocationHistory")
+	taskStates["task-1"], err = json.Marshal(taskFields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields["taskStates"], err = json.Marshal(taskStates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modern, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeSnapshot(bytes.NewReader(modern)); err == nil {
+		t.Fatal("decodeSnapshot accepted active invocation without history")
 	}
 }
 

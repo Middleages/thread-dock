@@ -121,6 +121,9 @@ func validateTaskStates(s WorkSnapshot) error {
 			return fmt.Errorf("task %q has too many prior attempts", key)
 		}
 		if task.InvocationHistory == nil {
+			if task.Invocation != nil {
+				return fmt.Errorf("task %q has active invocation without history", key)
+			}
 			task.InvocationHistory = []InvocationID{}
 			s.TaskStates[key] = task
 		}
@@ -133,6 +136,14 @@ func validateTaskStates(s WorkSnapshot) error {
 				return fmt.Errorf("task %q has duplicate invocation history ID %q", key, invocationID)
 			}
 			seenInvocations[invocationID] = struct{}{}
+		}
+		if task.Invocation != nil {
+			if task.Invocation.InvocationID == "" {
+				return fmt.Errorf("task %q has active invocation without an ID", key)
+			}
+			if _, ok := seenInvocations[task.Invocation.InvocationID]; !ok {
+				return fmt.Errorf("task %q active invocation is absent from history", key)
+			}
 		}
 		for _, attempt := range task.PriorAttempts {
 			if err := validateDiagnostic(attempt.Diagnostic); err != nil {
