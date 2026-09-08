@@ -113,9 +113,7 @@ func applyRuntimeResolve(snapshot *WorkSnapshot, transition WorkTransition) erro
 		return invalidTransition("runtime resolution task does not match invocation")
 	}
 	at := transition.At
-	if at.IsZero() {
-		at = time.Now().UTC()
-	} else if at.Location() != time.UTC {
+	if at.IsZero() || at.Location() != time.UTC {
 		return invalidTransition("runtime resolution time must be UTC")
 	}
 	switch payload.Kind {

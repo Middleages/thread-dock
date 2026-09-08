@@ -81,13 +81,18 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 	if strings.TrimSpace(string(transition.InvocationID)) == "" || strings.TrimSpace(string(transition.LogicalWorkID)) == "" {
 		return invalidTransition("invocation identity and launch inputs are required")
 	}
+	for _, invocationID := range task.InvocationHistory {
+		if invocationID == transition.InvocationID {
+			return invalidTransition("invocation ID was already used")
+		}
+	}
 	if task.Invocation != nil {
 		return invalidTransition("task already has an invocation")
 	}
 	if strings.TrimSpace(transition.Invocation.LogicalProfile) == "" || strings.TrimSpace(transition.Invocation.RuntimeFingerprint) == "" {
 		return invalidTransition("logical profile and runtime fingerprint are required")
 	}
-	if transition.Worktree.CanonicalPath == "" || transition.Worktree.GitCommonDir == "" || transition.Worktree.Branch == "" || transition.Worktree.BaseSHA == "" {
+	if strings.TrimSpace(transition.Worktree.CanonicalPath) == "" || strings.TrimSpace(transition.Worktree.GitCommonDir) == "" || strings.TrimSpace(transition.Worktree.Branch) == "" || strings.TrimSpace(transition.Worktree.BaseSHA) == "" {
 		return invalidTransition("complete worktree identity is required")
 	}
 	if transition.Invocation.ProviderIdentity != "" || transition.Invocation.ProviderSession != "" || transition.Invocation.ProviderPane != "" || transition.Invocation.ProviderProcess != "" {
@@ -108,12 +113,24 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 		task.BuilderAttempt = 1
 		task.LogicalWork = &LogicalWorkState{LogicalWorkID: transition.LogicalWorkID, Role: transition.Role, BuilderAttempt: 1, Purpose: "task invocation"}
 	} else if task.Status == TaskGatePassed && transition.Role == roleReviewer {
-		if (task.LogicalWork != nil && task.LogicalWork.Role == roleBuilder && task.LogicalWork.LogicalWorkID == transition.LogicalWorkID) || transition.ReturnStage != TaskGatePassed || transition.BuilderAttempt != task.BuilderAttempt || task.BuilderAttempt == 0 || task.Candidate == nil || task.Gate == nil {
+		if transition.ReturnStage != TaskGatePassed || transition.BuilderAttempt != task.BuilderAttempt || task.BuilderAttempt == 0 || task.Candidate == nil || task.Gate == nil || task.LogicalWork == nil {
 			return invalidTransition("invalid reviewer reservation")
 		}
-		// Reviewer work is a distinct logical invocation while candidate and gate
-		// evidence remain attached to the task.
-		task.LogicalWork = &LogicalWorkState{LogicalWorkID: transition.LogicalWorkID, Role: transition.Role, BuilderAttempt: task.BuilderAttempt, Purpose: "task invocation"}
+		if task.LogicalWork.Role == roleReviewer {
+			if task.LogicalWork.LogicalWorkID != transition.LogicalWorkID || task.LogicalWork.BuilderAttempt != transition.BuilderAttempt {
+				return invalidTransition("reviewer reservation does not match logical work")
+			}
+		} else {
+			if task.LogicalWork.Role != roleBuilder && task.LogicalWork.Role != "" {
+				return invalidTransition("reviewer reservation has invalid prior logical work")
+			}
+			if task.LogicalWork.LogicalWorkID == transition.LogicalWorkID {
+				return invalidTransition("reviewer reservation must use a new logical work")
+			}
+			// Initial reviewer work is distinct while candidate and gate evidence
+			// remain attached to the task.
+			task.LogicalWork = &LogicalWorkState{LogicalWorkID: transition.LogicalWorkID, Role: transition.Role, BuilderAttempt: task.BuilderAttempt, Purpose: "task invocation"}
+		}
 	} else {
 		if task.LogicalWork == nil || task.LogicalWork.LogicalWorkID != transition.LogicalWorkID || task.LogicalWork.Role != transition.Role || task.LogicalWork.BuilderAttempt != transition.BuilderAttempt || task.BuilderAttempt != transition.BuilderAttempt {
 			return invalidTransition("reservation does not match logical work")
@@ -139,6 +156,7 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 	invocation.TransitionRequestID = requestID
 	task.Worktree = cloneWorktree(transition.Worktree)
 	task.Invocation = &invocation
+	task.InvocationHistory = append(task.InvocationHistory, transition.InvocationID)
 	task.Status = TaskInvocationReserved
 	snapshot.TaskStates[task.TaskID] = *task
 	reduce(snapshot)

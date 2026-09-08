@@ -3,6 +3,7 @@ package statev2
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	contractv2 "thread-dock/internal/contract/v2"
 )
@@ -39,21 +40,22 @@ type WorkControl struct {
 }
 
 type TaskExecutionState struct {
-	TaskID         contractv2.TaskID    `json:"taskId"`
-	Status         TaskStatus           `json:"status"`
-	BuilderAttempt uint32               `json:"builderAttempt"`
-	RepairCount    uint32               `json:"repairCount"`
-	RepairLimit    uint32               `json:"repairLimit"`
-	RecoveryCount  uint32               `json:"recoveryCount"`
-	RecoveryLimit  uint32               `json:"recoveryLimit"`
-	LogicalWork    *LogicalWorkState    `json:"logicalWork,omitempty"`
-	Worktree       *WorktreeIdentity    `json:"worktree,omitempty"`
-	Invocation     *InvocationState     `json:"invocation,omitempty"`
-	Candidate      *CandidateEvidence   `json:"candidate,omitempty"`
-	Gate           *GateEvidence        `json:"gate,omitempty"`
-	Review         *ReviewEvidence      `json:"review,omitempty"`
-	Integration    *IntegrationEvidence `json:"integration,omitempty"`
-	PriorAttempts  []AttemptSummary     `json:"priorAttempts"`
+	TaskID            contractv2.TaskID    `json:"taskId"`
+	Status            TaskStatus           `json:"status"`
+	BuilderAttempt    uint32               `json:"builderAttempt"`
+	RepairCount       uint32               `json:"repairCount"`
+	RepairLimit       uint32               `json:"repairLimit"`
+	RecoveryCount     uint32               `json:"recoveryCount"`
+	RecoveryLimit     uint32               `json:"recoveryLimit"`
+	LogicalWork       *LogicalWorkState    `json:"logicalWork,omitempty"`
+	Worktree          *WorktreeIdentity    `json:"worktree,omitempty"`
+	Invocation        *InvocationState     `json:"invocation,omitempty"`
+	Candidate         *CandidateEvidence   `json:"candidate,omitempty"`
+	Gate              *GateEvidence        `json:"gate,omitempty"`
+	Review            *ReviewEvidence      `json:"review,omitempty"`
+	Integration       *IntegrationEvidence `json:"integration,omitempty"`
+	PriorAttempts     []AttemptSummary     `json:"priorAttempts"`
+	InvocationHistory []InvocationID       `json:"invocationHistory"`
 }
 
 type PublicationIntentID string
@@ -76,7 +78,7 @@ type PublicationState struct {
 func newTaskExecutionState(id contractv2.TaskID) TaskExecutionState {
 	return TaskExecutionState{
 		TaskID: id, Status: TaskPending, RepairLimit: DefaultRepairLimit,
-		RecoveryLimit: DefaultRecoveryLimit, PriorAttempts: []AttemptSummary{},
+		RecoveryLimit: DefaultRecoveryLimit, PriorAttempts: []AttemptSummary{}, InvocationHistory: []InvocationID{},
 	}
 }
 
@@ -117,6 +119,20 @@ func validateTaskStates(s WorkSnapshot) error {
 		}
 		if uint32(len(task.PriorAttempts)) > MaxPriorAttempts {
 			return fmt.Errorf("task %q has too many prior attempts", key)
+		}
+		if task.InvocationHistory == nil {
+			task.InvocationHistory = []InvocationID{}
+			s.TaskStates[key] = task
+		}
+		seenInvocations := make(map[InvocationID]struct{}, len(task.InvocationHistory))
+		for _, invocationID := range task.InvocationHistory {
+			if strings.TrimSpace(string(invocationID)) == "" {
+				return fmt.Errorf("task %q has an empty invocation history ID", key)
+			}
+			if _, seen := seenInvocations[invocationID]; seen {
+				return fmt.Errorf("task %q has duplicate invocation history ID %q", key, invocationID)
+			}
+			seenInvocations[invocationID] = struct{}{}
 		}
 		for _, attempt := range task.PriorAttempts {
 			if err := validateDiagnostic(attempt.Diagnostic); err != nil {

@@ -273,3 +273,72 @@ func TestRuntimeTerminatedResolutionConfirmsOnlyMatchingRuntimeBlocker(t *testin
 		t.Fatalf("resolved snapshot = %#v", resolved)
 	}
 }
+
+func TestRuntimeResolutionRequiresExplicitUTCAt(t *testing.T) {
+	base := invocationSnapshot()
+	state := base.TaskStates["task-1"]
+	state.Status = TaskNeedsOperator
+	state.BuilderAttempt = 1
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical-1", Role: roleBuilder, BuilderAttempt: 1}
+	state.Invocation = &InvocationState{InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, LogicalProfile: "builder", RuntimeFingerprint: "runtime"}
+	base.TaskStates["task-1"] = state
+	base.State = StateNeedsOperator
+	base.Control.Blocker = &OperatorBlocker{Kind: BlockerKindRuntimeUnknown, OperatorRef: "operator-1", TaskID: "task-1", InvocationID: "inv-1", Diagnostic: "unknown"}
+	resolve := WorkTransition{Action: WorkResolve, Resolve: &ResolvePayload{Kind: ResolveRuntimeNotStarted, OperatorRef: "operator-1", TaskID: "task-1", InvocationID: "inv-1", Evidence: &ResolutionEvidence{OwnerTerminated: true, ProviderAbsent: true}}}
+	if err := applyWorkTransition(&base, resolve); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("zero runtime resolution time error = %v", err)
+	}
+	resolve.At = time.Date(2026, time.January, 2, 3, 4, 5, 0, time.FixedZone("offset", 3600))
+	if err := applyWorkTransition(&base, resolve); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("non-UTC runtime resolution time error = %v", err)
+	}
+}
+
+func TestRuntimeResolutionRejectsMismatchedEvidenceWithoutWrite(t *testing.T) {
+	cases := []struct {
+		name       string
+		blocker    func(*OperatorBlocker)
+		resolution func(*ResolvePayload)
+		evidence   func(*ResolutionEvidence)
+	}{
+		{name: "unknown blocker", blocker: func(b *OperatorBlocker) { b.Kind = "other" }},
+		{name: "operator mismatch", resolution: func(r *ResolvePayload) { r.OperatorRef = "other" }},
+		{name: "task mismatch", resolution: func(r *ResolvePayload) { r.TaskID = "other" }},
+		{name: "invocation mismatch", resolution: func(r *ResolvePayload) { r.InvocationID = "other" }},
+		{name: "owner not terminated", evidence: func(e *ResolutionEvidence) { e.OwnerTerminated = false }},
+		{name: "provider not absent", evidence: func(e *ResolutionEvidence) { e.ProviderAbsent = false }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := invocationSnapshot()
+			state := snapshot.TaskStates["task-1"]
+			state.Status = TaskNeedsOperator
+			state.BuilderAttempt = 1
+			state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical-1", Role: roleBuilder, BuilderAttempt: 1}
+			state.Invocation = &InvocationState{InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, LogicalProfile: "builder", RuntimeFingerprint: "runtime"}
+			snapshot.TaskStates["task-1"] = state
+			snapshot.State = StateNeedsOperator
+			snapshot.Control.Blocker = &OperatorBlocker{Kind: BlockerKindRuntimeUnknown, OperatorRef: "operator-1", TaskID: "task-1", InvocationID: "inv-1", Diagnostic: "unknown"}
+			blocker := cloneBlocker(snapshot.Control.Blocker)
+			if tc.blocker != nil {
+				tc.blocker(blocker)
+			}
+			snapshot.Control.Blocker = blocker
+			payload := &ResolvePayload{Kind: ResolveRuntimeNotStarted, OperatorRef: "operator-1", TaskID: "task-1", InvocationID: "inv-1", Evidence: &ResolutionEvidence{OwnerTerminated: true, ProviderAbsent: true}}
+			if tc.resolution != nil {
+				tc.resolution(payload)
+			}
+			if tc.evidence != nil {
+				tc.evidence(payload.Evidence)
+			}
+			before := snapshot
+			resolve := WorkTransition{Action: WorkResolve, At: invocationAt(6), Resolve: payload}
+			if err := applyWorkTransition(&snapshot, resolve); !errors.Is(err, ErrInvalidTransition) {
+				t.Fatalf("error = %v, want invalid transition", err)
+			}
+			if !reflect.DeepEqual(snapshot, before) {
+				t.Fatalf("invalid resolution wrote state: before=%#v after=%#v", before, snapshot)
+			}
+		})
+	}
+}

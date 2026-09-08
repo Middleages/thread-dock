@@ -153,6 +153,26 @@ func TestValidateSnapshotAcceptsSupportedInvocationReturnStages(t *testing.T) {
 	}
 }
 
+func TestValidateSnapshotRejectsInvalidInvocationHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		history []InvocationID
+	}{
+		{name: "empty ID", history: []InvocationID{" "}},
+		{name: "duplicate ID", history: []InvocationID{"inv-1", "inv-1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := validSnapshot()
+			state := snapshot.TaskStates["task-1"]
+			state.InvocationHistory = tc.history
+			snapshot.TaskStates["task-1"] = state
+			if err := validateSnapshot(snapshot); err == nil {
+				t.Fatal("validateSnapshot accepted invalid invocation history")
+			}
+		})
+	}
+}
+
 func TestDecodeSnapshotRejectsPartialOrStartedMissingMaps(t *testing.T) {
 	base := validSnapshot()
 	base.TaskStates = nil
