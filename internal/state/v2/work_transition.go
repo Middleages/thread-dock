@@ -13,6 +13,7 @@ const (
 	BlockerKindRuntimeUnknown          = "runtime_unknown"
 	BlockerKindEvidenceMismatch        = "evidence_mismatch"
 	BlockerKindRetryVerifiedStage      = "retry_verified_stage"
+	BlockerKindPublicationConflict     = "publication_conflict"
 )
 
 func applyWorkTransition(snapshot *WorkSnapshot, transition WorkTransition) error {
@@ -65,6 +66,9 @@ func applyWorkResolve(snapshot *WorkSnapshot, transition WorkTransition) error {
 	payload := transition.Resolve
 	if snapshot.State != StateNeedsOperator || payload == nil {
 		return invalidTransition("unsupported work resolve transition")
+	}
+	if payload.Kind == ResolvePublicationReconciled {
+		return applyPublicationReconcile(snapshot, transition)
 	}
 	if payload.Kind == ResolveRuntimeNotStarted || payload.Kind == ResolveRuntimeTerminated {
 		return applyRuntimeResolve(snapshot, transition)

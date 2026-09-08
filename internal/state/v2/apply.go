@@ -10,6 +10,7 @@ import (
 )
 
 var ErrInvalidTransition = errors.New("invalid transition")
+var ErrStaleGeneration = errors.New("stale publication generation")
 
 type InvalidTransitionError struct{ Reason string }
 
@@ -70,8 +71,8 @@ func validateApplyRequest(request TransitionRequest) error {
 	if request.PayloadHash != hash {
 		return invalidTransition("payload hash does not match transition")
 	}
-	if request.Work == nil && request.Task == nil {
-		return invalidTransition("publication transitions are not supported")
+	if request.Work == nil && request.Task == nil && request.Publication == nil {
+		return invalidTransition("a typed transition is required")
 	}
 	if request.Work != nil {
 		switch request.Work.Action {
@@ -81,7 +82,7 @@ func validateApplyRequest(request TransitionRequest) error {
 				return invalidTransition("unsupported work resolve transition")
 			}
 			switch request.Work.Resolve.Kind {
-			case ResolveExtendBudget, ResolveRuntimeNotStarted, ResolveRuntimeTerminated, ResolveRetryVerifiedStage:
+			case ResolveExtendBudget, ResolveRuntimeNotStarted, ResolveRuntimeTerminated, ResolveRetryVerifiedStage, ResolvePublicationReconciled:
 			default:
 				return invalidTransition("unsupported work resolve transition")
 			}
@@ -98,6 +99,13 @@ func validateApplyRequest(request TransitionRequest) error {
 			return invalidTransition("unsupported task action %q", request.Task.Action)
 		}
 	}
+	if request.Publication != nil {
+		switch request.Publication.Action {
+		case PublicationBegin, PublicationComplete, PublicationFail, PublicationActionConflict, PublicationActionSupersede:
+		default:
+			return invalidTransition("unsupported publication action %q", request.Publication.Action)
+		}
+	}
 	return nil
 }
 
@@ -108,5 +116,8 @@ func applyTransition(snapshot *WorkSnapshot, request TransitionRequest) error {
 	if request.Task != nil {
 		return applyTaskTransition(snapshot, *request.Task, request.RequestID)
 	}
-	return invalidTransition("publication transitions are not supported")
+	if request.Publication != nil {
+		return applyPublicationTransition(snapshot, *request.Publication)
+	}
+	return invalidTransition("a typed transition is required")
 }

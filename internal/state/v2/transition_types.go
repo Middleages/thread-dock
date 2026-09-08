@@ -191,14 +191,15 @@ type WorkTransition struct {
 }
 
 type ResolvePayload struct {
-	Kind         ResolveKind         `json:"kind"`
-	OperatorRef  string              `json:"operatorRef"`
-	TaskID       contractv2.TaskID   `json:"taskId,omitempty"`
-	InvocationID InvocationID        `json:"invocationId,omitempty"`
-	IntentID     PublicationIntentID `json:"intentId,omitempty"`
-	Evidence     *ResolutionEvidence `json:"evidence,omitempty"`
-	Budget       BudgetKind          `json:"budget,omitempty"`
-	NewLimit     uint32              `json:"newLimit,omitempty"`
+	Kind               ResolveKind         `json:"kind"`
+	OperatorRef        string              `json:"operatorRef"`
+	TaskID             contractv2.TaskID   `json:"taskId,omitempty"`
+	InvocationID       InvocationID        `json:"invocationId,omitempty"`
+	IntentID           PublicationIntentID `json:"intentId,omitempty"`
+	PublicationReceipt *PublicationReceipt `json:"publicationReceipt,omitempty"`
+	Evidence           *ResolutionEvidence `json:"evidence,omitempty"`
+	Budget             BudgetKind          `json:"budget,omitempty"`
+	NewLimit           uint32              `json:"newLimit,omitempty"`
 }
 
 type ResolutionEvidence struct {
@@ -261,16 +262,20 @@ const (
 )
 
 type PublicationTransition struct {
-	Action      PublicationAction   `json:"action"`
-	IntentID    PublicationIntentID `json:"intentId"`
-	Key         PublicationKey      `json:"key,omitempty"`
-	Generation  uint32              `json:"generation,omitempty"`
-	Kind        PublicationKind     `json:"kind,omitempty"`
-	PayloadHash string              `json:"payloadHash,omitempty"`
-	PayloadRef  string              `json:"payloadRef,omitempty"`
-	Target      *PublicationTarget  `json:"target,omitempty"`
-	Receipt     *PublicationReceipt `json:"receipt,omitempty"`
-	Diagnostic  string              `json:"diagnostic,omitempty"`
+	Action             PublicationAction   `json:"action"`
+	IntentID           PublicationIntentID `json:"intentId"`
+	Key                PublicationKey      `json:"key,omitempty"`
+	Generation         uint32              `json:"generation,omitempty"`
+	Kind               PublicationKind     `json:"kind,omitempty"`
+	PayloadHash        string              `json:"payloadHash,omitempty"`
+	PayloadRef         string              `json:"payloadRef,omitempty"`
+	Target             *PublicationTarget  `json:"target,omitempty"`
+	Receipt            *PublicationReceipt `json:"receipt,omitempty"`
+	Diagnostic         string              `json:"diagnostic,omitempty"`
+	Supersedes         PublicationIntentID `json:"supersedes,omitempty"`
+	Resolution         *ResolutionEvidence `json:"resolution,omitempty"`
+	CompletionRequired bool                `json:"completionRequired,omitempty"`
+	Blocker            *OperatorBlocker    `json:"blocker,omitempty"`
 }
 
 type TransitionRequest struct {

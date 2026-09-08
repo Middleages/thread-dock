@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	contractv2 "thread-dock/internal/contract/v2"
 )
@@ -64,17 +65,18 @@ type PublicationIntentID string
 type PublicationKey string
 
 type PublicationState struct {
-	IntentID    PublicationIntentID `json:"intentId"`
-	Key         PublicationKey      `json:"key"`
-	Generation  uint32              `json:"generation"`
-	Kind        PublicationKind     `json:"kind"`
-	Status      PublicationStatus   `json:"status"`
-	PayloadHash string              `json:"payloadHash"`
-	PayloadRef  string              `json:"payloadRef"`
-	Target      PublicationTarget   `json:"target"`
-	Receipt     *PublicationReceipt `json:"receipt,omitempty"`
-	Attempts    uint32              `json:"attempts"`
-	LastError   string              `json:"lastError,omitempty"`
+	IntentID           PublicationIntentID `json:"intentId"`
+	Key                PublicationKey      `json:"key"`
+	Generation         uint32              `json:"generation"`
+	Kind               PublicationKind     `json:"kind"`
+	Status             PublicationStatus   `json:"status"`
+	PayloadHash        string              `json:"payloadHash"`
+	PayloadRef         string              `json:"payloadRef"`
+	Target             PublicationTarget   `json:"target"`
+	Receipt            *PublicationReceipt `json:"receipt,omitempty"`
+	Attempts           uint32              `json:"attempts"`
+	LastError          string              `json:"lastError,omitempty"`
+	CompletionRequired bool                `json:"completionRequired,omitempty"`
 }
 
 func newTaskExecutionState(id contractv2.TaskID) TaskExecutionState {
@@ -156,11 +158,13 @@ func validateTaskStates(s WorkSnapshot) error {
 			return fmt.Errorf("task %q: %w", key, err)
 		}
 	}
+	byKey := make(map[PublicationKey]map[uint32]PublicationIntentID)
+	conflictIntent := PublicationIntentID("")
 	for id, publication := range s.Publications {
-		if id == "" || id != publication.IntentID {
+		if id == "" || id != publication.IntentID || strings.TrimSpace(string(publication.IntentID)) != string(publication.IntentID) {
 			return fmt.Errorf("publication key %q does not match intent ID %q", id, publication.IntentID)
 		}
-		if publication.Key == "" || publication.Generation == 0 {
+		if strings.TrimSpace(string(publication.Key)) != string(publication.Key) || publication.Key == "" || publication.Generation == 0 {
 			return fmt.Errorf("publication %q has invalid identity", id)
 		}
 		if !validPublicationKind(publication.Kind) {
@@ -169,29 +173,77 @@ func validateTaskStates(s WorkSnapshot) error {
 		if !validPublicationStatus(publication.Status) {
 			return fmt.Errorf("publication %q has unknown status %q", id, publication.Status)
 		}
-		if err := validateDiagnostic(publication.LastError); err != nil {
+		if err := validatePublicationState(publication); err != nil {
 			return fmt.Errorf("publication %q: %w", id, err)
+		}
+		gens := byKey[publication.Key]
+		if gens == nil {
+			gens = map[uint32]PublicationIntentID{}
+			byKey[publication.Key] = gens
+		}
+		if prior, ok := gens[publication.Generation]; ok && prior != id {
+			return fmt.Errorf("publication %q duplicates key generation", id)
+		}
+		gens[publication.Generation] = id
+		if publication.Status == PublicationConflict {
+			conflictIntent = publication.IntentID
+		}
+	}
+	if conflictIntent != "" && (s.Control.Blocker == nil || s.Control.Blocker.Kind != BlockerKindPublicationConflict || s.Control.Blocker.IntentID != conflictIntent) {
+		return errors.New("publication conflict requires matching blocker")
+	}
+	for key, gens := range byKey {
+		max := uint32(0)
+		for gen := range gens {
+			if gen > max {
+				max = gen
+			}
+		}
+		for gen := uint32(1); gen <= max; gen++ {
+			if _, ok := gens[gen]; !ok {
+				return fmt.Errorf("publication key %q has non-contiguous generations", key)
+			}
+		}
+		for _, id := range gens {
+			publication := s.Publications[id]
+			if publication.Status == PublicationSuperseded && publication.Generation >= max {
+				return fmt.Errorf("superseded publication %q has no newer generation", id)
+			}
 		}
 	}
 	if s.Control.Blocker != nil {
-		if strings.TrimSpace(s.Control.Blocker.Kind) == "" || strings.TrimSpace(s.Control.Blocker.OperatorRef) == "" || strings.TrimSpace(string(s.Control.Blocker.TaskID)) == "" || strings.TrimSpace(s.Control.Blocker.Diagnostic) == "" {
+		if s.Control.Blocker.Kind == BlockerKindPublicationConflict {
+			publication, ok := s.Publications[s.Control.Blocker.IntentID]
+			if s.Control.Blocker.IntentID == "" || !ok || publication.Status != PublicationConflict || publication.Generation != maxPublicationGeneration(&s, publication.Key) {
+				return errors.New("publication conflict blocker intent is required")
+			}
+		} else if strings.TrimSpace(string(s.Control.Blocker.TaskID)) == "" {
+			return errors.New("operator blocker task is not in contract")
+		}
+	}
+	if s.Control.Blocker != nil {
+		if err := validateDiagnostic(s.Control.Blocker.Diagnostic); err != nil {
+			return fmt.Errorf("operator blocker: %w", err)
+		}
+	}
+	if s.Control.Blocker != nil {
+		if strings.TrimSpace(s.Control.Blocker.Kind) == "" || strings.TrimSpace(s.Control.Blocker.OperatorRef) == "" || (s.Control.Blocker.Kind != BlockerKindPublicationConflict && strings.TrimSpace(string(s.Control.Blocker.TaskID)) == "") || strings.TrimSpace(s.Control.Blocker.Diagnostic) == "" {
 			return errors.New("operator blocker identity is required")
 		}
 		if !validOperatorBlockerKind(s.Control.Blocker.Kind) {
 			return fmt.Errorf("operator blocker kind is unknown: %q", s.Control.Blocker.Kind)
 		}
-		blockedTask, ok := s.TaskStates[contractv2.TaskID(s.Control.Blocker.TaskID)]
-		if !ok {
-			return errors.New("operator blocker task is not in contract")
-		}
-		if blockedTask.Status != TaskNeedsOperator {
-			return errors.New("operator blocker task is not needs_operator")
-		}
-		if s.Control.Blocker.InvocationID != "" && (blockedTask.Invocation == nil || blockedTask.Invocation.InvocationID != s.Control.Blocker.InvocationID) {
-			return errors.New("operator blocker invocation does not match task")
-		}
-		if err := validateDiagnostic(s.Control.Blocker.Diagnostic); err != nil {
-			return err
+		if s.Control.Blocker.Kind != BlockerKindPublicationConflict {
+			blockedTask, ok := s.TaskStates[contractv2.TaskID(s.Control.Blocker.TaskID)]
+			if !ok {
+				return errors.New("operator blocker task is not in contract")
+			}
+			if blockedTask.Status != TaskNeedsOperator {
+				return errors.New("operator blocker task is not needs_operator")
+			}
+			if s.Control.Blocker.InvocationID != "" && (blockedTask.Invocation == nil || blockedTask.Invocation.InvocationID != s.Control.Blocker.InvocationID) {
+				return errors.New("operator blocker invocation does not match task")
+			}
 		}
 	}
 	return nil
@@ -429,7 +481,7 @@ func validOperatorBlocker(task TaskExecutionState, blocker *OperatorBlocker) boo
 
 func validOperatorBlockerKind(kind string) bool {
 	switch kind {
-	case BlockerKindRepairBudgetExhausted, BlockerKindRecoveryBudgetExhausted, BlockerKindRuntimeUnknown, BlockerKindRetryVerifiedStage, BlockerKindEvidenceMismatch, BlockerKindMalformedArtifact:
+	case BlockerKindRepairBudgetExhausted, BlockerKindRecoveryBudgetExhausted, BlockerKindRuntimeUnknown, BlockerKindRetryVerifiedStage, BlockerKindEvidenceMismatch, BlockerKindMalformedArtifact, BlockerKindPublicationConflict:
 		return true
 	default:
 		return false
@@ -492,10 +544,58 @@ func validateInvocation(task TaskExecutionState) error {
 }
 
 func validateDiagnostic(value string) error {
+	if !utf8.ValidString(value) {
+		return errors.New("diagnostic is not valid UTF-8")
+	}
 	if len([]byte(value)) > MaxDiagnosticBytes {
 		return fmt.Errorf("diagnostic exceeds %d bytes", MaxDiagnosticBytes)
 	}
 	return nil
+}
+
+func validatePublicationState(publication PublicationState) error {
+	if !validPayloadHash(publication.PayloadHash) || strings.TrimSpace(publication.PayloadRef) != publication.PayloadRef || publication.PayloadRef == "" || len([]byte(publication.PayloadRef)) > MaxDiagnosticBytes || !utf8.ValidString(publication.PayloadRef) {
+		return errors.New("invalid publication payload identity")
+	}
+	if strings.TrimSpace(publication.Target.Host) != publication.Target.Host || publication.Target.Host == "" || publication.Target.Key != publication.Key || strings.TrimSpace(string(publication.Target.Key)) != string(publication.Target.Key) {
+		return errors.New("invalid publication target")
+	}
+	if publication.Target.Repository != "" && strings.TrimSpace(string(publication.Target.Repository)) != string(publication.Target.Repository) || publication.Target.Resource != "" && strings.TrimSpace(publication.Target.Resource) != publication.Target.Resource || publication.Target.Base != "" && strings.TrimSpace(publication.Target.Base) != publication.Target.Base {
+		return errors.New("invalid publication target")
+	}
+	switch publication.Status {
+	case PublicationPending:
+		if publication.Receipt != nil || publication.LastError != "" || publication.Attempts == 0 {
+			return errors.New("pending publication shape is invalid")
+		}
+	case PublicationCompleted:
+		if publication.Receipt == nil || publication.LastError != "" || !validPublicationReceipt(*publication.Receipt) || publication.Attempts == 0 {
+			return errors.New("completed publication shape is invalid")
+		}
+	case PublicationFailed:
+		if publication.Receipt != nil || publication.LastError == "" || publication.Attempts == 0 {
+			return errors.New("failed publication shape is invalid")
+		}
+	case PublicationConflict:
+		if publication.Receipt != nil || publication.LastError == "" || publication.Attempts == 0 {
+			return errors.New("conflict publication shape is invalid")
+		}
+	case PublicationSuperseded:
+		if publication.Receipt != nil || publication.Attempts == 0 {
+			return errors.New("superseded publication shape is invalid")
+		}
+	}
+	return validateDiagnostic(publication.LastError)
+}
+
+func validPublicationReceipt(receipt PublicationReceipt) bool {
+	if receipt.PublishedAt.IsZero() || receipt.PublishedAt.Location() != time.UTC || (receipt.NodeID == "" && receipt.Number == 0 && receipt.URL == "") {
+		return false
+	}
+	if !utf8.ValidString(receipt.NodeID) || !utf8.ValidString(receipt.URL) || !utf8.ValidString(receipt.Base) || !utf8.ValidString(receipt.Head) {
+		return false
+	}
+	return strings.TrimSpace(receipt.NodeID) == receipt.NodeID && strings.TrimSpace(receipt.URL) == receipt.URL && strings.TrimSpace(receipt.Base) == receipt.Base && strings.TrimSpace(receipt.Head) == receipt.Head
 }
 
 func validTaskStatus(status TaskStatus) bool {
