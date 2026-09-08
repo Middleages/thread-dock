@@ -338,12 +338,14 @@ func TestRuntimeDuplicateObserveSubmissionsDeduplicateProviderCall(t *testing.T)
 	rt := &barrierRuntime{observeEntered: make(chan struct{}), observeRelease: make(chan struct{})}
 	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	first := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
-	second := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	select {
 	case <-rt.observeEntered:
 	case <-time.After(time.Second):
 		t.Fatal("observe did not enter barrier")
 	}
+	// Submit while the first provider call is blocked. The second command is
+	// accepted into the FIFO before the worker can enqueue its completion event.
+	second := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	close(rt.observeRelease)
 	rt.mu.Lock()
 	observeCalls := rt.observeCalls

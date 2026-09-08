@@ -24,23 +24,22 @@ type publicationCommand struct {
 }
 
 type publicationQueue struct {
-	workID        contractv2.WorkID
-	lease         OwnerLease
-	ctx           context.Context
-	cancel        context.CancelFunc
-	items         chan publicationCommand
-	runtimeItems  chan runtimeCommand
-	runtimeEvents chan runtimeEvent
-	done          chan struct{}
-	submitMu      sync.Mutex
-	submitWG      sync.WaitGroup
-	runtimeWG     sync.WaitGroup
-	releaseMu     sync.Mutex
-	releaseErr    error
-	stopped       bool
-	owner         OwnerRecord
-	beforeSelect  func()
-	runtimeOps    map[runtimeKey]map[runtimeOperationKind]*runtimeOperation
+	workID          contractv2.WorkID
+	lease           OwnerLease
+	ctx             context.Context
+	cancel          context.CancelFunc
+	items           chan publicationCommand
+	runtimeMessages chan runtimeMessage
+	done            chan struct{}
+	submitMu        sync.Mutex
+	submitWG        sync.WaitGroup
+	runtimeWG       sync.WaitGroup
+	releaseMu       sync.Mutex
+	releaseErr      error
+	stopped         bool
+	owner           OwnerRecord
+	beforeSelect    func()
+	runtimeOps      map[runtimeKey]map[runtimeOperationKind]*runtimeOperation
 }
 
 type publicationDispatcher struct {
@@ -137,7 +136,7 @@ func (d *publicationDispatcher) queueLocked(ctx context.Context, workID contract
 		return nil, err
 	}
 	queueCtx, cancel := context.WithCancel(context.Background())
-	q = &publicationQueue{workID: workID, lease: lease, owner: lease.Record(), ctx: queueCtx, cancel: cancel, items: make(chan publicationCommand, 64), runtimeItems: make(chan runtimeCommand, 64), runtimeEvents: make(chan runtimeEvent, 64), done: make(chan struct{}), runtimeOps: make(map[runtimeKey]map[runtimeOperationKind]*runtimeOperation)}
+	q = &publicationQueue{workID: workID, lease: lease, owner: lease.Record(), ctx: queueCtx, cancel: cancel, items: make(chan publicationCommand, 64), runtimeMessages: make(chan runtimeMessage, 64), done: make(chan struct{}), runtimeOps: make(map[runtimeKey]map[runtimeOperationKind]*runtimeOperation)}
 	d.queues[workID] = q
 	go d.runQueue(q)
 	return q, nil
@@ -177,7 +176,7 @@ func (d *publicationDispatcher) SubmitRuntime(ctx context.Context, workID contra
 	q.submitMu.Unlock()
 	defer q.submitWG.Done()
 	select {
-	case q.runtimeItems <- command:
+	case q.runtimeMessages <- runtimeMessage{command: &command}:
 	case <-ctx.Done():
 		result <- CommandResult{Err: ctx.Err()}
 	case <-q.ctx.Done():
@@ -193,8 +192,10 @@ func (d *publicationDispatcher) runQueue(q *publicationQueue) {
 			select {
 			case command := <-q.items:
 				command.result <- CommandResult{Err: ErrDispatcherClosed}
-			case command := <-q.runtimeItems:
-				command.result <- CommandResult{Err: ErrDispatcherClosed}
+			case message := <-q.runtimeMessages:
+				if message.command != nil {
+					message.command.result <- CommandResult{Err: ErrDispatcherClosed}
+				}
 			default:
 				return
 			}
@@ -233,10 +234,12 @@ func (d *publicationDispatcher) runQueue(q *publicationQueue) {
 			result := d.handlePublication(commandCtx, q, command.intentID)
 			cancel()
 			command.result <- result
-		case command := <-q.runtimeItems:
-			d.handleRuntimeCommand(q, command)
-		case event := <-q.runtimeEvents:
-			d.handleRuntimeEvent(q, event)
+		case message := <-q.runtimeMessages:
+			if message.command != nil {
+				d.handleRuntimeCommand(q, *message.command)
+			} else if message.event != nil {
+				d.handleRuntimeEvent(q, *message.event)
+			}
 		}
 	}
 }

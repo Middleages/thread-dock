@@ -57,6 +57,11 @@ type runtimeCommand struct {
 	result       chan<- CommandResult
 }
 
+type runtimeMessage struct {
+	command *runtimeCommand
+	event   *runtimeEvent
+}
+
 type runtimeKey struct {
 	taskID       contractv2.TaskID
 	invocationID statev2.InvocationID
@@ -236,7 +241,7 @@ func (d *publicationDispatcher) runRuntimeWorker(q *publicationQueue, op *runtim
 
 func (d *publicationDispatcher) sendRuntimeEvent(q *publicationQueue, event runtimeEvent) {
 	select {
-	case q.runtimeEvents <- event:
+	case q.runtimeMessages <- runtimeMessage{event: &event}:
 	case <-q.ctx.Done():
 	}
 }
