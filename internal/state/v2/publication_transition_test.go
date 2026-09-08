@@ -3,6 +3,7 @@ package statev2
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -24,8 +25,13 @@ func publicationRequest(t *testing.T, snapshot WorkSnapshot, requestID contractv
 
 func approvedPublicationStore(t *testing.T) (Store, WorkSnapshot) {
 	t.Helper()
+	return approvedPublicationStoreAt(t, t.TempDir())
+}
+
+func approvedPublicationStoreAt(t *testing.T, root string) (Store, WorkSnapshot) {
+	t.Helper()
 	ctx := context.Background()
-	s := NewStore(t.TempDir())
+	s := NewStore(root)
 	snapshot := validSnapshot()
 	if _, err := createPlan(s, ctx, snapshot); err != nil {
 		t.Fatal(err)
@@ -36,6 +42,13 @@ func approvedPublicationStore(t *testing.T) (Store, WorkSnapshot) {
 		t.Fatal(err)
 	}
 	return s, approved
+}
+
+func persistPublicationSnapshotForTest(t *testing.T, root string, snapshot WorkSnapshot) {
+	t.Helper()
+	if err := writeSnapshot(filepath.Join(root, "v2", "work", string(snapshot.WorkID), "work.json"), snapshot); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func publicationTarget() *PublicationTarget {
@@ -108,7 +121,7 @@ func TestPublicationFailureRetryAndSupersedePreserveTaskEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := retried.Publications["intent-1"]; p.Status != PublicationPending || p.Attempts != 3 || p.LastError != "" {
+	if p := retried.Publications["intent-1"]; p.Status != PublicationPending || p.Attempts != 2 || p.LastError != "" {
 		t.Fatalf("retry publication = %#v", p)
 	}
 	if !reflect.DeepEqual(beforeTasks, retried.TaskStates) {
@@ -134,6 +147,288 @@ func TestPublicationFailureRetryAndSupersedePreserveTaskEvidence(t *testing.T) {
 	lateRetry := publicationRequest(t, got, "publication-late-retry", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Generation: 1})
 	if _, err := s.Apply(ctx, lateRetry); !errors.Is(err, ErrStaleGeneration) {
 		t.Fatalf("late retry error = %v, want ErrStaleGeneration", err)
+	}
+}
+
+func TestUnknownNewPublicationStalePrecedesMissingCompletionHint(t *testing.T) {
+	ctx := context.Background()
+	s, snapshot := approvedPublicationStore(t)
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("a", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
+	pending, err := s.Apply(ctx, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown := publicationRequest(t, pending, "publication-unknown-missing-hint", PublicationTransition{Action: PublicationBegin, IntentID: "intent-unknown", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("b", 64), PayloadRef: "artifact://approved/unknown", Target: publicationTarget()})
+	if _, err := s.Apply(ctx, unknown); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("unknown stale begin error = %v, want ErrStaleGeneration", err)
+	}
+	current, err := s.Load(ctx, pending.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Revision != pending.Revision || !reflect.DeepEqual(current.Publications, pending.Publications) {
+		t.Fatalf("unknown stale begin wrote state: %#v", current)
+	}
+}
+
+func TestSupersedeMissingCompletionHintIsInvalidWithoutPanicOrWrite(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	s, snapshot := approvedPublicationStoreAt(t, root)
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("c", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
+	pending, err := s.Apply(ctx, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fail := publicationRequest(t, pending, "publication-fail", PublicationTransition{Action: PublicationFail, IntentID: "intent-1", Key: "issue:1", Generation: 1, Diagnostic: "no write"})
+	failed, err := s.Apply(ctx, fail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := failed
+	supersede := publicationRequest(t, failed, "publication-supersede-missing-hint", PublicationTransition{Action: PublicationActionSupersede, IntentID: "intent-2", Supersedes: "intent-1", Key: "issue:1", Generation: 2, Kind: PublicationParentIssue, PayloadHash: strings.Repeat("d", 64), PayloadRef: "artifact://approved/2", Target: publicationTarget(), Resolution: &ResolutionEvidence{NotPublished: true, Diagnostic: "confirmed no write"}})
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				t.Fatalf("supersede panicked: %v", recovered)
+			}
+		}()
+		if _, err := s.Apply(ctx, supersede); !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("missing completion hint error = %v, want ErrInvalidTransition", err)
+		}
+	}()
+	after, err := s.Load(ctx, before.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision || !reflect.DeepEqual(after.Publications, before.Publications) {
+		t.Fatalf("invalid supersede wrote state: before=%#v after=%#v", before, after)
+	}
+}
+
+func TestPublicationAttemptsCountDispatchesOnlyAndRetryOverflowIsNoWrite(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	s, snapshot := approvedPublicationStoreAt(t, root)
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("e", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
+	pending, err := s.Apply(ctx, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fail := publicationRequest(t, pending, "publication-fail", PublicationTransition{Action: PublicationFail, IntentID: "intent-1", Key: "issue:1", Generation: 1, Diagnostic: "timeout"})
+	failed, err := s.Apply(ctx, fail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Publications["intent-1"].Attempts != 1 {
+		t.Fatalf("failure counted as dispatch: %#v", failed.Publications["intent-1"])
+	}
+	retry := publicationRequest(t, failed, "publication-retry", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Generation: 1})
+	retried, err := s.Apply(ctx, retry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.Publications["intent-1"].Attempts != 2 {
+		t.Fatalf("retry attempts = %d, want 2", retried.Publications["intent-1"].Attempts)
+	}
+	mutated := retried
+	p := mutated.Publications["intent-1"]
+	p.Status = PublicationFailed
+	p.Attempts = ^uint32(0)
+	p.LastError = "exhausted"
+	mutated.Publications["intent-1"] = p
+	persistPublicationSnapshotForTest(t, root, mutated)
+	before := mutated
+	overflow := publicationRequest(t, before, "publication-retry-overflow", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Generation: 1})
+	if _, err := s.Apply(ctx, overflow); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("overflow retry error = %v, want ErrInvalidTransition", err)
+	}
+	after, err := s.Load(ctx, before.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision || after.Publications["intent-1"].Attempts != ^uint32(0) || after.Publications["intent-1"].Status != PublicationFailed {
+		t.Fatalf("overflow retry wrote state: %#v", after)
+	}
+}
+
+func TestPublicationSettlementPreservesUnrelatedBlocker(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		action PublicationAction
+	}{
+		{name: "complete", action: PublicationComplete},
+		{name: "fail", action: PublicationFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			s, snapshot := approvedPublicationStoreAt(t, root)
+			begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("f", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
+			pending, err := s.Apply(ctx, begin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending.State = StateNeedsOperator
+			pending.NextAction = "resolve"
+			pending.TaskStates["task-1"] = TaskExecutionState{TaskID: "task-1", Status: TaskNeedsOperator, RepairLimit: DefaultRepairLimit, RecoveryLimit: DefaultRecoveryLimit, PriorAttempts: []AttemptSummary{}, InvocationHistory: []InvocationID{}}
+			pending.Control.Blocker = &OperatorBlocker{Kind: BlockerKindEvidenceMismatch, OperatorRef: "task-operator", TaskID: "task-1", Diagnostic: "unrelated task blocker"}
+			persistPublicationSnapshotForTest(t, root, pending)
+			before := pending
+			var tr PublicationTransition
+			switch tc.action {
+			case PublicationComplete:
+				tr = PublicationTransition{Action: tc.action, IntentID: "intent-1", Key: "issue:1", Generation: 1, Receipt: &PublicationReceipt{NodeID: "node-1", PublishedAt: time.Date(2026, 9, 8, 5, 6, 7, 0, time.UTC)}}
+			case PublicationFail:
+				tr = PublicationTransition{Action: tc.action, IntentID: "intent-1", Key: "issue:1", Generation: 1, Diagnostic: "provider unavailable"}
+			}
+			got, err := s.Apply(ctx, publicationRequest(t, before, "publication-settle", tr))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != StateNeedsOperator || !reflect.DeepEqual(got.Control.Blocker, before.Control.Blocker) || got.TaskStates["task-1"].Status != TaskNeedsOperator {
+				t.Fatalf("unrelated blocker was not preserved: %#v", got)
+			}
+			wantSync := "synced"
+			if tc.action == PublicationFail {
+				wantSync = "failed"
+			}
+			if got.SyncStatus != wantSync {
+				t.Fatalf("sync status = %q, want %q", got.SyncStatus, wantSync)
+			}
+		})
+	}
+}
+
+func TestPublicationConflictCannotOverwriteUnrelatedBlocker(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	s, snapshot := approvedPublicationStoreAt(t, root)
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("0", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
+	pending, err := s.Apply(ctx, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending.State = StateNeedsOperator
+	pending.NextAction = "resolve"
+	pending.TaskStates["task-1"] = TaskExecutionState{TaskID: "task-1", Status: TaskNeedsOperator, RepairLimit: DefaultRepairLimit, RecoveryLimit: DefaultRecoveryLimit, PriorAttempts: []AttemptSummary{}, InvocationHistory: []InvocationID{}}
+	pending.Control.Blocker = &OperatorBlocker{Kind: BlockerKindEvidenceMismatch, OperatorRef: "task-operator", TaskID: "task-1", Diagnostic: "unrelated task blocker"}
+	persistPublicationSnapshotForTest(t, root, pending)
+	request := publicationRequest(t, pending, "publication-conflict", PublicationTransition{Action: PublicationActionConflict, IntentID: "intent-1", Key: "issue:1", Generation: 1, Diagnostic: "ambiguous", Blocker: &OperatorBlocker{Kind: BlockerKindPublicationConflict, OperatorRef: "publication-operator", IntentID: "intent-1", Diagnostic: "ambiguous"}})
+	if _, err := s.Apply(ctx, request); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("conflict error = %v, want ErrInvalidTransition", err)
+	}
+	after, err := s.Load(ctx, pending.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != pending.Revision || !reflect.DeepEqual(after.Control.Blocker, pending.Control.Blocker) || after.Publications["intent-1"].Status != PublicationPending {
+		t.Fatalf("conflict overwrote unrelated blocker: %#v", after)
+	}
+}
+
+func TestPublicationReconciliationRequiresExactEvidenceAndReceiptShape(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name    string
+		eval    *ResolutionEvidence
+		receipt *PublicationReceipt
+	}{
+		{name: "both", eval: &ResolutionEvidence{RemoteMatch: true, NotPublished: true}, receipt: &PublicationReceipt{NodeID: "node", PublishedAt: time.Date(2026, 9, 8, 6, 7, 8, 0, time.UTC)}},
+		{name: "neither", eval: &ResolutionEvidence{}, receipt: nil},
+		{name: "missing receipt", eval: &ResolutionEvidence{RemoteMatch: true}, receipt: nil},
+		{name: "invalid receipt", eval: &ResolutionEvidence{RemoteMatch: true}, receipt: &PublicationReceipt{PublishedAt: time.Date(2026, 9, 8, 6, 7, 8, 0, time.UTC)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, snapshot := approvedPublicationStore(t)
+			begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("1", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
+			pending, err := s.Apply(ctx, begin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conflict := publicationRequest(t, pending, "publication-conflict", PublicationTransition{Action: PublicationActionConflict, IntentID: "intent-1", Key: "issue:1", Generation: 1, Diagnostic: "ambiguous", Blocker: &OperatorBlocker{Kind: BlockerKindPublicationConflict, OperatorRef: "operator", IntentID: "intent-1", Diagnostic: "ambiguous"}})
+			blocked, err := s.Apply(ctx, conflict)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolve := WorkTransition{Action: WorkResolve, Resolve: &ResolvePayload{Kind: ResolvePublicationReconciled, OperatorRef: "operator", IntentID: "intent-1", Evidence: tc.eval, PublicationReceipt: tc.receipt}}
+			if _, err := s.Apply(ctx, transitionRequest(t, blocked, "publication-reconcile-invalid", resolve)); !errors.Is(err, ErrInvalidTransition) {
+				t.Fatalf("reconciliation error = %v, want ErrInvalidTransition", err)
+			}
+			after, err := s.Load(ctx, blocked.WorkID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Revision != blocked.Revision || after.Publications["intent-1"].Status != PublicationConflict || after.Control.Blocker == nil {
+				t.Fatalf("invalid reconciliation wrote state: %#v", after)
+			}
+		})
+	}
+}
+
+func TestReducerPublicationMatrixPreservesIntegratedExecutionProjection(t *testing.T) {
+	receipt := &PublicationReceipt{NodeID: "node-1", PublishedAt: time.Date(2026, 9, 8, 7, 8, 9, 0, time.UTC)}
+	cases := []struct {
+		name               string
+		status             PublicationStatus
+		completionRequired bool
+		lastError          string
+		wantState          WorkState
+		wantNext           string
+		wantSync           string
+	}{
+		{name: "ordinary pending", status: PublicationPending, wantState: StateReadyForPR, wantNext: "prepare_docs", wantSync: "pending"},
+		{name: "ordinary failed", status: PublicationFailed, lastError: "failed", wantState: StateReadyForPR, wantNext: "prepare_docs", wantSync: "failed"},
+		{name: "required pending", status: PublicationPending, completionRequired: true, wantState: StatePublicationPending, wantNext: "publish", wantSync: "pending"},
+		{name: "required failed", status: PublicationFailed, completionRequired: true, lastError: "failed", wantState: StatePublicationPending, wantNext: "publish", wantSync: "failed"},
+		{name: "required completed", status: PublicationCompleted, completionRequired: true, wantState: StateReadyForPR, wantNext: "prepare_docs", wantSync: "synced"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := validSnapshot()
+			s.Control = WorkControl{ApprovedContractHash: s.ContractHash, ApprovalRef: "approval"}
+			s.TaskStates["task-1"] = TaskExecutionState{TaskID: "task-1", Status: TaskIntegrated}
+			s.Publications = map[PublicationIntentID]PublicationState{"intent-1": {IntentID: "intent-1", Key: "issue:1", Generation: 1, Kind: PublicationParentIssue, Status: tc.status, PayloadHash: strings.Repeat("a", 64), PayloadRef: "artifact://one", Target: *publicationTarget(), Attempts: 1, LastError: tc.lastError, CompletionRequired: tc.completionRequired, Receipt: receipt}}
+			if tc.status != PublicationCompleted {
+				publication := s.Publications["intent-1"]
+				publication.Receipt = nil
+				s.Publications["intent-1"] = publication
+			}
+			reduce(&s)
+			if s.State != tc.wantState || s.NextAction != tc.wantNext || s.SyncStatus != tc.wantSync {
+				t.Fatalf("reducer projection = %q/%q/%q, want %q/%q/%q", s.State, s.NextAction, s.SyncStatus, tc.wantState, tc.wantNext, tc.wantSync)
+			}
+		})
+	}
+}
+
+func TestPublicationReplayPayloadConflictAndStaleCASAreNoWrite(t *testing.T) {
+	ctx := context.Background()
+	s, snapshot := approvedPublicationStore(t)
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("2", 64), PayloadRef: "artifact://one", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
+	first, err := s.Apply(ctx, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := s.Apply(ctx, begin)
+	if err != nil || !reflect.DeepEqual(replay, first) {
+		t.Fatalf("publication replay = %#v, err=%v", replay, err)
+	}
+	changed := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("2", 64), PayloadRef: "artifact://changed", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
+	if _, err := s.Apply(ctx, changed); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed publication replay error = %v, want ErrConflict", err)
+	}
+	stale := publicationRequest(t, snapshot, "publication-stale-cas", PublicationTransition{Action: PublicationFail, IntentID: "intent-1", Key: "issue:1", Generation: 1, Diagnostic: "stale"})
+	if _, err := s.Apply(ctx, stale); !errors.As(err, new(*StaleRevisionError)) {
+		t.Fatalf("stale publication CAS error = %v", err)
+	}
+	after, err := s.Load(ctx, snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != first.Revision || after.Publications["intent-1"].Status != PublicationPending {
+		t.Fatalf("replay/conflict/CAS mutated publication: %#v", after)
 	}
 }
 

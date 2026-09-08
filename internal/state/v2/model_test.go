@@ -74,6 +74,91 @@ func TestValidateSnapshotAcceptsCompleteTaskStateModel(t *testing.T) {
 	}
 }
 
+func TestValidateSnapshotRejectsEveryPublicationStatusShapeCorruption(t *testing.T) {
+	validReceipt := &PublicationReceipt{NodeID: "node-1", PublishedAt: time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)}
+	cases := []struct {
+		name   string
+		status PublicationStatus
+		mutate func(*PublicationState)
+	}{
+		{name: "pending receipt", status: PublicationPending, mutate: func(p *PublicationState) { p.Receipt = validReceipt }},
+		{name: "completed missing receipt", status: PublicationCompleted, mutate: func(p *PublicationState) { p.Receipt = nil }},
+		{name: "failed missing error", status: PublicationFailed, mutate: func(p *PublicationState) { p.LastError = "" }},
+		{name: "conflict receipt", status: PublicationConflict, mutate: func(p *PublicationState) { p.Receipt = validReceipt }},
+		{name: "superseded receipt", status: PublicationSuperseded, mutate: func(p *PublicationState) { p.Receipt = validReceipt }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := validSnapshot()
+			p := PublicationState{IntentID: "intent-1", Key: "issue:1", Generation: 1, Kind: PublicationParentIssue, Status: tc.status, PayloadHash: strings.Repeat("a", 64), PayloadRef: "artifact://one", Target: *publicationTarget(), Attempts: 1, LastError: "failure", Receipt: validReceipt}
+			if tc.status == PublicationPending || tc.status == PublicationSuperseded {
+				p.LastError = ""
+			}
+			if tc.status == PublicationSuperseded {
+				s.Publications = map[PublicationIntentID]PublicationState{
+					"intent-1": p,
+					"intent-2": {IntentID: "intent-2", Key: "issue:1", Generation: 2, Kind: PublicationParentIssue, Status: PublicationPending, PayloadHash: strings.Repeat("b", 64), PayloadRef: "artifact://two", Target: *publicationTarget(), Attempts: 1},
+				}
+			} else {
+				s.Publications = map[PublicationIntentID]PublicationState{"intent-1": p}
+			}
+			tc.mutate(&p)
+			s.Publications["intent-1"] = p
+			if err := validateSnapshot(s); err == nil {
+				t.Fatal("validateSnapshot accepted corrupt publication status shape")
+			}
+		})
+	}
+}
+
+func TestValidateSnapshotRejectsPublicationIdentityAndGenerationCorruption(t *testing.T) {
+	base := func() WorkSnapshot {
+		s := validSnapshot()
+		s.Publications = map[PublicationIntentID]PublicationState{"intent-1": {IntentID: "intent-1", Key: "issue:1", Generation: 1, Kind: PublicationParentIssue, Status: PublicationPending, PayloadHash: strings.Repeat("a", 64), PayloadRef: "artifact://one", Target: *publicationTarget(), Attempts: 1}}
+		return s
+	}
+	cases := []struct {
+		name   string
+		mutate func(*WorkSnapshot)
+	}{
+		{name: "missing target host", mutate: func(s *WorkSnapshot) {
+			p := s.Publications["intent-1"]
+			p.Target.Host = ""
+			s.Publications["intent-1"] = p
+		}},
+		{name: "target key mismatch", mutate: func(s *WorkSnapshot) {
+			p := s.Publications["intent-1"]
+			p.Target.Key = "issue:2"
+			s.Publications["intent-1"] = p
+		}},
+		{name: "noncontiguous generations", mutate: func(s *WorkSnapshot) {
+			p := s.Publications["intent-1"]
+			p.Generation = 2
+			s.Publications["intent-1"] = p
+		}},
+		{name: "duplicate key generation", mutate: func(s *WorkSnapshot) {
+			p := s.Publications["intent-1"]
+			s.Publications["intent-2"] = PublicationState{IntentID: "intent-2", Key: p.Key, Generation: p.Generation, Kind: p.Kind, Status: p.Status, PayloadHash: strings.Repeat("b", 64), PayloadRef: "artifact://two", Target: *publicationTarget(), Attempts: 1}
+		}},
+		{name: "unmatched conflict blocker", mutate: func(s *WorkSnapshot) {
+			p := s.Publications["intent-1"]
+			p.Status = PublicationConflict
+			p.LastError = "ambiguous"
+			s.Publications["intent-1"] = p
+			s.Control.Blocker = &OperatorBlocker{Kind: BlockerKindPublicationConflict, OperatorRef: "operator", IntentID: "other", Diagnostic: "ambiguous"}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := base()
+			tc.mutate(&s)
+			if err := validateSnapshot(s); err == nil {
+				t.Fatal("validateSnapshot accepted corrupt publication identity")
+			}
+		})
+	}
+}
+
 func TestDecodeSnapshotNormalizesOnlyUnstartedFoundationSnapshots(t *testing.T) {
 	snapshot := validSnapshot()
 	snapshot.TaskStates = nil

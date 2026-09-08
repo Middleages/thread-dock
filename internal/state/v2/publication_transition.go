@@ -36,6 +36,12 @@ func applyPublicationTransition(snapshot *WorkSnapshot, transition PublicationTr
 }
 
 func beginPublication(snapshot *WorkSnapshot, transition PublicationTransition) error {
+	if transition.Generation == 0 {
+		return invalidTransition("publication generation is required")
+	}
+	if _, ok := snapshot.Publications[transition.IntentID]; !ok && transition.Generation <= maxPublicationGeneration(snapshot, transition.Key) {
+		return ErrStaleGeneration
+	}
 	if snapshot.Control.PauseRequested || snapshot.Control.Blocker != nil || snapshot.State == StateAwaitingApproval || snapshot.State == StateDraft || snapshot.State == StateNeedsOperator || snapshot.State == StateCompleted || snapshot.State == StatePaused {
 		return invalidTransition("work cannot dispatch publication in state %q", snapshot.State)
 	}
@@ -55,6 +61,9 @@ func beginPublication(snapshot *WorkSnapshot, transition PublicationTransition) 
 		if transition.Key != "" && transition.Key != existing.Key || transition.Kind != "" && transition.Kind != existing.Kind || transition.PayloadHash != "" && transition.PayloadHash != existing.PayloadHash || transition.PayloadRef != "" && transition.PayloadRef != existing.PayloadRef || transition.Target != nil && *transition.Target != existing.Target || transition.CompletionRequired != nil && *transition.CompletionRequired != existing.CompletionRequired {
 			return invalidTransition("publication immutable identity does not match")
 		}
+		if existing.Attempts == math.MaxUint32 {
+			return invalidTransition("publication attempts exhausted")
+		}
 		existing.Status = PublicationPending
 		existing.Attempts++
 		existing.LastError = ""
@@ -62,9 +71,6 @@ func beginPublication(snapshot *WorkSnapshot, transition PublicationTransition) 
 		snapshot.Publications[existing.IntentID] = existing
 		reduce(snapshot)
 		return nil
-	}
-	if transition.Generation == 0 {
-		return invalidTransition("publication generation is required")
 	}
 	if transition.CompletionRequired == nil {
 		return invalidTransition("completion-required hint is required for a new publication")
@@ -113,6 +119,9 @@ func validateNewPublicationIdentity(transition PublicationTransition) error {
 	if transition.Generation == 0 || !validPublicationKind(transition.Kind) {
 		return invalidTransition("publication identity is invalid")
 	}
+	if transition.CompletionRequired == nil {
+		return invalidTransition("completion-required hint is required for a new publication")
+	}
 	if !validPayloadHash(transition.PayloadHash) {
 		return invalidTransition("publication payload hash must be lowercase SHA-256")
 	}
@@ -134,9 +143,6 @@ func validPayloadHash(value string) bool {
 }
 
 func completePublication(snapshot *WorkSnapshot, transition PublicationTransition) error {
-	if snapshot.Control.Blocker != nil {
-		return invalidTransition("work has an operator blocker")
-	}
 	publication, err := currentPublication(snapshot, transition)
 	if err != nil {
 		return err
@@ -163,9 +169,6 @@ func completePublication(snapshot *WorkSnapshot, transition PublicationTransitio
 }
 
 func failPublication(snapshot *WorkSnapshot, transition PublicationTransition) error {
-	if snapshot.Control.Blocker != nil {
-		return invalidTransition("work has an operator blocker")
-	}
 	publication, err := currentPublication(snapshot, transition)
 	if err != nil {
 		return err
@@ -179,10 +182,6 @@ func failPublication(snapshot *WorkSnapshot, transition PublicationTransition) e
 	if err := validateDiagnostic(transition.Diagnostic); err != nil || strings.TrimSpace(transition.Diagnostic) == "" {
 		return invalidTransition("bounded failure diagnostic is required")
 	}
-	if publication.Attempts == math.MaxUint32 {
-		return invalidTransition("publication attempts exhausted")
-	}
-	publication.Attempts++
 	publication.Status = PublicationFailed
 	publication.LastError = boundedDiagnostic(transition.Diagnostic)
 	snapshot.Publications[publication.IntentID] = publication

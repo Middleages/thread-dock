@@ -162,10 +162,10 @@ func validateTaskStates(s WorkSnapshot) error {
 	byKey := make(map[PublicationKey]map[uint32]PublicationIntentID)
 	conflictIntents := make([]PublicationIntentID, 0, 1)
 	for id, publication := range s.Publications {
-		if id == "" || id != publication.IntentID || strings.TrimSpace(string(publication.IntentID)) != string(publication.IntentID) {
+		if id == "" || id != publication.IntentID || strings.TrimSpace(string(publication.IntentID)) != string(publication.IntentID) || !utf8.ValidString(string(publication.IntentID)) {
 			return fmt.Errorf("publication key %q does not match intent ID %q", id, publication.IntentID)
 		}
-		if strings.TrimSpace(string(publication.Key)) != string(publication.Key) || publication.Key == "" || publication.Generation == 0 {
+		if strings.TrimSpace(string(publication.Key)) != string(publication.Key) || publication.Key == "" || !utf8.ValidString(string(publication.Key)) || publication.Generation == 0 {
 			return fmt.Errorf("publication %q has invalid identity", id)
 		}
 		if !validPublicationKind(publication.Kind) {
@@ -562,10 +562,10 @@ func validatePublicationState(publication PublicationState) error {
 	if !validPayloadHash(publication.PayloadHash) || strings.TrimSpace(publication.PayloadRef) != publication.PayloadRef || publication.PayloadRef == "" || len([]byte(publication.PayloadRef)) > MaxDiagnosticBytes || !utf8.ValidString(publication.PayloadRef) {
 		return errors.New("invalid publication payload identity")
 	}
-	if strings.TrimSpace(publication.Target.Host) != publication.Target.Host || publication.Target.Host == "" || publication.Target.Key != publication.Key || strings.TrimSpace(string(publication.Target.Key)) != string(publication.Target.Key) {
+	if !utf8.ValidString(publication.Target.Host) || strings.TrimSpace(publication.Target.Host) != publication.Target.Host || publication.Target.Host == "" || publication.Target.Key != publication.Key || !utf8.ValidString(string(publication.Target.Key)) || strings.TrimSpace(string(publication.Target.Key)) != string(publication.Target.Key) {
 		return errors.New("invalid publication target")
 	}
-	if publication.Target.Repository != "" && strings.TrimSpace(string(publication.Target.Repository)) != string(publication.Target.Repository) || publication.Target.Resource != "" && strings.TrimSpace(publication.Target.Resource) != publication.Target.Resource || publication.Target.Base != "" && strings.TrimSpace(publication.Target.Base) != publication.Target.Base {
+	if !utf8.ValidString(string(publication.Target.Repository)) || !utf8.ValidString(publication.Target.Resource) || !utf8.ValidString(publication.Target.Base) || publication.Target.Repository != "" && strings.TrimSpace(string(publication.Target.Repository)) != string(publication.Target.Repository) || publication.Target.Resource != "" && strings.TrimSpace(publication.Target.Resource) != publication.Target.Resource || publication.Target.Base != "" && strings.TrimSpace(publication.Target.Base) != publication.Target.Base {
 		return errors.New("invalid publication target")
 	}
 	switch publication.Status {
