@@ -81,7 +81,7 @@ func validateApplyRequest(request TransitionRequest) error {
 				return invalidTransition("unsupported work resolve transition")
 			}
 			switch request.Work.Resolve.Kind {
-			case ResolveExtendBudget, ResolveRuntimeNotStarted, ResolveRuntimeTerminated:
+			case ResolveExtendBudget, ResolveRuntimeNotStarted, ResolveRuntimeTerminated, ResolveRetryVerifiedStage:
 			default:
 				return invalidTransition("unsupported work resolve transition")
 			}
@@ -92,7 +92,8 @@ func validateApplyRequest(request TransitionRequest) error {
 	if request.Task != nil {
 		switch request.Task.Action {
 		case TaskReserveInvocation, TaskBeginLaunch, TaskMarkRunning, TaskRequestTermination,
-			TaskConfirmTermination, TaskReconcileNotStarted, TaskNeedsOperatorAction:
+			TaskConfirmTermination, TaskReconcileNotStarted, TaskRecordCandidate, TaskRecordGate,
+			TaskRecordReview, TaskRecordIntegration, TaskNeedsOperatorAction:
 		default:
 			return invalidTransition("unsupported task action %q", request.Task.Action)
 		}

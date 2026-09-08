@@ -90,11 +90,12 @@ type ReviewEvidence struct {
 }
 
 type IntegrationEvidence struct {
-	BuilderAttempt  uint32    `json:"builderAttempt"`
-	CandidateSHA    string    `json:"candidateSha"`
-	IntegrationHEAD string    `json:"integrationHead"`
-	ObservedAt      time.Time `json:"observedAt"`
-	Diagnostic      string    `json:"diagnostic,omitempty"`
+	BuilderAttempt   uint32    `json:"builderAttempt"`
+	CandidateSHA     string    `json:"candidateSha"`
+	IntegrationHEAD  string    `json:"integrationHead"`
+	RelationVerified bool      `json:"relationVerified"`
+	ObservedAt       time.Time `json:"observedAt"`
+	Diagnostic       string    `json:"diagnostic,omitempty"`
 }
 
 type AttemptSummary struct {

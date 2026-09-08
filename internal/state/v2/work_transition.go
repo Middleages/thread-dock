@@ -11,6 +11,7 @@ const (
 	BlockerKindRepairBudgetExhausted   = "repair_budget_exhausted"
 	BlockerKindRecoveryBudgetExhausted = "recovery_budget_exhausted"
 	BlockerKindRuntimeUnknown          = "runtime_unknown"
+	BlockerKindEvidenceMismatch        = "evidence_mismatch"
 )
 
 func applyWorkTransition(snapshot *WorkSnapshot, transition WorkTransition) error {
@@ -67,6 +68,9 @@ func applyWorkResolve(snapshot *WorkSnapshot, transition WorkTransition) error {
 	if payload.Kind == ResolveRuntimeNotStarted || payload.Kind == ResolveRuntimeTerminated {
 		return applyRuntimeResolve(snapshot, transition)
 	}
+	if payload.Kind == ResolveRetryVerifiedStage {
+		return applyRetryVerifiedStage(snapshot, transition)
+	}
 	if payload.Kind != ResolveExtendBudget {
 		return invalidTransition("unsupported work resolve transition")
 	}
@@ -97,6 +101,56 @@ func applyWorkResolve(snapshot *WorkSnapshot, transition WorkTransition) error {
 	snapshot.Control.Blocker = nil
 	reduce(snapshot)
 	return nil
+}
+
+func applyRetryVerifiedStage(snapshot *WorkSnapshot, transition WorkTransition) error {
+	payload := transition.Resolve
+	if payload == nil || strings.TrimSpace(payload.OperatorRef) == "" || payload.TaskID == "" || payload.Evidence == nil {
+		return invalidTransition("invalid evidence resolution")
+	}
+	blocker := snapshot.Control.Blocker
+	if blocker == nil || blocker.Kind != BlockerKindEvidenceMismatch || blocker.OperatorRef != payload.OperatorRef || blocker.TaskID != payload.TaskID {
+		return invalidTransition("evidence resolution does not match blocker")
+	}
+	task, ok := snapshot.TaskStates[payload.TaskID]
+	if !ok {
+		return invalidTransition("evidence resolution task is not in contract")
+	}
+	if strings.TrimSpace(payload.Evidence.Diagnostic) == "" {
+		return invalidTransition("evidence resolution diagnostic is required")
+	}
+	if err := validateDiagnostic(payload.Evidence.Diagnostic); err != nil {
+		return invalidTransition("resolution diagnostic: %v", err)
+	}
+	switch {
+	case task.Integration != nil && task.Integration.BuilderAttempt == task.BuilderAttempt && task.Integration.CandidateSHA == candidateSHAOf(task):
+		task.Status = TaskIntegrated
+	case task.Review != nil && task.Review.BuilderAttempt == task.BuilderAttempt && task.Review.CandidateSHA == candidateSHAOf(task) && task.Review.Accepted:
+		task.Status = TaskAccepted
+	case task.Review != nil && task.Review.BuilderAttempt == task.BuilderAttempt && task.Review.CandidateSHA == candidateSHAOf(task) && !task.Review.Accepted:
+		task.Status = TaskReviewBlocked
+	case task.Gate != nil && task.Gate.BuilderAttempt == task.BuilderAttempt && task.Gate.CandidateSHA == candidateSHAOf(task) && task.Gate.Passed:
+		task.Status = TaskGatePassed
+	case task.Gate != nil && task.Gate.BuilderAttempt == task.BuilderAttempt && task.Gate.CandidateSHA == candidateSHAOf(task) && !task.Gate.Passed:
+		task.Status = TaskGateFailed
+	case task.Candidate != nil && task.Candidate.BuilderAttempt == task.BuilderAttempt:
+		task.Status = TaskCandidateReady
+	case task.Invocation != nil && task.Invocation.TerminationConfirmed && task.Invocation.EndedAt != nil:
+		task.Status = TaskTerminated
+	default:
+		task.Status = TaskPending
+	}
+	snapshot.TaskStates[payload.TaskID] = task
+	snapshot.Control.Blocker = nil
+	reduce(snapshot)
+	return nil
+}
+
+func candidateSHAOf(task TaskExecutionState) string {
+	if task.Candidate == nil {
+		return ""
+	}
+	return task.Candidate.CandidateSHA
 }
 
 func applyRuntimeResolve(snapshot *WorkSnapshot, transition WorkTransition) error {

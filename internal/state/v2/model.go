@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
 )
@@ -180,30 +181,82 @@ func validateTaskStates(s WorkSnapshot) error {
 }
 
 func validateTaskEvidence(task TaskExecutionState) error {
+	switch task.Status {
+	case TaskCandidateReady:
+		if task.Candidate == nil {
+			return errors.New("candidate_ready task has no candidate evidence")
+		}
+	case TaskGatePassed, TaskGateFailed:
+		if task.Candidate == nil || task.Gate == nil {
+			return errors.New("gate task has incomplete evidence")
+		}
+	case TaskAccepted, TaskReviewBlocked:
+		if task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Review == nil {
+			return errors.New("review task has incomplete evidence")
+		}
+	case TaskIntegrated:
+		if task.Candidate == nil || task.Review == nil || !task.Review.Accepted || task.Integration == nil {
+			return errors.New("integrated task has incomplete evidence")
+		}
+	}
 	if task.Invocation != nil && !validTaskStatus(task.Invocation.ReturnStage) {
 		return fmt.Errorf("unknown invocation return stage %q", task.Invocation.ReturnStage)
 	}
 	if task.Candidate != nil {
+		if task.Candidate.BuilderAttempt == 0 || task.Candidate.BuilderAttempt != task.BuilderAttempt || !validSHA(task.Candidate.CandidateSHA) || !validSHA(task.Candidate.TreeSHA) || task.Candidate.ChangedFiles == nil || len(task.Candidate.ChangedFiles) == 0 {
+			return errors.New("invalid candidate evidence")
+		}
+		seen := map[string]bool{}
+		for _, path := range task.Candidate.ChangedFiles {
+			if !validRepositoryPath(path) || seen[path] {
+				return errors.New("invalid candidate changed files")
+			}
+			seen[path] = true
+		}
 		if err := validateDiagnostic(task.Candidate.Diagnostic); err != nil {
 			return err
 		}
 	}
 	if task.Gate != nil {
+		if task.Candidate == nil || task.Gate.BuilderAttempt != task.BuilderAttempt || task.Gate.BuilderAttempt != task.Candidate.BuilderAttempt || task.Gate.CandidateSHA != task.Candidate.CandidateSHA || task.Gate.ObservedAt.IsZero() || task.Gate.ObservedAt.Location() != time.UTC || len(task.Gate.Commands) == 0 || len(task.Gate.Commands) != len(task.Gate.Outcomes) {
+			return errors.New("invalid gate evidence")
+		}
+		for i := range task.Gate.Commands {
+			if strings.TrimSpace(task.Gate.Commands[i]) != task.Gate.Commands[i] || strings.TrimSpace(task.Gate.Outcomes[i]) != task.Gate.Outcomes[i] || task.Gate.Commands[i] == "" || task.Gate.Outcomes[i] == "" {
+				return errors.New("invalid gate command and outcome")
+			}
+		}
 		if err := validateDiagnostic(task.Gate.Diagnostic); err != nil {
 			return err
 		}
 	}
 	if task.Review != nil {
+		if task.Candidate == nil || task.Review.BuilderAttempt != task.BuilderAttempt || task.Review.CandidateSHA != task.Candidate.CandidateSHA || task.Review.ReviewSHA != task.Candidate.CandidateSHA || task.Review.ObservedAt.IsZero() || task.Review.Findings == nil {
+			return errors.New("invalid review evidence")
+		}
+		blocking := 0
 		if err := validateDiagnostic(task.Review.Diagnostic); err != nil {
 			return err
 		}
 		for _, finding := range task.Review.Findings {
+			if strings.TrimSpace(finding.Code) == "" {
+				return errors.New("review finding code is required")
+			}
+			if strings.EqualFold(finding.Severity, "blocking") {
+				blocking++
+			}
 			if err := validateDiagnostic(finding.Diagnostic); err != nil {
 				return err
 			}
 		}
+		if task.Review.Accepted && blocking != 0 || !task.Review.Accepted && len(task.Review.Findings) == 0 {
+			return errors.New("review acceptance does not match findings")
+		}
 	}
 	if task.Integration != nil {
+		if task.Candidate == nil || task.Review == nil || !task.Review.Accepted || task.Integration.BuilderAttempt != task.BuilderAttempt || task.Integration.CandidateSHA != task.Candidate.CandidateSHA || !validSHA(task.Integration.IntegrationHEAD) || task.Integration.IntegrationHEAD == task.Candidate.CandidateSHA || !task.Integration.RelationVerified || task.Integration.ObservedAt.IsZero() || task.Integration.ObservedAt.Location() != time.UTC {
+			return errors.New("invalid integration evidence")
+		}
 		if err := validateDiagnostic(task.Integration.Diagnostic); err != nil {
 			return err
 		}

@@ -1,6 +1,8 @@
 package statev2
 
 import (
+	"encoding/hex"
+	"path"
 	"strings"
 	"time"
 
@@ -38,6 +40,22 @@ func applyTaskTransition(snapshot *WorkSnapshot, transition TaskTransition, requ
 	switch transition.Action {
 	case TaskReserveInvocation:
 		return reserveInvocation(snapshot, &task, transition, requestID)
+	case TaskRecordCandidate:
+		if err := recordCandidate(&task, transition); err != nil {
+			return err
+		}
+	case TaskRecordGate:
+		if err := recordGate(&task, transition); err != nil {
+			return err
+		}
+	case TaskRecordReview:
+		if err := recordReview(&task, transition); err != nil {
+			return err
+		}
+	case TaskRecordIntegration:
+		if err := recordIntegration(&task, transition); err != nil {
+			return err
+		}
 	case TaskBeginLaunch:
 		if err := beginLaunch(&task, transition); err != nil {
 			return err
@@ -86,20 +104,19 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 			return invalidTransition("invocation ID was already used")
 		}
 	}
-	if task.Invocation != nil {
+	if err := validateReservationInputs(transition); err != nil {
+		return err
+	}
+	isRepair := transition.Role == roleBuilder && !transition.Transient && (task.Status == TaskGateFailed || task.Status == TaskReviewBlocked)
+	isRecovery := transition.Transient && task.Status == TaskTerminated
+	if isRepair {
+		return reserveRepair(snapshot, task, transition, requestID)
+	}
+	if isRecovery {
+		return reserveRecovery(snapshot, task, transition, requestID)
+	}
+	if task.Invocation != nil && !(task.Status == TaskGatePassed && transition.Role == roleReviewer && task.Invocation.TerminationConfirmed && task.Invocation.EndedAt != nil) {
 		return invalidTransition("task already has an invocation")
-	}
-	if strings.TrimSpace(transition.Invocation.LogicalProfile) == "" || strings.TrimSpace(transition.Invocation.RuntimeFingerprint) == "" {
-		return invalidTransition("logical profile and runtime fingerprint are required")
-	}
-	if strings.TrimSpace(transition.Worktree.CanonicalPath) == "" || strings.TrimSpace(transition.Worktree.GitCommonDir) == "" || strings.TrimSpace(transition.Worktree.Branch) == "" || strings.TrimSpace(transition.Worktree.BaseSHA) == "" {
-		return invalidTransition("complete worktree identity is required")
-	}
-	if transition.Invocation.ProviderIdentity != "" || transition.Invocation.ProviderSession != "" || transition.Invocation.ProviderPane != "" || transition.Invocation.ProviderProcess != "" {
-		return invalidTransition("provider identity is not accepted when reserving")
-	}
-	if transition.Invocation.StartedAt != nil || transition.Invocation.EndedAt != nil || transition.Invocation.LaunchRequested || transition.Invocation.TerminationConfirmed {
-		return invalidTransition("invalid initial invocation state")
 	}
 	if task.Status == TaskPending && task.LogicalWork == nil {
 		if transition.Role != roleBuilder || transition.ReturnStage != TaskPending || transition.BuilderAttempt != 1 || task.BuilderAttempt != 0 || task.LogicalWork != nil {
@@ -131,6 +148,7 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 			// remain attached to the task.
 			task.LogicalWork = &LogicalWorkState{LogicalWorkID: transition.LogicalWorkID, Role: transition.Role, BuilderAttempt: task.BuilderAttempt, Purpose: "task invocation"}
 		}
+		task.Invocation = nil
 	} else {
 		if task.LogicalWork == nil || task.LogicalWork.LogicalWorkID != transition.LogicalWorkID || task.LogicalWork.Role != transition.Role || task.LogicalWork.BuilderAttempt != transition.BuilderAttempt || task.BuilderAttempt != transition.BuilderAttempt {
 			return invalidTransition("reservation does not match logical work")
@@ -160,6 +178,238 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 	task.Status = TaskInvocationReserved
 	snapshot.TaskStates[task.TaskID] = *task
 	reduce(snapshot)
+	return nil
+}
+
+func validateReservationInputs(transition TaskTransition) error {
+	if strings.TrimSpace(transition.Invocation.LogicalProfile) == "" || strings.TrimSpace(transition.Invocation.RuntimeFingerprint) == "" {
+		return invalidTransition("logical profile and runtime fingerprint are required")
+	}
+	if strings.TrimSpace(transition.Worktree.CanonicalPath) == "" || strings.TrimSpace(transition.Worktree.GitCommonDir) == "" || strings.TrimSpace(transition.Worktree.Branch) == "" || strings.TrimSpace(transition.Worktree.BaseSHA) == "" {
+		return invalidTransition("complete worktree identity is required")
+	}
+	if transition.Invocation.ProviderIdentity != "" || transition.Invocation.ProviderSession != "" || transition.Invocation.ProviderPane != "" || transition.Invocation.ProviderProcess != "" {
+		return invalidTransition("provider identity is not accepted when reserving")
+	}
+	if transition.Invocation.StartedAt != nil || transition.Invocation.EndedAt != nil || transition.Invocation.LaunchRequested || transition.Invocation.TerminationConfirmed {
+		return invalidTransition("invalid initial invocation state")
+	}
+	return nil
+}
+
+func reserveRepair(snapshot *WorkSnapshot, task *TaskExecutionState, transition TaskTransition, requestID contractv2.RequestID) error {
+	if transition.InvocationID == "" || transition.LogicalWorkID == "" || transition.Invocation == nil || transition.Worktree == nil || transition.BuilderAttempt != task.BuilderAttempt+1 || transition.ReturnStage != task.Status {
+		return invalidTransition("invalid repair reservation")
+	}
+	if task.LogicalWork == nil || task.LogicalWork.Role != roleBuilder || task.LogicalWork.BuilderAttempt != task.BuilderAttempt {
+		return invalidTransition("repair reservation has invalid prior logical work")
+	}
+	if task.RepairCount >= task.RepairLimit {
+		blocker := OperatorBlocker{Kind: BlockerKindRepairBudgetExhausted, TaskID: task.TaskID, Diagnostic: "repair budget exhausted; remaining=0"}
+		if transition.Blocker != nil {
+			blocker.OperatorRef = transition.Blocker.OperatorRef
+		}
+		snapshot.Control.Blocker = &blocker
+		task.Status = TaskNeedsOperator
+		snapshot.TaskStates[task.TaskID] = *task
+		reduce(snapshot)
+		return nil
+	}
+	if len(task.PriorAttempts) >= MaxPriorAttempts {
+		return invalidTransition("prior attempt summary limit reached")
+	}
+	summary := AttemptSummary{BuilderAttempt: task.BuilderAttempt, Outcome: string(task.Status)}
+	if task.Candidate != nil {
+		summary.CandidateSHA, summary.TreeSHA = task.Candidate.CandidateSHA, task.Candidate.TreeSHA
+		summary.Diagnostic = task.Candidate.Diagnostic
+	}
+	if task.Gate != nil && task.Gate.Diagnostic != "" {
+		summary.FailureReason, summary.Diagnostic = "gate_failed", task.Gate.Diagnostic
+	}
+	if task.Review != nil && task.Review.Diagnostic != "" {
+		summary.FailureReason, summary.Diagnostic = "review_blocked", task.Review.Diagnostic
+	}
+	task.PriorAttempts = append(task.PriorAttempts, summary)
+	task.RepairCount++
+	task.BuilderAttempt++
+	task.Candidate, task.Gate, task.Review, task.Integration = nil, nil, nil, nil
+	task.LogicalWork = &LogicalWorkState{LogicalWorkID: transition.LogicalWorkID, Role: roleBuilder, BuilderAttempt: task.BuilderAttempt, Purpose: "task invocation", RepairCount: task.RepairCount, RecoveryCount: task.RecoveryCount, RepairBudgetDebited: true}
+	task.Invocation = nil
+	if err := installInvocation(task, transition, requestID); err != nil {
+		return err
+	}
+	snapshot.TaskStates[task.TaskID] = *task
+	reduce(snapshot)
+	return nil
+}
+
+func reserveRecovery(snapshot *WorkSnapshot, task *TaskExecutionState, transition TaskTransition, requestID contractv2.RequestID) error {
+	if task.Invocation == nil || !task.Invocation.TerminationConfirmed || task.Invocation.EndedAt == nil || !task.Invocation.TransientFailure || transition.InvocationID == task.Invocation.InvocationID || transition.Role != task.Invocation.Role || transition.LogicalWorkID != task.Invocation.LogicalWorkID || transition.BuilderAttempt != task.BuilderAttempt || transition.ReturnStage != task.Invocation.ReturnStage {
+		return invalidTransition("invalid recovery reservation")
+	}
+	if task.RecoveryCount >= task.RecoveryLimit {
+		blocker := OperatorBlocker{Kind: BlockerKindRecoveryBudgetExhausted, TaskID: task.TaskID, InvocationID: task.Invocation.InvocationID, Diagnostic: "recovery budget exhausted; remaining=0"}
+		if transition.Blocker != nil {
+			blocker.OperatorRef = transition.Blocker.OperatorRef
+		}
+		snapshot.Control.Blocker = &blocker
+		task.Status = TaskNeedsOperator
+		snapshot.TaskStates[task.TaskID] = *task
+		reduce(snapshot)
+		return nil
+	}
+	task.RecoveryCount++
+	if task.LogicalWork != nil {
+		task.LogicalWork.RecoveryCount = task.RecoveryCount
+		task.LogicalWork.RecoveryBudgetDebited = true
+	}
+	task.Invocation = nil
+	if err := installInvocation(task, transition, requestID); err != nil {
+		return err
+	}
+	snapshot.TaskStates[task.TaskID] = *task
+	reduce(snapshot)
+	return nil
+}
+
+func installInvocation(task *TaskExecutionState, transition TaskTransition, requestID contractv2.RequestID) error {
+	invocation := *transition.Invocation
+	invocation.InvocationID = transition.InvocationID
+	invocation.LogicalWorkID = transition.LogicalWorkID
+	invocation.Role = transition.Role
+	invocation.ReturnStage = transition.ReturnStage
+	invocation.TransitionRequestID = requestID
+	task.Worktree = cloneWorktree(transition.Worktree)
+	task.Invocation = &invocation
+	task.InvocationHistory = append(task.InvocationHistory, transition.InvocationID)
+	task.Status = TaskInvocationReserved
+	return nil
+}
+
+func validSHA(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil && value == strings.ToLower(value)
+}
+
+func recordCandidate(task *TaskExecutionState, transition TaskTransition) error {
+	if transition.Role != roleBuilder || transition.Transient || task.Status != TaskTerminated || task.Invocation == nil || task.Invocation.Role != roleBuilder || !task.Invocation.TerminationConfirmed || task.Invocation.EndedAt == nil || task.Invocation.TransientFailure || transition.InvocationID != task.Invocation.InvocationID || transition.LogicalWorkID != task.Invocation.LogicalWorkID || transition.BuilderAttempt != task.BuilderAttempt || transition.ReturnStage != TaskPending || transition.Candidate == nil {
+		return invalidTransition("candidate requires a normal terminated builder invocation")
+	}
+	c := transition.Candidate
+	if c.BuilderAttempt != task.BuilderAttempt || !validSHA(c.CandidateSHA) || !validSHA(c.TreeSHA) || c.ChangedFiles == nil || len(c.ChangedFiles) == 0 {
+		return invalidTransition("candidate evidence does not match current attempt")
+	}
+	seen := map[string]bool{}
+	for _, path := range c.ChangedFiles {
+		if !validRepositoryPath(path) || seen[path] {
+			return invalidTransition("candidate changed files are not repository-relative and unique")
+		}
+		seen[path] = true
+	}
+	if err := validateDiagnostic(c.Diagnostic); err != nil {
+		return invalidTransition("candidate diagnostic: %v", err)
+	}
+	clone := *c
+	clone.ChangedFiles = append([]string(nil), c.ChangedFiles...)
+	task.Candidate = &clone
+	task.Status = TaskCandidateReady
+	return nil
+}
+
+func validRepositoryPath(value string) bool {
+	if strings.TrimSpace(value) != value || value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") || path.Clean(value) != value || value == "." || strings.HasPrefix(value, "../") || strings.Contains(value, "/../") {
+		return false
+	}
+	return true
+}
+
+func recordGate(task *TaskExecutionState, transition TaskTransition) error {
+	if transition.Role != roleBuilder || task.Status != TaskCandidateReady || task.Candidate == nil || transition.BuilderAttempt != task.BuilderAttempt || transition.Gate == nil {
+		return invalidTransition("gate requires current candidate")
+	}
+	g := transition.Gate
+	if g.BuilderAttempt != task.BuilderAttempt || g.CandidateSHA != task.Candidate.CandidateSHA || g.ObservedAt.IsZero() || g.ObservedAt.Location() != time.UTC || len(g.Commands) == 0 || len(g.Commands) != len(g.Outcomes) {
+		return invalidTransition("gate evidence does not match candidate")
+	}
+	for i := range g.Commands {
+		if strings.TrimSpace(g.Commands[i]) != g.Commands[i] || strings.TrimSpace(g.Outcomes[i]) != g.Outcomes[i] || g.Commands[i] == "" || g.Outcomes[i] == "" {
+			return invalidTransition("gate command and outcome must be trimmed")
+		}
+	}
+	if err := validateDiagnostic(g.Diagnostic); err != nil {
+		return invalidTransition("gate diagnostic: %v", err)
+	}
+	clone := *g
+	clone.Commands = append([]string(nil), g.Commands...)
+	clone.Outcomes = append([]string(nil), g.Outcomes...)
+	task.Gate = &clone
+	if g.Passed {
+		task.Status = TaskGatePassed
+	} else {
+		task.Status = TaskGateFailed
+	}
+	return nil
+}
+
+func recordReview(task *TaskExecutionState, transition TaskTransition) error {
+	if transition.Role != roleReviewer || task.Status != TaskTerminated || task.Invocation == nil || task.Invocation.Role != roleReviewer || !task.Invocation.TerminationConfirmed || task.Invocation.EndedAt == nil || task.Invocation.TransientFailure || transition.InvocationID != task.Invocation.InvocationID || transition.LogicalWorkID != task.Invocation.LogicalWorkID || transition.BuilderAttempt != task.BuilderAttempt || transition.ReturnStage != TaskGatePassed || task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || transition.Review == nil {
+		return invalidTransition("review requires a normal terminated reviewer invocation")
+	}
+	r := transition.Review
+	if r.ReviewerInvocationID != task.Invocation.InvocationID || r.BuilderAttempt != task.BuilderAttempt || r.CandidateSHA != task.Candidate.CandidateSHA || r.ReviewSHA != task.Candidate.CandidateSHA || r.ObservedAt.IsZero() || r.ObservedAt.Location() != time.UTC || r.Findings == nil {
+		return invalidTransition("review evidence does not match candidate")
+	}
+	blocking := 0
+	for _, f := range r.Findings {
+		if err := validateDiagnostic(f.Diagnostic); err != nil {
+			return invalidTransition("review finding: %v", err)
+		}
+		if strings.TrimSpace(f.Code) == "" {
+			return invalidTransition("review finding code is required")
+		}
+		if strings.EqualFold(f.Severity, "blocking") {
+			blocking++
+		}
+	}
+	if r.Accepted && blocking != 0 {
+		return invalidTransition("accepted review has blocking findings")
+	}
+	if !r.Accepted && len(r.Findings) == 0 {
+		return invalidTransition("blocked review requires a finding")
+	}
+	if err := validateDiagnostic(r.Diagnostic); err != nil {
+		return invalidTransition("review diagnostic: %v", err)
+	}
+	clone := *r
+	if r.Findings != nil {
+		clone.Findings = append([]ReviewFinding{}, r.Findings...)
+	}
+	task.Review = &clone
+	if r.Accepted {
+		task.Status = TaskAccepted
+	} else {
+		task.Status = TaskReviewBlocked
+	}
+	return nil
+}
+
+func recordIntegration(task *TaskExecutionState, transition TaskTransition) error {
+	if transition.Role != roleBuilder || task.Status != TaskAccepted || task.Candidate == nil || task.Review == nil || !task.Review.Accepted || transition.BuilderAttempt != task.BuilderAttempt || transition.Integration == nil {
+		return invalidTransition("integration requires accepted review")
+	}
+	i := transition.Integration
+	if i.BuilderAttempt != task.BuilderAttempt || i.CandidateSHA != task.Candidate.CandidateSHA || !validSHA(i.IntegrationHEAD) || i.IntegrationHEAD == task.Candidate.CandidateSHA || !i.RelationVerified || i.ObservedAt.IsZero() || i.ObservedAt.Location() != time.UTC {
+		return invalidTransition("integration evidence does not match candidate")
+	}
+	if err := validateDiagnostic(i.Diagnostic); err != nil {
+		return invalidTransition("integration diagnostic: %v", err)
+	}
+	clone := *i
+	task.Integration = &clone
+	task.Status = TaskIntegrated
 	return nil
 }
 
@@ -276,6 +526,9 @@ func confirmTermination(task *TaskExecutionState, transition TaskTransition) err
 	at := transition.At
 	task.Invocation.EndedAt = &at
 	task.Invocation.TerminationConfirmed = true
+	if transition.Transient {
+		task.Invocation.TransientFailure = true
+	}
 	if transition.Reason != "" {
 		task.Invocation.TerminationReason = transition.Reason
 	}

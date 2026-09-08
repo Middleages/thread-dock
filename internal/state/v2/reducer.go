@@ -47,7 +47,37 @@ func reduce(snapshot *WorkSnapshot) {
 			snapshot.State = StateRunning
 			snapshot.NextAction = "inspect_candidate"
 			return
+		case TaskIntegrated:
+			// Terminal task evidence is considered below once all tasks are inspected.
+		case TaskAccepted:
+			snapshot.State = StateReview
+			snapshot.NextAction = "integrate"
+			return
+		case TaskGatePassed:
+			snapshot.State = StateReview
+			snapshot.NextAction = "review"
+			return
+		case TaskGateFailed, TaskReviewBlocked:
+			snapshot.State = StateRunning
+			snapshot.NextAction = "repair"
+			return
+		case TaskCandidateReady:
+			snapshot.State = StateRunning
+			snapshot.NextAction = "verify"
+			return
 		}
+	}
+	allIntegrated := len(snapshot.TaskStates) > 0
+	for _, task := range snapshot.TaskStates {
+		if task.Status != TaskIntegrated {
+			allIntegrated = false
+			break
+		}
+	}
+	if allIntegrated {
+		snapshot.State = StateReadyForPR
+		snapshot.NextAction = "prepare_docs"
+		return
 	}
 	allPending := true
 	for _, task := range snapshot.TaskStates {
