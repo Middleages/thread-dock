@@ -133,6 +133,26 @@ func TestPublicationMutationAfterObservePreventsPublish(t *testing.T) {
 	_ = d.Close(context.Background())
 }
 
+func TestImmutablePublicationMutationAfterObservePreventsPublish(t *testing.T) {
+	st := newFakeState("work-1", "intent-1", statev2.PublicationPending)
+	pub := &blockingPublisher{allow: make(chan struct{}), entered: make(chan struct{})}
+	d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	resultCh := d.SubmitPublication(context.Background(), "work-1", "intent-1")
+	<-pub.entered
+	st.mu.Lock()
+	p := st.snapshot.Publications["intent-1"]
+	p.PayloadHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	p.Target.Resource = "changed-resource"
+	st.snapshot.Publications["intent-1"] = p
+	st.mu.Unlock()
+	close(pub.allow)
+	result := <-resultCh
+	if !errors.Is(result.Err, ErrPublicationStale) || pub.publishes != 0 {
+		t.Fatalf("result=%v publish calls=%d", result.Err, pub.publishes)
+	}
+	_ = d.Close(context.Background())
+}
+
 func TestFailedPublicationRetriesPersistedIdentityBeforeIO(t *testing.T) {
 	st := newFakeState("work-1", "intent-1", statev2.PublicationFailed)
 	before := st.snapshot.Publications["intent-1"]
@@ -369,11 +389,18 @@ type fakeState struct {
 }
 
 func newFakeState(workID contractv2.WorkID, intentID statev2.PublicationIntentID, status statev2.PublicationStatus) *fakeState {
-	return &fakeState{snapshot: statev2.WorkSnapshot{WorkID: workID, Revision: 1, State: statev2.StatePublicationPending, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{intentID: {
+	p := statev2.PublicationState{
 		IntentID: intentID, Key: "issue:1", Generation: 1, Kind: statev2.PublicationParentIssue, Status: status,
 		PayloadHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PayloadRef: "artifact://one",
 		Target: statev2.PublicationTarget{Host: "github.com", Key: "issue:1"}, CompletionRequired: true, Attempts: 1,
-	}}}}
+	}
+	if status == statev2.PublicationFailed {
+		p.LastError = "previous provider failure"
+	}
+	if status == statev2.PublicationCompleted {
+		p.Receipt = &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)}
+	}
+	return &fakeState{snapshot: statev2.WorkSnapshot{WorkID: workID, Revision: 1, State: statev2.StatePublicationPending, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{intentID: p}}}
 }
 
 func (s *fakeState) Load(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error) {
@@ -414,13 +441,27 @@ func (s *fakeState) Apply(_ context.Context, req statev2.TransitionRequest) (sta
 	case statev2.PublicationBegin:
 		p.Status = statev2.PublicationPending
 		p.Attempts++
+		p.LastError = ""
+		p.Receipt = nil
 	case statev2.PublicationComplete:
 		p.Status = statev2.PublicationCompleted
 		p.Receipt = req.Publication.Receipt
+		p.LastError = ""
 	case statev2.PublicationFail:
 		p.Status = statev2.PublicationFailed
+		p.Receipt = nil
+		p.LastError = req.Publication.Diagnostic
+		if p.LastError == "" {
+			p.LastError = "provider failure"
+		}
 	case statev2.PublicationActionConflict:
 		p.Status = statev2.PublicationConflict
+		p.Receipt = nil
+		p.LastError = req.Publication.Diagnostic
+		if p.LastError == "" {
+			p.LastError = "publication conflict"
+		}
+		s.snapshot.Control.Blocker = req.Publication.Blocker
 	}
 	s.snapshot.Publications[p.IntentID] = p
 	s.snapshot.Revision++

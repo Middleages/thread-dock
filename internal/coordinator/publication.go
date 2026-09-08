@@ -32,9 +32,6 @@ const (
 	PublicationObservationMatch   = "match"
 	PublicationObservationAbsent  = "absent"
 	PublicationObservationUnknown = "unknown"
-	ObservationMatch              = PublicationObservationMatch
-	ObservationAbsent             = PublicationObservationAbsent
-	ObservationUnknown            = PublicationObservationUnknown
 )
 
 // Publisher observes and, only when proven absent, publishes one immutable intent.
@@ -181,10 +178,14 @@ func (d *publicationDispatcher) validateDispatch(snapshot statev2.WorkSnapshot, 
 		return ErrPublicationBlocked
 	}
 	current, ok := snapshot.Publications[p.IntentID]
-	if !ok || current.Generation != p.Generation || current.Key != p.Key || current.Status != statev2.PublicationPending || !isLatestGeneration(snapshot, current) {
+	if !ok || !sameImmutablePublication(current, p) || current.Status != statev2.PublicationPending || !isLatestGeneration(snapshot, current) {
 		return ErrPublicationStale
 	}
 	return nil
+}
+
+func sameImmutablePublication(current, observed statev2.PublicationState) bool {
+	return current.IntentID == observed.IntentID && current.Key == observed.Key && current.Generation == observed.Generation && current.Kind == observed.Kind && current.PayloadHash == observed.PayloadHash && current.PayloadRef == observed.PayloadRef && current.Target == observed.Target && current.CompletionRequired == observed.CompletionRequired
 }
 
 func isLatestGeneration(snapshot statev2.WorkSnapshot, p statev2.PublicationState) bool {
