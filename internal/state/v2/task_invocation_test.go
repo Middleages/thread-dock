@@ -202,6 +202,7 @@ func TestStoreApplyRejectsFreshInvocationWhileInvocationIsActiveWithoutWrite(t *
 	store := NewStore(t.TempDir())
 	initial := validSnapshot()
 	task := initial.TaskStates["task-1"]
+	task.Status = TaskInvocationReserved
 	task.BuilderAttempt = 1
 	task.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical-1", Role: roleBuilder, BuilderAttempt: 1, Purpose: "task invocation"}
 	task.Invocation = &InvocationState{

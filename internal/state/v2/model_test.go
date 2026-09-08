@@ -151,6 +151,8 @@ func TestValidateSnapshotAcceptsSupportedInvocationReturnStages(t *testing.T) {
 			role := roleBuilder
 			if stage == TaskGatePassed {
 				role = roleReviewer
+				state.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+				state.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"check"}, Outcomes: []string{"pass"}, Passed: true, ObservedAt: invocationAt(1)}
 			}
 			state.Status = TaskInvocationReserved
 			state.BuilderAttempt = 1

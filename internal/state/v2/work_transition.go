@@ -91,11 +91,22 @@ func applyWorkResolve(snapshot *WorkSnapshot, transition WorkTransition) error {
 		if payload.NewLimit <= task.RepairCount || payload.NewLimit <= task.RepairLimit {
 			return invalidTransition("new repair budget must be higher than current limit and usage")
 		}
+		if task.Review != nil && !task.Review.Accepted && task.Gate != nil && task.Gate.Passed {
+			task.Status = TaskReviewBlocked
+		} else if task.Gate != nil && !task.Gate.Passed {
+			task.Status = TaskGateFailed
+		} else {
+			return invalidTransition("repair blocker has no coherent evidence source")
+		}
 		task.RepairLimit = payload.NewLimit
 	case BudgetRecovery:
 		if payload.NewLimit <= task.RecoveryCount || payload.NewLimit <= task.RecoveryLimit {
 			return invalidTransition("new recovery budget must be higher than current limit and usage")
 		}
+		if task.Invocation == nil || task.Status != TaskNeedsOperator || !task.Invocation.TerminationConfirmed || task.Invocation.EndedAt == nil || !task.Invocation.TransientFailure {
+			return invalidTransition("recovery blocker has no coherent terminated invocation")
+		}
+		task.Status = TaskTerminated
 		task.RecoveryLimit = payload.NewLimit
 	}
 	snapshot.TaskStates[contractv2.TaskID(payload.TaskID)] = task

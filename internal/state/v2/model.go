@@ -327,6 +327,68 @@ func validateTaskEvidence(task TaskExecutionState) error {
 			return err
 		}
 	}
+	return validateTaskStageMatrix(task)
+}
+
+func validateTaskStageMatrix(task TaskExecutionState) error {
+	inv := task.Invocation
+	terminated := inv != nil && inv.Role != "" && inv.TerminationConfirmed && inv.EndedAt != nil
+	noEvidence := task.Candidate == nil && task.Gate == nil && task.Review == nil && task.Integration == nil
+	switch task.Status {
+	case TaskPending:
+		if inv != nil || !noEvidence {
+			return errors.New("pending task has active invocation or evidence")
+		}
+	case TaskInvocationReserved, TaskRunning, TaskTerminationPending:
+		if inv == nil {
+			return errors.New("active task has no invocation")
+		}
+		if inv.Role == roleBuilder {
+			if inv.ReturnStage != TaskPending && inv.ReturnStage != TaskGateFailed && inv.ReturnStage != TaskReviewBlocked || !noEvidence {
+				return errors.New("builder active lifecycle is incoherent")
+			}
+		} else if inv.Role == roleReviewer {
+			if inv.ReturnStage != TaskGatePassed || task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Review != nil || task.Integration != nil {
+				return errors.New("reviewer active lifecycle is incoherent")
+			}
+		} else {
+			return errors.New("active invocation role is invalid")
+		}
+	case TaskCandidateReady:
+		if !terminated || inv.Role != roleBuilder || task.Candidate == nil || task.Gate != nil || task.Review != nil || task.Integration != nil {
+			return errors.New("candidate_ready lifecycle is incoherent")
+		}
+	case TaskGateFailed, TaskGatePassed:
+		if !terminated || inv.Role != roleBuilder || task.Candidate == nil || task.Gate == nil || task.Review != nil || task.Integration != nil || task.Gate.Passed != (task.Status == TaskGatePassed) {
+			return errors.New("gate lifecycle is incoherent")
+		}
+	case TaskReviewBlocked, TaskAccepted:
+		if !terminated || inv.Role != roleReviewer || task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Review == nil || task.Integration != nil || task.Review.Accepted != (task.Status == TaskAccepted) {
+			return errors.New("review lifecycle is incoherent")
+		}
+	case TaskIntegrated:
+		if !terminated || inv.Role != roleReviewer || task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Review == nil || !task.Review.Accepted || task.Integration == nil || !task.Integration.RelationVerified {
+			return errors.New("integration lifecycle is incoherent")
+		}
+	case TaskNeedsOperator:
+		if task.Integration != nil {
+			if !terminated || inv.Role != roleReviewer {
+				return errors.New("operator integration lifecycle is incoherent")
+			}
+		} else if task.Review != nil {
+			if !terminated || inv.Role != roleReviewer || task.Gate == nil || !task.Gate.Passed {
+				return errors.New("operator review lifecycle is incoherent")
+			}
+		} else if task.Gate != nil {
+			if !terminated || inv.Role != roleBuilder || task.Candidate == nil {
+				return errors.New("operator gate lifecycle is incoherent")
+			}
+		} else if task.Candidate != nil {
+			if !terminated || inv.Role != roleBuilder {
+				return errors.New("operator candidate lifecycle is incoherent")
+			}
+		}
+	}
 	return nil
 }
 

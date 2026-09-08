@@ -57,6 +57,9 @@ func TestRepairBudgetExhaustionNeedsOperatorWithoutReservation(t *testing.T) {
 	state := snapshot.TaskStates["task-1"]
 	state.Status, state.BuilderAttempt, state.RepairCount = TaskGateFailed, 2, 2
 	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical-1", Role: roleBuilder, BuilderAttempt: 2}
+	at := invocationAt(1)
+	state.Invocation = &InvocationState{InvocationID: "old", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskGateFailed, LogicalProfile: "p", RuntimeFingerprint: "r", TerminationConfirmed: true, EndedAt: &at}
+	state.InvocationHistory = []InvocationID{"old"}
 	state.Candidate = &CandidateEvidence{BuilderAttempt: 2, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{"x"}}
 	state.Gate = &GateEvidence{BuilderAttempt: 2, CandidateSHA: candidateSHA, Commands: []string{"go test"}, Outcomes: []string{"fail"}, ObservedAt: invocationAt(1)}
 	snapshot.TaskStates["task-1"] = state
@@ -74,7 +77,7 @@ func TestRepairBudgetExhaustionNeedsOperatorWithoutReservation(t *testing.T) {
 	}
 	got := snapshot
 	state = got.TaskStates["task-1"]
-	if state.Status != TaskNeedsOperator || state.RepairCount != 2 || state.Invocation != nil || got.Control.Blocker == nil || got.Control.Blocker.Kind != BlockerKindRepairBudgetExhausted {
+	if state.Status != TaskNeedsOperator || state.RepairCount != 2 || state.Invocation == nil || got.Control.Blocker == nil || got.Control.Blocker.Kind != BlockerKindRepairBudgetExhausted {
 		t.Fatalf("exhausted state = %#v blocker=%#v", state, got.Control.Blocker)
 	}
 }
@@ -132,6 +135,34 @@ func TestRecoveryExhaustionPersistsAndExtendBudgetResolves(t *testing.T) {
 	}
 }
 
+func TestExtendRepairBudgetRestoresFailedEvidenceAndAllowsReservation(t *testing.T) {
+	s := validSnapshot()
+	s.Control = WorkControl{ApprovedContractHash: s.ContractHash, ApprovalRef: "approval", Blocker: &OperatorBlocker{Kind: BlockerKindRepairBudgetExhausted, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "exhausted"}}
+	s.State = StateNeedsOperator
+	state := s.TaskStates["task-1"]
+	state.Status = TaskNeedsOperator
+	state.BuilderAttempt = 2
+	state.RepairCount, state.RepairLimit = 2, 2
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "old", Role: roleBuilder, BuilderAttempt: 2}
+	state.Candidate = &CandidateEvidence{BuilderAttempt: 2, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+	state.Gate = &GateEvidence{BuilderAttempt: 2, CandidateSHA: candidateSHA, Commands: []string{"x"}, Outcomes: []string{"fail"}, ObservedAt: invocationAt(1)}
+	s.TaskStates["task-1"] = state
+	if err := applyWorkTransition(&s, WorkTransition{Action: WorkResolve, Resolve: &ResolvePayload{Kind: ResolveExtendBudget, OperatorRef: "operator", TaskID: "task-1", Budget: BudgetRepair, NewLimit: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if s.TaskStates["task-1"].Status != TaskGateFailed {
+		t.Fatalf("restored stage=%q", s.TaskStates["task-1"].Status)
+	}
+	tr := builderReserveTransition(invocationAt(2))
+	tr.InvocationID, tr.LogicalWorkID, tr.BuilderAttempt, tr.ReturnStage = "repair", "new", 3, TaskGateFailed
+	if err := applyTaskTransition(&s, tr, "reserve"); err != nil {
+		t.Fatal(err)
+	}
+	if s.TaskStates["task-1"].Status != TaskInvocationReserved {
+		t.Fatalf("reserve after extension=%q", s.TaskStates["task-1"].Status)
+	}
+}
+
 func TestPauseResumeLeavesTaskBudgetsAndEvidenceUnchanged(t *testing.T) {
 	s := validSnapshot()
 	s.Control = WorkControl{ApprovedContractHash: s.ContractHash, ApprovalRef: "approval"}
@@ -163,6 +194,10 @@ func TestRetryVerifiedStageDerivesTaskStatusFromEvidence(t *testing.T) {
 	state.BuilderAttempt = 1
 	state.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{"x"}}
 	state.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"go test"}, Outcomes: []string{"pass"}, Passed: true, ObservedAt: invocationAt(1)}
+	at := invocationAt(1)
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical", Role: roleBuilder, BuilderAttempt: 1}
+	state.Invocation = &InvocationState{InvocationID: "inv", LogicalWorkID: "logical", Role: roleBuilder, ReturnStage: TaskPending, LogicalProfile: "p", RuntimeFingerprint: "r", TerminationConfirmed: true, EndedAt: &at}
+	state.InvocationHistory = []InvocationID{"inv"}
 	snapshot.TaskStates["task-1"] = state
 	snapshot.State = StateNeedsOperator
 	snapshot.Control.Blocker = &OperatorBlocker{Kind: BlockerKindRetryVerifiedStage, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "repair"}
@@ -184,6 +219,12 @@ func TestRetryVerifiedStageRequiresExactBlockerAndEvidence(t *testing.T) {
 	s.Control = WorkControl{ApprovedContractHash: s.ContractHash, ApprovalRef: "approval", Blocker: &OperatorBlocker{Kind: BlockerKindEvidenceMismatch, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "blocked"}}
 	s.State = StateNeedsOperator
 	s.TaskStates["task-1"] = TaskExecutionState{TaskID: "task-1", Status: TaskNeedsOperator, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1, Candidate: &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{"x"}}}
+	at := invocationAt(1)
+	state := s.TaskStates["task-1"]
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical", Role: roleBuilder, BuilderAttempt: 1}
+	state.Invocation = &InvocationState{InvocationID: "inv", LogicalWorkID: "logical", Role: roleBuilder, ReturnStage: TaskPending, LogicalProfile: "p", RuntimeFingerprint: "r", TerminationConfirmed: true, EndedAt: &at}
+	state.InvocationHistory = []InvocationID{"inv"}
+	s.TaskStates["task-1"] = state
 	before := cloneSnapshot(t, s)
 	err := applyWorkTransition(&s, WorkTransition{Action: WorkResolve, Resolve: &ResolvePayload{Kind: ResolveRetryVerifiedStage, OperatorRef: "operator", TaskID: "task-1", Evidence: &ResolutionEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Diagnostic: "verified"}}})
 	if !errors.Is(err, ErrInvalidTransition) || !reflect.DeepEqual(s, before) {

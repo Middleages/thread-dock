@@ -90,6 +90,13 @@ func TestWorkResumeAndBudgetExtensionGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot.State = StateNeedsOperator
+	state := snapshot.TaskStates["task-1"]
+	state.Status = TaskNeedsOperator
+	state.BuilderAttempt = 1
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical", Role: roleBuilder, BuilderAttempt: 1}
+	state.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+	state.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"check"}, Outcomes: []string{"fail"}, ObservedAt: invocationAt(1)}
+	snapshot.TaskStates["task-1"] = state
 	snapshot.Control.Blocker = &OperatorBlocker{Kind: BlockerKindRepairBudgetExhausted, OperatorRef: "operator-1", TaskID: "task-1", Diagnostic: "budget"}
 	for _, tc := range []struct {
 		name      string
@@ -115,7 +122,7 @@ func TestWorkResumeAndBudgetExtensionGuards(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if next.TaskStates[contractv2.TaskID("task-1")].RepairLimit != 3 || next.TaskStates["task-1"].RepairCount != 0 || next.Control.Blocker != nil || next.State != StateQueued {
+			if next.TaskStates[contractv2.TaskID("task-1")].RepairLimit != 3 || next.TaskStates["task-1"].RepairCount != 0 || next.Control.Blocker != nil || next.TaskStates["task-1"].Status != TaskGateFailed || next.State != StateRunning || next.NextAction != "repair" {
 				t.Fatalf("extended snapshot = %#v", next)
 			}
 		})
