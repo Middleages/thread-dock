@@ -144,6 +144,9 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 			if task.LogicalWork.LogicalWorkID != transition.LogicalWorkID || task.LogicalWork.BuilderAttempt != transition.BuilderAttempt {
 				return invalidTransition("reviewer reservation does not match logical work")
 			}
+			if err := matchLogicalWorkExecution(task.LogicalWork, transition); err != nil {
+				return err
+			}
 		} else {
 			if task.LogicalWork.Role != roleBuilder && task.LogicalWork.Role != "" {
 				return invalidTransition("reviewer reservation has invalid prior logical work")
@@ -268,6 +271,9 @@ func reserveRepair(snapshot *WorkSnapshot, task *TaskExecutionState, transition 
 func reserveRecovery(snapshot *WorkSnapshot, task *TaskExecutionState, transition TaskTransition, requestID contractv2.RequestID) error {
 	if task.Invocation == nil || !task.Invocation.TerminationConfirmed || task.Invocation.EndedAt == nil || !task.Invocation.TransientFailure || transition.InvocationID == task.Invocation.InvocationID || transition.Role != task.Invocation.Role || transition.LogicalWorkID != task.Invocation.LogicalWorkID || transition.BuilderAttempt != task.BuilderAttempt || transition.ReturnStage != task.Invocation.ReturnStage {
 		return invalidTransition("invalid recovery reservation")
+	}
+	if err := matchLogicalWorkExecution(task.LogicalWork, transition); err != nil {
+		return err
 	}
 	if task.RecoveryCount >= task.RecoveryLimit {
 		if transition.Blocker == nil || transition.Blocker.Kind != BlockerKindRecoveryBudgetExhausted || transition.Blocker.TaskID != task.TaskID || strings.TrimSpace(transition.Blocker.OperatorRef) == "" || strings.TrimSpace(transition.Blocker.Diagnostic) == "" {
@@ -713,7 +719,16 @@ func validateExecutionIdentity(snapshot *WorkSnapshot, task *TaskExecutionState,
 }
 
 func matchLogicalWorkExecution(logical *LogicalWorkState, transition TaskTransition) error {
-	if logical == nil || logical.LogicalProfile != transition.Invocation.LogicalProfile || logical.RuntimeFingerprint != transition.Invocation.RuntimeFingerprint || logical.Worktree == nil || !worktreesEqual(logical.Worktree, transition.Worktree) {
+	if logical == nil {
+		return invalidTransition("reservation execution identity does not match logical work")
+	}
+	// Snapshots written before execution identity was persisted have no fields
+	// to compare. Preserve their lifecycle compatibility; once any identity is
+	// present, every dimension must match exactly.
+	if logical.LogicalProfile == "" && logical.RuntimeFingerprint == "" && logical.Worktree == nil {
+		return nil
+	}
+	if logical.LogicalProfile != transition.Invocation.LogicalProfile || logical.RuntimeFingerprint != transition.Invocation.RuntimeFingerprint || logical.Worktree == nil || !worktreesEqual(logical.Worktree, transition.Worktree) {
 		return invalidTransition("reservation execution identity does not match logical work")
 	}
 	return nil

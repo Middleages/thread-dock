@@ -42,13 +42,22 @@ func reduce(snapshot *WorkSnapshot) {
 		return
 	}
 	if snapshot.Control.PauseRequested {
-		if hasActiveInvocation(snapshot) {
-			snapshot.State = StateRunning
-			snapshot.NextAction = "terminate"
-		} else {
-			snapshot.State = StatePaused
-			snapshot.NextAction = "resume"
+		for _, task := range snapshot.TaskStates {
+			if task.Status == TaskInvocationReserved {
+				snapshot.State = StateRunning
+				snapshot.NextAction = "reconcile"
+				return
+			}
 		}
+		for _, task := range snapshot.TaskStates {
+			if task.Status == TaskRunning || task.Status == TaskTerminationPending {
+				snapshot.State = StateRunning
+				snapshot.NextAction = "terminate"
+				return
+			}
+		}
+		snapshot.State = StatePaused
+		snapshot.NextAction = "resume"
 		return
 	}
 	// Required publications are a distinct work stage. Keep this ahead of
