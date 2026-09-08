@@ -585,6 +585,9 @@ func TestFinalFixStorePublicationLineageMismatchAndImpossibleHistory(t *testing.
 				"prior": prior,
 				"new":   {IntentID: "new", Key: "issue:1", Generation: 2, Kind: PublicationParentIssue, Status: PublicationPending, PayloadHash: strings.Repeat("b", 64), PayloadRef: "artifact://new", Target: *publicationTarget(), Attempts: 1},
 			}
+			if status == PublicationConflict {
+				current.Control.Blocker = &OperatorBlocker{Kind: BlockerKindPublicationConflict, OperatorRef: "operator", IntentID: "prior", Diagnostic: "conflict"}
+			}
 			persistPublicationSnapshotForTest(t, root, current)
 			_, err := corruptStore.Load(ctx, current.WorkID)
 			if status == PublicationPending || status == PublicationFailed {
@@ -592,8 +595,8 @@ func TestFinalFixStorePublicationLineageMismatchAndImpossibleHistory(t *testing.
 					t.Fatalf("impossible %s publication history error = %v, want nonterminal prior-generation diagnostic", name, err)
 				}
 			} else if status == PublicationConflict {
-				if err == nil || (!strings.Contains(err.Error(), "impossible prior-generation status") && !strings.Contains(err.Error(), "publication conflict requires matching blocker")) {
-					t.Fatalf("impossible conflict publication history error = %v", err)
+				if err == nil || !strings.Contains(err.Error(), "impossible prior-generation status") {
+					t.Fatalf("impossible conflict publication history error = %v, want nonterminal prior-generation diagnostic", err)
 				}
 			} else if err != nil {
 				t.Fatalf("valid %s publication history rejected: %v", name, err)
