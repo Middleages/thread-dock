@@ -194,6 +194,9 @@ func validateReservationInputs(transition TaskTransition) error {
 	if transition.Invocation.StartedAt != nil || transition.Invocation.EndedAt != nil || transition.Invocation.LaunchRequested || transition.Invocation.TerminationConfirmed {
 		return invalidTransition("invalid initial invocation state")
 	}
+	if transition.Invocation.TransientFailure {
+		return invalidTransition("transient failure may only be confirmed on termination")
+	}
 	return nil
 }
 
@@ -201,14 +204,19 @@ func reserveRepair(snapshot *WorkSnapshot, task *TaskExecutionState, transition 
 	if transition.InvocationID == "" || transition.LogicalWorkID == "" || transition.Invocation == nil || transition.Worktree == nil || transition.BuilderAttempt != task.BuilderAttempt+1 || transition.ReturnStage != task.Status {
 		return invalidTransition("invalid repair reservation")
 	}
-	if task.LogicalWork == nil || task.LogicalWork.Role != roleBuilder || task.LogicalWork.BuilderAttempt != task.BuilderAttempt {
+	priorRole := roleBuilder
+	if task.Status == TaskReviewBlocked {
+		priorRole = roleReviewer
+	}
+	if task.LogicalWork == nil || task.LogicalWork.Role != priorRole || task.LogicalWork.BuilderAttempt != task.BuilderAttempt || strings.TrimSpace(string(transition.LogicalWorkID)) == "" || transition.LogicalWorkID == task.LogicalWork.LogicalWorkID {
 		return invalidTransition("repair reservation has invalid prior logical work")
 	}
 	if task.RepairCount >= task.RepairLimit {
-		blocker := OperatorBlocker{Kind: BlockerKindRepairBudgetExhausted, TaskID: task.TaskID, Diagnostic: "repair budget exhausted; remaining=0"}
-		if transition.Blocker != nil {
-			blocker.OperatorRef = transition.Blocker.OperatorRef
+		if transition.Blocker == nil || transition.Blocker.Kind != BlockerKindRepairBudgetExhausted || transition.Blocker.TaskID != task.TaskID || strings.TrimSpace(transition.Blocker.OperatorRef) == "" || strings.TrimSpace(transition.Blocker.Diagnostic) == "" {
+			return invalidTransition("matching repair budget blocker is required")
 		}
+		blocker := *transition.Blocker
+		blocker.Diagnostic = transition.Blocker.Diagnostic + "; remaining=0"
 		snapshot.Control.Blocker = &blocker
 		task.Status = TaskNeedsOperator
 		snapshot.TaskStates[task.TaskID] = *task
@@ -229,6 +237,9 @@ func reserveRepair(snapshot *WorkSnapshot, task *TaskExecutionState, transition 
 	if task.Review != nil && task.Review.Diagnostic != "" {
 		summary.FailureReason, summary.Diagnostic = "review_blocked", task.Review.Diagnostic
 	}
+	if len(task.PriorAttempts) == MaxPriorAttempts {
+		task.PriorAttempts = task.PriorAttempts[1:]
+	}
 	task.PriorAttempts = append(task.PriorAttempts, summary)
 	task.RepairCount++
 	task.BuilderAttempt++
@@ -248,10 +259,12 @@ func reserveRecovery(snapshot *WorkSnapshot, task *TaskExecutionState, transitio
 		return invalidTransition("invalid recovery reservation")
 	}
 	if task.RecoveryCount >= task.RecoveryLimit {
-		blocker := OperatorBlocker{Kind: BlockerKindRecoveryBudgetExhausted, TaskID: task.TaskID, InvocationID: task.Invocation.InvocationID, Diagnostic: "recovery budget exhausted; remaining=0"}
-		if transition.Blocker != nil {
-			blocker.OperatorRef = transition.Blocker.OperatorRef
+		if transition.Blocker == nil || transition.Blocker.Kind != BlockerKindRecoveryBudgetExhausted || transition.Blocker.TaskID != task.TaskID || strings.TrimSpace(transition.Blocker.OperatorRef) == "" || strings.TrimSpace(transition.Blocker.Diagnostic) == "" {
+			return invalidTransition("matching recovery budget blocker is required")
 		}
+		blocker := *transition.Blocker
+		blocker.InvocationID = task.Invocation.InvocationID
+		blocker.Diagnostic = transition.Blocker.Diagnostic + "; remaining=0"
 		snapshot.Control.Blocker = &blocker
 		task.Status = TaskNeedsOperator
 		snapshot.TaskStates[task.TaskID] = *task
@@ -299,7 +312,7 @@ func recordCandidate(task *TaskExecutionState, transition TaskTransition) error 
 		return invalidTransition("candidate requires a normal terminated builder invocation")
 	}
 	c := transition.Candidate
-	if c.BuilderAttempt != task.BuilderAttempt || !validSHA(c.CandidateSHA) || !validSHA(c.TreeSHA) || c.ChangedFiles == nil || len(c.ChangedFiles) == 0 {
+	if c.BuilderAttempt != task.BuilderAttempt || !validSHA(c.CandidateSHA) || !validSHA(c.TreeSHA) || c.ChangedFiles == nil {
 		return invalidTransition("candidate evidence does not match current attempt")
 	}
 	seen := map[string]bool{}
@@ -313,7 +326,9 @@ func recordCandidate(task *TaskExecutionState, transition TaskTransition) error 
 		return invalidTransition("candidate diagnostic: %v", err)
 	}
 	clone := *c
-	clone.ChangedFiles = append([]string(nil), c.ChangedFiles...)
+	if c.ChangedFiles != nil {
+		clone.ChangedFiles = append([]string{}, c.ChangedFiles...)
+	}
 	task.Candidate = &clone
 	task.Status = TaskCandidateReady
 	return nil

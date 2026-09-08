@@ -202,8 +202,25 @@ func validateTaskEvidence(task TaskExecutionState) error {
 	if task.Invocation != nil && !validTaskStatus(task.Invocation.ReturnStage) {
 		return fmt.Errorf("unknown invocation return stage %q", task.Invocation.ReturnStage)
 	}
+	if task.Invocation != nil {
+		inv := task.Invocation
+		if (inv.EndedAt == nil) != !inv.TerminationConfirmed {
+			return errors.New("invocation termination lifecycle is inconsistent")
+		}
+		if inv.Role != "" {
+			if inv.Role != roleBuilder && inv.Role != roleReviewer {
+				return errors.New("invocation role is invalid")
+			}
+			if task.LogicalWork == nil || task.LogicalWork.LogicalWorkID != inv.LogicalWorkID || task.LogicalWork.Role != inv.Role || task.LogicalWork.BuilderAttempt != task.BuilderAttempt {
+				return errors.New("invocation logical work does not match task")
+			}
+			if inv.Role == roleReviewer && inv.ReturnStage != TaskGatePassed {
+				return errors.New("reviewer invocation return stage is invalid")
+			}
+		}
+	}
 	if task.Candidate != nil {
-		if task.Candidate.BuilderAttempt == 0 || task.Candidate.BuilderAttempt != task.BuilderAttempt || !validSHA(task.Candidate.CandidateSHA) || !validSHA(task.Candidate.TreeSHA) || task.Candidate.ChangedFiles == nil || len(task.Candidate.ChangedFiles) == 0 {
+		if task.Candidate.BuilderAttempt == 0 || task.Candidate.BuilderAttempt != task.BuilderAttempt || !validSHA(task.Candidate.CandidateSHA) || !validSHA(task.Candidate.TreeSHA) || task.Candidate.ChangedFiles == nil {
 			return errors.New("invalid candidate evidence")
 		}
 		seen := map[string]bool{}
@@ -218,8 +235,15 @@ func validateTaskEvidence(task TaskExecutionState) error {
 		}
 	}
 	if task.Gate != nil {
-		if task.Candidate == nil || task.Gate.BuilderAttempt != task.BuilderAttempt || task.Gate.BuilderAttempt != task.Candidate.BuilderAttempt || task.Gate.CandidateSHA != task.Candidate.CandidateSHA || task.Gate.ObservedAt.IsZero() || task.Gate.ObservedAt.Location() != time.UTC || len(task.Gate.Commands) == 0 || len(task.Gate.Commands) != len(task.Gate.Outcomes) {
-			return errors.New("invalid gate evidence")
+		gateStatusMatches := true
+		switch task.Status {
+		case TaskGatePassed, TaskAccepted, TaskReviewBlocked, TaskIntegrated:
+			gateStatusMatches = task.Gate.Passed
+		case TaskGateFailed:
+			gateStatusMatches = !task.Gate.Passed
+		}
+		if task.Candidate == nil || task.Gate.BuilderAttempt != task.BuilderAttempt || task.Gate.BuilderAttempt != task.Candidate.BuilderAttempt || task.Gate.CandidateSHA != task.Candidate.CandidateSHA || !gateStatusMatches || task.Gate.ObservedAt.IsZero() || task.Gate.ObservedAt.Location() != time.UTC || len(task.Gate.Commands) == 0 || len(task.Gate.Commands) != len(task.Gate.Outcomes) {
+			return fmt.Errorf("invalid gate evidence: status=%q candidate=%#v gate=%#v", task.Status, task.Candidate, task.Gate)
 		}
 		for i := range task.Gate.Commands {
 			if strings.TrimSpace(task.Gate.Commands[i]) != task.Gate.Commands[i] || strings.TrimSpace(task.Gate.Outcomes[i]) != task.Gate.Outcomes[i] || task.Gate.Commands[i] == "" || task.Gate.Outcomes[i] == "" {
@@ -231,8 +255,11 @@ func validateTaskEvidence(task TaskExecutionState) error {
 		}
 	}
 	if task.Review != nil {
-		if task.Candidate == nil || task.Review.BuilderAttempt != task.BuilderAttempt || task.Review.CandidateSHA != task.Candidate.CandidateSHA || task.Review.ReviewSHA != task.Candidate.CandidateSHA || task.Review.ObservedAt.IsZero() || task.Review.Findings == nil {
+		if task.Candidate == nil || task.Review.BuilderAttempt != task.BuilderAttempt || task.Review.CandidateSHA != task.Candidate.CandidateSHA || task.Review.ReviewSHA != task.Candidate.CandidateSHA || task.Review.ObservedAt.IsZero() || task.Review.ObservedAt.Location() != time.UTC || task.Review.Findings == nil || task.Review.Accepted != (task.Status == TaskAccepted || task.Status == TaskIntegrated) {
 			return errors.New("invalid review evidence")
+		}
+		if task.Invocation == nil || task.Invocation.Role != roleReviewer || !task.Invocation.TerminationConfirmed || task.Invocation.EndedAt == nil || task.Review.ReviewerInvocationID != task.Invocation.InvocationID {
+			return errors.New("review invocation does not match terminated reviewer")
 		}
 		blocking := 0
 		if err := validateDiagnostic(task.Review.Diagnostic); err != nil {
@@ -254,7 +281,7 @@ func validateTaskEvidence(task TaskExecutionState) error {
 		}
 	}
 	if task.Integration != nil {
-		if task.Candidate == nil || task.Review == nil || !task.Review.Accepted || task.Integration.BuilderAttempt != task.BuilderAttempt || task.Integration.CandidateSHA != task.Candidate.CandidateSHA || !validSHA(task.Integration.IntegrationHEAD) || task.Integration.IntegrationHEAD == task.Candidate.CandidateSHA || !task.Integration.RelationVerified || task.Integration.ObservedAt.IsZero() || task.Integration.ObservedAt.Location() != time.UTC {
+		if task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Review == nil || !task.Review.Accepted || task.Integration.BuilderAttempt != task.BuilderAttempt || task.Integration.CandidateSHA != task.Candidate.CandidateSHA || !validSHA(task.Integration.IntegrationHEAD) || task.Integration.IntegrationHEAD == task.Candidate.CandidateSHA || !task.Integration.RelationVerified || task.Integration.ObservedAt.IsZero() || task.Integration.ObservedAt.Location() != time.UTC {
 			return errors.New("invalid integration evidence")
 		}
 		if err := validateDiagnostic(task.Integration.Diagnostic); err != nil {

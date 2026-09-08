@@ -12,6 +12,7 @@ const (
 	BlockerKindRecoveryBudgetExhausted = "recovery_budget_exhausted"
 	BlockerKindRuntimeUnknown          = "runtime_unknown"
 	BlockerKindEvidenceMismatch        = "evidence_mismatch"
+	BlockerKindRetryVerifiedStage      = "retry_verified_stage"
 )
 
 func applyWorkTransition(snapshot *WorkSnapshot, transition WorkTransition) error {
@@ -109,7 +110,7 @@ func applyRetryVerifiedStage(snapshot *WorkSnapshot, transition WorkTransition) 
 		return invalidTransition("invalid evidence resolution")
 	}
 	blocker := snapshot.Control.Blocker
-	if blocker == nil || blocker.Kind != BlockerKindEvidenceMismatch || blocker.OperatorRef != payload.OperatorRef || blocker.TaskID != payload.TaskID {
+	if blocker == nil || (blocker.Kind != BlockerKindEvidenceMismatch && blocker.Kind != BlockerKindRetryVerifiedStage) || blocker.OperatorRef != payload.OperatorRef || blocker.TaskID != payload.TaskID {
 		return invalidTransition("evidence resolution does not match blocker")
 	}
 	task, ok := snapshot.TaskStates[payload.TaskID]
@@ -121,6 +122,21 @@ func applyRetryVerifiedStage(snapshot *WorkSnapshot, transition WorkTransition) 
 	}
 	if err := validateDiagnostic(payload.Evidence.Diagnostic); err != nil {
 		return invalidTransition("resolution diagnostic: %v", err)
+	}
+	if payload.Evidence.BuilderAttempt != task.BuilderAttempt {
+		return invalidTransition("evidence resolution attempt does not match task")
+	}
+	if task.Candidate != nil && payload.Evidence.CandidateSHA != task.Candidate.CandidateSHA {
+		return invalidTransition("evidence resolution candidate SHA does not match task")
+	}
+	if task.Candidate == nil && payload.Evidence.CandidateSHA != "" {
+		return invalidTransition("evidence resolution candidate SHA is unexpected")
+	}
+	if task.Review != nil && payload.Evidence.ReviewSHA != task.Review.ReviewSHA {
+		return invalidTransition("evidence resolution review SHA does not match task")
+	}
+	if task.Review == nil && payload.Evidence.ReviewSHA != "" {
+		return invalidTransition("evidence resolution review SHA is unexpected")
 	}
 	switch {
 	case task.Integration != nil && task.Integration.BuilderAttempt == task.BuilderAttempt && task.Integration.CandidateSHA == candidateSHAOf(task):

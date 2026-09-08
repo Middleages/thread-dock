@@ -17,7 +17,6 @@ func advanceBuilderToTerminated(t *testing.T, store Store, snapshot WorkSnapshot
 	t.Helper()
 	ctx := context.Background()
 	reserve := builderReserveTransition(invocationAt(1))
-	reserve.Invocation.TransientFailure = transient
 	var err error
 	if snapshot, err = store.Apply(ctx, taskRequest(t, snapshot, "reserve", reserve)); err != nil {
 		t.Fatal(err)
@@ -28,7 +27,7 @@ func advanceBuilderToTerminated(t *testing.T, store Store, snapshot WorkSnapshot
 	}{
 		{"launch", TaskTransition{TaskID: "task-1", Action: TaskBeginLaunch, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(2)}},
 		{"running", TaskTransition{TaskID: "task-1", Action: TaskMarkRunning, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(3), Invocation: &InvocationState{ProviderProcess: "pid"}}},
-		{"terminated", TaskTransition{TaskID: "task-1", Action: TaskConfirmTermination, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(4)}},
+		{"terminated", TaskTransition{TaskID: "task-1", Action: TaskConfirmTermination, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(4), Transient: transient}},
 	} {
 		id, tr := item.id, item.tr
 		if snapshot, err = store.Apply(ctx, taskRequest(t, snapshot, contractv2.RequestID(id), tr)); err != nil {

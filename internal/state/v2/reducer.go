@@ -89,7 +89,10 @@ func reduce(snapshot *WorkSnapshot) {
 	if allPending {
 		snapshot.State = StateQueued
 		snapshot.NextAction = "run"
+		return
 	}
+	snapshot.State = StateQueued
+	snapshot.NextAction = "run"
 }
 
 func hasActiveInvocation(snapshot *WorkSnapshot) bool {

@@ -207,6 +207,9 @@ type ResolutionEvidence struct {
 	ProviderAbsent  bool   `json:"providerAbsent"`
 	RemoteMatch     bool   `json:"remoteMatch"`
 	NotPublished    bool   `json:"notPublished"`
+	BuilderAttempt  uint32 `json:"builderAttempt,omitempty"`
+	CandidateSHA    string `json:"candidateSha,omitempty"`
+	ReviewSHA       string `json:"reviewSha,omitempty"`
 	Diagnostic      string `json:"diagnostic,omitempty"`
 }
 

@@ -3,7 +3,9 @@ package statev2
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
+	contractv2 "thread-dock/internal/contract/v2"
 )
 
 func TestRepairReservationDebitsAndInvalidatesEvidenceAtomically(t *testing.T) {
@@ -57,6 +59,7 @@ func TestRepairBudgetExhaustionNeedsOperatorWithoutReservation(t *testing.T) {
 	reserve.LogicalWorkID = "repair-work"
 	reserve.BuilderAttempt = 3
 	reserve.ReturnStage = TaskGateFailed
+	reserve.Blocker = &OperatorBlocker{Kind: BlockerKindRepairBudgetExhausted, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "repair budget exhausted"}
 	if err := applyTaskTransition(&snapshot, reserve, "repair-exhausted"); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +77,6 @@ func TestRecoveryReservationUsesTransientTerminatedInvocationAndBudget(t *testin
 	tr := builderReserveTransition(invocationAt(5))
 	tr.InvocationID = "recovery-inv"
 	tr.Transient = true
-	tr.Invocation.TransientFailure = true
 	got, err := store.Apply(ctx, taskRequest(t, snapshot, "recovery", tr))
 	if err != nil {
 		t.Fatal(err)
@@ -101,13 +103,112 @@ func TestRetryVerifiedStageDerivesTaskStatusFromEvidence(t *testing.T) {
 	if err := validateSnapshot(snapshot); err != nil {
 		t.Fatal(err)
 	}
-	err := applyWorkTransition(&snapshot, WorkTransition{Action: WorkResolve, At: invocationAt(2), Resolve: &ResolvePayload{Kind: ResolveRetryVerifiedStage, OperatorRef: "operator", TaskID: "task-1", Evidence: &ResolutionEvidence{Diagnostic: "verified"}}})
+	err := applyWorkTransition(&snapshot, WorkTransition{Action: WorkResolve, At: invocationAt(2), Resolve: &ResolvePayload{Kind: ResolveRetryVerifiedStage, OperatorRef: "operator", TaskID: "task-1", Evidence: &ResolutionEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Diagnostic: "verified"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := snapshot
 	if got.TaskStates["task-1"].Status != TaskGatePassed || got.Control.Blocker != nil {
 		t.Fatalf("resolved state = %#v blocker=%#v", got.TaskStates["task-1"], got.Control.Blocker)
+	}
+}
+
+func TestReviewBlockedRepairUsesNewBuilderLogicalWork(t *testing.T) {
+	ctx := context.Background()
+	store, snapshot := approvedStore(t)
+	snapshot = advanceBuilderToTerminated(t, store, snapshot, false)
+	if snapshot, err := store.Apply(ctx, taskRequest(t, snapshot, "candidate", candidateTransition())); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	gate := TaskTransition{TaskID: "task-1", Action: TaskRecordGate, Role: roleBuilder, BuilderAttempt: 1, At: invocationAt(6), Gate: &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"go test"}, Outcomes: []string{"pass"}, Passed: true, ObservedAt: invocationAt(6)}}
+	if snapshot, err := store.Apply(ctx, taskRequest(t, snapshot, "gate", gate)); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	reviewReserve := TaskTransition{TaskID: "task-1", Action: TaskReserveInvocation, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(7), Worktree: &WorktreeIdentity{CanonicalPath: "/review", GitCommonDir: "/repo/.git", Branch: "review", BaseSHA: treeSHA}, Invocation: &InvocationState{LogicalProfile: "reviewer", RuntimeFingerprint: "runtime-v1"}}
+	if snapshot, err := store.Apply(ctx, taskRequest(t, snapshot, "review-reserve", reviewReserve)); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	for _, tr := range []TaskTransition{{TaskID: "task-1", Action: TaskBeginLaunch, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(8)}, {TaskID: "task-1", Action: TaskMarkRunning, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(9), Invocation: &InvocationState{ProviderProcess: "review"}}, {TaskID: "task-1", Action: TaskConfirmTermination, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(10)}} {
+		if snapshot, err := store.Apply(ctx, taskRequest(t, snapshot, contractv2.RequestID(string(tr.Action)), tr)); err != nil {
+			t.Fatal(err)
+		} else {
+			_ = snapshot
+		}
+		snapshot, _ = store.Load(ctx, "work-1")
+	}
+	review := TaskTransition{TaskID: "task-1", Action: TaskRecordReview, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(11), Review: &ReviewEvidence{ReviewerInvocationID: "review-inv", BuilderAttempt: 1, CandidateSHA: candidateSHA, ReviewSHA: candidateSHA, Accepted: false, Findings: []ReviewFinding{{Code: "bad", Severity: "blocking"}}, ObservedAt: invocationAt(11)}}
+	if snapshot, err := store.Apply(ctx, taskRequest(t, snapshot, "review", review)); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	old := snapshot.TaskStates["task-1"].LogicalWork.LogicalWorkID
+	reserve := builderReserveTransition(invocationAt(12))
+	reserve.InvocationID = "repair-inv"
+	reserve.LogicalWorkID = "repair-work"
+	reserve.BuilderAttempt = 2
+	reserve.ReturnStage = TaskReviewBlocked
+	got, err := store.Apply(ctx, taskRequest(t, snapshot, "repair", reserve))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := got.TaskStates["task-1"]
+	if state.Status != TaskInvocationReserved || state.LogicalWork.LogicalWorkID != "repair-work" || state.LogicalWork.LogicalWorkID == old || state.LogicalWork.Role != roleBuilder || state.RepairCount != 1 || state.BuilderAttempt != 2 || state.Review != nil {
+		t.Fatalf("review repair state = %#v", state)
+	}
+}
+
+func TestBudgetExhaustionRequiresMatchingOperatorBlocker(t *testing.T) {
+	snapshot := validSnapshot()
+	snapshot.Control = WorkControl{ApprovedContractHash: snapshot.ContractHash, ApprovalRef: "approval"}
+	state := snapshot.TaskStates["task-1"]
+	state.Status = TaskGateFailed
+	state.BuilderAttempt = 2
+	state.RepairCount = 2
+	state.RepairLimit = 2
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "old", Role: roleBuilder, BuilderAttempt: 2}
+	snapshot.TaskStates["task-1"] = state
+	snapshot.State = StateRunning
+	tr := builderReserveTransition(invocationAt(1))
+	tr.InvocationID = "new"
+	tr.LogicalWorkID = "new-work"
+	tr.BuilderAttempt = 3
+	tr.ReturnStage = TaskGateFailed
+	before := cloneSnapshot(t, snapshot)
+	if err := applyTaskTransition(&snapshot, tr, "request"); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("missing blocker error = %v", err)
+	}
+	if !reflect.DeepEqual(snapshot, before) {
+		t.Fatal("missing blocker mutated state")
+	}
+	tr.Blocker = &OperatorBlocker{Kind: BlockerKindRepairBudgetExhausted, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "repair budget exhausted"}
+	if err := applyTaskTransition(&snapshot, tr, "request-2"); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.TaskStates["task-1"].Status != TaskNeedsOperator || snapshot.Control.Blocker == nil || snapshot.Control.Blocker.OperatorRef != "operator" {
+		t.Fatalf("blocker = %#v", snapshot.Control.Blocker)
+	}
+}
+
+func TestReducerMixedIntegratedAndPendingRemainsQueued(t *testing.T) {
+	s := validSnapshot()
+	s.Control = WorkControl{ApprovedContractHash: s.ContractHash, ApprovalRef: "approval"}
+	s.Contract.Tasks = append(s.Contract.Tasks, contractv2.Task{TaskID: "task-2", RepoKey: "app", AllowedPaths: []string{"internal"}, AcceptanceCriteria: []string{"works"}})
+	s.TaskStates["task-2"] = newTaskExecutionState("task-2")
+	s.TaskStates["task-1"] = TaskExecutionState{TaskID: "task-1", Status: TaskIntegrated, RepairLimit: 2, RecoveryLimit: 1, PriorAttempts: []AttemptSummary{}, InvocationHistory: []InvocationID{}}
+	reduce(&s)
+	if s.State != StateQueued || s.NextAction != "run" {
+		t.Fatalf("mixed reducer state = %q/%q", s.State, s.NextAction)
 	}
 }
 
