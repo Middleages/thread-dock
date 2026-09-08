@@ -1,5 +1,11 @@
 package statev2
 
+// Reduce recomputes the derived Work state from its typed control, task, and
+// publication state. It does not persist or otherwise perform side effects.
+func Reduce(snapshot *WorkSnapshot) {
+	reduce(snapshot)
+}
+
 func reduce(snapshot *WorkSnapshot) {
 	publicationPending, publicationFailed, publicationConflict, completionRequiredPending, publicationSettled := publicationAggregate(snapshot)
 	if publicationConflict {
@@ -16,6 +22,16 @@ func reduce(snapshot *WorkSnapshot) {
 		snapshot.NextAction = "approve"
 		return
 	}
+	// Operator attention is the strongest durable signal. A task-level blocker
+	// is authoritative even when the control blocker was not persisted by an
+	// older foundation snapshot.
+	for _, task := range snapshot.TaskStates {
+		if task.Status == TaskNeedsOperator {
+			snapshot.State = StateNeedsOperator
+			snapshot.NextAction = "resolve"
+			return
+		}
+	}
 	if snapshot.Control.Blocker != nil {
 		snapshot.State = StateNeedsOperator
 		snapshot.NextAction = "resolve"
@@ -30,6 +46,24 @@ func reduce(snapshot *WorkSnapshot) {
 			snapshot.NextAction = "resume"
 		}
 		return
+	}
+	// Required publications are a distinct work stage. Keep this ahead of
+	// task execution stages so a mixed snapshot cannot hide a durable publish
+	// obligation behind a lower-priority running/review task.
+	if completionRequiredPending {
+		snapshot.State = StatePublicationPending
+		snapshot.NextAction = "publish"
+		return
+	}
+	// Review is higher priority than running. Iterating the contract order
+	// would otherwise make the aggregate depend on YAML task ordering.
+	for _, contractTask := range snapshot.Contract.Tasks {
+		task, ok := snapshot.TaskStates[contractTask.TaskID]
+		if ok && (task.Status == TaskAccepted || task.Status == TaskGatePassed) {
+			snapshot.State = StateReview
+			snapshot.NextAction = map[TaskStatus]string{TaskAccepted: "integrate", TaskGatePassed: "review"}[task.Status]
+			return
+		}
 	}
 	for _, contractTask := range snapshot.Contract.Tasks {
 		task, ok := snapshot.TaskStates[contractTask.TaskID]
@@ -59,14 +93,6 @@ func reduce(snapshot *WorkSnapshot) {
 			return
 		case TaskIntegrated:
 			// Terminal task evidence is considered below once all tasks are inspected.
-		case TaskAccepted:
-			snapshot.State = StateReview
-			snapshot.NextAction = "integrate"
-			return
-		case TaskGatePassed:
-			snapshot.State = StateReview
-			snapshot.NextAction = "review"
-			return
 		case TaskGateFailed, TaskReviewBlocked:
 			snapshot.State = StateRunning
 			snapshot.NextAction = "repair"
