@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,8 +86,10 @@ func TestCoordinatorOwnerLossAcquiresBeforeAnyRuntimeCall(t *testing.T) {
 		t.Fatal("owner helper unexpectedly exited cleanly")
 	}
 	_ = stdin.Close()
+	realLocker := coordinator.NewOwnerLocker(root)
+	countingLocker := &countingOwnerLocker{delegate: realLocker}
 	rt := &integrationRuntime{identity: "provider-1", phase: "reconcile", events: &[]string{}}
-	c := coordinator.NewCoordinator(store, rt, nil, coordinator.NewOwnerLocker(root), "successor", 43, reconcileAt)
+	c := coordinator.NewCoordinator(store, rt, nil, countingLocker, "successor", 43, reconcileAt)
 	result, err := c.Reconcile(context.Background(), contract.WorkID)
 	if err != nil {
 		t.Fatal(err)
@@ -94,18 +97,32 @@ func TestCoordinatorOwnerLossAcquiresBeforeAnyRuntimeCall(t *testing.T) {
 	if result.WorkID != contract.WorkID || rt.observes != 1 || rt.launches != 0 || rt.terminates != 0 {
 		t.Fatalf("result=%#v runtime=%d/%d/%d", result, rt.observes, rt.launches, rt.terminates)
 	}
+	successorAcquires, successorReleases := countingLocker.counts()
+	if successorAcquires != 1 || successorReleases != 1 {
+		t.Fatalf("successor owner calls = acquire %d release %d, want 1/1", successorAcquires, successorReleases)
+	}
 	rt.phase = "dispatcher"
-	dispatcher := coordinator.NewRuntimeDispatcher(store, rt, coordinator.NewOwnerLocker(root), "queue", 44, reconcileAt)
+	dispatcher := coordinator.NewRuntimeDispatcher(store, rt, countingLocker, "queue", 44, reconcileAt)
 	if result := <-dispatcher.SubmitRuntime(context.Background(), contract.WorkID, "task-1", "inv-1"); result.Err != nil {
 		t.Fatal(result.Err)
 	}
 	if rt.observes != 2 || len(*rt.events) != 2 || (*rt.events)[0] != "reconcile-observe" || (*rt.events)[1] != "dispatcher-observe" {
 		t.Fatalf("event order=%#v observes=%d", *rt.events, rt.observes)
 	}
+	if rt.terminates != 0 {
+		t.Fatalf("post-reconcile dispatcher terminate calls = %d, want 0", rt.terminates)
+	}
 	if err := dispatcher.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	lease, err := coordinator.NewOwnerLocker(root).Acquire(context.Background(), contract.WorkID, "after", 44, reconcileAt)
+	dispatcherAcquires, dispatcherReleases := countingLocker.counts()
+	if dispatcherAcquires-successorAcquires != 1 || dispatcherReleases-successorReleases != 1 {
+		t.Fatalf("dispatcher owner calls = acquire %d release %d, want phase delta 1/1", dispatcherAcquires-successorAcquires, dispatcherReleases-successorReleases)
+	}
+	if dispatcherAcquires != 2 || dispatcherReleases != 2 {
+		t.Fatalf("owner calls total = acquire %d release %d, want 2/2", dispatcherAcquires, dispatcherReleases)
+	}
+	lease, err := realLocker.Acquire(context.Background(), contract.WorkID, "after", 44, reconcileAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,6 +475,10 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	if rt.launches != 1 {
 		t.Fatalf("launch calls = %d, want 1", rt.launches)
 	}
+	// A settled running command exercises the dispatcher observe path exactly once.
+	if result := <-dispatcher.SubmitRuntime(context.Background(), contract.WorkID, "task-1", "inv-1"); result.Err != nil {
+		t.Fatal(result.Err)
+	}
 	beforePause, err := service.Status(context.Background(), contract.WorkID)
 	if err != nil {
 		t.Fatal(err)
@@ -537,8 +558,8 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if statusAfter.Revision == statusBefore.Revision || pub.observes != 1 || pub.publishes != 1 || statusAfter.Publications["intent-1"].Status != statev2.PublicationCompleted {
-		t.Fatalf("status revision=%d/%d publication calls=%d/%d status=%q", statusBefore.Revision, statusAfter.Revision, pub.observes, pub.publishes, statusAfter.Publications["intent-1"].Status)
+	if statusAfter.Revision == statusBefore.Revision || rt.observes != 1 || rt.launches != 1 || rt.terminates != 1 || pub.observes != 1 || pub.publishes != 1 || statusAfter.Publications["intent-1"].Status != statev2.PublicationCompleted {
+		t.Fatalf("status revision=%d/%d runtime observe/launch/terminate=%d/%d/%d publication calls=%d/%d status=%q", statusBefore.Revision, statusAfter.Revision, rt.observes, rt.launches, rt.terminates, pub.observes, pub.publishes, statusAfter.Publications["intent-1"].Status)
 	}
 	if reconcileLocker.acquires != 1 || reconcileLocker.releases != 1 {
 		t.Fatalf("reconcile owner calls = acquire %d release %d", reconcileLocker.acquires, reconcileLocker.releases)
@@ -621,6 +642,49 @@ func (p *integrationPublisher) Publish(context.Context, statev2.PublicationState
 		return *p.observation.Receipt, nil
 	}
 	return statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: reconcileAt}, nil
+}
+
+type countingOwnerLocker struct {
+	delegate coordinator.OwnerLocker
+	mu       sync.Mutex
+	acquires int
+	releases int
+}
+
+func (l *countingOwnerLocker) Acquire(ctx context.Context, workID contractv2.WorkID, ownerID coordinator.OwnerID, pid int, startedAt time.Time) (coordinator.OwnerLease, error) {
+	lease, err := l.delegate.Acquire(ctx, workID, ownerID, pid, startedAt)
+	if err != nil {
+		return nil, err
+	}
+	l.mu.Lock()
+	l.acquires++
+	l.mu.Unlock()
+	return &countingOwnerLease{delegate: lease, locker: l}, nil
+}
+
+func (l *countingOwnerLocker) counts() (acquires, releases int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.acquires, l.releases
+}
+
+type countingOwnerLease struct {
+	delegate   coordinator.OwnerLease
+	locker     *countingOwnerLocker
+	release    sync.Once
+	releaseErr error
+}
+
+func (l *countingOwnerLease) Record() coordinator.OwnerRecord { return l.delegate.Record() }
+
+func (l *countingOwnerLease) Release() error {
+	l.release.Do(func() {
+		l.releaseErr = l.delegate.Release()
+		l.locker.mu.Lock()
+		l.locker.releases++
+		l.locker.mu.Unlock()
+	})
+	return l.releaseErr
 }
 
 type integrationLocker struct{ acquires, releases int }
