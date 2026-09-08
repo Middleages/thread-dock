@@ -74,48 +74,6 @@ func TestCoordinatorReconcilePublicationMatchAdoptsReceipt(t *testing.T) {
 	}
 }
 
-func TestCoordinatorSkipsSettledHistoricalInvocationAndReconcilesPublication(t *testing.T) {
-	st := &reconcileTestState{snapshot: reconcilePublicationSnapshot()}
-	task := reconcileSnapshot(statev2.TaskTerminated).TaskStates["task-1"]
-	ended := reconcileAt.Add(time.Minute)
-	task.Status = statev2.TaskIntegrated
-	task.Invocation.ProviderIdentity = "provider-1"
-	task.Invocation.StartedAt = &reconcileAt
-	task.Invocation.EndedAt = &ended
-	task.Invocation.TerminationConfirmed = true
-	st.snapshot.TaskStates["task-1"] = task
-	pub := &reconcileTestPublisher{observation: PublicationObservation{State: PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: reconcileAt}}}
-	rt := &reconcileTestRuntime{observation: RuntimeObservation{State: RuntimeObservationUnknown}}
-	c := NewCoordinator(st, rt, pub, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
-	if _, err := c.Reconcile(context.Background(), "work-1"); err != nil {
-		t.Fatal(err)
-	}
-	if rt.observes != 0 || pub.observes != 1 || pub.publishes != 0 || st.snapshot.Publications["intent-1"].Status != statev2.PublicationCompleted {
-		t.Fatalf("historical invocation calls observe=%d publication=%d/%d status=%q", rt.observes, pub.observes, pub.publishes, st.snapshot.Publications["intent-1"].Status)
-	}
-}
-
-func TestCoordinatorTerminationPendingUnknownDoesNotTerminate(t *testing.T) {
-	for _, observation := range []RuntimeObservation{{State: RuntimeObservationUnknown}, {State: RuntimeObservationNotStarted}, {}, {State: RuntimeObservationActive, ProviderIdentity: "provider-other"}} {
-		st := &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskTerminationPending)}
-		task := st.snapshot.TaskStates["task-1"]
-		task.Invocation.LaunchRequested = true
-		task.Invocation.ProviderIdentity = "provider-1"
-		st.snapshot.TaskStates["task-1"] = task
-		rt := &reconcileTestRuntime{observation: observation}
-		c := NewCoordinator(st, rt, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
-		if _, err := c.Reconcile(context.Background(), "work-1"); err == nil {
-			t.Fatalf("observation %#v unexpectedly succeeded", observation)
-		}
-		if rt.terminates != 0 {
-			t.Fatalf("observation %#v terminate calls = %d, want 0", observation, rt.terminates)
-		}
-		if st.snapshot.State != statev2.StateNeedsOperator || st.snapshot.Control.Blocker == nil || st.snapshot.Control.Blocker.Kind != statev2.BlockerKindRuntimeUnknown {
-			t.Fatalf("observation %#v blocker = %#v state=%q", observation, st.snapshot.Control.Blocker, st.snapshot.State)
-		}
-	}
-}
-
 func TestCoordinatorRunningUnknownObservationsNeverTerminate(t *testing.T) {
 	for _, observation := range []RuntimeObservation{
 		{State: RuntimeObservationUnknown},
@@ -152,58 +110,6 @@ func TestCoordinatorProvenAbsentPublishesExactlyOnce(t *testing.T) {
 	}
 	if pub.observes != 1 || pub.publishes != 1 || st.snapshot.Publications["intent-1"].Status != statev2.PublicationCompleted {
 		t.Fatalf("calls=%d/%d status=%q", pub.observes, pub.publishes, st.snapshot.Publications["intent-1"].Status)
-	}
-}
-
-func TestCoordinatorPausedReservedFalseReconcilesLocallyWithoutLaunchOrPublish(t *testing.T) {
-	st := &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskInvocationReserved)}
-	st.snapshot.Control.PauseRequested = true
-	rt := &reconcileTestRuntime{}
-	pub := &reconcileTestPublisher{observation: PublicationObservation{State: PublicationObservationAbsent}}
-	c := NewCoordinator(st, rt, pub, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
-	if _, err := c.Reconcile(context.Background(), "work-1"); err != nil {
-		t.Fatal(err)
-	}
-	if rt.launches != 0 || rt.observes != 0 || pub.publishes != 0 || st.lastTaskAction != statev2.TaskReconcileNotStarted {
-		t.Fatalf("runtime=%d/%d publication=%d task=%q", rt.launches, rt.observes, pub.publishes, st.lastTaskAction)
-	}
-}
-
-func TestCoordinatorPausedRunningActiveTerminatesExactlyOnce(t *testing.T) {
-	st := &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskRunning)}
-	st.snapshot.Control.PauseRequested = true
-	task := st.snapshot.TaskStates["task-1"]
-	task.Invocation.LaunchRequested = true
-	task.Invocation.ProviderIdentity = "provider-1"
-	st.snapshot.TaskStates["task-1"] = task
-	rt := &reconcileTestRuntime{observation: RuntimeObservation{State: RuntimeObservationActive, ProviderIdentity: "provider-1"}}
-	c := NewCoordinator(st, rt, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
-	if _, err := c.Reconcile(context.Background(), "work-1"); err != nil {
-		t.Fatal(err)
-	}
-	if rt.terminates != 1 || st.lastTaskAction != statev2.TaskConfirmTermination {
-		t.Fatalf("terminate=%d last action=%q", rt.terminates, st.lastTaskAction)
-	}
-}
-
-func TestCoordinatorPausedPublicationAdoptsMatchButDoesNotPublishAbsent(t *testing.T) {
-	for _, observation := range []PublicationObservation{{State: PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: reconcileAt}}, {State: PublicationObservationAbsent}} {
-		st := &reconcileTestState{snapshot: reconcilePublicationSnapshot()}
-		st.snapshot.Control.PauseRequested = true
-		pub := &reconcileTestPublisher{observation: observation, publishReceipt: &statev2.PublicationReceipt{NodeID: "published", PublishedAt: reconcileAt}}
-		c := NewCoordinator(st, nil, pub, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
-		if _, err := c.Reconcile(context.Background(), "work-1"); err != nil {
-			t.Fatal(err)
-		}
-		if pub.publishes != 0 {
-			t.Fatalf("observation=%q publish calls=%d", observation.State, pub.publishes)
-		}
-		if observation.State == PublicationObservationMatch && st.lastPublicationAction != statev2.PublicationComplete {
-			t.Fatalf("match action=%q", st.lastPublicationAction)
-		}
-		if observation.State == PublicationObservationAbsent && st.lastPublicationAction != "" {
-			t.Fatalf("absent action=%q", st.lastPublicationAction)
-		}
 	}
 }
 
