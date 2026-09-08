@@ -36,6 +36,7 @@ type Coordinator struct {
 	StartedAt   time.Time
 
 	mu         sync.Mutex
+	closed     bool
 	dispatcher *publicationDispatcher
 	activated  map[contractv2.WorkID]ReconcileResult
 }
@@ -61,6 +62,7 @@ var (
 	ErrReconcileRuntimeUnknown      = errors.New("runtime state is unknown; operator action required")
 	ErrReconcilePublicationConflict = errors.New("publication state is unknown; operator action required")
 	ErrWorkNotActivated             = errors.New("work is not activated")
+	ErrPublisherRequired            = errors.New("publisher is required")
 )
 
 // Reconcile acquires one Work lease, serially settles durable in-flight work,
@@ -175,6 +177,9 @@ func (c *Coordinator) Activate(ctx context.Context, workID contractv2.WorkID) (R
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		return ReconcileResult{WorkID: workID}, ErrDispatcherClosed
+	}
 	if c.activated == nil {
 		c.activated = make(map[contractv2.WorkID]ReconcileResult)
 	}
@@ -220,11 +225,17 @@ func (c *Coordinator) SubmitRuntime(ctx context.Context, workID contractv2.WorkI
 		return rejectedCommand(ErrWorkNotActivated)
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, ok := c.activated[workID]; !ok || c.dispatcher == nil {
+	if c.closed {
+		c.mu.Unlock()
+		return rejectedCommand(ErrDispatcherClosed)
+	}
+	d := c.dispatcher
+	if _, ok := c.activated[workID]; !ok || d == nil {
+		c.mu.Unlock()
 		return rejectedCommand(ErrWorkNotActivated)
 	}
-	return c.dispatcher.SubmitRuntime(ctx, workID, taskID, invocationID)
+	c.mu.Unlock()
+	return d.SubmitRuntime(ctx, workID, taskID, invocationID)
 }
 
 // SubmitPublication delegates only to an activated Work queue.
@@ -233,11 +244,21 @@ func (c *Coordinator) SubmitPublication(ctx context.Context, workID contractv2.W
 		return rejectedCommand(ErrWorkNotActivated)
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, ok := c.activated[workID]; !ok || c.dispatcher == nil {
+	if c.closed {
+		c.mu.Unlock()
+		return rejectedCommand(ErrDispatcherClosed)
+	}
+	d := c.dispatcher
+	if _, ok := c.activated[workID]; !ok || d == nil {
+		c.mu.Unlock()
 		return rejectedCommand(ErrWorkNotActivated)
 	}
-	return c.dispatcher.SubmitPublication(ctx, workID, intentID)
+	publisher := c.Publisher
+	c.mu.Unlock()
+	if publisher == nil {
+		return rejectedCommand(ErrPublisherRequired)
+	}
+	return d.SubmitPublication(ctx, workID, intentID)
 }
 
 // Close stops all activated Work queues and releases their leases.
@@ -246,8 +267,21 @@ func (c *Coordinator) Close(ctx context.Context) error {
 		return nil
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.dispatcher.Close(ctx)
+	if c.closed {
+		d := c.dispatcher
+		c.mu.Unlock()
+		if d == nil {
+			return nil
+		}
+		return d.Close(ctx)
+	}
+	c.closed = true
+	d := c.dispatcher
+	c.mu.Unlock()
+	if d == nil {
+		return nil
+	}
+	return d.Close(ctx)
 }
 
 func rejectedCommand(err error) <-chan CommandResult {

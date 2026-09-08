@@ -223,6 +223,126 @@ func TestCoordinatorActivateOwnsOneLeaseAndRejectsPreActivationSubmission(t *tes
 	}
 }
 
+func TestCoordinatorSubmitWrapperDoesNotHoldCoordinatorLockDuringQueueSaturation(t *testing.T) {
+	st := &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskIntegrated)}
+	st.snapshot.TaskStates["task-1"] = statev2.TaskExecutionState{TaskID: "task-1", Status: statev2.TaskIntegrated, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1, InvocationHistory: []statev2.InvocationID{}}
+	lease := &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}
+	locker := &reconcileLocker{lease: lease}
+	allow := make(chan struct{})
+	entered := make(chan struct{})
+	pub := &blockingPublisher{allow: allow, entered: entered}
+	c := NewCoordinator(st, nil, pub, locker, "owner-1", 41, reconcileAt)
+	if _, err := c.Activate(context.Background(), "work-1"); err != nil {
+		t.Fatal(err)
+	}
+	st.snapshot.Publications = map[statev2.PublicationIntentID]statev2.PublicationState{
+		"intent-1": {IntentID: "intent-1", Key: "issue:1", Generation: 1, Kind: statev2.PublicationParentIssue, Status: statev2.PublicationPending, PayloadHash: strings.Repeat("a", 64), PayloadRef: "artifact://one", Target: statev2.PublicationTarget{Host: "github.com", Key: "issue:1"}, CompletionRequired: true},
+	}
+	first := c.SubmitPublication(context.Background(), "work-1", "intent-1")
+	<-entered
+	queued := make([]<-chan CommandResult, 64)
+	for i := range queued {
+		queued[i] = c.SubmitPublication(context.Background(), "work-1", "intent-1")
+	}
+	q := c.dispatcher.queues["work-1"]
+	hookEntered := make(chan struct{})
+	hookRelease := make(chan struct{})
+	q.beforeSelect = func() {
+		close(hookEntered)
+		<-hookRelease
+	}
+	extraReturned := make(chan (<-chan CommandResult), 1)
+	go func() { extraReturned <- c.SubmitPublication(context.Background(), "work-1", "intent-1") }()
+	<-hookEntered
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- c.Close(context.Background()) }()
+	close(hookRelease)
+	closed := false
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+		closed = true
+	case <-time.After(time.Second):
+		q.cancel()
+		<-closeDone
+	}
+	if !closed {
+		t.Error("Coordinator.Close blocked behind saturated wrapper submission")
+	}
+	close(allow)
+	for name, result := range map[string]<-chan CommandResult{"first": first} {
+		select {
+		case <-result:
+		case <-time.After(time.Second):
+			t.Fatalf("%s result stranded", name)
+		}
+	}
+	select {
+	case result := <-extraReturned:
+		select {
+		case <-result:
+		case <-time.After(time.Second):
+			t.Fatal("extra result stranded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("extra wrapper submission did not return")
+	}
+	if lease.releases != 1 {
+		t.Fatalf("lease releases = %d, want 1", lease.releases)
+	}
+}
+
+func TestCoordinatorCloseIsIdempotentAndDisablesActivationAndSubmission(t *testing.T) {
+	st := &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskIntegrated)}
+	st.snapshot.TaskStates["task-1"] = statev2.TaskExecutionState{TaskID: "task-1", Status: statev2.TaskIntegrated, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1, InvocationHistory: []statev2.InvocationID{}}
+	lease := &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}
+	locker := &reconcileLocker{lease: lease}
+	c := NewCoordinator(st, nil, nil, locker, "owner-1", 41, reconcileAt)
+	if _, err := c.Activate(context.Background(), "work-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Activate(context.Background(), "work-1"); !errors.Is(err, ErrDispatcherClosed) {
+		t.Fatalf("activation after close error = %v", err)
+	}
+	if result := <-c.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1"); !errors.Is(result.Err, ErrDispatcherClosed) {
+		t.Fatalf("runtime submission after close error = %v", result.Err)
+	}
+	if result := <-c.SubmitPublication(context.Background(), "work-1", "intent-1"); !errors.Is(result.Err, ErrDispatcherClosed) {
+		t.Fatalf("publication submission after close error = %v", result.Err)
+	}
+	if locker.acquires != 1 || lease.releases != 1 {
+		t.Fatalf("owner calls acquire=%d release=%d", locker.acquires, lease.releases)
+	}
+}
+
+func TestCoordinatorActivatedPublicationWithoutPublisherReturnsStableError(t *testing.T) {
+	st := &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskIntegrated)}
+	st.snapshot.TaskStates["task-1"] = statev2.TaskExecutionState{TaskID: "task-1", Status: statev2.TaskIntegrated, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1, InvocationHistory: []statev2.InvocationID{}}
+	lease := &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}
+	c := NewCoordinator(st, nil, nil, &reconcileLocker{lease: lease}, "owner-1", 41, reconcileAt)
+	if _, err := c.Activate(context.Background(), "work-1"); err != nil {
+		t.Fatal(err)
+	}
+	result := <-c.SubmitPublication(context.Background(), "work-1", "intent-1")
+	if !errors.Is(result.Err, ErrPublisherRequired) {
+		t.Fatalf("nil publisher error = %v", result.Err)
+	}
+	if st.taskActions != 0 || st.lastPublicationAction != "" || lease.releases != 0 {
+		t.Fatalf("nil publisher caused state/lease activity task=%d publication=%q releases=%d", st.taskActions, st.lastPublicationAction, lease.releases)
+	}
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 var reconcileAt = time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
 
 func reconcileSnapshot(status statev2.TaskStatus) statev2.WorkSnapshot {
