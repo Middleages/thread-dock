@@ -2,11 +2,13 @@ package coordinator
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	contractv2 "thread-dock/internal/contract/v2"
 	statev2 "thread-dock/internal/state/v2"
@@ -53,8 +55,6 @@ var (
 	ErrPublicationBlocked = errors.New("publication dispatch is blocked")
 )
 
-var dispatchRequestSequence atomic.Uint64
-
 func (d *publicationDispatcher) handlePublication(ctx context.Context, q *publicationQueue, intentID statev2.PublicationIntentID) CommandResult {
 	if err := ctx.Err(); err != nil {
 		return CommandResult{Err: err}
@@ -74,12 +74,15 @@ func (d *publicationDispatcher) handlePublication(ctx context.Context, q *public
 		return CommandResult{Snapshot: snapshot, Err: ErrPublicationStale}
 	}
 	if p.Status == statev2.PublicationFailed {
-		request := d.publicationRequest(snapshot, statev2.PublicationTransition{
+		request, requestErr := d.publicationRequest(snapshot, statev2.PublicationTransition{
 			Action: statev2.PublicationBegin, IntentID: p.IntentID, Key: p.Key,
 			Generation: p.Generation, Kind: p.Kind, PayloadHash: p.PayloadHash,
 			PayloadRef: p.PayloadRef, Target: publicationTargetPtr(p.Target),
 			CompletionRequired: boolPtr(p.CompletionRequired),
 		})
+		if requestErr != nil {
+			return CommandResult{Snapshot: snapshot, Err: requestErr}
+		}
 		snapshot, err = d.state.Apply(ctx, request)
 		if err != nil {
 			return d.latestResult(ctx, snapshot, err)
@@ -136,7 +139,7 @@ func (d *publicationDispatcher) handlePublication(ctx context.Context, q *public
 }
 
 func (d *publicationDispatcher) pendingIntent(snapshot statev2.WorkSnapshot, q *publicationQueue, intentID statev2.PublicationIntentID) (statev2.PublicationState, error) {
-	if snapshot.WorkID != q.workID || q.lease.Record().WorkID != q.workID {
+	if !ownerRecordMatches(d, q) {
 		return statev2.PublicationState{}, fmt.Errorf("%w: owner record does not match Work", ErrPublicationStale)
 	}
 	p, ok := snapshot.Publications[intentID]
@@ -162,7 +165,7 @@ func (d *publicationDispatcher) pendingIntent(snapshot statev2.WorkSnapshot, q *
 }
 
 func (d *publicationDispatcher) validateDispatch(snapshot statev2.WorkSnapshot, q *publicationQueue, p statev2.PublicationState) error {
-	if snapshot.WorkID != q.workID || q.lease.Record().WorkID != q.workID {
+	if !ownerRecordMatches(d, q) {
 		return fmt.Errorf("%w: owner record does not match Work", ErrPublicationStale)
 	}
 	if snapshot.Control.PauseRequested {
@@ -208,7 +211,11 @@ func (d *publicationDispatcher) applySettlement(ctx context.Context, snapshot st
 	if action == statev2.PublicationActionConflict {
 		transition.Blocker = &statev2.OperatorBlocker{Kind: statev2.BlockerKindPublicationConflict, OperatorRef: string(d.ownerID), IntentID: p.IntentID, Diagnostic: diagnostic}
 	}
-	result, err := d.state.Apply(ctx, d.publicationRequest(snapshot, transition))
+	request, err := d.publicationRequest(snapshot, transition)
+	if err != nil {
+		return CommandResult{Snapshot: snapshot, Err: err}
+	}
+	result, err := d.state.Apply(ctx, request)
 	if err != nil {
 		return d.latestResult(ctx, snapshot, err)
 	}
@@ -223,15 +230,26 @@ func (d *publicationDispatcher) latestResult(ctx context.Context, fallback state
 	return CommandResult{Snapshot: fallback, Err: cause}
 }
 
-func (d *publicationDispatcher) publicationRequest(snapshot statev2.WorkSnapshot, transition statev2.PublicationTransition) statev2.TransitionRequest {
-	req := statev2.TransitionRequest{WorkID: snapshot.WorkID, ExpectedRevision: snapshot.Revision, RequestID: d.nextRequestID(), Publication: &transition}
-	req.PayloadHash, _ = statev2.TransitionPayloadHash(req)
-	return req
+func (d *publicationDispatcher) publicationRequest(snapshot statev2.WorkSnapshot, transition statev2.PublicationTransition) (statev2.TransitionRequest, error) {
+	req := statev2.TransitionRequest{WorkID: snapshot.WorkID, ExpectedRevision: snapshot.Revision, Publication: &transition}
+	var err error
+	req.RequestID, err = d.nextRequestID()
+	if err != nil {
+		return statev2.TransitionRequest{}, err
+	}
+	req.PayloadHash, err = statev2.TransitionPayloadHash(req)
+	if err != nil {
+		return statev2.TransitionRequest{}, err
+	}
+	return req, nil
 }
 
-func (d *publicationDispatcher) nextRequestID() contractv2.RequestID {
-	seq := dispatchRequestSequence.Add(1)
-	return contractv2.RequestID(fmt.Sprintf("publication-dispatch-%d", seq))
+func (d *publicationDispatcher) nextRequestID() (contractv2.RequestID, error) {
+	entropy := make([]byte, 16)
+	if _, err := rand.Read(entropy); err != nil {
+		return "", fmt.Errorf("generate publication request ID: %w", err)
+	}
+	return contractv2.RequestID("publication-dispatch-" + hex.EncodeToString(entropy)), nil
 }
 
 func publicationTargetPtr(target statev2.PublicationTarget) *statev2.PublicationTarget {
@@ -240,5 +258,19 @@ func publicationTargetPtr(target statev2.PublicationTarget) *statev2.Publication
 func boolPtr(value bool) *bool { return &value }
 
 func validReceipt(receipt *statev2.PublicationReceipt) bool {
-	return receipt != nil && !receipt.PublishedAt.IsZero() && receipt.PublishedAt.Location() == time.UTC && (receipt.NodeID != "" || receipt.Number != 0 || strings.TrimSpace(receipt.URL) != "")
+	if receipt == nil || receipt.PublishedAt.IsZero() || receipt.PublishedAt.Location() != time.UTC || (receipt.NodeID == "" && receipt.Number == 0 && receipt.URL == "") {
+		return false
+	}
+	for _, value := range []string{receipt.NodeID, receipt.URL, receipt.Base, receipt.Head} {
+		if !utf8.ValidString(value) || strings.TrimSpace(value) != value {
+			return false
+		}
+	}
+	return true
+}
+
+func ownerRecordMatches(d *publicationDispatcher, q *publicationQueue) bool {
+	record := q.lease.Record()
+	expected := q.owner
+	return expected.WorkID == q.workID && expected.OwnerID == d.ownerID && expected.PID == d.pid && expected.StartedAt == d.startedAt && record == expected && record.WorkID == q.workID && record.OwnerID == d.ownerID && record.PID == d.pid && record.StartedAt == d.startedAt
 }

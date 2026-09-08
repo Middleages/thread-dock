@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -69,4 +70,45 @@ func TestDispatcherSkipsPausedIntentQueuedBeforePause(t *testing.T) {
 		t.Fatalf("paused result=%v observe=%d publish=%d", result.Err, pub.observes, pub.publishes)
 	}
 	_ = d.Close(context.Background())
+}
+
+func TestDispatcherCloseSubmitBarrierResolvesEveryResult(t *testing.T) {
+	for attempt := 0; attempt < 20; attempt++ {
+		workID := contractv2.WorkID("work-1")
+		intentID := statev2.PublicationIntentID("intent-1")
+		st := newFakeState(workID, intentID, statev2.PublicationPending)
+		pub := &blockingPublisher{allow: make(chan struct{}), entered: make(chan struct{})}
+		d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+		first := d.SubmitPublication(context.Background(), workID, intentID)
+		select {
+		case <-pub.entered:
+		case <-time.After(time.Second):
+			t.Fatal("publisher did not enter Observe")
+		}
+		closeStarted := make(chan struct{})
+		closeDone := make(chan error, 1)
+		go func() {
+			close(closeStarted)
+			closeDone <- d.Close(context.Background())
+		}()
+		<-closeStarted
+		second := d.SubmitPublication(context.Background(), workID, intentID)
+		close(pub.allow)
+		select {
+		case <-first:
+		case <-time.After(time.Second):
+			t.Fatal("first result stranded")
+		}
+		select {
+		case got := <-second:
+			if !errors.Is(got.Err, ErrDispatcherClosed) {
+				t.Fatalf("second result error = %v", got.Err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("second result stranded")
+		}
+		if err := <-closeDone; err != nil {
+			t.Fatal(err)
+		}
+	}
 }

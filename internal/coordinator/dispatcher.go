@@ -32,6 +32,8 @@ type publicationQueue struct {
 	submitMu   sync.Mutex
 	releaseMu  sync.Mutex
 	releaseErr error
+	stopped    bool
+	owner      OwnerRecord
 }
 
 type publicationDispatcher struct {
@@ -59,12 +61,6 @@ func NewDispatcher(state State, publisher Publisher, locker OwnerLocker, ownerID
 	return &publicationDispatcher{state: state, publisher: publisher, locker: locker, ownerID: ownerID, pid: pid, startedAt: startedAt, queues: make(map[contractv2.WorkID]*publicationQueue)}
 }
 
-// NewPublicationDispatcher is an explicit alias for callers that prefer the
-// domain-specific constructor name.
-func NewPublicationDispatcher(state State, publisher Publisher, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
-	return NewDispatcher(state, publisher, locker, ownerID, pid, startedAt)
-}
-
 func (d *publicationDispatcher) SubmitPublication(ctx context.Context, workID contractv2.WorkID, intentID statev2.PublicationIntentID) <-chan CommandResult {
 	if ctx == nil {
 		ctx = context.Background()
@@ -90,7 +86,7 @@ func (d *publicationDispatcher) SubmitPublication(ctx context.Context, workID co
 			return result
 		}
 		queueCtx, cancel := context.WithCancel(context.Background())
-		q = &publicationQueue{workID: workID, lease: lease, ctx: queueCtx, cancel: cancel, items: make(chan publicationCommand, 64), done: make(chan struct{})}
+		q = &publicationQueue{workID: workID, lease: lease, owner: lease.Record(), ctx: queueCtx, cancel: cancel, items: make(chan publicationCommand, 64), done: make(chan struct{})}
 		d.queues[workID] = q
 		go d.runQueue(q)
 	}
@@ -98,12 +94,14 @@ func (d *publicationDispatcher) SubmitPublication(ctx context.Context, workID co
 	command := publicationCommand{ctx: ctx, intentID: intentID, result: result}
 	q.submitMu.Lock()
 	defer q.submitMu.Unlock()
+	if q.stopped {
+		result <- CommandResult{Err: ErrDispatcherClosed}
+		return result
+	}
 	select {
 	case q.items <- command:
 	case <-ctx.Done():
 		result <- CommandResult{Err: ctx.Err()}
-	case <-q.ctx.Done():
-		result <- CommandResult{Err: ErrDispatcherClosed}
 	}
 	return result
 }
@@ -172,6 +170,7 @@ func (d *publicationDispatcher) Close(ctx context.Context) error {
 	for _, q := range d.queues {
 		queues = append(queues, q)
 		q.submitMu.Lock()
+		q.stopped = true
 		q.cancel()
 		q.submitMu.Unlock()
 	}
