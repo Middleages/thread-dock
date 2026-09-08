@@ -121,6 +121,14 @@ fresh review를 통과시킨 뒤, 경로가 분리된 Publisher와 runtime/Git �
 
 ## 재사용과 검증
 
+### Shared-state core 구현
+
+PR #49 merge commit `1d7fa1b`를 기준으로 `agent/workflow-shared-state`에서 typed Work/Task/publication state core를 구현했다. 구현 계획은 [`docs/superpowers/plans/2026-09-08-workflow-shared-state-core.md`](docs/superpowers/plans/2026-09-08-workflow-shared-state-core.md), 다음 coordinator 계획은 [`docs/superpowers/plans/2026-09-08-work-item-coordinator.md`](docs/superpowers/plans/2026-09-08-work-item-coordinator.md)다.
+
+core는 typed `Store.Apply`, 승인·pause/resume·resolution, builder/reviewer invocation lifecycle, candidate/gate/review/integration evidence, repair/recovery budget, publication generation/reconcile와 privacy-safe Monitor projection을 포함한다. final review와 residual review의 production finding을 수정한 최종 통합 코드 HEAD는 `95831b4715325dd84ed84bf435bc06ec44ae9ea4`다.
+
+Docker Go 1.27 `make check`가 최종 통합 코드에서 통과했다. native WSL Go, Windows/Wails bridge, 실제 runtime과 GitHub Projects/Wiki publication은 아직 `unverified`다. 다음 행동은 coordinator 계획을 검토하고 owner lease→publication queue→async runtime→restart reconcile 순서로 실행하는 것이다. 이 계획이 끝나기 전에는 Publisher/runtime adapter를 독립적으로 launch하지 않는다.
+
 기존 contract, state, pathscope, worktree, integration과 Herdr의 좁은 기능을 검토해
 재사용한다. 기존 자동 병합·세션 복구 상태 기계 전체를 보존할 의무는 없다.
 기존 project-template은 v1 자료이며 새 MVP 자동 설치에 사용하기 전에 새 계약에 맞춰 정리한다.
