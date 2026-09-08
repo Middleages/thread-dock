@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
@@ -33,6 +34,10 @@ type Coordinator struct {
 	OwnerID     OwnerID
 	PID         int
 	StartedAt   time.Time
+
+	mu         sync.Mutex
+	dispatcher *publicationDispatcher
+	activated  map[contractv2.WorkID]ReconcileResult
 }
 
 // NewCoordinator constructs a coordinator with stable process metadata. A
@@ -49,12 +54,13 @@ func NewCoordinator(state State, runtime Runtime, publisher Publisher, locker Ow
 	if ownerID == "" {
 		ownerID = OwnerID(fmt.Sprintf("coordinator-%d-%d", pid, startedAt.UnixNano()))
 	}
-	return &Coordinator{State: state, Runtime: runtime, Publisher: publisher, OwnerLocker: locker, OwnerID: ownerID, PID: pid, StartedAt: startedAt}
+	return &Coordinator{State: state, Runtime: runtime, Publisher: publisher, OwnerLocker: locker, OwnerID: ownerID, PID: pid, StartedAt: startedAt, dispatcher: newDispatcher(state, publisher, runtime, locker, ownerID, pid, startedAt), activated: make(map[contractv2.WorkID]ReconcileResult)}
 }
 
 var (
 	ErrReconcileRuntimeUnknown      = errors.New("runtime state is unknown; operator action required")
 	ErrReconcilePublicationConflict = errors.New("publication state is unknown; operator action required")
+	ErrWorkNotActivated             = errors.New("work is not activated")
 )
 
 // Reconcile acquires one Work lease, serially settles durable in-flight work,
@@ -78,6 +84,18 @@ func (c *Coordinator) Reconcile(ctx context.Context, workID contractv2.WorkID) (
 		}
 	}()
 
+	result, err = c.reconcileWithLease(ctx, workID, lease)
+	return result, err
+}
+
+func (c *Coordinator) reconcileWithLease(ctx context.Context, workID contractv2.WorkID, lease OwnerLease) (result ReconcileResult, err error) {
+	if lease == nil {
+		return ReconcileResult{WorkID: workID}, errors.New("owner lease is required")
+	}
+	d := c.dispatcher
+	if d == nil {
+		d = newDispatcher(c.State, c.Publisher, c.Runtime, c.OwnerLocker, c.OwnerID, c.PID, c.StartedAt)
+	}
 	snapshot, err := c.State.Load(ctx, workID)
 	if err != nil {
 		return ReconcileResult{WorkID: workID}, err
@@ -92,7 +110,6 @@ func (c *Coordinator) Reconcile(ctx context.Context, workID contractv2.WorkID) (
 	}
 
 	q := &publicationQueue{workID: workID, lease: lease, owner: lease.Record(), runtimeOps: make(map[runtimeKey]map[runtimeOperationKind]*runtimeOperation)}
-	d := &publicationDispatcher{state: c.State, runtime: c.Runtime, publisher: c.Publisher, locker: c.OwnerLocker, ownerID: c.OwnerID, pid: c.PID, startedAt: c.StartedAt}
 	for _, contractTask := range snapshot.Contract.Tasks {
 		if err := ctx.Err(); err != nil {
 			return c.result(snapshot), err
@@ -145,6 +162,98 @@ func (c *Coordinator) Reconcile(ctx context.Context, workID contractv2.WorkID) (
 		return c.result(snapshot), err
 	}
 	return c.result(latest), nil
+}
+
+// Activate acquires one Work lease, reconciles under that held lease, and
+// transfers the same lease to the Work queue before returning.
+func (c *Coordinator) Activate(ctx context.Context, workID contractv2.WorkID) (ReconcileResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if c == nil || c.State == nil || c.OwnerLocker == nil {
+		return ReconcileResult{WorkID: workID}, errors.New("coordinator state and owner locker are required")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.activated == nil {
+		c.activated = make(map[contractv2.WorkID]ReconcileResult)
+	}
+	if cached, ok := c.activated[workID]; ok {
+		return cached, nil
+	}
+	if c.dispatcher == nil {
+		c.dispatcher = newDispatcher(c.State, c.Publisher, c.Runtime, c.OwnerLocker, c.OwnerID, c.PID, c.StartedAt)
+	}
+	c.dispatcher.mu.Lock()
+	closed := c.dispatcher.closed
+	c.dispatcher.mu.Unlock()
+	if closed {
+		return ReconcileResult{WorkID: workID}, ErrDispatcherClosed
+	}
+	lease, err := c.OwnerLocker.Acquire(ctx, workID, c.OwnerID, c.PID, c.StartedAt)
+	if err != nil {
+		return ReconcileResult{WorkID: workID}, err
+	}
+	result, err := c.reconcileWithLease(ctx, workID, lease)
+	if err != nil {
+		if lease != nil {
+			_ = lease.Release()
+		}
+		return result, err
+	}
+	c.dispatcher.mu.Lock()
+	_, installErr := c.dispatcher.installQueueLocked(lease)
+	c.dispatcher.mu.Unlock()
+	if installErr != nil {
+		if lease != nil {
+			_ = lease.Release()
+		}
+		return result, installErr
+	}
+	c.activated[workID] = result
+	return result, nil
+}
+
+// SubmitRuntime delegates only to an activated Work queue.
+func (c *Coordinator) SubmitRuntime(ctx context.Context, workID contractv2.WorkID, taskID contractv2.TaskID, invocationID statev2.InvocationID) <-chan CommandResult {
+	if c == nil {
+		return rejectedCommand(ErrWorkNotActivated)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.activated[workID]; !ok || c.dispatcher == nil {
+		return rejectedCommand(ErrWorkNotActivated)
+	}
+	return c.dispatcher.SubmitRuntime(ctx, workID, taskID, invocationID)
+}
+
+// SubmitPublication delegates only to an activated Work queue.
+func (c *Coordinator) SubmitPublication(ctx context.Context, workID contractv2.WorkID, intentID statev2.PublicationIntentID) <-chan CommandResult {
+	if c == nil {
+		return rejectedCommand(ErrWorkNotActivated)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.activated[workID]; !ok || c.dispatcher == nil {
+		return rejectedCommand(ErrWorkNotActivated)
+	}
+	return c.dispatcher.SubmitPublication(ctx, workID, intentID)
+}
+
+// Close stops all activated Work queues and releases their leases.
+func (c *Coordinator) Close(ctx context.Context) error {
+	if c == nil || c.dispatcher == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dispatcher.Close(ctx)
+}
+
+func rejectedCommand(err error) <-chan CommandResult {
+	result := make(chan CommandResult, 1)
+	result <- CommandResult{Err: err}
+	return result
 }
 
 func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDispatcher, q *publicationQueue, snapshot statev2.WorkSnapshot, taskID contractv2.TaskID, task statev2.TaskExecutionState) (statev2.WorkSnapshot, error) {
@@ -434,10 +543,10 @@ func (c *Coordinator) reconcilePublication(ctx context.Context, d *publicationDi
 	}
 	receipt, err := c.Publisher.Publish(ctx, current)
 	if err != nil {
-		return c.applyPublicationSettlement(ctx, d, latest, current, statev2.PublicationFail, nil, "publication publish failed")
+		return c.applyPublicationSettlement(ctx, d, latest, current, statev2.PublicationActionConflict, nil, "publication outcome is ambiguous; operator reconciliation required")
 	}
 	if !validReceipt(&receipt) {
-		return c.applyPublicationSettlement(ctx, d, latest, current, statev2.PublicationFail, nil, "publication publish returned an invalid receipt")
+		return c.applyPublicationSettlement(ctx, d, latest, current, statev2.PublicationActionConflict, nil, "publication outcome is ambiguous; operator reconciliation required")
 	}
 	return c.applyPublicationSettlement(ctx, d, latest, current, statev2.PublicationComplete, &receipt, "")
 }

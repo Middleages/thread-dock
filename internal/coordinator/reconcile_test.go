@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +185,41 @@ func TestCoordinatorPublicationUnknownIsConflictWithoutPublish(t *testing.T) {
 	}
 	if pub.publishes != 0 || st.lastPublicationAction != statev2.PublicationActionConflict {
 		t.Fatalf("publication calls=%d action=%q", pub.publishes, st.lastPublicationAction)
+	}
+}
+
+func TestCoordinatorActivateOwnsOneLeaseAndRejectsPreActivationSubmission(t *testing.T) {
+	st := &reconcileTestState{snapshot: reconcilePublicationSnapshot()}
+	pub := &reconcileTestPublisher{observation: PublicationObservation{State: PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: reconcileAt}}}
+	lease := &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}
+	locker := &reconcileLocker{lease: lease}
+	c := NewCoordinator(st, nil, pub, locker, "owner-1", 41, reconcileAt)
+
+	if result := <-c.SubmitPublication(context.Background(), "work-1", "intent-1"); !errors.Is(result.Err, ErrWorkNotActivated) {
+		t.Fatalf("pre-activation submission error = %v", result.Err)
+	}
+	activated, err := c.Activate(context.Background(), "work-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := c.Activate(context.Background(), "work-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(activated, repeated) || locker.acquires != 1 || lease.releases != 0 {
+		t.Fatalf("activation=%#v repeated=%#v acquires=%d releases=%d", activated, repeated, locker.acquires, lease.releases)
+	}
+	if result := <-c.SubmitPublication(context.Background(), "work-1", "intent-1"); result.Err != nil {
+		t.Fatalf("activated submission error = %v", result.Err)
+	}
+	if pub.observes != 1 || pub.publishes != 0 {
+		t.Fatalf("submission repeated provider calls observe=%d publish=%d", pub.observes, pub.publishes)
+	}
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if lease.releases != 1 {
+		t.Fatalf("lease releases = %d, want 1", lease.releases)
 	}
 }
 

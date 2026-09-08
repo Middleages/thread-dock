@@ -11,6 +11,10 @@ import (
 	statev2 "thread-dock/internal/state/v2"
 )
 
+func newRuntimeDispatcherForTest(state State, publisher Publisher, runtime Runtime, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
+	return newDispatcher(state, publisher, runtime, locker, ownerID, pid, startedAt)
+}
+
 func TestDispatcherDeduplicatesPublicationAndReleasesOwner(t *testing.T) {
 	workID := contractv2.WorkID("work-1")
 	intentID := statev2.PublicationIntentID("intent-1")
@@ -65,7 +69,7 @@ func TestDispatcherRuntimeAndPublicationShareWorkQueue(t *testing.T) {
 	close(allow)
 	pub := &blockingPublisher{allow: allow}
 	locker := &fakeOwnerLocker{}
-	d := NewDispatcherWithRuntime(st, pub, rt, locker, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, pub, rt, locker, OwnerID("owner-1"), 42, time.Now().UTC())
 	runtimeResult := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	select {
 	case <-rt.launchEntered:

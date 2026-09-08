@@ -109,7 +109,7 @@ func (d *publicationDispatcher) handlePublication(ctx context.Context, q *public
 	}
 	observation, err := d.publisher.Observe(ctx, p)
 	if err != nil {
-		return d.settleFailure(ctx, snapshot, p, "publication observe failed")
+		return d.settleConflict(ctx, snapshot, p, "publication observation unavailable; operator reconciliation required")
 	}
 	if observation.State == PublicationObservationMatch && validReceipt(observation.Receipt) {
 		return d.settleComplete(ctx, snapshot, p, observation.Receipt)
@@ -127,10 +127,10 @@ func (d *publicationDispatcher) handlePublication(ctx context.Context, q *public
 	}
 	receipt, err := d.publisher.Publish(ctx, p)
 	if err != nil {
-		return d.settleFailure(ctx, latest, p, "publication publish failed")
+		return d.settleConflict(ctx, latest, p, "publication outcome is ambiguous; operator reconciliation required")
 	}
 	if !validReceipt(&receipt) {
-		return d.settleFailure(ctx, latest, p, "publication publish returned an invalid receipt")
+		return d.settleConflict(ctx, latest, p, "publication outcome is ambiguous; operator reconciliation required")
 	}
 	return d.settleComplete(ctx, latest, p, &receipt)
 }
@@ -203,10 +203,6 @@ func isLatestGeneration(snapshot statev2.WorkSnapshot, p statev2.PublicationStat
 
 func (d *publicationDispatcher) settleComplete(ctx context.Context, snapshot statev2.WorkSnapshot, p statev2.PublicationState, receipt *statev2.PublicationReceipt) CommandResult {
 	return d.applySettlement(ctx, snapshot, p, statev2.PublicationComplete, receipt, "")
-}
-
-func (d *publicationDispatcher) settleFailure(ctx context.Context, snapshot statev2.WorkSnapshot, p statev2.PublicationState, diagnostic string) CommandResult {
-	return d.applySettlement(ctx, snapshot, p, statev2.PublicationFail, nil, diagnostic)
 }
 
 func (d *publicationDispatcher) settleConflict(ctx context.Context, snapshot statev2.WorkSnapshot, p statev2.PublicationState, diagnostic string) CommandResult {

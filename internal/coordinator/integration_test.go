@@ -102,17 +102,20 @@ func TestCoordinatorOwnerLossAcquiresBeforeAnyRuntimeCall(t *testing.T) {
 		t.Fatalf("successor owner calls = acquire %d release %d, want 1/1", successorAcquires, successorReleases)
 	}
 	rt.phase = "dispatcher"
-	dispatcher := coordinator.NewRuntimeDispatcher(store, rt, countingLocker, "queue", 44, reconcileAt)
-	if result := <-dispatcher.SubmitRuntime(context.Background(), contract.WorkID, "task-1", "inv-1"); result.Err != nil {
+	queueCoordinator := coordinator.NewCoordinator(store, rt, nil, countingLocker, "queue", 44, reconcileAt)
+	if _, err := queueCoordinator.Activate(context.Background(), contract.WorkID); err != nil {
+		t.Fatal(err)
+	}
+	if result := <-queueCoordinator.SubmitRuntime(context.Background(), contract.WorkID, "task-1", "inv-1"); result.Err != nil {
 		t.Fatal(result.Err)
 	}
-	if rt.observes != 2 || len(*rt.events) != 2 || (*rt.events)[0] != "reconcile-observe" || (*rt.events)[1] != "dispatcher-observe" {
+	if rt.observes != 3 || len(*rt.events) != 3 || (*rt.events)[0] != "reconcile-observe" || (*rt.events)[1] != "dispatcher-observe" || (*rt.events)[2] != "dispatcher-observe" {
 		t.Fatalf("event order=%#v observes=%d", *rt.events, rt.observes)
 	}
 	if rt.terminates != 0 {
 		t.Fatalf("post-reconcile dispatcher terminate calls = %d, want 0", rt.terminates)
 	}
-	if err := dispatcher.Close(context.Background()); err != nil {
+	if err := queueCoordinator.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	dispatcherAcquires, dispatcherReleases := countingLocker.counts()
@@ -466,17 +469,29 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	if _, err := works.Apply(context.Background(), reserveRequest); err != nil {
 		t.Fatal(err)
 	}
+	begin := statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskBeginLaunch, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: reconcileAt}
+	beginRequest := statev2.TransitionRequest{WorkID: contract.WorkID, ExpectedRevision: approved.Revision + 1, RequestID: "begin-flow", Task: &begin}
+	beginRequest.PayloadHash, err = statev2.TransitionPayloadHash(beginRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := works.Apply(context.Background(), beginRequest); err != nil {
+		t.Fatal(err)
+	}
 	rt := &integrationRuntime{identity: "provider-1"}
 	locker := &integrationLocker{}
-	dispatcher := coordinator.NewRuntimeDispatcher(works, rt, locker, "owner-dispatch", 41, reconcileAt)
-	if result := <-dispatcher.SubmitRuntime(context.Background(), contract.WorkID, "task-1", "inv-1"); result.Err != nil {
+	runtimeCoordinator := coordinator.NewCoordinator(works, rt, nil, locker, "owner-dispatch", 41, reconcileAt)
+	if _, err := runtimeCoordinator.Activate(context.Background(), contract.WorkID); err != nil {
+		t.Fatal(err)
+	}
+	if result := <-runtimeCoordinator.SubmitRuntime(context.Background(), contract.WorkID, "task-1", "inv-1"); result.Err != nil {
 		t.Fatal(result.Err)
 	}
-	if rt.launches != 1 {
-		t.Fatalf("launch calls = %d, want 1", rt.launches)
+	if rt.launches != 0 {
+		t.Fatalf("launch calls = %d, want 0 after activation reconciliation", rt.launches)
 	}
 	// A settled running command exercises the dispatcher observe path exactly once.
-	if result := <-dispatcher.SubmitRuntime(context.Background(), contract.WorkID, "task-1", "inv-1"); result.Err != nil {
+	if result := <-runtimeCoordinator.SubmitRuntime(context.Background(), contract.WorkID, "task-1", "inv-1"); result.Err != nil {
 		t.Fatal(result.Err)
 	}
 	beforePause, err := service.Status(context.Background(), contract.WorkID)
@@ -486,7 +501,7 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	if _, err := service.PauseWork(context.Background(), contract.WorkID, beforePause.Revision, "pause-flow"); err != nil {
 		t.Fatal(err)
 	}
-	if result := <-dispatcher.SubmitRuntime(context.Background(), contract.WorkID, "task-1", "inv-1"); result.Err != nil {
+	if result := <-runtimeCoordinator.SubmitRuntime(context.Background(), contract.WorkID, "task-1", "inv-1"); result.Err != nil {
 		t.Fatal(result.Err)
 	}
 	if rt.terminates != 1 {
@@ -495,7 +510,7 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	if locker.acquires != 1 || locker.releases != 0 {
 		t.Fatalf("dispatcher owner calls before close = acquire %d release %d", locker.acquires, locker.releases)
 	}
-	if err := dispatcher.Close(context.Background()); err != nil {
+	if err := runtimeCoordinator.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if locker.releases != 1 {
@@ -558,7 +573,7 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if statusAfter.Revision == statusBefore.Revision || rt.observes != 1 || rt.launches != 1 || rt.terminates != 1 || pub.observes != 1 || pub.publishes != 1 || statusAfter.Publications["intent-1"].Status != statev2.PublicationCompleted {
+	if statusAfter.Revision == statusBefore.Revision || rt.observes != 3 || rt.launches != 0 || rt.terminates != 1 || pub.observes != 1 || pub.publishes != 1 || statusAfter.Publications["intent-1"].Status != statev2.PublicationCompleted {
 		t.Fatalf("status revision=%d/%d runtime observe/launch/terminate=%d/%d/%d publication calls=%d/%d status=%q", statusBefore.Revision, statusAfter.Revision, rt.observes, rt.launches, rt.terminates, pub.observes, pub.publishes, statusAfter.Publications["intent-1"].Status)
 	}
 	if reconcileLocker.acquires != 1 || reconcileLocker.releases != 1 {

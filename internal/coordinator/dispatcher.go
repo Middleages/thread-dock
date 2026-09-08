@@ -62,17 +62,7 @@ func NewDispatcher(state State, publisher Publisher, locker OwnerLocker, ownerID
 	return newDispatcher(state, publisher, nil, locker, ownerID, pid, startedAt)
 }
 
-// NewRuntimeDispatcher creates a dispatcher with the state-driven runtime port.
-func NewRuntimeDispatcher(state State, runtime Runtime, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
-	return newDispatcher(state, nil, runtime, locker, ownerID, pid, startedAt)
-}
-
-// NewDispatcherWithRuntime is the explicit runtime-aware constructor.
-func NewDispatcherWithRuntime(state State, publisher Publisher, runtime Runtime, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
-	return newDispatcher(state, publisher, runtime, locker, ownerID, pid, startedAt)
-}
-
-func newDispatcher(state State, publisher Publisher, runtime Runtime, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
+func newDispatcher(state State, publisher Publisher, runtime Runtime, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) *publicationDispatcher {
 	if pid == 0 {
 		pid = os.Getpid()
 	}
@@ -80,6 +70,24 @@ func newDispatcher(state State, publisher Publisher, runtime Runtime, locker Own
 		startedAt = time.Now().UTC()
 	}
 	return &publicationDispatcher{state: state, publisher: publisher, runtime: runtime, locker: locker, ownerID: ownerID, pid: pid, startedAt: startedAt, queues: make(map[contractv2.WorkID]*publicationQueue)}
+}
+
+func (d *publicationDispatcher) installQueueLocked(lease OwnerLease) (*publicationQueue, error) {
+	if lease == nil {
+		return nil, errors.New("owner lease is required")
+	}
+	record := lease.Record()
+	if record.WorkID == "" {
+		return nil, errors.New("owner lease work ID is required")
+	}
+	if existing := d.queues[record.WorkID]; existing != nil {
+		return existing, nil
+	}
+	queueCtx, cancel := context.WithCancel(context.Background())
+	q := &publicationQueue{workID: record.WorkID, lease: lease, owner: record, ctx: queueCtx, cancel: cancel, items: make(chan publicationCommand, 64), runtimeMessages: make(chan runtimeMessage, 64), done: make(chan struct{}), runtimeOps: make(map[runtimeKey]map[runtimeOperationKind]*runtimeOperation)}
+	d.queues[record.WorkID] = q
+	go d.runQueue(q)
+	return q, nil
 }
 
 func (d *publicationDispatcher) SubmitPublication(ctx context.Context, workID contractv2.WorkID, intentID statev2.PublicationIntentID) <-chan CommandResult {
@@ -135,10 +143,11 @@ func (d *publicationDispatcher) queueLocked(ctx context.Context, workID contract
 	if err != nil {
 		return nil, err
 	}
-	queueCtx, cancel := context.WithCancel(context.Background())
-	q = &publicationQueue{workID: workID, lease: lease, owner: lease.Record(), ctx: queueCtx, cancel: cancel, items: make(chan publicationCommand, 64), runtimeMessages: make(chan runtimeMessage, 64), done: make(chan struct{}), runtimeOps: make(map[runtimeKey]map[runtimeOperationKind]*runtimeOperation)}
-	d.queues[workID] = q
-	go d.runQueue(q)
+	q, err = d.installQueueLocked(lease)
+	if err != nil {
+		_ = lease.Release()
+		return nil, err
+	}
 	return q, nil
 }
 

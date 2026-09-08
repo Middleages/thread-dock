@@ -13,13 +13,14 @@ import (
 )
 
 type testRuntime struct {
-	mu         sync.Mutex
-	launches   int
-	observes   int
-	terminates int
-	ended      bool
-	endedAt    *time.Time
-	identity   string
+	mu           sync.Mutex
+	launches     int
+	observes     int
+	terminates   int
+	ended        bool
+	endedAt      *time.Time
+	identity     string
+	terminateErr error
 }
 
 func (r *testRuntime) Observe(context.Context, statev2.InvocationState) (RuntimeObservation, error) {
@@ -43,7 +44,7 @@ func (r *testRuntime) Terminate(context.Context, statev2.InvocationState) error 
 	r.mu.Lock()
 	r.terminates++
 	r.mu.Unlock()
-	return nil
+	return r.terminateErr
 }
 
 func runtimeTestSnapshot() statev2.WorkSnapshot {
@@ -58,7 +59,7 @@ func runtimeTestSnapshot() statev2.WorkSnapshot {
 func TestRuntimeReserveAloneDoesNotLaunchAndSubmitBeginsBeforeOneLaunch(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	rt := &testRuntime{identity: "provider-1"}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	result := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	if result.Err != nil {
 		t.Fatalf("submit runtime: %v", result.Err)
@@ -79,7 +80,7 @@ func TestRuntimeLaunchRequestReplayObservesWithoutRelaunch(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	st.snapshot.TaskStates["task-1"].Invocation.LaunchRequested = true
 	rt := &testRuntime{identity: "provider-1"}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	if result := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1"); result.Err != nil {
 		t.Fatalf("submit runtime: %v", result.Err)
 	}
@@ -101,7 +102,7 @@ func TestRuntimePauseRequestsTerminationAndConfirmsAfterTerminate(t *testing.T) 
 	st.snapshot.TaskStates["task-1"] = task
 	st.snapshot.Control.PauseRequested = true
 	rt := &testRuntime{identity: "provider-1"}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	result := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	if result.Err != nil {
 		t.Fatalf("submit runtime: %v", result.Err)
@@ -129,6 +130,23 @@ func TestRuntimePauseRequestsTerminationAndConfirmsAfterTerminate(t *testing.T) 
 	_ = d.Close(context.Background())
 }
 
+func TestRuntimeRequestOnlyTerminationDoesNotConfirm(t *testing.T) {
+	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
+	task := st.snapshot.TaskStates["task-1"]
+	task.Status = statev2.TaskRunning
+	task.Invocation.LaunchRequested = true
+	task.Invocation.ProviderIdentity = "provider-1"
+	st.snapshot.TaskStates["task-1"] = task
+	st.snapshot.Control.PauseRequested = true
+	rt := &testRuntime{identity: "provider-1", terminateErr: errors.New("termination request sent; awaiting confirmation")}
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	result := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
+	if result.Err == nil || st.snapshot.TaskStates["task-1"].Status != statev2.TaskTerminationPending {
+		t.Fatalf("result=%v task status=%q, want pending until confirmation", result.Err, st.snapshot.TaskStates["task-1"].Status)
+	}
+	_ = d.Close(context.Background())
+}
+
 func TestRuntimeProviderMismatchNeedsOperatorAndDoesNotConfirm(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	task := st.snapshot.TaskStates["task-1"]
@@ -137,7 +155,7 @@ func TestRuntimeProviderMismatchNeedsOperatorAndDoesNotConfirm(t *testing.T) {
 	task.Invocation.ProviderIdentity = "provider-1"
 	st.snapshot.TaskStates["task-1"] = task
 	rt := &testRuntime{identity: "provider-2"}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	result := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	if result.Err == nil || st.snapshot.TaskStates["task-1"].Status != statev2.TaskNeedsOperator {
 		t.Fatalf("result=%#v task=%#v", result, st.snapshot.TaskStates["task-1"])
@@ -159,7 +177,7 @@ func TestRuntimeUnknownNeedsOperatorWithoutRelaunch(t *testing.T) {
 	rt.ended = false
 	// An unknown observation must settle durably as operator attention; it must
 	// not create a second launch attempt.
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	result := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	if result.Err == nil || st.snapshot.TaskStates["task-1"].Status != statev2.TaskNeedsOperator {
 		t.Fatalf("result=%#v task=%#v", result, st.snapshot.TaskStates["task-1"])
@@ -175,7 +193,7 @@ func TestRuntimeUnknownNeedsOperatorWithoutRelaunch(t *testing.T) {
 
 func TestRuntimePositiveNoLaunchReconcileRequiresEvidence(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
-	d := NewRuntimeDispatcher(st, &testRuntime{identity: "provider-1"}, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC()).(*publicationDispatcher)
+	d := newRuntimeDispatcherForTest(st, nil, &testRuntime{identity: "provider-1"}, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC()).(*publicationDispatcher)
 	bad := d.reconcileRuntimeNotStarted(context.Background(), st.snapshot, "task-1", "inv-1", statev2.ResolutionEvidence{OwnerTerminated: true})
 	if bad.Err == nil {
 		t.Fatal("incomplete no-launch evidence was accepted")
@@ -245,7 +263,7 @@ func (r *barrierRuntime) Terminate(context.Context, statev2.InvocationState) err
 func TestRuntimeBlockedWorkersDoNotBlockQueue(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	rt := &barrierRuntime{launchEntered: make(chan struct{}), launchRelease: make(chan struct{}), observeEntered: make(chan struct{}), observeRelease: make(chan struct{})}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	first := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	select {
 	case <-rt.launchEntered:
@@ -284,7 +302,7 @@ func TestRuntimeBlockedObserveStillProcessesPauseTermination(t *testing.T) {
 	task.Invocation.ProviderIdentity = "provider-1"
 	st.snapshot.TaskStates["task-1"] = task
 	rt := &barrierRuntime{observeEntered: make(chan struct{}), observeRelease: make(chan struct{}), terminateEntered: make(chan struct{}), terminateRelease: make(chan struct{})}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	first := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	select {
 	case <-rt.observeEntered:
@@ -337,7 +355,7 @@ func TestRuntimeDuplicateObserveSubmissionsDeduplicateProviderCall(t *testing.T)
 	task.Invocation.ProviderIdentity = "provider-1"
 	st.snapshot.TaskStates["task-1"] = task
 	rt := &barrierRuntime{observeEntered: make(chan struct{}), observeRelease: make(chan struct{})}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	first := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	select {
 	case <-rt.observeEntered:
@@ -375,7 +393,7 @@ func TestRuntimeDuplicateObserveSubmissionsDeduplicateProviderCall(t *testing.T)
 func TestRuntimePreIOIdentityDriftPreventsProviderCall(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot(), preIOEntered: make(chan struct{}), preIOAllow: make(chan struct{})}
 	rt := &testRuntime{identity: "provider-1"}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	preIOEntered := st.preIOEntered
 	resultCh := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	select {
@@ -404,7 +422,7 @@ func TestRuntimeCloseCancelsWorkersResolvesResultsAndReleasesLease(t *testing.T)
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	rt := &barrierRuntime{launchEntered: make(chan struct{}), launchRelease: make(chan struct{})}
 	locker := &fakeOwnerLocker{}
-	d := NewRuntimeDispatcher(st, rt, locker, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, locker, OwnerID("owner-1"), 42, time.Now().UTC())
 	result := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	select {
 	case <-rt.launchEntered:
@@ -466,7 +484,7 @@ func TestRuntimeSubmitCancellationTerminatesRunningInvocation(t *testing.T) {
 	task.Invocation.ProviderIdentity = "provider-1"
 	st.snapshot.TaskStates["task-1"] = task
 	rt := &cancelRuntime{observeEntered: make(chan struct{})}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	ctx, cancel := context.WithCancel(context.Background())
 	result := d.SubmitRuntime(ctx, "work-1", "task-1", "inv-1")
 	select {
@@ -517,7 +535,7 @@ func TestCoalescedWaiterCancellationCancelsSharedObserve(t *testing.T) {
 	task.Invocation.ProviderIdentity = "provider-1"
 	st.snapshot.TaskStates["task-1"] = task
 	rt := &coalescedCancelRuntime{observeEntered: make(chan struct{})}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	first := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	select {
 	case <-rt.observeEntered:
@@ -550,7 +568,7 @@ func TestRuntimeReplayObserveCancellationNeedsOperatorWithoutStrandedWaiter(t *t
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	st.snapshot.TaskStates["task-1"].Invocation.LaunchRequested = true
 	rt := &cancelRuntime{observeEntered: make(chan struct{})}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	ctx, cancel := context.WithCancel(context.Background())
 	result := d.SubmitRuntime(ctx, "work-1", "task-1", "inv-1")
 	select {
@@ -573,7 +591,7 @@ func TestRuntimeReplayObserveCancellationNeedsOperatorWithoutStrandedWaiter(t *t
 func TestRuntimeLaunchCancellationAfterBeginNeedsOperator(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	rt := &cancelRuntime{launchEntered: make(chan struct{})}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	ctx, cancel := context.WithCancel(context.Background())
 	result := d.SubmitRuntime(ctx, "work-1", "task-1", "inv-1")
 	select {
@@ -598,7 +616,7 @@ func TestRuntimeEndedAtIsPersistedExactly(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	st.snapshot.TaskStates["task-1"].Invocation.LaunchRequested = true
 	rt := &testRuntime{identity: "provider-1", ended: true, endedAt: &endedAt}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	got := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	if got.Err != nil {
 		t.Fatalf("ended runtime result: %v", got.Err)
@@ -615,7 +633,7 @@ func TestRuntimeInvalidEndedAtNeedsOperator(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	st.snapshot.TaskStates["task-1"].Invocation.LaunchRequested = true
 	rt := &testRuntime{identity: "provider-1", ended: true, endedAt: &endedAt}
-	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	got := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	if got.Err == nil || st.snapshot.TaskStates["task-1"].Status != statev2.TaskNeedsOperator {
 		t.Fatalf("invalid ended at result=%#v", got)
