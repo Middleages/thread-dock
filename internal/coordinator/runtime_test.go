@@ -488,6 +488,64 @@ func TestRuntimeSubmitCancellationTerminatesRunningInvocation(t *testing.T) {
 	_ = d.Close(context.Background())
 }
 
+type coalescedCancelRuntime struct {
+	observeEntered chan struct{}
+	mu             sync.Mutex
+	terminateCalls int
+}
+
+func (r *coalescedCancelRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity) (string, error) {
+	return "provider-1", nil
+}
+func (r *coalescedCancelRuntime) Observe(ctx context.Context, _ statev2.InvocationState) (RuntimeObservation, error) {
+	close(r.observeEntered)
+	<-ctx.Done()
+	return RuntimeObservation{}, ctx.Err()
+}
+func (r *coalescedCancelRuntime) Terminate(context.Context, statev2.InvocationState) error {
+	r.mu.Lock()
+	r.terminateCalls++
+	r.mu.Unlock()
+	return nil
+}
+
+func TestCoalescedWaiterCancellationCancelsSharedObserve(t *testing.T) {
+	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
+	task := st.snapshot.TaskStates["task-1"]
+	task.Status = statev2.TaskRunning
+	task.Invocation.LaunchRequested = true
+	task.Invocation.ProviderIdentity = "provider-1"
+	st.snapshot.TaskStates["task-1"] = task
+	rt := &coalescedCancelRuntime{observeEntered: make(chan struct{})}
+	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	first := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
+	select {
+	case <-rt.observeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("observe did not enter")
+	}
+	secondCtx, cancel := context.WithCancel(context.Background())
+	second := d.SubmitRuntime(secondCtx, "work-1", "task-1", "inv-1")
+	cancel()
+	for name, resultCh := range map[string]<-chan CommandResult{"first": first, "second": second} {
+		select {
+		case got := <-resultCh:
+			if got.Err != nil || got.Snapshot.TaskStates["task-1"].Status != statev2.TaskTerminated {
+				t.Fatalf("%s result=%#v", name, got)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%s result stranded", name)
+		}
+	}
+	rt.mu.Lock()
+	terminates := rt.terminateCalls
+	rt.mu.Unlock()
+	if terminates != 1 {
+		t.Fatalf("terminate calls=%d, want 1", terminates)
+	}
+	_ = d.Close(context.Background())
+}
+
 func TestRuntimeReplayObserveCancellationNeedsOperatorWithoutStrandedWaiter(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	st.snapshot.TaskStates["task-1"].Invocation.LaunchRequested = true

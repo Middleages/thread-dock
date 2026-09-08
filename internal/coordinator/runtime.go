@@ -78,10 +78,14 @@ const (
 type runtimeOperation struct {
 	key     runtimeKey
 	kind    runtimeOperationKind
-	waiters []chan<- CommandResult
+	waiters []runtimeWaiter
 	ctx     context.Context
 	cancel  context.CancelFunc
-	stop    func() bool
+}
+
+type runtimeWaiter struct {
+	result chan<- CommandResult
+	stop   func() bool
 }
 
 type runtimeEvent struct {
@@ -93,7 +97,14 @@ type runtimeEvent struct {
 }
 
 func (d *publicationDispatcher) handleRuntimeCommand(q *publicationQueue, command runtimeCommand) {
+	key := runtimeKey{taskID: command.taskID, invocationID: command.invocationID}
 	if command.ctx.Err() != nil {
+		if ops := q.runtimeOps[key]; len(ops) == 1 {
+			for _, existing := range ops {
+				existing.waiters = append(existing.waiters, d.runtimeWaiter(q, existing, command))
+				return
+			}
+		}
 		command.result <- CommandResult{Err: command.ctx.Err()}
 		return
 	}
@@ -102,7 +113,6 @@ func (d *publicationDispatcher) handleRuntimeCommand(q *publicationQueue, comman
 		command.result <- CommandResult{Err: err}
 		return
 	}
-	key := runtimeKey{taskID: command.taskID, invocationID: command.invocationID}
 	task, invocation, err := d.validateRuntimeIdentity(snapshot, q, key)
 	if err != nil {
 		command.result <- CommandResult{Snapshot: snapshot, Err: err}
@@ -176,12 +186,12 @@ func (d *publicationDispatcher) handleRuntimeCommand(q *publicationQueue, comman
 		return
 	}
 	if existing := q.runtimeOps[key][kind]; existing != nil {
-		existing.waiters = append(existing.waiters, command.result)
+		existing.waiters = append(existing.waiters, d.runtimeWaiter(q, existing, command))
 		return
 	}
-	op := &runtimeOperation{key: key, kind: kind, waiters: []chan<- CommandResult{command.result}}
+	op := &runtimeOperation{key: key, kind: kind}
 	op.ctx, op.cancel = context.WithCancel(q.ctx)
-	op.stop = context.AfterFunc(command.ctx, op.cancel)
+	op.waiters = append(op.waiters, d.runtimeWaiter(q, op, command))
 	if q.runtimeOps[key] == nil {
 		q.runtimeOps[key] = make(map[runtimeOperationKind]*runtimeOperation)
 	}
@@ -192,9 +202,6 @@ func (d *publicationDispatcher) handleRuntimeCommand(q *publicationQueue, comman
 
 func (d *publicationDispatcher) runRuntimeWorker(q *publicationQueue, op *runtimeOperation) {
 	defer q.runtimeWG.Done()
-	if op.stop != nil {
-		defer op.stop()
-	}
 	if op.cancel != nil {
 		defer op.cancel()
 	}
@@ -248,6 +255,10 @@ func (d *publicationDispatcher) runRuntimeWorker(q *publicationQueue, op *runtim
 		event.result.Err = d.runtime.Terminate(ctx, invocationCopy)
 	}
 	d.sendRuntimeEvent(q, event)
+}
+
+func (d *publicationDispatcher) runtimeWaiter(_ *publicationQueue, op *runtimeOperation, command runtimeCommand) runtimeWaiter {
+	return runtimeWaiter{result: command.result, stop: context.AfterFunc(command.ctx, op.cancel)}
 }
 
 func (d *publicationDispatcher) sendRuntimeEvent(q *publicationQueue, event runtimeEvent) {
@@ -389,7 +400,7 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 	}
 }
 
-func (d *publicationDispatcher) requestRuntimeTermination(q *publicationQueue, snapshot statev2.WorkSnapshot, key runtimeKey, reason string, waiters ...chan<- CommandResult) CommandResult {
+func (d *publicationDispatcher) requestRuntimeTermination(q *publicationQueue, snapshot statev2.WorkSnapshot, key runtimeKey, reason string, waiters ...runtimeWaiter) CommandResult {
 	task, invocation, err := d.validateRuntimeIdentity(snapshot, q, key)
 	if err != nil {
 		return CommandResult{Snapshot: snapshot, Err: err}
@@ -412,7 +423,7 @@ func (d *publicationDispatcher) requestRuntimeTermination(q *publicationQueue, s
 		if existing := q.runtimeOps[key][runtimeTerminate]; existing != nil {
 			existing.waiters = append(existing.waiters, waiters...)
 		} else {
-			op := &runtimeOperation{key: key, kind: runtimeTerminate, waiters: append([]chan<- CommandResult(nil), waiters...)}
+			op := &runtimeOperation{key: key, kind: runtimeTerminate, waiters: append([]runtimeWaiter(nil), waiters...)}
 			op.ctx, op.cancel = context.WithCancel(q.ctx)
 			q.runtimeOps[key][runtimeTerminate] = op
 			q.runtimeWG.Add(1)
@@ -580,7 +591,10 @@ func (d *publicationDispatcher) reconcileRuntimeNotStarted(ctx context.Context, 
 
 func (d *publicationDispatcher) resolveRuntimeWaiters(op *runtimeOperation, result CommandResult) {
 	for _, waiter := range op.waiters {
-		waiter <- result
+		if waiter.stop != nil {
+			waiter.stop()
+		}
+		waiter.result <- result
 	}
 }
 
