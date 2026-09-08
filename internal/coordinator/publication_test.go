@@ -136,14 +136,39 @@ func TestPublicationMutationAfterObservePreventsPublish(t *testing.T) {
 func TestFailedPublicationRetriesPersistedIdentityBeforeIO(t *testing.T) {
 	st := newFakeState("work-1", "intent-1", statev2.PublicationFailed)
 	before := st.snapshot.Publications["intent-1"]
+	beforeRevision := st.snapshot.Revision
 	allow := make(chan struct{})
 	pub := &blockingPublisher{allow: allow, entered: make(chan struct{})}
 	d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
 	resultCh := d.SubmitPublication(context.Background(), "work-1", "intent-1")
 	<-pub.entered
+	pub.mu.Lock()
+	if len(pub.observed) != 1 {
+		t.Fatalf("Observe calls = %d, want 1", len(pub.observed))
+	}
+	observed := pub.observed[0]
+	pub.mu.Unlock()
 	st.mu.Lock()
 	if st.snapshot.Publications["intent-1"].Status != statev2.PublicationPending || len(st.transitions) < 1 || st.transitions[0].Publication.Action != statev2.PublicationBegin {
 		t.Fatalf("Observe entered before persisted retry begin: snapshot=%#v transitions=%#v", st.snapshot.Publications["intent-1"], st.transitions)
+	}
+	beginRequest := st.transitions[0]
+	if beginRequest.ExpectedRevision != beforeRevision {
+		t.Fatalf("retry begin expected revision = %d, want %d", beginRequest.ExpectedRevision, beforeRevision)
+	}
+	canonicalHash, err := statev2.TransitionPayloadHash(beginRequest)
+	if err != nil {
+		t.Fatalf("hash retry begin: %v", err)
+	}
+	if beginRequest.PayloadHash != canonicalHash {
+		t.Fatalf("retry begin payload hash = %q, want canonical %q", beginRequest.PayloadHash, canonicalHash)
+	}
+	begin := beginRequest.Publication
+	if begin == nil || begin.IntentID != before.IntentID || begin.Key != before.Key || begin.Generation != before.Generation || begin.Kind != before.Kind || begin.PayloadHash != before.PayloadHash || begin.PayloadRef != before.PayloadRef || begin.Target == nil || *begin.Target != before.Target || begin.CompletionRequired == nil || *begin.CompletionRequired != before.CompletionRequired {
+		t.Fatalf("retry begin did not preserve full immutable identity: %#v", begin)
+	}
+	if observed.Status != statev2.PublicationPending || observed.IntentID != before.IntentID || observed.Key != before.Key || observed.Generation != before.Generation || observed.Kind != before.Kind || observed.PayloadHash != before.PayloadHash || observed.PayloadRef != before.PayloadRef || observed.Target != before.Target || observed.CompletionRequired != before.CompletionRequired {
+		t.Fatalf("Observe received unexpected pending intent: %#v", observed)
 	}
 	st.mu.Unlock()
 	close(allow)
@@ -274,20 +299,37 @@ func TestQueuedPublicationRechecksMutatedDurableState(t *testing.T) {
 			s.snapshot.Control.Blocker = &statev2.OperatorBlocker{Kind: "evidence_mismatch", OperatorRef: "operator", TaskID: "task-1", Diagnostic: "blocked"}
 		}},
 		{name: "newer generation", apply: func(s *fakeState) {
-			newer := s.snapshot.Publications["intent-1"]
+			older := s.snapshot.Publications["intent-1"]
+			older.Status = statev2.PublicationCompleted
+			older.Receipt = &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)}
+			s.snapshot.Publications["intent-1"] = older
+			newer := older
 			newer.IntentID = "intent-2"
 			newer.Generation = 2
+			newer.Status = statev2.PublicationPending
+			newer.Receipt = nil
+			newer.LastError = ""
 			s.snapshot.Publications["intent-2"] = newer
 		}},
 		{name: "completed", apply: func(s *fakeState) {
 			p := s.snapshot.Publications["intent-1"]
 			p.Status = statev2.PublicationCompleted
+			p.Receipt = &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)}
 			s.snapshot.Publications["intent-1"] = p
 		}},
 		{name: "superseded", apply: func(s *fakeState) {
-			p := s.snapshot.Publications["intent-1"]
-			p.Status = statev2.PublicationSuperseded
-			s.snapshot.Publications["intent-1"] = p
+			older := s.snapshot.Publications["intent-1"]
+			older.Status = statev2.PublicationSuperseded
+			older.Receipt = nil
+			older.LastError = ""
+			s.snapshot.Publications["intent-1"] = older
+			newer := older
+			newer.IntentID = "intent-2"
+			newer.Generation = 2
+			newer.Status = statev2.PublicationPending
+			newer.Receipt = nil
+			newer.LastError = ""
+			s.snapshot.Publications["intent-2"] = newer
 		}},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
@@ -434,11 +476,13 @@ type blockingPublisher struct {
 	publishErr  error
 	observes    int
 	publishes   int
+	observed    []statev2.PublicationState
 }
 
-func (p *blockingPublisher) Observe(ctx context.Context, _ statev2.PublicationState) (PublicationObservation, error) {
+func (p *blockingPublisher) Observe(ctx context.Context, intent statev2.PublicationState) (PublicationObservation, error) {
 	p.mu.Lock()
 	p.observes++
+	p.observed = append(p.observed, intent)
 	if p.entered != nil {
 		close(p.entered)
 	}

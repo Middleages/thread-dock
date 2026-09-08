@@ -189,23 +189,35 @@ func TestDispatcherCloseCancelsSubmitterAfterRegistrationBeforeSend(t *testing.T
 	<-registered
 	closeDone := make(chan error, 1)
 	go func() { closeDone <- d.Close(context.Background()) }()
+	// Close marks stopped and cancels the queue while holding submitMu. Wait
+	// for that observable cancellation before releasing the registered sender;
+	// a timing delay would leave the Add-before-select interleaving racy.
+	select {
+	case <-q.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Close did not cancel queue")
+	}
 	close(resume)
 	select {
 	case <-secondReturned:
 	case <-time.After(time.Second):
 		t.Fatal("registered submitter did not return")
 	}
-	select {
-	case <-second:
-	case <-time.After(time.Second):
-		t.Fatal("second result did not resolve")
-	}
-	select {
-	case <-first:
-	case <-time.After(time.Second):
-		t.Fatal("first result did not resolve")
-	}
 	if err := <-closeDone; err != nil {
 		t.Fatal(err)
+	}
+	<-first
+	secondResult := <-second
+	if !errors.Is(secondResult.Err, ErrDispatcherClosed) {
+		t.Fatalf("registered submitter error = %v, want ErrDispatcherClosed", secondResult.Err)
+	}
+	// Close waits for the worker and all registered submitters, so no later
+	// result can arrive. A non-blocking receive therefore proves one delivery.
+	for name, result := range map[string]<-chan CommandResult{"first": first, "second": second} {
+		select {
+		case extra := <-result:
+			t.Fatalf("%s result delivered twice: %#v", name, extra)
+		default:
+		}
 	}
 }
