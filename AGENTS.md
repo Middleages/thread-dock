@@ -30,6 +30,7 @@
 
 ## 구현·검토
 
+- 개발 과정에서 GitHub PR·Issue를 만들 때 제목과 본문은 한국어로 작성한다. 코드 식별자·명령·고유명사는 원문을 유지한다.
 - 흐름은 `Luna 구현+테스트+self-review → fresh Sol td_reviewer task-review → Luna fixes`다. coordinator 자기검토로 reviewer를 대체하지 않는다.
 - 통합 `make check`가 실패하면 Sol이 재현 원인과 소유 Task를 귀속해 Luna에 수정 배정한다. blocking 사항을 완료로 꾸미지 않는다.
 - 동일 원인 수정이 두 번 반복되면 Sol이 새 정보가 반영된 brief로 재분해·재배정한다. 새 정보 없는 반복은 금지한다.

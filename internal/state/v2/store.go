@@ -189,17 +189,17 @@ func (s *store) List(ctx context.Context) ([]WorkSnapshot, error) {
 	return work, nil
 }
 
-func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, error) {
+func (s *store) Apply(ctx context.Context, request TransitionRequest) (WorkSnapshot, error) {
 	if err := contextErr(ctx); err != nil {
 		return WorkSnapshot{}, err
 	}
-	if err := validID(string(mutation.WorkID)); err != nil {
+	if err := validID(string(request.WorkID)); err != nil {
 		return WorkSnapshot{}, err
 	}
-	if mutation.RequestID == "" || strings.TrimSpace(mutation.PayloadHash) == "" {
-		return WorkSnapshot{}, errors.New("request ID and payload hash are required")
+	if err := validateApplyRequest(request); err != nil {
+		return WorkSnapshot{}, err
 	}
-	dir := s.workDir(mutation.WorkID)
+	dir := s.workDir(request.WorkID)
 	l, err := acquireLease(dir)
 	if err != nil {
 		return WorkSnapshot{}, err
@@ -208,7 +208,7 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 	f, err := os.Open(filepath.Join(dir, "work.json"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return WorkSnapshot{}, fmt.Errorf("%w: %q", ErrNotFound, mutation.WorkID)
+			return WorkSnapshot{}, fmt.Errorf("%w: %q", ErrNotFound, request.WorkID)
 		}
 		return WorkSnapshot{}, err
 	}
@@ -220,17 +220,14 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 	if err := verifyContractFile(dir, snapshot); err != nil {
 		return WorkSnapshot{}, err
 	}
-	if receipt, ok := snapshot.Receipts[mutation.RequestID]; ok {
-		if receipt.PayloadHash == mutation.PayloadHash {
+	if receipt, ok := snapshot.Receipts[request.RequestID]; ok {
+		if receipt.PayloadHash == request.PayloadHash {
 			return decodeReceiptResult(receipt, snapshot.Contract, snapshot.ContractHash)
 		}
-		return WorkSnapshot{}, fmt.Errorf("%w: %w", ErrConflict, &RequestConflictError{RequestID: mutation.RequestID, ExistingHash: receipt.PayloadHash, PayloadHash: mutation.PayloadHash})
+		return WorkSnapshot{}, fmt.Errorf("%w: %w", ErrConflict, &RequestConflictError{RequestID: request.RequestID, ExistingHash: receipt.PayloadHash, PayloadHash: request.PayloadHash})
 	}
-	if mutation.ExpectedRevision != snapshot.Revision {
+	if request.ExpectedRevision != snapshot.Revision {
 		return WorkSnapshot{}, &StaleRevisionError{CurrentRevision: snapshot.Revision, CurrentState: snapshot.State}
-	}
-	if mutation.Transition == nil {
-		return WorkSnapshot{}, errors.New("transition is required")
 	}
 	immutable := snapshot
 	immutableContract, err := canonicalContract(snapshot.Contract)
@@ -238,10 +235,10 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 		return WorkSnapshot{}, err
 	}
 	immutable.Receipts = cloneReceipts(snapshot.Receipts)
-	if err := mutation.Transition(&snapshot); err != nil {
+	if err := applyTransition(&snapshot, request); err != nil {
 		return WorkSnapshot{}, err
 	}
-	if snapshot.WorkID != mutation.WorkID || snapshot.Revision != mutation.ExpectedRevision ||
+	if snapshot.WorkID != request.WorkID || snapshot.Revision != request.ExpectedRevision ||
 		snapshot.SchemaVersion != immutable.SchemaVersion || snapshot.ProjectID != immutable.ProjectID ||
 		snapshot.ContractHash != immutable.ContractHash || !sameCanonicalContract(snapshot.Contract, immutableContract) ||
 		!reflect.DeepEqual(snapshot.Receipts, immutable.Receipts) {
@@ -259,7 +256,7 @@ func (s *store) Mutate(ctx context.Context, mutation Mutation) (WorkSnapshot, er
 	if snapshot.Receipts == nil {
 		snapshot.Receipts = map[contractv2.RequestID]Receipt{}
 	}
-	snapshot.Receipts[mutation.RequestID] = Receipt{RequestID: mutation.RequestID, PayloadHash: mutation.PayloadHash, Status: "committed", Result: result}
+	snapshot.Receipts[request.RequestID] = Receipt{RequestID: request.RequestID, PayloadHash: request.PayloadHash, Status: "committed", Result: result}
 	if err := writeSnapshot(filepath.Join(dir, "work.json"), snapshot); err != nil {
 		return WorkSnapshot{}, err
 	}
@@ -280,7 +277,17 @@ func decodeReceiptResult(receipt Receipt, contract contractv2.WorkItemContract, 
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return WorkSnapshot{}, errors.New("decode request receipt: trailing JSON")
 	}
-	if err := validateSnapshot(result); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(receipt.Result, &fields); err != nil {
+		return WorkSnapshot{}, fmt.Errorf("decode request receipt: %w", err)
+	}
+	var normalizeErr error
+	result, normalizeErr = normalizeFoundationSnapshot(result, fieldsPresent(fields, "taskStates"), fieldsPresent(fields, "publications"), fieldsPresent(fields, "control"))
+	if normalizeErr != nil {
+		return WorkSnapshot{}, normalizeErr
+	}
+	legacy := !fieldsPresent(fields, "taskStates") && !fieldsPresent(fields, "publications") && !fieldsPresent(fields, "control")
+	if err := validateDecodedSnapshot(result, fieldsPresent(fields, "control"), legacy); err != nil {
 		return WorkSnapshot{}, err
 	}
 	if len(result.Receipts) != 0 {
@@ -349,13 +356,29 @@ func validateSnapshot(s WorkSnapshot) error {
 	if s.Contract.WorkID != s.WorkID || s.Contract.ProjectID != s.ProjectID || s.Contract.Revision != 1 {
 		return errors.New("snapshot contract mismatch")
 	}
+	if len(contractv2.Validate(s.Contract)) > 0 {
+		return errors.New("contract is invalid")
+	}
 	if !validState(s.State) {
 		return fmt.Errorf("unknown workflow state %q", s.State)
 	}
 	if s.Receipts == nil {
 		return errors.New("receipts map is required")
 	}
-	return nil
+	if (s.Control.ApprovedContractHash == "") != (s.Control.ApprovalRef == "") {
+		return errors.New("approval hash and reference must be provided together")
+	}
+	if s.Control.ApprovedContractHash != "" && s.Control.ApprovedContractHash != s.ContractHash {
+		return errors.New("approved contract hash does not match contract")
+	}
+	return validateTaskStates(s)
+}
+
+func validateDecodedSnapshot(s WorkSnapshot, controlPresent, legacy bool) error {
+	if !legacy && !controlPresent {
+		return errors.New("control field is required")
+	}
+	return validateSnapshot(s)
 }
 func (s *store) workDir(id contractv2.WorkID) string { return filepath.Join(s.root, string(id)) }
 func validID(v string) error {
@@ -365,7 +388,11 @@ func validID(v string) error {
 	return nil
 }
 func decodeSnapshot(r io.Reader) (WorkSnapshot, error) {
-	d := json.NewDecoder(r)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return WorkSnapshot{}, fmt.Errorf("decode snapshot: %w", err)
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	var s WorkSnapshot
 	if err := d.Decode(&s); err != nil {
@@ -375,10 +402,27 @@ func decodeSnapshot(r io.Reader) (WorkSnapshot, error) {
 	if err := d.Decode(&x); err != io.EOF {
 		return WorkSnapshot{}, errors.New("decode snapshot: trailing JSON")
 	}
-	if err := validateSnapshot(s); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return WorkSnapshot{}, fmt.Errorf("decode snapshot: %w", err)
+	}
+	taskStatesPresent := fieldsPresent(fields, "taskStates")
+	publicationsPresent := fieldsPresent(fields, "publications")
+	controlPresent := fieldsPresent(fields, "control")
+	s, err = normalizeFoundationSnapshot(s, taskStatesPresent, publicationsPresent, controlPresent)
+	if err != nil {
+		return WorkSnapshot{}, err
+	}
+	legacy := !taskStatesPresent && !publicationsPresent && !controlPresent
+	if err := validateDecodedSnapshot(s, controlPresent, legacy); err != nil {
 		return WorkSnapshot{}, err
 	}
 	return s, nil
+}
+
+func fieldsPresent(fields map[string]json.RawMessage, name string) bool {
+	_, ok := fields[name]
+	return ok
 }
 func writeContract(path string, c contractv2.WorkItemContract) error {
 	if _, err := os.Stat(path); err == nil {

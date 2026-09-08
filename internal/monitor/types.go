@@ -39,22 +39,24 @@ type Project struct {
 	NextAction   string               `json:"nextAction"`
 	EvidenceRefs []string             `json:"evidenceRefs"`
 	UpdatedAt    time.Time            `json:"updatedAt,omitempty"`
-	WorkItems    []WorkItem           `json:"workItems,omitempty"`
+	WorkItems    []WorkItem           `json:"workItems"`
 }
 
 type WorkItem struct {
-	WorkID       contractv2.WorkID `json:"workId"`
-	Title        string            `json:"title"`
-	Request      string            `json:"request,omitempty"`
-	State        string            `json:"state"`
-	SyncStatus   string            `json:"syncStatus"`
-	NextAction   string            `json:"nextAction"`
-	EvidenceRefs []string          `json:"evidenceRefs"`
-	UpdatedAt    time.Time         `json:"updatedAt,omitempty"`
-	Tasks        []TaskDetail      `json:"tasks,omitempty"`
-	Decisions    []DecisionDetail  `json:"decisions,omitempty"`
-	Handoffs     []HandoffDetail   `json:"handoffs,omitempty"`
-	Links        []Link            `json:"links,omitempty"`
+	WorkID       contractv2.WorkID   `json:"workId"`
+	Title        string              `json:"title"`
+	Request      string              `json:"request,omitempty"`
+	State        string              `json:"state"`
+	SyncStatus   string              `json:"syncStatus"`
+	NextAction   string              `json:"nextAction"`
+	EvidenceRefs []string            `json:"evidenceRefs"`
+	UpdatedAt    time.Time           `json:"updatedAt,omitempty"`
+	Tasks        []TaskDetail        `json:"tasks"`
+	Blocker      string              `json:"blocker,omitempty"`
+	Publications []PublicationDetail `json:"publications"`
+	Decisions    []DecisionDetail    `json:"decisions,omitempty"`
+	Handoffs     []HandoffDetail     `json:"handoffs,omitempty"`
+	Links        []Link              `json:"links,omitempty"`
 }
 
 type TaskDetail struct {
@@ -64,6 +66,18 @@ type TaskDetail struct {
 	Verification string             `json:"verification,omitempty"`
 	Review       string             `json:"review,omitempty"`
 	Merge        string             `json:"merge,omitempty"`
+}
+
+// PublicationDetail is the provider-neutral portion of a publication intent.
+// Payload and target identity remain local state and are deliberately absent.
+type PublicationDetail struct {
+	IntentID   string `json:"intentId"`
+	Key        string `json:"key"`
+	Generation uint32 `json:"generation"`
+	Kind       string `json:"kind"`
+	Status     string `json:"status"`
+	Attempts   uint32 `json:"attempts"`
+	URL        string `json:"url,omitempty"`
 }
 
 type DecisionDetail struct {
