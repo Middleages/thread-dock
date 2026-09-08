@@ -162,6 +162,11 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 	if task.Invocation == nil {
 		return snapshot, nil
 	}
+	// An invocation retained on a settled evidence stage is historical
+	// provenance, not an outstanding runtime operation.
+	if task.Status != statev2.TaskInvocationReserved && task.Status != statev2.TaskRunning && task.Status != statev2.TaskTerminationPending {
+		return snapshot, nil
+	}
 	key := runtimeKey{taskID: taskID, invocationID: task.Invocation.InvocationID}
 	if _, _, err := d.validateRuntimeIdentity(snapshot, q, key); err != nil {
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, err.Error())
@@ -189,6 +194,9 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 	}
 
 	if task.Status == statev2.TaskTerminationPending {
+		if observation.State != RuntimeObservationActive && observation.State != RuntimeObservationEnded {
+			return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, runtimeDiagnostic(observation))
+		}
 		return c.terminateInvocation(ctx, d, q, snapshot, taskID, task, observation)
 	}
 	switch observation.State {
@@ -241,6 +249,9 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 func (c *Coordinator) terminateInvocation(ctx context.Context, d *publicationDispatcher, q *publicationQueue, snapshot statev2.WorkSnapshot, taskID contractv2.TaskID, task statev2.TaskExecutionState, observation RuntimeObservation) (statev2.WorkSnapshot, error) {
 	if task.Invocation == nil || c.Runtime == nil {
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "runtime adapter is not configured")
+	}
+	if observation.State != RuntimeObservationActive && observation.State != RuntimeObservationEnded {
+		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, runtimeDiagnostic(observation))
 	}
 	if observation.State == RuntimeObservationEnded {
 		if strings.TrimSpace(observation.ProviderIdentity) == "" || observation.ProviderIdentity != task.Invocation.ProviderIdentity {
@@ -386,7 +397,10 @@ func (c *Coordinator) reconcilePublication(ctx context.Context, d *publicationDi
 	}
 	observed, err := c.Publisher.Observe(ctx, publication)
 	if err != nil {
-		return c.applyPublicationSettlement(ctx, d, snapshot, publication, statev2.PublicationFail, nil, "publication observe failed")
+		// Observe errors cannot prove absence or non-publication. Persist only a
+		// bounded static conflict diagnostic; provider error text may contain
+		// credentials or request data and must not become durable evidence.
+		return c.applyPublicationSettlement(ctx, d, snapshot, publication, statev2.PublicationActionConflict, nil, "publication observation unavailable; operator reconciliation required")
 	}
 	latest, loadErr := c.State.Load(ctx, snapshot.WorkID)
 	if loadErr != nil {
