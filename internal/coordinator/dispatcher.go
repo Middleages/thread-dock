@@ -23,18 +23,19 @@ type publicationCommand struct {
 }
 
 type publicationQueue struct {
-	workID     contractv2.WorkID
-	lease      OwnerLease
-	ctx        context.Context
-	cancel     context.CancelFunc
-	items      chan publicationCommand
-	done       chan struct{}
-	submitMu   sync.Mutex
-	submitWG   sync.WaitGroup
-	releaseMu  sync.Mutex
-	releaseErr error
-	stopped    bool
-	owner      OwnerRecord
+	workID       contractv2.WorkID
+	lease        OwnerLease
+	ctx          context.Context
+	cancel       context.CancelFunc
+	items        chan publicationCommand
+	done         chan struct{}
+	submitMu     sync.Mutex
+	submitWG     sync.WaitGroup
+	releaseMu    sync.Mutex
+	releaseErr   error
+	stopped      bool
+	owner        OwnerRecord
+	beforeSelect func()
 }
 
 type publicationDispatcher struct {
@@ -102,10 +103,15 @@ func (d *publicationDispatcher) SubmitPublication(ctx context.Context, workID co
 	q.submitWG.Add(1)
 	q.submitMu.Unlock()
 	defer q.submitWG.Done()
+	if q.beforeSelect != nil {
+		q.beforeSelect()
+	}
 	select {
 	case q.items <- command:
 	case <-ctx.Done():
 		result <- CommandResult{Err: ctx.Err()}
+	case <-q.ctx.Done():
+		result <- CommandResult{Err: ErrDispatcherClosed}
 	}
 	return result
 }
@@ -127,6 +133,7 @@ func (d *publicationDispatcher) runQueue(q *publicationQueue) {
 		q.releaseErr = q.lease.Release()
 		q.releaseMu.Unlock()
 	}()
+	defer q.submitWG.Wait()
 	for {
 		select {
 		case <-q.ctx.Done():

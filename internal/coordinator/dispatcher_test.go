@@ -166,3 +166,46 @@ func TestDispatcherCloseCancelsSaturatedQueueAndResolvesEverySubmitter(t *testin
 		}
 	}
 }
+
+func TestDispatcherCloseCancelsSubmitterAfterRegistrationBeforeSend(t *testing.T) {
+	st := newFakeState("work-1", "intent-1", statev2.PublicationPending)
+	pub := &blockingPublisher{allow: make(chan struct{}), entered: make(chan struct{})}
+	d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	first := d.SubmitPublication(context.Background(), "work-1", "intent-1")
+	<-pub.entered
+	q := d.(*publicationDispatcher).queues["work-1"]
+	registered := make(chan struct{})
+	resume := make(chan struct{})
+	q.beforeSelect = func() {
+		close(registered)
+		<-resume
+	}
+	secondReturned := make(chan struct{})
+	var second <-chan CommandResult
+	go func() {
+		second = d.SubmitPublication(context.Background(), "work-1", "intent-1")
+		close(secondReturned)
+	}()
+	<-registered
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- d.Close(context.Background()) }()
+	close(resume)
+	select {
+	case <-secondReturned:
+	case <-time.After(time.Second):
+		t.Fatal("registered submitter did not return")
+	}
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("second result did not resolve")
+	}
+	select {
+	case <-first:
+	case <-time.After(time.Second):
+		t.Fatal("first result did not resolve")
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatal(err)
+	}
+}

@@ -137,10 +137,17 @@ func TestFailedPublicationRetriesPersistedIdentityBeforeIO(t *testing.T) {
 	st := newFakeState("work-1", "intent-1", statev2.PublicationFailed)
 	before := st.snapshot.Publications["intent-1"]
 	allow := make(chan struct{})
-	close(allow)
-	pub := &blockingPublisher{allow: allow}
+	pub := &blockingPublisher{allow: allow, entered: make(chan struct{})}
 	d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
-	result := <-d.SubmitPublication(context.Background(), "work-1", "intent-1")
+	resultCh := d.SubmitPublication(context.Background(), "work-1", "intent-1")
+	<-pub.entered
+	st.mu.Lock()
+	if st.snapshot.Publications["intent-1"].Status != statev2.PublicationPending || len(st.transitions) < 1 || st.transitions[0].Publication.Action != statev2.PublicationBegin {
+		t.Fatalf("Observe entered before persisted retry begin: snapshot=%#v transitions=%#v", st.snapshot.Publications["intent-1"], st.transitions)
+	}
+	st.mu.Unlock()
+	close(allow)
+	result := <-resultCh
 	if result.Err != nil {
 		t.Fatalf("result error: %v", result.Err)
 	}
@@ -158,15 +165,43 @@ func TestFailedPublicationRetriesPersistedIdentityBeforeIO(t *testing.T) {
 }
 
 func TestDispatcherSkipsNewerGenerationAndCompletedIntent(t *testing.T) {
-	for _, status := range []statev2.PublicationStatus{statev2.PublicationCompleted, statev2.PublicationPending} {
-		t.Run(string(status), func(t *testing.T) {
-			st := newFakeState("work-1", "intent-1", status)
-			if status == statev2.PublicationPending {
-				newer := st.snapshot.Publications["intent-1"]
-				newer.IntentID = "intent-2"
-				newer.Generation = 2
-				st.snapshot.Publications["intent-2"] = newer
-			}
+	for _, tc := range []struct {
+		name      string
+		setup     func(*fakeState)
+		completed bool
+	}{
+		{name: "already completed", completed: true, setup: func(s *fakeState) {
+			p := s.snapshot.Publications["intent-1"]
+			p.Status = statev2.PublicationCompleted
+			p.Receipt = &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)}
+			s.snapshot.Publications["intent-1"] = p
+		}},
+		{name: "newer pending successor", setup: func(s *fakeState) {
+			p := s.snapshot.Publications["intent-1"]
+			p.Status = statev2.PublicationCompleted
+			p.Receipt = &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)}
+			s.snapshot.Publications["intent-1"] = p
+			newer := p
+			newer.IntentID = "intent-2"
+			newer.Generation = 2
+			newer.Status = statev2.PublicationPending
+			newer.Receipt = nil
+			s.snapshot.Publications["intent-2"] = newer
+		}},
+		{name: "superseded prior with pending successor", setup: func(s *fakeState) {
+			p := s.snapshot.Publications["intent-1"]
+			p.Status = statev2.PublicationSuperseded
+			s.snapshot.Publications["intent-1"] = p
+			newer := p
+			newer.IntentID = "intent-2"
+			newer.Generation = 2
+			newer.Status = statev2.PublicationPending
+			s.snapshot.Publications["intent-2"] = newer
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeState("work-1", "intent-1", statev2.PublicationPending)
+			tc.setup(st)
 			allow := make(chan struct{})
 			close(allow)
 			pub := &blockingPublisher{allow: allow}
@@ -175,7 +210,7 @@ func TestDispatcherSkipsNewerGenerationAndCompletedIntent(t *testing.T) {
 			if pub.observes != 0 || pub.publishes != 0 {
 				t.Fatalf("publisher calls observe=%d publish=%d", pub.observes, pub.publishes)
 			}
-			if status == statev2.PublicationCompleted && result.Err != nil {
+			if tc.completed && result.Err != nil {
 				t.Fatalf("completed result error: %v", result.Err)
 			}
 			_ = d.Close(context.Background())
