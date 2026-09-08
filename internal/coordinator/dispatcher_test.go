@@ -44,8 +44,8 @@ func TestDispatcherDeduplicatesPublicationAndReleasesOwner(t *testing.T) {
 	if pub.observes != 1 || pub.publishes != 1 {
 		t.Fatalf("publisher calls = observe %d publish %d", pub.observes, pub.publishes)
 	}
-	if st.applies < 1 || !pub.sawApply {
-		t.Fatalf("publish did not follow state Apply: applies=%d sawApply=%v", st.applies, pub.sawApply)
+	if st.applies < 1 || len(st.transitions) != 1 || st.transitions[0].Publication.Action != statev2.PublicationComplete {
+		t.Fatalf("publish settlement did not Apply: applies=%d transitions=%#v", st.applies, st.transitions)
 	}
 	if err := d.Close(context.Background()); err != nil {
 		t.Fatal(err)
@@ -109,6 +109,60 @@ func TestDispatcherCloseSubmitBarrierResolvesEveryResult(t *testing.T) {
 		}
 		if err := <-closeDone; err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func TestDispatcherCloseCancelsSaturatedQueueAndResolvesEverySubmitter(t *testing.T) {
+	st := newFakeState("work-1", "intent-1", statev2.PublicationPending)
+	pub := &blockingPublisher{allow: make(chan struct{}), entered: make(chan struct{})}
+	d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	results := make([]<-chan CommandResult, 66)
+	results[0] = d.SubmitPublication(context.Background(), "work-1", "intent-1")
+	select {
+	case <-pub.entered:
+	case <-time.After(time.Second):
+		t.Fatal("publisher did not enter Observe")
+	}
+	var submitWG sync.WaitGroup
+	for i := 1; i <= 64; i++ {
+		submitWG.Add(1)
+		go func(i int) {
+			defer submitWG.Done()
+			results[i] = d.SubmitPublication(context.Background(), "work-1", "intent-1")
+		}(i)
+	}
+	submitWG.Wait()
+	blockedReturned := make(chan struct{})
+	go func() {
+		results[65] = d.SubmitPublication(context.Background(), "work-1", "intent-1")
+		close(blockedReturned)
+	}()
+	select {
+	case <-blockedReturned:
+		t.Fatal("saturated submitter returned before Close")
+	case <-time.After(20 * time.Millisecond):
+	}
+	closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := d.Close(closeCtx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case <-blockedReturned:
+	case <-time.After(time.Second):
+		t.Fatal("blocked submitter did not return")
+	}
+	for i, result := range results {
+		select {
+		case <-result:
+		case <-time.After(time.Second):
+			t.Fatalf("result %d stranded", i)
+		}
+		select {
+		case extra := <-result:
+			t.Fatalf("result %d delivered twice: %#v", i, extra)
+		case <-time.After(5 * time.Millisecond):
 		}
 	}
 }

@@ -30,6 +30,7 @@ type publicationQueue struct {
 	items      chan publicationCommand
 	done       chan struct{}
 	submitMu   sync.Mutex
+	submitWG   sync.WaitGroup
 	releaseMu  sync.Mutex
 	releaseErr error
 	stopped    bool
@@ -93,11 +94,14 @@ func (d *publicationDispatcher) SubmitPublication(ctx context.Context, workID co
 	d.mu.Unlock()
 	command := publicationCommand{ctx: ctx, intentID: intentID, result: result}
 	q.submitMu.Lock()
-	defer q.submitMu.Unlock()
 	if q.stopped {
+		q.submitMu.Unlock()
 		result <- CommandResult{Err: ErrDispatcherClosed}
 		return result
 	}
+	q.submitWG.Add(1)
+	q.submitMu.Unlock()
+	defer q.submitWG.Done()
 	select {
 	case q.items <- command:
 	case <-ctx.Done():
@@ -180,6 +184,16 @@ func (d *publicationDispatcher) Close(ctx context.Context) error {
 
 func waitPublicationQueues(ctx context.Context, queues []*publicationQueue) error {
 	for _, q := range queues {
+		registeredDone := make(chan struct{})
+		go func(q *publicationQueue) {
+			q.submitWG.Wait()
+			close(registeredDone)
+		}(q)
+		select {
+		case <-registeredDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		select {
 		case <-q.done:
 		case <-ctx.Done():

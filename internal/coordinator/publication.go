@@ -139,6 +139,9 @@ func (d *publicationDispatcher) handlePublication(ctx context.Context, q *public
 }
 
 func (d *publicationDispatcher) pendingIntent(snapshot statev2.WorkSnapshot, q *publicationQueue, intentID statev2.PublicationIntentID) (statev2.PublicationState, error) {
+	if snapshot.WorkID != q.workID {
+		return statev2.PublicationState{}, fmt.Errorf("%w: loaded WorkID does not match queue", ErrPublicationStale)
+	}
 	if !ownerRecordMatches(d, q) {
 		return statev2.PublicationState{}, fmt.Errorf("%w: owner record does not match Work", ErrPublicationStale)
 	}
@@ -165,6 +168,9 @@ func (d *publicationDispatcher) pendingIntent(snapshot statev2.WorkSnapshot, q *
 }
 
 func (d *publicationDispatcher) validateDispatch(snapshot statev2.WorkSnapshot, q *publicationQueue, p statev2.PublicationState) error {
+	if snapshot.WorkID != q.workID {
+		return fmt.Errorf("%w: loaded WorkID does not match queue", ErrPublicationStale)
+	}
 	if !ownerRecordMatches(d, q) {
 		return fmt.Errorf("%w: owner record does not match Work", ErrPublicationStale)
 	}

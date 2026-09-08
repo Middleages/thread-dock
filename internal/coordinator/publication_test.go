@@ -65,6 +65,19 @@ func TestOwnerRecordMustMatchBeforePublisherIO(t *testing.T) {
 	_ = d.Close(context.Background())
 }
 
+func TestLoadedWorkIDMustMatchQueueBeforePublisherIO(t *testing.T) {
+	st := newFakeState("different-work", "intent-1", statev2.PublicationPending)
+	pub := &blockingPublisher{allow: make(chan struct{})}
+	d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	resultCh := d.SubmitPublication(context.Background(), "work-1", "intent-1")
+	close(pub.allow)
+	result := <-resultCh
+	if !errors.Is(result.Err, ErrPublicationStale) || pub.observes != 0 || pub.publishes != 0 {
+		t.Fatalf("result=%v observe=%d publish=%d", result.Err, pub.observes, pub.publishes)
+	}
+	_ = d.Close(context.Background())
+}
+
 func TestPublicationObservationMatrix(t *testing.T) {
 	at := time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)
 	tests := []struct {
@@ -76,6 +89,7 @@ func TestPublicationObservationMatrix(t *testing.T) {
 		wantCalls   int
 	}{
 		{name: "remote match adoption", observation: PublicationObservation{State: PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: at}}, wantStatus: statev2.PublicationCompleted, wantCalls: 0},
+		{name: "invalid match receipt conflict", observation: PublicationObservation{State: PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{NodeID: " node-1", PublishedAt: at}}, wantStatus: statev2.PublicationConflict, wantCalls: 0},
 		{name: "unknown conflict", observation: PublicationObservation{State: PublicationObservationUnknown}, wantStatus: statev2.PublicationConflict, wantCalls: 0},
 		{name: "observe error", observeErr: errors.New("provider unavailable"), wantStatus: statev2.PublicationFailed, wantCalls: 0},
 		{name: "publish error", publishErr: errors.New("provider unavailable"), wantStatus: statev2.PublicationFailed, wantCalls: 1},
@@ -136,6 +150,9 @@ func TestFailedPublicationRetriesPersistedIdentityBeforeIO(t *testing.T) {
 	}
 	if st.applies < 2 {
 		t.Fatalf("Apply count = %d, want begin and settlement", st.applies)
+	}
+	if len(st.transitions) < 2 || st.transitions[0].Publication.Action != statev2.PublicationBegin || st.transitions[0].Publication.Key != before.Key || st.transitions[0].Publication.PayloadHash != before.PayloadHash || st.transitions[0].Publication.PayloadRef != before.PayloadRef || *st.transitions[0].Publication.Target != before.Target {
+		t.Fatalf("retry begin did not preserve identity: transitions=%#v", st.transitions)
 	}
 	_ = d.Close(context.Background())
 }
@@ -199,10 +216,79 @@ func TestDispatcherSkipsBlockedIntentAndDoesNotHoldStateLockDuringObserve(t *tes
 	_ = d.Close(context.Background())
 }
 
+func TestSettlementRevisionConflictReturnsLatestSnapshotWithoutRepublish(t *testing.T) {
+	st := newFakeState("work-1", "intent-1", statev2.PublicationPending)
+	st.settlementConflict = true
+	allow := make(chan struct{})
+	close(allow)
+	pub := &blockingPublisher{allow: allow}
+	d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	result := <-d.SubmitPublication(context.Background(), "work-1", "intent-1")
+	if result.Err == nil || result.Snapshot.Revision != 2 || pub.publishes != 1 {
+		t.Fatalf("result=%#v publish calls=%d", result, pub.publishes)
+	}
+	_ = d.Close(context.Background())
+}
+
+func TestQueuedPublicationRechecksMutatedDurableState(t *testing.T) {
+	for _, mutation := range []struct {
+		name  string
+		apply func(*fakeState)
+	}{
+		{name: "blocker", apply: func(s *fakeState) {
+			s.snapshot.Control.Blocker = &statev2.OperatorBlocker{Kind: "evidence_mismatch", OperatorRef: "operator", TaskID: "task-1", Diagnostic: "blocked"}
+		}},
+		{name: "newer generation", apply: func(s *fakeState) {
+			newer := s.snapshot.Publications["intent-1"]
+			newer.IntentID = "intent-2"
+			newer.Generation = 2
+			s.snapshot.Publications["intent-2"] = newer
+		}},
+		{name: "completed", apply: func(s *fakeState) {
+			p := s.snapshot.Publications["intent-1"]
+			p.Status = statev2.PublicationCompleted
+			s.snapshot.Publications["intent-1"] = p
+		}},
+		{name: "superseded", apply: func(s *fakeState) {
+			p := s.snapshot.Publications["intent-1"]
+			p.Status = statev2.PublicationSuperseded
+			s.snapshot.Publications["intent-1"] = p
+		}},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			st := newFakeState("work-1", "intent-1", statev2.PublicationPending)
+			loadEntered := make(chan struct{})
+			loadAllow := make(chan struct{})
+			st.loadEntered = loadEntered
+			st.loadAllow = loadAllow
+			pub := &blockingPublisher{allow: make(chan struct{})}
+			d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+			resultCh := d.SubmitPublication(context.Background(), "work-1", "intent-1")
+			<-loadEntered
+			st.mu.Lock()
+			mutation.apply(st)
+			st.mu.Unlock()
+			close(loadAllow)
+			result := <-resultCh
+			if pub.observes != 0 || pub.publishes != 0 {
+				t.Fatalf("publisher calls observe=%d publish=%d", pub.observes, pub.publishes)
+			}
+			if mutation.name == "completed" && result.Err != nil {
+				t.Fatalf("completed result error: %v", result.Err)
+			}
+			_ = d.Close(context.Background())
+		})
+	}
+}
+
 type fakeState struct {
-	mu       sync.Mutex
-	snapshot statev2.WorkSnapshot
-	applies  int
+	mu                 sync.Mutex
+	snapshot           statev2.WorkSnapshot
+	applies            int
+	transitions        []statev2.TransitionRequest
+	settlementConflict bool
+	loadEntered        chan struct{}
+	loadAllow          chan struct{}
 }
 
 func newFakeState(workID contractv2.WorkID, intentID statev2.PublicationIntentID, status statev2.PublicationStatus) *fakeState {
@@ -215,6 +301,14 @@ func newFakeState(workID contractv2.WorkID, intentID statev2.PublicationIntentID
 
 func (s *fakeState) Load(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error) {
 	s.mu.Lock()
+	if s.loadEntered != nil {
+		close(s.loadEntered)
+		s.loadEntered = nil
+		allow := s.loadAllow
+		s.mu.Unlock()
+		<-allow
+		s.mu.Lock()
+	}
 	defer s.mu.Unlock()
 	return s.snapshot, nil
 }
@@ -231,6 +325,11 @@ func (s *fakeState) Apply(_ context.Context, req statev2.TransitionRequest) (sta
 	}
 	if req.Publication == nil {
 		return s.snapshot, errors.New("publication transition required")
+	}
+	s.transitionCopy(req)
+	if s.settlementConflict && req.Publication.Action != statev2.PublicationBegin {
+		s.snapshot.Revision++
+		return s.snapshot, errors.New("settlement revision conflict")
 	}
 	s.applies++
 	p := s.snapshot.Publications[req.Publication.IntentID]
@@ -249,6 +348,15 @@ func (s *fakeState) Apply(_ context.Context, req statev2.TransitionRequest) (sta
 	s.snapshot.Publications[p.IntentID] = p
 	s.snapshot.Revision++
 	return s.snapshot, nil
+}
+
+func (s *fakeState) transitionCopy(req statev2.TransitionRequest) {
+	copyReq := req
+	if req.Publication != nil {
+		copyTransition := *req.Publication
+		copyReq.Publication = &copyTransition
+	}
+	s.transitions = append(s.transitions, copyReq)
 }
 
 type fakeOwnerLocker struct {
@@ -291,17 +399,20 @@ type blockingPublisher struct {
 	publishErr  error
 	observes    int
 	publishes   int
-	sawApply    bool
 }
 
-func (p *blockingPublisher) Observe(context.Context, statev2.PublicationState) (PublicationObservation, error) {
+func (p *blockingPublisher) Observe(ctx context.Context, _ statev2.PublicationState) (PublicationObservation, error) {
 	p.mu.Lock()
 	p.observes++
 	if p.entered != nil {
 		close(p.entered)
 	}
 	p.mu.Unlock()
-	<-p.allow
+	select {
+	case <-p.allow:
+	case <-ctx.Done():
+		return PublicationObservation{}, ctx.Err()
+	}
 	if p.observeErr != nil {
 		return PublicationObservation{}, p.observeErr
 	}
@@ -313,7 +424,6 @@ func (p *blockingPublisher) Observe(context.Context, statev2.PublicationState) (
 func (p *blockingPublisher) Publish(context.Context, statev2.PublicationState) (statev2.PublicationReceipt, error) {
 	p.mu.Lock()
 	p.publishes++
-	p.sawApply = true
 	p.mu.Unlock()
 	if p.publishErr != nil {
 		return statev2.PublicationReceipt{}, p.publishErr
