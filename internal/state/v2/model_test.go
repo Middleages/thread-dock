@@ -132,7 +132,8 @@ func TestDecodeSnapshotRejectsModernMapsWithoutControl(t *testing.T) {
 func TestValidateSnapshotRejectsUnknownInvocationReturnStage(t *testing.T) {
 	snapshot := validSnapshot()
 	state := snapshot.TaskStates["task-1"]
-	state.Invocation = &InvocationState{ReturnStage: TaskStatus("unknown")}
+	state.Invocation = &InvocationState{InvocationID: "invocation", ReturnStage: TaskStatus("unknown")}
+	state.InvocationHistory = []InvocationID{"invocation"}
 	snapshot.TaskStates["task-1"] = state
 	if err := validateSnapshot(snapshot); err == nil {
 		t.Fatal("validateSnapshot accepted unknown invocation return stage")

@@ -76,9 +76,13 @@ func TestInvocationLifecycleRejectsMarkRunningBeforeLaunch(t *testing.T) {
 	if err := applyTransition(&s, TransitionRequest{Task: &reserve}); err != nil {
 		t.Fatal(err)
 	}
+	before := cloneSnapshot(t, s)
 	err := applyTransition(&s, TransitionRequest{Task: &TaskTransition{TaskID: "task-1", Action: TaskMarkRunning, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: "builder", ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(2), Invocation: &InvocationState{ProviderIdentity: "provider"}}})
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("mark running before launch error = %v", err)
+	}
+	if got, want := marshalSnapshot(t, s), marshalSnapshot(t, before); string(got) != string(want) {
+		t.Fatalf("invalid mark-running wrote state: before=%s after=%s", want, got)
 	}
 }
 
@@ -215,9 +219,13 @@ func TestReconcileNotStartedRejectsLaunchRequestedOrInsufficientProof(t *testing
 					t.Fatal(err)
 				}
 			}
+			before := cloneSnapshot(t, s)
 			tr := TaskTransition{TaskID: "task-1", Action: TaskReconcileNotStarted, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(3), Resolution: &tc.proof}
 			if err := applyTransition(&s, TransitionRequest{Task: &tr}); !errors.Is(err, ErrInvalidTransition) {
 				t.Fatalf("error = %v", err)
+			}
+			if got, want := marshalSnapshot(t, s), marshalSnapshot(t, before); string(got) != string(want) {
+				t.Fatalf("invalid reconcile wrote state: before=%s after=%s", want, got)
 			}
 		})
 	}
@@ -272,6 +280,25 @@ func TestReserveRejectsLifecycleMatrixWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestReserveRejectsDuplicateAndCandidateBeforeTerminationWithoutWrite(t *testing.T) {
+	snapshot := invocationSnapshot()
+	reserve := builderReserveTransition(invocationAt(1))
+	if err := applyTransition(&snapshot, TransitionRequest{Task: &reserve}); err != nil {
+		t.Fatal(err)
+	}
+	before := cloneSnapshot(t, snapshot)
+	if err := applyTransition(&snapshot, TransitionRequest{Task: &reserve}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("duplicate reserve error = %v", err)
+	}
+	candidate := TaskTransition{TaskID: "task-1", Action: TaskRecordCandidate, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(2)}
+	if err := applyTransition(&snapshot, TransitionRequest{Task: &candidate}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("candidate before termination error = %v", err)
+	}
+	if got, want := marshalSnapshot(t, snapshot), marshalSnapshot(t, before); string(got) != string(want) {
+		t.Fatalf("invalid duplicate/candidate transition wrote state: before=%s after=%s", want, got)
+	}
+}
+
 func marshalSnapshot(t *testing.T, snapshot WorkSnapshot) []byte {
 	t.Helper()
 	data, err := json.Marshal(snapshot)
@@ -281,36 +308,86 @@ func marshalSnapshot(t *testing.T, snapshot WorkSnapshot) []byte {
 	return data
 }
 
-func TestLifecycleRejectsMismatchedIdentityAndNextReserveBeforeTermination(t *testing.T) {
-	snapshot := invocationSnapshot()
-	reserve := builderReserveTransition(invocationAt(1))
-	if err := applyTransition(&snapshot, TransitionRequest{Task: &reserve}); err != nil {
+func TestLifecycleIdentityGuardsReachEachActionSourceStage(t *testing.T) {
+	for _, action := range []TaskAction{TaskBeginLaunch, TaskMarkRunning, TaskRequestTermination, TaskConfirmTermination, TaskReconcileNotStarted} {
+		for _, identity := range []struct {
+			name   string
+			mutate func(*TaskTransition)
+		}{
+			{name: "invocation", mutate: func(tr *TaskTransition) { tr.InvocationID = "other" }},
+			{name: "logical work", mutate: func(tr *TaskTransition) { tr.LogicalWorkID = "other" }},
+			{name: "attempt", mutate: func(tr *TaskTransition) { tr.BuilderAttempt = 2 }},
+		} {
+			t.Run(string(action)+"/"+identity.name, func(t *testing.T) {
+				store, source, transition := setupLifecycleStage(t, action)
+				identity.mutate(&transition)
+				before := marshalSnapshot(t, source)
+				request := taskRequest(t, source, "invalid", transition)
+				if _, err := store.Apply(context.Background(), request); !errors.Is(err, ErrInvalidTransition) {
+					t.Fatalf("error = %v, want invalid transition", err)
+				}
+				after, err := store.Load(context.Background(), source.WorkID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := marshalSnapshot(t, after); string(got) != string(before) {
+					t.Fatalf("invalid lifecycle wrote state: before=%s after=%s", before, got)
+				}
+			})
+		}
+	}
+}
+
+func setupLifecycleStage(t *testing.T, action TaskAction) (Store, WorkSnapshot, TaskTransition) {
+	t.Helper()
+	ctx := context.Background()
+	store := NewStore(t.TempDir())
+	if _, err := createPlan(store, ctx, validSnapshot()); err != nil {
 		t.Fatal(err)
 	}
-	before := cloneSnapshot(t, snapshot)
-	for _, tc := range []struct {
-		name   string
-		mutate func(*TaskTransition)
-	}{
-		{name: "invocation", mutate: func(tr *TaskTransition) { tr.InvocationID = "other" }},
-		{name: "logical work", mutate: func(tr *TaskTransition) { tr.LogicalWorkID = "other" }},
-		{name: "attempt", mutate: func(tr *TaskTransition) { tr.BuilderAttempt = 2 }},
-		{name: "duplicate next reserve", mutate: func(_ *TaskTransition) {}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			next := cloneSnapshot(t, before)
-			tr := reserve
-			tc.mutate(&tr)
-			if err := applyTransition(&next, TransitionRequest{Task: &tr}); !errors.Is(err, ErrInvalidTransition) {
-				t.Fatalf("error = %v", err)
-			}
-			if got, want := marshalSnapshot(t, next), marshalSnapshot(t, before); string(got) != string(want) {
-				t.Fatalf("invalid lifecycle wrote state")
-			}
-		})
+	snapshot, err := store.Load(ctx, "work-1")
+	if err != nil {
+		t.Fatal(err)
 	}
-	candidate := TaskTransition{TaskID: "task-1", Action: TaskRecordCandidate, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(2)}
-	if err := applyTransition(&snapshot, TransitionRequest{Task: &candidate}); !errors.Is(err, ErrInvalidTransition) {
-		t.Fatalf("candidate before termination error = %v", err)
+	if _, err := store.Apply(ctx, transitionRequest(t, snapshot, "approve", WorkTransition{Action: WorkApprove, ApprovalRef: "approval", ContractHash: snapshot.ContractHash})); err != nil {
+		t.Fatal(err)
 	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	reserve := builderReserveTransition(invocationAt(1))
+	if _, err := store.Apply(ctx, taskRequest(t, snapshot, "reserve", reserve)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	if action == TaskReconcileNotStarted {
+		return store, snapshot, TaskTransition{TaskID: "task-1", Action: TaskReconcileNotStarted, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(6), Resolution: &ResolutionEvidence{OwnerTerminated: true, ProviderAbsent: true}}
+	}
+	begin := TaskTransition{TaskID: "task-1", Action: TaskBeginLaunch, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(2)}
+	if action == TaskBeginLaunch {
+		return store, snapshot, begin
+	}
+	if _, err := store.Apply(ctx, taskRequest(t, snapshot, "begin", begin)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	running := TaskTransition{TaskID: "task-1", Action: TaskMarkRunning, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(3), Invocation: &InvocationState{ProviderProcess: "pid"}}
+	if action == TaskMarkRunning {
+		return store, snapshot, running
+	}
+	if _, err := store.Apply(ctx, taskRequest(t, snapshot, "running", running)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	requestTermination := TaskTransition{TaskID: "task-1", Action: TaskRequestTermination, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(4), Reason: "done"}
+	if action == TaskRequestTermination {
+		return store, snapshot, requestTermination
+	}
+	if _, err := store.Apply(ctx, taskRequest(t, snapshot, "request-termination", requestTermination)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	confirm := TaskTransition{TaskID: "task-1", Action: TaskConfirmTermination, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(5)}
+	if action == TaskConfirmTermination {
+		return store, snapshot, confirm
+	}
+	return store, snapshot, confirm
 }
