@@ -13,6 +13,7 @@ import (
 
 type Dispatcher interface {
 	SubmitPublication(context.Context, contractv2.WorkID, statev2.PublicationIntentID) <-chan CommandResult
+	SubmitRuntime(context.Context, contractv2.WorkID, contractv2.TaskID, statev2.InvocationID) <-chan CommandResult
 	Close(context.Context) error
 }
 
@@ -23,19 +24,23 @@ type publicationCommand struct {
 }
 
 type publicationQueue struct {
-	workID       contractv2.WorkID
-	lease        OwnerLease
-	ctx          context.Context
-	cancel       context.CancelFunc
-	items        chan publicationCommand
-	done         chan struct{}
-	submitMu     sync.Mutex
-	submitWG     sync.WaitGroup
-	releaseMu    sync.Mutex
-	releaseErr   error
-	stopped      bool
-	owner        OwnerRecord
-	beforeSelect func()
+	workID        contractv2.WorkID
+	lease         OwnerLease
+	ctx           context.Context
+	cancel        context.CancelFunc
+	items         chan publicationCommand
+	runtimeItems  chan runtimeCommand
+	runtimeEvents chan runtimeEvent
+	done          chan struct{}
+	submitMu      sync.Mutex
+	submitWG      sync.WaitGroup
+	runtimeWG     sync.WaitGroup
+	releaseMu     sync.Mutex
+	releaseErr    error
+	stopped       bool
+	owner         OwnerRecord
+	beforeSelect  func()
+	runtimeOps    map[runtimeKey]map[runtimeOperationKind]*runtimeOperation
 }
 
 type publicationDispatcher struct {
@@ -45,6 +50,7 @@ type publicationDispatcher struct {
 	ownerID   OwnerID
 	pid       int
 	startedAt time.Time
+	runtime   Runtime
 
 	mu     sync.Mutex
 	closed bool
@@ -54,13 +60,27 @@ type publicationDispatcher struct {
 // NewDispatcher creates a Work-scoped publication dispatcher. Owner metadata
 // is stable for the process lifetime and each Work queue retains one lease.
 func NewDispatcher(state State, publisher Publisher, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
+	return newDispatcher(state, publisher, nil, locker, ownerID, pid, startedAt)
+}
+
+// NewRuntimeDispatcher creates a dispatcher with the state-driven runtime port.
+func NewRuntimeDispatcher(state State, runtime Runtime, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
+	return newDispatcher(state, nil, runtime, locker, ownerID, pid, startedAt)
+}
+
+// NewDispatcherWithRuntime is the explicit runtime-aware constructor.
+func NewDispatcherWithRuntime(state State, publisher Publisher, runtime Runtime, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
+	return newDispatcher(state, publisher, runtime, locker, ownerID, pid, startedAt)
+}
+
+func newDispatcher(state State, publisher Publisher, runtime Runtime, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
 	if pid == 0 {
 		pid = os.Getpid()
 	}
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
-	return &publicationDispatcher{state: state, publisher: publisher, locker: locker, ownerID: ownerID, pid: pid, startedAt: startedAt, queues: make(map[contractv2.WorkID]*publicationQueue)}
+	return &publicationDispatcher{state: state, publisher: publisher, runtime: runtime, locker: locker, ownerID: ownerID, pid: pid, startedAt: startedAt, queues: make(map[contractv2.WorkID]*publicationQueue)}
 }
 
 func (d *publicationDispatcher) SubmitPublication(ctx context.Context, workID contractv2.WorkID, intentID statev2.PublicationIntentID) <-chan CommandResult {
@@ -74,23 +94,11 @@ func (d *publicationDispatcher) SubmitPublication(ctx context.Context, workID co
 		result <- CommandResult{Err: ErrDispatcherClosed}
 		return result
 	}
-	q := d.queues[workID]
-	if q == nil {
-		if d.locker == nil {
-			d.mu.Unlock()
-			result <- CommandResult{Err: errors.New("owner locker is required")}
-			return result
-		}
-		lease, err := d.locker.Acquire(ctx, workID, d.ownerID, d.pid, d.startedAt)
-		if err != nil {
-			d.mu.Unlock()
-			result <- CommandResult{Err: err}
-			return result
-		}
-		queueCtx, cancel := context.WithCancel(context.Background())
-		q = &publicationQueue{workID: workID, lease: lease, owner: lease.Record(), ctx: queueCtx, cancel: cancel, items: make(chan publicationCommand, 64), done: make(chan struct{})}
-		d.queues[workID] = q
-		go d.runQueue(q)
+	q, err := d.queueLocked(ctx, workID)
+	if err != nil {
+		d.mu.Unlock()
+		result <- CommandResult{Err: err}
+		return result
 	}
 	d.mu.Unlock()
 	command := publicationCommand{ctx: ctx, intentID: intentID, result: result}
@@ -116,12 +124,76 @@ func (d *publicationDispatcher) SubmitPublication(ctx context.Context, workID co
 	return result
 }
 
+func (d *publicationDispatcher) queueLocked(ctx context.Context, workID contractv2.WorkID) (*publicationQueue, error) {
+	q := d.queues[workID]
+	if q != nil {
+		return q, nil
+	}
+	if d.locker == nil {
+		return nil, errors.New("owner locker is required")
+	}
+	lease, err := d.locker.Acquire(ctx, workID, d.ownerID, d.pid, d.startedAt)
+	if err != nil {
+		return nil, err
+	}
+	queueCtx, cancel := context.WithCancel(context.Background())
+	q = &publicationQueue{workID: workID, lease: lease, owner: lease.Record(), ctx: queueCtx, cancel: cancel, items: make(chan publicationCommand, 64), runtimeItems: make(chan runtimeCommand, 64), runtimeEvents: make(chan runtimeEvent, 64), done: make(chan struct{}), runtimeOps: make(map[runtimeKey]map[runtimeOperationKind]*runtimeOperation)}
+	d.queues[workID] = q
+	go d.runQueue(q)
+	return q, nil
+}
+
+func (d *publicationDispatcher) SubmitRuntime(ctx context.Context, workID contractv2.WorkID, taskID contractv2.TaskID, invocationID statev2.InvocationID) <-chan CommandResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result := make(chan CommandResult, 1)
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		result <- CommandResult{Err: ErrDispatcherClosed}
+		return result
+	}
+	if d.runtime == nil {
+		d.mu.Unlock()
+		result <- CommandResult{Err: errors.New("runtime is required")}
+		return result
+	}
+	q, err := d.queueLocked(ctx, workID)
+	if err != nil {
+		d.mu.Unlock()
+		result <- CommandResult{Err: err}
+		return result
+	}
+	d.mu.Unlock()
+	command := runtimeCommand{ctx: ctx, taskID: taskID, invocationID: invocationID, result: result}
+	q.submitMu.Lock()
+	if q.stopped {
+		q.submitMu.Unlock()
+		result <- CommandResult{Err: ErrDispatcherClosed}
+		return result
+	}
+	q.submitWG.Add(1)
+	q.submitMu.Unlock()
+	defer q.submitWG.Done()
+	select {
+	case q.runtimeItems <- command:
+	case <-ctx.Done():
+		result <- CommandResult{Err: ctx.Err()}
+	case <-q.ctx.Done():
+		result <- CommandResult{Err: ErrDispatcherClosed}
+	}
+	return result
+}
+
 func (d *publicationDispatcher) runQueue(q *publicationQueue) {
 	defer close(q.done)
 	defer func() {
 		for {
 			select {
 			case command := <-q.items:
+				command.result <- CommandResult{Err: ErrDispatcherClosed}
+			case command := <-q.runtimeItems:
 				command.result <- CommandResult{Err: ErrDispatcherClosed}
 			default:
 				return
@@ -134,6 +206,8 @@ func (d *publicationDispatcher) runQueue(q *publicationQueue) {
 		q.releaseMu.Unlock()
 	}()
 	defer q.submitWG.Wait()
+	defer q.runtimeWG.Wait()
+	defer d.resolveRuntimeOperations(q)
 	for {
 		select {
 		case <-q.ctx.Done():
@@ -159,6 +233,10 @@ func (d *publicationDispatcher) runQueue(q *publicationQueue) {
 			result := d.handlePublication(commandCtx, q, command.intentID)
 			cancel()
 			command.result <- result
+		case command := <-q.runtimeItems:
+			d.handleRuntimeCommand(q, command)
+		case event := <-q.runtimeEvents:
+			d.handleRuntimeEvent(q, event)
 		}
 	}
 }
