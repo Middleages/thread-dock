@@ -42,13 +42,15 @@ func publicationTarget() *PublicationTarget {
 	return &PublicationTarget{Host: "github.com", Repository: "app", Key: "issue:1", Resource: "1", Base: "main"}
 }
 
+func ptrBool(value bool) *bool { return &value }
+
 func TestPublicationBeginPersistsFirstGenerationBeforeExternalWrite(t *testing.T) {
 	ctx := context.Background()
 	s, snapshot := approvedPublicationStore(t)
 	beforeTasks := snapshot.TaskStates
 	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{
 		Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue,
-		Generation: 1, PayloadHash: strings.Repeat("a", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: true,
+		Generation: 1, PayloadHash: strings.Repeat("a", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(true),
 	})
 	got, err := s.Apply(ctx, begin)
 	if err != nil {
@@ -66,7 +68,7 @@ func TestPublicationBeginPersistsFirstGenerationBeforeExternalWrite(t *testing.T
 func TestPublicationCompleteRequiresMatchingImmutableReceipt(t *testing.T) {
 	ctx := context.Background()
 	s, snapshot := approvedPublicationStore(t)
-	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("a", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget()})
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("a", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
 	pending, err := s.Apply(ctx, begin)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +92,7 @@ func TestPublicationFailureRetryAndSupersedePreserveTaskEvidence(t *testing.T) {
 	ctx := context.Background()
 	s, snapshot := approvedPublicationStore(t)
 	hash := strings.Repeat("b", 64)
-	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: hash, PayloadRef: "artifact://approved/1", Target: publicationTarget()})
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: hash, PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
 	pending, err := s.Apply(ctx, begin)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +120,7 @@ func TestPublicationFailureRetryAndSupersedePreserveTaskEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	supersede := publicationRequest(t, failedAgain, "publication-supersede", PublicationTransition{Action: PublicationActionSupersede, IntentID: "intent-2", Supersedes: "intent-1", Key: "issue:1", Generation: 2, Kind: PublicationParentIssue, PayloadHash: strings.Repeat("c", 64), PayloadRef: "artifact://approved/2", Target: publicationTarget(), Resolution: &ResolutionEvidence{NotPublished: true, Diagnostic: "confirmed no write"}})
+	supersede := publicationRequest(t, failedAgain, "publication-supersede", PublicationTransition{Action: PublicationActionSupersede, IntentID: "intent-2", Supersedes: "intent-1", Key: "issue:1", Generation: 2, Kind: PublicationParentIssue, PayloadHash: strings.Repeat("c", 64), PayloadRef: "artifact://approved/2", Target: publicationTarget(), CompletionRequired: ptrBool(false), Resolution: &ResolutionEvidence{NotPublished: true, Diagnostic: "confirmed no write"}})
 	got, err := s.Apply(ctx, supersede)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +140,7 @@ func TestPublicationFailureRetryAndSupersedePreserveTaskEvidence(t *testing.T) {
 func TestPublicationConflictReconciliationPreservesTaskEvidence(t *testing.T) {
 	ctx := context.Background()
 	s, snapshot := approvedPublicationStore(t)
-	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("d", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget()})
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("d", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
 	pending, err := s.Apply(ctx, begin)
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +174,7 @@ func TestPublicationConflictReconciliationPreservesTaskEvidence(t *testing.T) {
 func TestPublicationCannotAdvanceNewGenerationFromFailedWithoutSupersede(t *testing.T) {
 	ctx := context.Background()
 	s, snapshot := approvedPublicationStore(t)
-	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("e", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget()})
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("e", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
 	pending, err := s.Apply(ctx, begin)
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +184,7 @@ func TestPublicationCannotAdvanceNewGenerationFromFailedWithoutSupersede(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	advance := publicationRequest(t, failed, "publication-advance", PublicationTransition{Action: PublicationBegin, IntentID: "intent-2", Key: "issue:1", Kind: PublicationParentIssue, Generation: 2, PayloadHash: strings.Repeat("f", 64), PayloadRef: "artifact://approved/2", Target: publicationTarget()})
+	advance := publicationRequest(t, failed, "publication-advance", PublicationTransition{Action: PublicationBegin, IntentID: "intent-2", Key: "issue:1", Kind: PublicationParentIssue, Generation: 2, PayloadHash: strings.Repeat("f", 64), PayloadRef: "artifact://approved/2", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
 	if _, err := s.Apply(ctx, advance); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("failed generation advance error = %v, want invalid transition", err)
 	}
@@ -198,7 +200,7 @@ func TestPublicationCannotAdvanceNewGenerationFromFailedWithoutSupersede(t *test
 func TestPublicationSettlingWhilePausedUpdatesSyncWithoutResumingWork(t *testing.T) {
 	ctx := context.Background()
 	s, snapshot := approvedPublicationStore(t)
-	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("1", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget()})
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("1", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
 	pending, err := s.Apply(ctx, begin)
 	if err != nil {
 		t.Fatal(err)
@@ -239,12 +241,12 @@ func TestValidateSnapshotRejectsMultiplePublicationConflicts(t *testing.T) {
 func TestUnknownPublicationBeginAtExistingGenerationIsStaleBeforeStatusGuard(t *testing.T) {
 	ctx := context.Background()
 	s, snapshot := approvedPublicationStore(t)
-	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("3", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget()})
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("3", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
 	pending, err := s.Apply(ctx, begin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	unknown := publicationRequest(t, pending, "publication-unknown-stale", PublicationTransition{Action: PublicationBegin, IntentID: "intent-unknown", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("4", 64), PayloadRef: "artifact://approved/unknown", Target: publicationTarget()})
+	unknown := publicationRequest(t, pending, "publication-unknown-stale", PublicationTransition{Action: PublicationBegin, IntentID: "intent-unknown", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("4", 64), PayloadRef: "artifact://approved/unknown", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
 	if _, err := s.Apply(ctx, unknown); !errors.Is(err, ErrStaleGeneration) {
 		t.Fatalf("unknown stale begin error = %v, want ErrStaleGeneration", err)
 	}
@@ -260,7 +262,7 @@ func TestUnknownPublicationBeginAtExistingGenerationIsStaleBeforeStatusGuard(t *
 func TestPublicationCompletionClearsSyncPendingWhilePaused(t *testing.T) {
 	ctx := context.Background()
 	s, snapshot := approvedPublicationStore(t)
-	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("5", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget()})
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("5", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
 	pending, err := s.Apply(ctx, begin)
 	if err != nil {
 		t.Fatal(err)
@@ -278,5 +280,94 @@ func TestPublicationCompletionClearsSyncPendingWhilePaused(t *testing.T) {
 	}
 	if completed.State != StatePaused || completed.SyncStatus != "synced" || !completed.Control.PauseRequested || completed.Publications["intent-1"].Status != PublicationCompleted {
 		t.Fatalf("paused completion = %#v", completed)
+	}
+}
+
+func TestCompletionRequiredHintIsPreservedAcrossRetryAndSettlement(t *testing.T) {
+	ctx := context.Background()
+	s, snapshot := approvedPublicationStore(t)
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("6", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(true)})
+	pending, err := s.Apply(ctx, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fail := publicationRequest(t, pending, "publication-fail", PublicationTransition{Action: PublicationFail, IntentID: "intent-1", Key: "issue:1", Generation: 1, CompletionRequired: ptrBool(true), Diagnostic: "temporary failure"})
+	failed, err := s.Apply(ctx, fail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry := publicationRequest(t, failed, "publication-retry", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Generation: 1, CompletionRequired: ptrBool(true)})
+	retried, err := s.Apply(ctx, retry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 9, 8, 3, 4, 5, 0, time.UTC)
+	complete := publicationRequest(t, retried, "publication-complete", PublicationTransition{Action: PublicationComplete, IntentID: "intent-1", Key: "issue:1", Generation: 1, CompletionRequired: ptrBool(true), Receipt: &PublicationReceipt{NodeID: "node-1", PublishedAt: at}})
+	completed, err := s.Apply(ctx, complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !completed.Publications["intent-1"].CompletionRequired || completed.Publications["intent-1"].Status != PublicationCompleted {
+		t.Fatalf("completion-required publication = %#v", completed.Publications["intent-1"])
+	}
+}
+
+func TestCompletionRequiredFalseHintCannotMutatePendingIntent(t *testing.T) {
+	ctx := context.Background()
+	s, snapshot := approvedPublicationStore(t)
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("7", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(true)})
+	pending, err := s.Apply(ctx, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fail := publicationRequest(t, pending, "publication-fail-mismatch", PublicationTransition{Action: PublicationFail, IntentID: "intent-1", Key: "issue:1", Generation: 1, CompletionRequired: ptrBool(false), Diagnostic: "must reject"})
+	if _, err := s.Apply(ctx, fail); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("mismatched completion hint error = %v", err)
+	}
+	current, err := s.Load(ctx, pending.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Revision != pending.Revision || current.Publications["intent-1"].Status != PublicationPending {
+		t.Fatalf("mismatched completion hint wrote state: %#v", current)
+	}
+}
+
+func TestCompletedGenerationAdvancesAndLateActionsAreStaleNoWrites(t *testing.T) {
+	ctx := context.Background()
+	s, snapshot := approvedPublicationStore(t)
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("8", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
+	pending, err := s.Apply(ctx, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 9, 8, 4, 5, 6, 0, time.UTC)
+	complete := publicationRequest(t, pending, "publication-complete", PublicationTransition{Action: PublicationComplete, IntentID: "intent-1", Key: "issue:1", Generation: 1, Receipt: &PublicationReceipt{NodeID: "node-1", PublishedAt: at}})
+	completed, err := s.Apply(ctx, complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := publicationRequest(t, completed, "publication-begin-2", PublicationTransition{Action: PublicationBegin, IntentID: "intent-2", Key: "issue:1", Kind: PublicationParentIssue, Generation: 2, PayloadHash: strings.Repeat("9", 64), PayloadRef: "artifact://approved/2", Target: publicationTarget(), CompletionRequired: ptrBool(false)})
+	current, err := s.Apply(ctx, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRevision := current.Revision
+	for _, transition := range []PublicationTransition{
+		{Action: PublicationComplete, IntentID: "intent-1", Key: "issue:1", Generation: 1, Receipt: &PublicationReceipt{NodeID: "late", PublishedAt: at}},
+		{Action: PublicationFail, IntentID: "intent-1", Key: "issue:1", Generation: 1, Diagnostic: "late"},
+		{Action: PublicationActionConflict, IntentID: "intent-1", Key: "issue:1", Generation: 1, Diagnostic: "late", Blocker: &OperatorBlocker{Kind: BlockerKindPublicationConflict, OperatorRef: "operator", IntentID: "intent-1", Diagnostic: "late"}},
+	} {
+		req := publicationRequest(t, current, contractv2.RequestID("late-")+contractv2.RequestID(transition.Action), transition)
+		if _, err := s.Apply(ctx, req); !errors.Is(err, ErrStaleGeneration) {
+			t.Fatalf("late %s error = %v", transition.Action, err)
+		}
+	}
+	after, err := s.Load(ctx, current.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != beforeRevision || after.Publications["intent-1"].Status != PublicationCompleted || after.Publications["intent-2"].Status != PublicationPending {
+		t.Fatalf("late actions wrote state: %#v", after)
 	}
 }

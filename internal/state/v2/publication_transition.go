@@ -52,7 +52,7 @@ func beginPublication(snapshot *WorkSnapshot, transition PublicationTransition) 
 		if transition.Key == "" || transition.Key != existing.Key {
 			return invalidTransition("publication key is required and must match intent")
 		}
-		if transition.Key != "" && transition.Key != existing.Key || transition.Kind != "" && transition.Kind != existing.Kind || transition.PayloadHash != "" && transition.PayloadHash != existing.PayloadHash || transition.PayloadRef != "" && transition.PayloadRef != existing.PayloadRef || transition.Target != nil && *transition.Target != existing.Target || transition.CompletionRequired != existing.CompletionRequired {
+		if transition.Key != "" && transition.Key != existing.Key || transition.Kind != "" && transition.Kind != existing.Kind || transition.PayloadHash != "" && transition.PayloadHash != existing.PayloadHash || transition.PayloadRef != "" && transition.PayloadRef != existing.PayloadRef || transition.Target != nil && *transition.Target != existing.Target || transition.CompletionRequired != nil && *transition.CompletionRequired != existing.CompletionRequired {
 			return invalidTransition("publication immutable identity does not match")
 		}
 		existing.Status = PublicationPending
@@ -65,6 +65,9 @@ func beginPublication(snapshot *WorkSnapshot, transition PublicationTransition) 
 	}
 	if transition.Generation == 0 {
 		return invalidTransition("publication generation is required")
+	}
+	if transition.CompletionRequired == nil {
+		return invalidTransition("completion-required hint is required for a new publication")
 	}
 	max := maxPublicationGeneration(snapshot, transition.Key)
 	if transition.Generation <= max {
@@ -82,7 +85,7 @@ func beginPublication(snapshot *WorkSnapshot, transition PublicationTransition) 
 	if err := validateNewPublicationIdentity(transition); err != nil {
 		return err
 	}
-	publication := PublicationState{IntentID: transition.IntentID, Key: transition.Key, Generation: transition.Generation, Kind: transition.Kind, Status: PublicationPending, PayloadHash: transition.PayloadHash, PayloadRef: transition.PayloadRef, Target: *transition.Target, Attempts: 1, CompletionRequired: transition.CompletionRequired}
+	publication := PublicationState{IntentID: transition.IntentID, Key: transition.Key, Generation: transition.Generation, Kind: transition.Kind, Status: PublicationPending, PayloadHash: transition.PayloadHash, PayloadRef: transition.PayloadRef, Target: *transition.Target, Attempts: 1, CompletionRequired: *transition.CompletionRequired}
 	if snapshot.Publications == nil {
 		snapshot.Publications = map[PublicationIntentID]PublicationState{}
 	}
@@ -249,7 +252,7 @@ func supersedePublication(snapshot *WorkSnapshot, transition PublicationTransiti
 	}
 	old.Status = PublicationSuperseded
 	snapshot.Publications[old.IntentID] = old
-	snapshot.Publications[transition.IntentID] = PublicationState{IntentID: transition.IntentID, Key: transition.Key, Generation: transition.Generation, Kind: transition.Kind, Status: PublicationPending, PayloadHash: transition.PayloadHash, PayloadRef: transition.PayloadRef, Target: *transition.Target, Attempts: 1, CompletionRequired: transition.CompletionRequired}
+	snapshot.Publications[transition.IntentID] = PublicationState{IntentID: transition.IntentID, Key: transition.Key, Generation: transition.Generation, Kind: transition.Kind, Status: PublicationPending, PayloadHash: transition.PayloadHash, PayloadRef: transition.PayloadRef, Target: *transition.Target, Attempts: 1, CompletionRequired: *transition.CompletionRequired}
 	reduce(snapshot)
 	return nil
 }
@@ -278,7 +281,7 @@ func currentPublication(snapshot *WorkSnapshot, transition PublicationTransition
 }
 
 func validateImmutableHints(publication PublicationState, transition PublicationTransition) error {
-	if transition.Key != "" && transition.Key != publication.Key || transition.Kind != "" && transition.Kind != publication.Kind || transition.PayloadHash != "" && transition.PayloadHash != publication.PayloadHash || transition.PayloadRef != "" && transition.PayloadRef != publication.PayloadRef || transition.Target != nil && *transition.Target != publication.Target || transition.CompletionRequired != publication.CompletionRequired {
+	if transition.Key != "" && transition.Key != publication.Key || transition.Kind != "" && transition.Kind != publication.Kind || transition.PayloadHash != "" && transition.PayloadHash != publication.PayloadHash || transition.PayloadRef != "" && transition.PayloadRef != publication.PayloadRef || transition.Target != nil && *transition.Target != publication.Target || transition.CompletionRequired != nil && *transition.CompletionRequired != publication.CompletionRequired {
 		return invalidTransition("publication immutable identity does not match")
 	}
 	return nil

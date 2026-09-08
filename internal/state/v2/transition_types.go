@@ -274,7 +274,7 @@ type PublicationTransition struct {
 	Diagnostic         string              `json:"diagnostic,omitempty"`
 	Supersedes         PublicationIntentID `json:"supersedes,omitempty"`
 	Resolution         *ResolutionEvidence `json:"resolution,omitempty"`
-	CompletionRequired bool                `json:"completionRequired,omitempty"`
+	CompletionRequired *bool               `json:"completionRequired,omitempty"`
 	Blocker            *OperatorBlocker    `json:"blocker,omitempty"`
 }
 
