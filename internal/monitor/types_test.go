@@ -35,7 +35,7 @@ func TestSnapshotJSONUsesAggregateWireAndOmitsRuntimeIdentity(t *testing.T) {
 }
 
 func TestSnapshotJSONKeepsRequiredKeysWhenValuesAreEmpty(t *testing.T) {
-	data, err := json.Marshal(Snapshot{})
+	data, err := json.Marshal(Snapshot{EvidenceRefs: []string{}, Projects: []Project{{EvidenceRefs: []string{}, WorkItems: []WorkItem{}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +47,18 @@ func TestSnapshotJSONKeepsRequiredKeysWhenValuesAreEmpty(t *testing.T) {
 		if _, ok := wire[key]; !ok {
 			t.Fatalf("missing required top-level key %s in %s", key, data)
 		}
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	projects, ok := decoded["projects"].([]any)
+	if !ok || len(projects) != 1 {
+		t.Fatalf("projects = %#v", decoded["projects"])
+	}
+	project := projects[0].(map[string]any)
+	if _, ok := project["workItems"]; !ok {
+		t.Fatalf("missing empty workItems array: %s", data)
 	}
 }
 

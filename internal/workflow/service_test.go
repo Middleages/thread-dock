@@ -238,14 +238,14 @@ func TestSnapshotAggregatesRegisteredProjectAndWorkWithoutSideEffects(t *testing
 		t.Fatalf("projects = %#v", got.Projects)
 	}
 	project := got.Projects[0]
-	if project.Name != "Alpha" || project.State != string(work.State) || project.SyncStatus != work.SyncStatus || project.NextAction != work.NextAction || !reflect.DeepEqual(project.EvidenceRefs, work.EvidenceRefs) {
+	if project.Name != "Alpha" || project.State != string(work.State) || project.SyncStatus != work.SyncStatus || project.NextAction != "resolve" || !reflect.DeepEqual(project.EvidenceRefs, work.EvidenceRefs) {
 		t.Fatalf("project = %#v", project)
 	}
 	if len(project.WorkItems) != 1 {
 		t.Fatalf("work items = %#v", project.WorkItems)
 	}
 	item := project.WorkItems[0]
-	if item.WorkID != work.WorkID || item.Title != "Ship the thing" || item.Request != work.Contract.Request || item.State != string(work.State) || item.SyncStatus != work.SyncStatus || item.NextAction != work.NextAction || !reflect.DeepEqual(item.EvidenceRefs, work.EvidenceRefs) {
+	if item.WorkID != work.WorkID || item.Title != "Ship the thing" || item.Request != work.Contract.Request || item.State != string(work.State) || item.SyncStatus != work.SyncStatus || item.NextAction != "resolve" || !reflect.DeepEqual(item.EvidenceRefs, work.EvidenceRefs) {
 		t.Fatalf("work item = %#v", item)
 	}
 	if len(item.Tasks) != 2 || item.Tasks[0].TaskID != "task-2" || item.Tasks[0].RepoKey != "backend" || item.Tasks[1].TaskID != "task-1" || item.Tasks[1].RepoKey != "app" {
@@ -283,10 +283,46 @@ func TestSnapshotUsesWorkIDTitleFallbackAndDraftDefaults(t *testing.T) {
 func TestSnapshotOrdersWorkItemsByStateAndRecentActivity(t *testing.T) {
 	projects := &countingProjectStore{projects: []registry.Project{{ProjectID: "project-1", Name: "Project"}}}
 	newWork := func(id contractv2.WorkID, state statev2.WorkState, at time.Time) statev2.WorkSnapshot {
-		return statev2.WorkSnapshot{ProjectID: "project-1", WorkID: id, State: state, SyncStatus: "local", NextAction: string(state), Contract: contractv2.WorkItemContract{WorkID: id, ProjectID: "project-1", Tasks: []contractv2.Task{{TaskID: "activity"}}}, EvidenceRefs: []string{}, TaskStates: map[contractv2.TaskID]statev2.TaskExecutionState{"activity": {TaskID: "activity", Status: statev2.TaskPending, Invocation: &statev2.InvocationState{StartedAt: &at}}}, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}}
+		work := statev2.WorkSnapshot{ProjectID: "project-1", WorkID: id, State: state, SyncStatus: "local", NextAction: string(state), Contract: contractv2.WorkItemContract{WorkID: id, ProjectID: "project-1", Tasks: []contractv2.Task{{TaskID: "activity"}}}, EvidenceRefs: []string{}, TaskStates: map[contractv2.TaskID]statev2.TaskExecutionState{"activity": {TaskID: "activity", Status: statev2.TaskPending, Invocation: &statev2.InvocationState{StartedAt: &at}}}, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}}
+		if state == statev2.StateDraft {
+			work.Contract.Tasks = nil
+			work.TaskStates = map[contractv2.TaskID]statev2.TaskExecutionState{}
+		}
+		if state != statev2.StateDraft {
+			work.ContractHash = "contract-hash"
+			work.Control.ApprovedContractHash = "contract-hash"
+		}
+		switch state {
+		case statev2.StateNeedsOperator:
+			work.TaskStates["activity"] = statev2.TaskExecutionState{TaskID: "activity", Status: statev2.TaskNeedsOperator, Invocation: &statev2.InvocationState{StartedAt: &at}}
+		case statev2.StatePaused:
+			work.Control.PauseRequested = true
+		case statev2.StatePublicationPending:
+			work.TaskStates["activity"] = statev2.TaskExecutionState{TaskID: "activity", Status: statev2.TaskIntegrated, Invocation: &statev2.InvocationState{StartedAt: &at}}
+			work.Publications["intent"] = statev2.PublicationState{IntentID: "intent", Key: "issue", Generation: 1, Status: statev2.PublicationPending, CompletionRequired: true}
+		case statev2.StateReview:
+			work.TaskStates["activity"] = statev2.TaskExecutionState{TaskID: "activity", Status: statev2.TaskAccepted, Invocation: &statev2.InvocationState{StartedAt: &at}}
+		case statev2.StateRunning:
+			activity := work.TaskStates["activity"]
+			activity.Status = statev2.TaskRunning
+			work.TaskStates["activity"] = activity
+		case statev2.StateReadyForPR, statev2.StateCompleted:
+			work.TaskStates["activity"] = statev2.TaskExecutionState{TaskID: "activity", Status: statev2.TaskIntegrated, Invocation: &statev2.InvocationState{StartedAt: &at}}
+		case statev2.StateQueued:
+			activity := work.TaskStates["activity"]
+			activity.Status = statev2.TaskPending
+			work.TaskStates["activity"] = activity
+		}
+		return work
 	}
 	works := []statev2.WorkSnapshot{
 		newWork("queued", statev2.StateQueued, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+		newWork("draft", statev2.StateDraft, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+		newWork("completed", statev2.StateCompleted, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+		newWork("ready", statev2.StateReadyForPR, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+		newWork("running", statev2.StateRunning, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+		newWork("review", statev2.StateReview, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+		newWork("publication", statev2.StatePublicationPending, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
 		newWork("operator", statev2.StateNeedsOperator, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
 		newWork("paused", statev2.StatePaused, time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)),
 	}
@@ -295,8 +331,50 @@ func TestSnapshotOrdersWorkItemsByStateAndRecentActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	items := got.Projects[0].WorkItems
-	if len(items) != 3 || items[0].WorkID != "operator" || items[1].WorkID != "paused" || items[2].WorkID != "queued" {
+	want := []contractv2.WorkID{"operator", "paused", "publication", "review", "running", "ready", "queued", "completed", "draft"}
+	if len(items) != len(want) {
+		t.Fatalf("work count = %d, want %d", len(items), len(want))
+	}
+	for i, id := range want {
+		if items[i].WorkID != id {
+			t.Fatalf("work order[%d] = %q, want %q", i, items[i].WorkID, id)
+		}
+	}
+	if items[0].WorkID != "operator" || items[1].WorkID != "paused" {
 		t.Fatalf("work order = %#v", items)
+	}
+}
+
+func TestSnapshotOrdersEqualStateByRecentActivityThenWorkID(t *testing.T) {
+	projects := &countingProjectStore{projects: []registry.Project{{ProjectID: "project-1", Name: "Project"}}}
+	newWork := func(id contractv2.WorkID, at time.Time) statev2.WorkSnapshot {
+		return statev2.WorkSnapshot{ProjectID: "project-1", WorkID: id, State: statev2.StateQueued, ContractHash: "hash", Control: statev2.WorkControl{ApprovedContractHash: "hash"}, Contract: contractv2.WorkItemContract{WorkID: id, ProjectID: "project-1", Tasks: []contractv2.Task{{TaskID: "task"}}}, TaskStates: map[contractv2.TaskID]statev2.TaskExecutionState{"task": {TaskID: "task", Status: statev2.TaskPending, Invocation: &statev2.InvocationState{StartedAt: &at}}}, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}}
+	}
+	older := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	works := &countingWorkStore{works: []statev2.WorkSnapshot{newWork("z", older), newWork("b", newer), newWork("a", newer)}}
+	got, err := New(projects, works).Snapshot(context.Background(), newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := got.Projects[0].WorkItems
+	if want := []contractv2.WorkID{"a", "b", "z"}; len(items) != len(want) || items[0].WorkID != want[0] || items[1].WorkID != want[1] || items[2].WorkID != want[2] {
+		t.Fatalf("equal-state order = %#v, want %#v", items, want)
+	}
+}
+
+func TestSnapshotUsesProjectAndGlobalRepresentativesByPriority(t *testing.T) {
+	projects := &countingProjectStore{projects: []registry.Project{{ProjectID: "project-a", Name: "A"}, {ProjectID: "project-b", Name: "B"}}}
+	work := func(project contractv2.ProjectID, id contractv2.WorkID, state statev2.WorkState, task statev2.TaskStatus) statev2.WorkSnapshot {
+		return statev2.WorkSnapshot{ProjectID: project, WorkID: id, State: state, ContractHash: "hash", Control: statev2.WorkControl{ApprovedContractHash: "hash"}, Contract: contractv2.WorkItemContract{WorkID: id, ProjectID: project, Tasks: []contractv2.Task{{TaskID: "task"}}}, TaskStates: map[contractv2.TaskID]statev2.TaskExecutionState{"task": {TaskID: "task", Status: task}}, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}}
+	}
+	works := &countingWorkStore{works: []statev2.WorkSnapshot{work("project-a", "queued", statev2.StateQueued, statev2.TaskPending), work("project-a", "review", statev2.StateReview, statev2.TaskAccepted), work("project-b", "operator", statev2.StateNeedsOperator, statev2.TaskNeedsOperator)}}
+	got, err := New(projects, works).Snapshot(context.Background(), time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Projects[0].WorkItems[0].WorkID != "review" || got.Projects[1].WorkItems[0].WorkID != "operator" || got.State != string(statev2.StateNeedsOperator) || got.NextAction != "resolve" {
+		t.Fatalf("representatives = %#v global=%q/%q", got.Projects, got.State, got.NextAction)
 	}
 }
 
@@ -329,11 +407,141 @@ func TestSnapshotProjectsExposeTaskPublicationAndBoundedBlockerProjection(t *tes
 	}
 }
 
+func TestSnapshotMapsEveryTaskSummaryState(t *testing.T) {
+	projects := &countingProjectStore{projects: []registry.Project{{ProjectID: "project-1", Name: "Project"}}}
+	tasks := []contractv2.Task{
+		{TaskID: "passed", RepoKey: "app"}, {TaskID: "failed", RepoKey: "app"}, {TaskID: "pending", RepoKey: "app"},
+		{TaskID: "accepted", RepoKey: "app"}, {TaskID: "blocked", RepoKey: "app"}, {TaskID: "integrated", RepoKey: "app"},
+	}
+	states := map[contractv2.TaskID]statev2.TaskExecutionState{
+		"passed":     {TaskID: "passed", Status: statev2.TaskGatePassed},
+		"failed":     {TaskID: "failed", Status: statev2.TaskGateFailed},
+		"pending":    {TaskID: "pending", Status: statev2.TaskPending},
+		"accepted":   {TaskID: "accepted", Status: statev2.TaskAccepted},
+		"blocked":    {TaskID: "blocked", Status: statev2.TaskReviewBlocked},
+		"integrated": {TaskID: "integrated", Status: statev2.TaskIntegrated},
+	}
+	work := statev2.WorkSnapshot{ProjectID: "project-1", WorkID: "work-1", State: statev2.StateRunning, ContractHash: "hash", Control: statev2.WorkControl{ApprovedContractHash: "hash"}, Contract: contractv2.WorkItemContract{WorkID: "work-1", ProjectID: "project-1", Tasks: tasks}, TaskStates: states, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}}
+	got, err := New(projects, &countingWorkStore{works: []statev2.WorkSnapshot{work}}).Snapshot(context.Background(), time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[contractv2.TaskID][3]string{
+		"passed": {"passed", "pending", "pending"}, "failed": {"failed", "pending", "pending"}, "pending": {"pending", "pending", "pending"},
+		"accepted": {"passed", "accepted", "pending"}, "blocked": {"pending", "blocked", "pending"}, "integrated": {"passed", "accepted", "integrated"},
+	}
+	for _, task := range got.Projects[0].WorkItems[0].Tasks {
+		values, ok := want[task.TaskID]
+		if !ok || [3]string{task.Verification, task.Review, task.Merge} != values {
+			t.Fatalf("task %q summary = %#v, want %#v", task.TaskID, task, values)
+		}
+	}
+}
+
+func TestSnapshotSortsPublicationDetailsByKeyGenerationAndIntent(t *testing.T) {
+	projects := &countingProjectStore{projects: []registry.Project{{ProjectID: "project-1", Name: "Project"}}}
+	work := statev2.WorkSnapshot{ProjectID: "project-1", WorkID: "work-1", State: statev2.StateReadyForPR, Contract: contractv2.WorkItemContract{WorkID: "work-1", ProjectID: "project-1"}, TaskStates: map[contractv2.TaskID]statev2.TaskExecutionState{}, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{
+		"z": {IntentID: "z", Key: "a", Generation: 2}, "b": {IntentID: "b", Key: "a", Generation: 1}, "a": {IntentID: "a", Key: "a", Generation: 1}, "c": {IntentID: "c", Key: "b", Generation: 1},
+	}}
+	got, err := New(projects, &countingWorkStore{works: []statev2.WorkSnapshot{work}}).Snapshot(context.Background(), time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotOrder []string
+	for _, publication := range got.Projects[0].WorkItems[0].Publications {
+		gotOrder = append(gotOrder, publication.IntentID)
+	}
+	if want := []string{"a", "b", "z", "c"}; !reflect.DeepEqual(gotOrder, want) {
+		t.Fatalf("publication order = %#v, want %#v", gotOrder, want)
+	}
+}
+
+func TestSnapshotActivityUsesEachEvidenceTimestampAndProjectMaximum(t *testing.T) {
+	projects := &countingProjectStore{projects: []registry.Project{{ProjectID: "project-1", Name: "Project"}}}
+	times := []time.Time{
+		time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC), time.Date(2026, 9, 8, 2, 0, 0, 0, time.UTC),
+		time.Date(2026, 9, 8, 3, 0, 0, 0, time.UTC), time.Date(2026, 9, 8, 4, 0, 0, 0, time.UTC),
+		time.Date(2026, 9, 8, 5, 0, 0, 0, time.UTC), time.Date(2026, 9, 8, 6, 0, 0, 0, time.UTC),
+	}
+	work := statev2.WorkSnapshot{ProjectID: "project-1", WorkID: "work-1", State: statev2.StateReadyForPR, Contract: contractv2.WorkItemContract{WorkID: "work-1", ProjectID: "project-1", Tasks: []contractv2.Task{{TaskID: "task-1"}}}, TaskStates: map[contractv2.TaskID]statev2.TaskExecutionState{"task-1": {TaskID: "task-1", Status: statev2.TaskIntegrated}}, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}}
+	start := times[0]
+	work.TaskStates["task-1"] = statev2.TaskExecutionState{TaskID: "task-1", Status: statev2.TaskIntegrated, Invocation: &statev2.InvocationState{StartedAt: &start}}
+	got, err := New(projects, &countingWorkStore{works: []statev2.WorkSnapshot{work}}).Snapshot(context.Background(), times[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Projects[0].WorkItems[0].UpdatedAt.Equal(times[0]) || !got.Projects[0].UpdatedAt.Equal(times[0]) {
+		t.Fatalf("invocation activity = %v/%v", got.Projects[0].WorkItems[0].UpdatedAt, got.Projects[0].UpdatedAt)
+	}
+	mutations := []func(*statev2.WorkSnapshot){
+		func(s *statev2.WorkSnapshot) {
+			ended := times[1]
+			s.TaskStates["task-1"] = statev2.TaskExecutionState{TaskID: "task-1", Status: statev2.TaskIntegrated, Invocation: &statev2.InvocationState{EndedAt: &ended}}
+		},
+		func(s *statev2.WorkSnapshot) {
+			s.TaskStates["task-1"] = statev2.TaskExecutionState{TaskID: "task-1", Status: statev2.TaskIntegrated, Gate: &statev2.GateEvidence{ObservedAt: times[2]}}
+		},
+		func(s *statev2.WorkSnapshot) {
+			s.TaskStates["task-1"] = statev2.TaskExecutionState{TaskID: "task-1", Status: statev2.TaskIntegrated, Review: &statev2.ReviewEvidence{ObservedAt: times[3]}}
+		},
+		func(s *statev2.WorkSnapshot) {
+			s.TaskStates["task-1"] = statev2.TaskExecutionState{TaskID: "task-1", Status: statev2.TaskIntegrated, Integration: &statev2.IntegrationEvidence{ObservedAt: times[4]}}
+		},
+		func(s *statev2.WorkSnapshot) {
+			s.Publications["intent"] = statev2.PublicationState{IntentID: "intent", Receipt: &statev2.PublicationReceipt{PublishedAt: times[5]}}
+		},
+	}
+	for i, mutate := range mutations {
+		current := work
+		current.TaskStates = map[contractv2.TaskID]statev2.TaskExecutionState{"task-1": {TaskID: "task-1", Status: statev2.TaskIntegrated}}
+		current.Publications = map[statev2.PublicationIntentID]statev2.PublicationState{}
+		mutate(&current)
+		got, err := New(projects, &countingWorkStore{works: []statev2.WorkSnapshot{current}}).Snapshot(context.Background(), times[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := times[i+1]
+		if !got.Projects[0].WorkItems[0].UpdatedAt.Equal(want) || !got.Projects[0].UpdatedAt.Equal(want) {
+			t.Fatalf("activity source %d = %v/%v, want %v", i, got.Projects[0].WorkItems[0].UpdatedAt, got.Projects[0].UpdatedAt, want)
+		}
+	}
+}
+
 func TestSnapshotRejectsNonUTCObservationTime(t *testing.T) {
 	projects := &countingProjectStore{projects: []registry.Project{{ProjectID: "project-1", Name: "Project"}}}
 	works := &countingWorkStore{}
 	_, err := New(projects, works).Snapshot(context.Background(), time.Date(2026, 9, 8, 12, 0, 0, 0, time.FixedZone("KST", 9*60*60)))
 	if err == nil {
 		t.Fatal("Snapshot accepted non-UTC observation time")
+	}
+}
+
+func TestSnapshotUsesReducerDerivedStateWithoutMutatingStoreSnapshot(t *testing.T) {
+	projects := &countingProjectStore{projects: []registry.Project{{ProjectID: "project-1", Name: "Project"}}}
+	work := statev2.WorkSnapshot{
+		ProjectID: "project-1", WorkID: "work-1", State: statev2.StateQueued, SyncStatus: "raw-sync", NextAction: "raw-action",
+		ContractHash: "contract-hash", Control: statev2.WorkControl{ApprovedContractHash: "contract-hash"},
+		Contract:     contractv2.WorkItemContract{WorkID: "work-1", ProjectID: "project-1", Tasks: []contractv2.Task{{TaskID: "task-1", RepoKey: "app"}}},
+		TaskStates:   map[contractv2.TaskID]statev2.TaskExecutionState{"task-1": {TaskID: "task-1", Status: statev2.TaskAccepted}},
+		Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}, EvidenceRefs: []string{},
+	}
+	store := &countingWorkStore{works: []statev2.WorkSnapshot{work}}
+	got, err := New(projects, store).Snapshot(context.Background(), time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := got.Projects[0].WorkItems[0]
+	if item.State != string(statev2.StateReview) || item.NextAction != "integrate" {
+		t.Fatalf("derived projection = %q/%q, want review/integrate", item.State, item.NextAction)
+	}
+	if store.works[0].State != statev2.StateQueued || store.works[0].NextAction != "raw-action" || store.works[0].SyncStatus != "raw-sync" {
+		t.Fatalf("store snapshot was mutated: %#v", store.works[0])
+	}
+}
+
+func TestSnapshotRejectsZeroObservationTime(t *testing.T) {
+	_, err := New(&countingProjectStore{}, &countingWorkStore{}).Snapshot(context.Background(), time.Time{})
+	if err == nil {
+		t.Fatal("Snapshot accepted zero observation time")
 	}
 }

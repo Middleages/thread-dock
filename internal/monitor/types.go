@@ -39,7 +39,7 @@ type Project struct {
 	NextAction   string               `json:"nextAction"`
 	EvidenceRefs []string             `json:"evidenceRefs"`
 	UpdatedAt    time.Time            `json:"updatedAt,omitempty"`
-	WorkItems    []WorkItem           `json:"workItems,omitempty"`
+	WorkItems    []WorkItem           `json:"workItems"`
 }
 
 type WorkItem struct {
@@ -51,7 +51,7 @@ type WorkItem struct {
 	NextAction   string              `json:"nextAction"`
 	EvidenceRefs []string            `json:"evidenceRefs"`
 	UpdatedAt    time.Time           `json:"updatedAt,omitempty"`
-	Tasks        []TaskDetail        `json:"tasks,omitempty"`
+	Tasks        []TaskDetail        `json:"tasks"`
 	Blocker      string              `json:"blocker,omitempty"`
 	Publications []PublicationDetail `json:"publications"`
 	Decisions    []DecisionDetail    `json:"decisions,omitempty"`

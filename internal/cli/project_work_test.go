@@ -298,10 +298,13 @@ func mustJSON(value any) string {
 }
 
 func TestProjectStatusUsesServiceSnapshotOnce(t *testing.T) {
-	service := &fakeWorkflowService{snapshot: monitor.Snapshot{SchemaVersion: 2, EvidenceRefs: []string{}, Projects: []monitor.Project{}}}
+	service := &fakeWorkflowService{snapshot: monitor.Snapshot{SchemaVersion: 2, EvidenceRefs: []string{}, Projects: []monitor.Project{{ProjectID: "project-1", EvidenceRefs: []string{}, WorkItems: []monitor.WorkItem{}}}}}
 	code, out, errOut := runWorkflow(t, service, []string{"project", "status", "--all", "--json"})
 	if code != 0 || errOut != "" || out == "" || len(service.calls) != 1 || !strings.HasPrefix(service.calls[0], "snapshot:") {
 		t.Fatalf("code=%d out=%q err=%q calls=%v", code, out, errOut, service.calls)
+	}
+	if !strings.Contains(out, `"workItems":[]`) {
+		t.Fatalf("missing empty workItems array: %s", out)
 	}
 }
 

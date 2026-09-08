@@ -176,19 +176,21 @@ func (s *Service) Snapshot(ctx context.Context, at time.Time) (monitor.Snapshot,
 		if len(work.Contract.IssueDrafts) > 0 && strings.TrimSpace(work.Contract.IssueDrafts[0].Title) != "" {
 			title = work.Contract.IssueDrafts[0].Title
 		}
-		if err := normalizeProjectionState(&work); err != nil {
-			return monitor.Snapshot{}, fmt.Errorf("work %q: %w", work.WorkID, err)
+		derived := work
+		if err := normalizeProjectionState(&derived); err != nil {
+			return monitor.Snapshot{}, fmt.Errorf("work %q: %w", derived.WorkID, err)
 		}
-		tasks := make([]monitor.TaskDetail, 0, len(work.Contract.Tasks))
-		for _, task := range work.Contract.Tasks {
-			taskState, ok := work.TaskStates[task.TaskID]
+		statev2.Reduce(&derived)
+		tasks := make([]monitor.TaskDetail, 0, len(derived.Contract.Tasks))
+		for _, task := range derived.Contract.Tasks {
+			taskState, ok := derived.TaskStates[task.TaskID]
 			if !ok {
-				return monitor.Snapshot{}, fmt.Errorf("work %q is missing task state %q", work.WorkID, task.TaskID)
+				return monitor.Snapshot{}, fmt.Errorf("work %q is missing task state %q", derived.WorkID, task.TaskID)
 			}
 			tasks = append(tasks, taskDetail(task.TaskID, task.RepoKey, taskState))
 		}
-		publications := make([]monitor.PublicationDetail, 0, len(work.Publications))
-		for _, publication := range work.Publications {
+		publications := make([]monitor.PublicationDetail, 0, len(derived.Publications))
+		for _, publication := range derived.Publications {
 			detail := monitor.PublicationDetail{IntentID: string(publication.IntentID), Key: string(publication.Key), Generation: publication.Generation, Kind: string(publication.Kind), Status: string(publication.Status), Attempts: publication.Attempts}
 			if publication.Receipt != nil {
 				detail.URL = publication.Receipt.URL
@@ -204,17 +206,17 @@ func (s *Service) Snapshot(ctx context.Context, at time.Time) (monitor.Snapshot,
 			}
 			return publications[i].IntentID < publications[j].IntentID
 		})
-		updatedAt := workActivity(work)
+		updatedAt := workActivity(derived)
 		item := monitor.WorkItem{
-			WorkID:       work.WorkID,
+			WorkID:       derived.WorkID,
 			Title:        title,
-			Request:      work.Contract.Request,
-			State:        string(work.State),
-			SyncStatus:   work.SyncStatus,
-			NextAction:   work.NextAction,
-			EvidenceRefs: append([]string{}, work.EvidenceRefs...),
+			Request:      derived.Contract.Request,
+			State:        string(derived.State),
+			SyncStatus:   derived.SyncStatus,
+			NextAction:   derived.NextAction,
+			EvidenceRefs: append([]string{}, derived.EvidenceRefs...),
 			Tasks:        tasks,
-			Blocker:      blockerKind(work.Control.Blocker),
+			Blocker:      blockerKind(derived.Control.Blocker),
 			Publications: publications,
 			Decisions:    []monitor.DecisionDetail{},
 			Handoffs:     []monitor.HandoffDetail{},

@@ -17,6 +17,10 @@ func reduce(snapshot *WorkSnapshot) {
 	} else if publicationSettled {
 		snapshot.SyncStatus = "synced"
 	}
+	if snapshot.State == StateDraft && snapshot.Control.ApprovedContractHash == "" && len(snapshot.TaskStates) == 0 && len(snapshot.Publications) == 0 {
+		snapshot.NextAction = ""
+		return
+	}
 	if snapshot.Control.ApprovedContractHash == "" {
 		snapshot.State = StateAwaitingApproval
 		snapshot.NextAction = "approve"
@@ -127,6 +131,10 @@ func reduce(snapshot *WorkSnapshot) {
 			} else {
 				snapshot.SyncStatus = "pending"
 			}
+		}
+		if snapshot.State == StateCompleted && (len(snapshot.Publications) == 0 || publicationSettled) {
+			snapshot.NextAction = ""
+			return
 		}
 		snapshot.State = StateReadyForPR
 		snapshot.NextAction = "prepare_docs"
