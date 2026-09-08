@@ -129,6 +129,13 @@ core는 typed `Store.Apply`, 승인·pause/resume·resolution, builder/reviewer 
 
 Docker Go 1.27 `make check`가 최종 통합 코드에서 통과했다. native WSL Go, Windows/Wails bridge, 실제 runtime과 GitHub Projects/Wiki publication은 아직 `unverified`다. 다음 행동은 coordinator 계획을 검토하고 owner lease→publication queue→async runtime→restart reconcile 순서로 실행하는 것이다. 이 계획이 끝나기 전에는 Publisher/runtime adapter를 독립적으로 launch하지 않는다.
 
+Task review breaker에서 남은 항목은 production blocker가 아니라 검증 기록·test precision이다.
+Task 4의 초기 RED 일부는 최종 동작을 증명하지 못하므로 audit gap으로 남겼다. Task 5의 일부
+publication matrix는 named guard보다 앞선 guard에서 실패하며, Task 6의 task count·empty-array
+assertion도 더 엄밀하게 만들 수 있다. final review가 찾은 실제 authorization·lineage 결함은
+별도 residual Task와 fresh review로 수정했다. 후속 변경이 이 영역을 건드리면 해당 parked test를
+먼저 보강하고 동일한 성공 근거로 간주하지 않는다.
+
 기존 contract, state, pathscope, worktree, integration과 Herdr의 좁은 기능을 검토해
 재사용한다. 기존 자동 병합·세션 복구 상태 기계 전체를 보존할 의무는 없다.
 기존 project-template은 v1 자료이며 새 MVP 자동 설치에 사용하기 전에 새 계약에 맞춰 정리한다.
