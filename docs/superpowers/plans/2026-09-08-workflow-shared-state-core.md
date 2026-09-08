@@ -329,7 +329,7 @@ Begin requires approved/non-paused/non-blocked Work and records pending before a
 
 - [ ] **Step 3: Write failing reconciliation tests**
 
-`publication_reconciled` adopts an exact remote match as completed, restores proven-not-published to failed, and preserves conflict for ambiguous evidence. A late request for an older generation cannot change the current generation. Running sync failure changes SyncStatus only; required post-merge failure derives publication_pending without changing Task evidence.
+`publication_reconciled` adopts an exact remote match as completed, restores proven-not-published to failed, and preserves conflict for ambiguous evidence. A late request for an older generation cannot change the current generation. Publication `Attempts` increments on begin/retry dispatch (never merely because a publication fails). Running sync failure changes SyncStatus only; required post-merge failure derives publication_pending without changing Task evidence.
 
 - [ ] **Step 4: Verify RED, implement transitions/reducer, verify GREEN**
 

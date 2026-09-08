@@ -77,7 +77,9 @@ func reduce(snapshot *WorkSnapshot) {
 		switch task.Status {
 		case TaskInvocationReserved:
 			snapshot.State = StateRunning
-			if task.Invocation != nil && task.Invocation.LaunchRequested {
+			if snapshot.Control.PauseRequested {
+				snapshot.NextAction = "reconcile"
+			} else if task.Invocation != nil && task.Invocation.LaunchRequested {
 				snapshot.NextAction = "reconcile"
 			} else {
 				snapshot.NextAction = "launch"

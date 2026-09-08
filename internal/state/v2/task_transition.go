@@ -32,10 +32,10 @@ func applyTaskTransition(snapshot *WorkSnapshot, transition TaskTransition, requ
 	if transition.Role != roleBuilder && transition.Role != roleReviewer {
 		return invalidTransition("invalid invocation role")
 	}
-	if snapshot.Control.ApprovedContractHash == "" {
+	if !approvedSnapshot(snapshot) {
 		return invalidTransition("work is not approved")
 	}
-	if snapshot.Control.Blocker != nil {
+	if snapshot.Control.Blocker != nil && !taskCleanupAction(transition.Action) {
 		return invalidTransition("work has an operator blocker")
 	}
 	switch transition.Action {
@@ -58,6 +58,9 @@ func applyTaskTransition(snapshot *WorkSnapshot, transition TaskTransition, requ
 			return err
 		}
 	case TaskBeginLaunch:
+		if snapshot.Control.PauseRequested {
+			return invalidTransition("work pause is requested")
+		}
 		if err := beginLaunch(&task, transition); err != nil {
 			return err
 		}
@@ -108,6 +111,9 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 	if err := validateReservationInputs(transition); err != nil {
 		return err
 	}
+	if err := validateExecutionIdentity(snapshot, task, transition); err != nil {
+		return err
+	}
 	isRepair := transition.Role == roleBuilder && !transition.Transient && (task.Status == TaskGateFailed || task.Status == TaskReviewBlocked)
 	isRecovery := transition.Transient && task.Status == TaskTerminated
 	if isRepair {
@@ -129,7 +135,7 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 			}
 		}
 		task.BuilderAttempt = 1
-		task.LogicalWork = &LogicalWorkState{LogicalWorkID: transition.LogicalWorkID, Role: transition.Role, BuilderAttempt: 1, Purpose: "task invocation"}
+		task.LogicalWork = newLogicalWorkState(transition, 1, 0, 0)
 	} else if task.Status == TaskGatePassed && transition.Role == roleReviewer {
 		if transition.ReturnStage != TaskGatePassed || transition.BuilderAttempt != task.BuilderAttempt || task.BuilderAttempt == 0 || task.Candidate == nil || task.Gate == nil || task.LogicalWork == nil {
 			return invalidTransition("invalid reviewer reservation")
@@ -147,7 +153,7 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 			}
 			// Initial reviewer work is distinct while candidate and gate evidence
 			// remain attached to the task.
-			task.LogicalWork = &LogicalWorkState{LogicalWorkID: transition.LogicalWorkID, Role: transition.Role, BuilderAttempt: task.BuilderAttempt, Purpose: "task invocation"}
+			task.LogicalWork = newLogicalWorkState(transition, task.BuilderAttempt, task.RepairCount, task.RecoveryCount)
 		}
 		task.Invocation = nil
 	} else {
@@ -159,6 +165,9 @@ func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transit
 		}
 		if !reservationStage(task.Status, transition.Role, transition.ReturnStage) {
 			return invalidTransition("task is not at a reservable stage")
+		}
+		if err := matchLogicalWorkExecution(task.LogicalWork, transition); err != nil {
+			return err
 		}
 	}
 	if transition.Role == roleReviewer && (task.Status != TaskGatePassed || transition.ReturnStage != TaskGatePassed) {
@@ -186,7 +195,7 @@ func validateReservationInputs(transition TaskTransition) error {
 	if strings.TrimSpace(transition.Invocation.LogicalProfile) == "" || strings.TrimSpace(transition.Invocation.RuntimeFingerprint) == "" {
 		return invalidTransition("logical profile and runtime fingerprint are required")
 	}
-	if strings.TrimSpace(transition.Worktree.CanonicalPath) == "" || strings.TrimSpace(transition.Worktree.GitCommonDir) == "" || strings.TrimSpace(transition.Worktree.Branch) == "" || strings.TrimSpace(transition.Worktree.BaseSHA) == "" {
+	if strings.TrimSpace(transition.Worktree.CanonicalPath) == "" || strings.TrimSpace(transition.Worktree.GitCommonDir) == "" || strings.TrimSpace(transition.Worktree.Branch) == "" || !validSHA(transition.Worktree.BaseSHA) {
 		return invalidTransition("complete worktree identity is required")
 	}
 	if transition.Invocation.ProviderIdentity != "" || transition.Invocation.ProviderSession != "" || transition.Invocation.ProviderPane != "" || transition.Invocation.ProviderProcess != "" {
@@ -211,6 +220,9 @@ func reserveRepair(snapshot *WorkSnapshot, task *TaskExecutionState, transition 
 	}
 	if task.LogicalWork == nil || task.LogicalWork.Role != priorRole || task.LogicalWork.BuilderAttempt != task.BuilderAttempt || strings.TrimSpace(string(transition.LogicalWorkID)) == "" || transition.LogicalWorkID == task.LogicalWork.LogicalWorkID {
 		return invalidTransition("repair reservation has invalid prior logical work")
+	}
+	if err := validateExecutionIdentity(snapshot, task, transition); err != nil {
+		return err
 	}
 	if task.RepairCount >= task.RepairLimit {
 		if transition.Blocker == nil || transition.Blocker.Kind != BlockerKindRepairBudgetExhausted || transition.Blocker.TaskID != task.TaskID || strings.TrimSpace(transition.Blocker.OperatorRef) == "" || strings.TrimSpace(transition.Blocker.Diagnostic) == "" {
@@ -242,7 +254,8 @@ func reserveRepair(snapshot *WorkSnapshot, task *TaskExecutionState, transition 
 	task.RepairCount++
 	task.BuilderAttempt++
 	task.Candidate, task.Gate, task.Review, task.Integration = nil, nil, nil, nil
-	task.LogicalWork = &LogicalWorkState{LogicalWorkID: transition.LogicalWorkID, Role: roleBuilder, BuilderAttempt: task.BuilderAttempt, Purpose: "task invocation", RepairCount: task.RepairCount, RecoveryCount: task.RecoveryCount, RepairBudgetDebited: true}
+	task.LogicalWork = newLogicalWorkState(transition, task.BuilderAttempt, task.RepairCount, task.RecoveryCount)
+	task.LogicalWork.RepairBudgetDebited = true
 	task.Invocation = nil
 	if err := installInvocation(task, transition, requestID); err != nil {
 		return err
@@ -268,6 +281,9 @@ func reserveRecovery(snapshot *WorkSnapshot, task *TaskExecutionState, transitio
 		snapshot.TaskStates[task.TaskID] = *task
 		reduce(snapshot)
 		return nil
+	}
+	if err := validateExecutionIdentity(snapshot, task, transition); err != nil {
+		return err
 	}
 	task.RecoveryCount++
 	if task.LogicalWork != nil {
@@ -572,10 +588,7 @@ func reconcileNotStarted(task *TaskExecutionState, transition TaskTransition) er
 	if err := validateDiagnostic(transition.Resolution.Diagnostic); err != nil {
 		return invalidTransition("resolution diagnostic: %v", err)
 	}
-	if len(task.PriorAttempts) >= MaxPriorAttempts {
-		return invalidTransition("prior attempt summary limit reached")
-	}
-	task.PriorAttempts = append(task.PriorAttempts, AttemptSummary{BuilderAttempt: task.BuilderAttempt, Outcome: "abandoned_not_started", FailureReason: transition.Reason, Diagnostic: transition.Resolution.Diagnostic})
+	appendAttemptSummary(task, AttemptSummary{BuilderAttempt: task.BuilderAttempt, Outcome: "abandoned_not_started", FailureReason: transition.Reason, Diagnostic: transition.Resolution.Diagnostic})
 	return restoreAfterReconcile(task)
 }
 
@@ -651,5 +664,111 @@ func cloneWorktree(worktree *WorktreeIdentity) *WorktreeIdentity {
 		return nil
 	}
 	clone := *worktree
+	if worktree.IntegratedDependencies != nil {
+		clone.IntegratedDependencies = make(map[contractv2.TaskID]string, len(worktree.IntegratedDependencies))
+		for id, head := range worktree.IntegratedDependencies {
+			clone.IntegratedDependencies[id] = head
+		}
+	}
 	return &clone
+}
+
+func approvedSnapshot(snapshot *WorkSnapshot) bool {
+	return snapshot != nil && snapshot.Control.ApprovedContractHash != "" && snapshot.Control.ApprovalRef != "" && snapshot.Control.ApprovedContractHash == snapshot.ContractHash
+}
+
+func taskCleanupAction(action TaskAction) bool {
+	switch action {
+	case TaskMarkRunning, TaskRequestTermination, TaskConfirmTermination, TaskReconcileNotStarted:
+		return true
+	default:
+		return false
+	}
+}
+
+func newLogicalWorkState(transition TaskTransition, attempt, repairs, recoveries uint32) *LogicalWorkState {
+	return &LogicalWorkState{LogicalWorkID: transition.LogicalWorkID, Role: transition.Role, BuilderAttempt: attempt, Purpose: "task invocation", LogicalProfile: transition.Invocation.LogicalProfile, RuntimeFingerprint: transition.Invocation.RuntimeFingerprint, Worktree: cloneWorktree(transition.Worktree), RepairCount: repairs, RecoveryCount: recoveries}
+}
+
+func validateExecutionIdentity(snapshot *WorkSnapshot, task *TaskExecutionState, transition TaskTransition) error {
+	if transition.Invocation == nil || transition.Worktree == nil {
+		return invalidTransition("execution identity is required")
+	}
+	expected := ""
+	if transition.Role == roleBuilder {
+		expected = snapshot.Contract.ExecutionProfiles.Builder
+	} else if transition.Role == roleReviewer {
+		expected = snapshot.Contract.ExecutionProfiles.Reviewer
+	}
+	if transition.Invocation.LogicalProfile != expected {
+		return invalidTransition("logical profile does not match contract role")
+	}
+	if !validSHA(transition.Worktree.BaseSHA) {
+		return invalidTransition("worktree base SHA must be lowercase 40-hex")
+	}
+	if err := validateIntegratedDependencies(snapshot, task.TaskID, transition.Worktree.IntegratedDependencies); err != nil {
+		return err
+	}
+	return nil
+}
+
+func matchLogicalWorkExecution(logical *LogicalWorkState, transition TaskTransition) error {
+	if logical == nil || logical.LogicalProfile != transition.Invocation.LogicalProfile || logical.RuntimeFingerprint != transition.Invocation.RuntimeFingerprint || logical.Worktree == nil || !worktreesEqual(logical.Worktree, transition.Worktree) {
+		return invalidTransition("reservation execution identity does not match logical work")
+	}
+	return nil
+}
+
+func worktreesEqual(a, b *WorktreeIdentity) bool {
+	if a == nil || b == nil || a.CanonicalPath != b.CanonicalPath || a.GitCommonDir != b.GitCommonDir || a.Branch != b.Branch || a.BaseSHA != b.BaseSHA || len(a.IntegratedDependencies) != len(b.IntegratedDependencies) {
+		return false
+	}
+	for id, head := range a.IntegratedDependencies {
+		if b.IntegratedDependencies[id] != head {
+			return false
+		}
+	}
+	return true
+}
+
+func validateIntegratedDependencies(snapshot *WorkSnapshot, taskID contractv2.TaskID, got map[contractv2.TaskID]string) error {
+	var task *contractv2.Task
+	for i := range snapshot.Contract.Tasks {
+		if snapshot.Contract.Tasks[i].TaskID == taskID {
+			task = &snapshot.Contract.Tasks[i]
+			break
+		}
+	}
+	if task == nil {
+		return invalidTransition("task is not in contract")
+	}
+	if len(got) != len(task.DependsOn) {
+		return invalidTransition("integrated dependency heads must exactly match task dependencies")
+	}
+	for _, depID := range task.DependsOn {
+		dep, ok := snapshot.TaskStates[depID]
+		if !ok || dep.Status != TaskIntegrated || dep.Integration == nil || got[depID] != dep.Integration.IntegrationHEAD {
+			return invalidTransition("integrated dependency head does not match dependency evidence")
+		}
+	}
+	for depID := range got {
+		found := false
+		for _, expected := range task.DependsOn {
+			if depID == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return invalidTransition("integrated dependency map contains an extra task")
+		}
+	}
+	return nil
+}
+
+func appendAttemptSummary(task *TaskExecutionState, summary AttemptSummary) {
+	if len(task.PriorAttempts) >= MaxPriorAttempts {
+		task.PriorAttempts = task.PriorAttempts[len(task.PriorAttempts)-MaxPriorAttempts+1:]
+	}
+	task.PriorAttempts = append(task.PriorAttempts, summary)
 }

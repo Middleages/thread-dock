@@ -8,7 +8,7 @@ import (
 )
 
 func applyPublicationTransition(snapshot *WorkSnapshot, transition PublicationTransition) error {
-	if snapshot.Control.ApprovedContractHash == "" {
+	if !approvedSnapshot(snapshot) {
 		return invalidTransition("work is not approved")
 	}
 	if strings.TrimSpace(string(transition.IntentID)) == "" {
@@ -83,6 +83,9 @@ func beginPublication(snapshot *WorkSnapshot, transition PublicationTransition) 
 		current := publicationForGeneration(snapshot, transition.Key, max)
 		if current.Status != PublicationCompleted {
 			return invalidTransition("new publication generation requires completed prior generation")
+		}
+		if transition.Kind != current.Kind || transition.Target == nil || *transition.Target != current.Target || transition.CompletionRequired == nil || *transition.CompletionRequired != current.CompletionRequired {
+			return invalidTransition("publication generation lineage does not match prior generation")
 		}
 	}
 	if transition.Generation != max+1 {
@@ -240,7 +243,7 @@ func supersedePublication(snapshot *WorkSnapshot, transition PublicationTransiti
 	if err := validateDiagnostic(transition.Resolution.Diagnostic); err != nil {
 		return invalidTransition("supersede resolution: %v", err)
 	}
-	if transition.Generation != old.Generation+1 || transition.Key != old.Key || transition.Target == nil || *transition.Target != old.Target {
+	if transition.Generation != old.Generation+1 || transition.Key != old.Key || transition.Kind != old.Kind || transition.CompletionRequired == nil || *transition.CompletionRequired != old.CompletionRequired || transition.Target == nil || *transition.Target != old.Target {
 		return invalidTransition("publication supersede identity does not match prior generation")
 	}
 	if _, exists := snapshot.Publications[transition.IntentID]; exists {

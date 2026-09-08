@@ -150,6 +150,22 @@ func validateTaskStates(s WorkSnapshot) error {
 				return fmt.Errorf("task %q active invocation is absent from history", key)
 			}
 		}
+		if task.Worktree != nil {
+			if err := validateWorktreeIdentity(*task.Worktree); err != nil {
+				return fmt.Errorf("task %q: %w", key, err)
+			}
+			if err := validateIntegratedDependencies(&s, key, task.Worktree.IntegratedDependencies); err != nil {
+				return fmt.Errorf("task %q: %w", key, err)
+			}
+		}
+		if task.LogicalWork != nil && task.LogicalWork.Worktree != nil {
+			if err := validateWorktreeIdentity(*task.LogicalWork.Worktree); err != nil {
+				return fmt.Errorf("task %q logical work: %w", key, err)
+			}
+			if err := validateIntegratedDependencies(&s, key, task.LogicalWork.Worktree.IntegratedDependencies); err != nil {
+				return fmt.Errorf("task %q logical work: %w", key, err)
+			}
+		}
 		for _, attempt := range task.PriorAttempts {
 			if err := validateDiagnostic(attempt.Diagnostic); err != nil {
 				return fmt.Errorf("task %q: %w", key, err)
@@ -209,10 +225,17 @@ func validateTaskStates(s WorkSnapshot) error {
 				return fmt.Errorf("publication key %q has non-contiguous generations", key)
 			}
 		}
-		for _, id := range gens {
+		for gen, id := range gens {
 			publication := s.Publications[id]
 			if publication.Status == PublicationSuperseded && publication.Generation >= max {
 				return fmt.Errorf("superseded publication %q has no newer generation", id)
+			}
+			if gen < max && publication.Status != PublicationCompleted && publication.Status != PublicationSuperseded {
+				return fmt.Errorf("publication %q has impossible prior-generation status %q", id, publication.Status)
+			}
+			current := publicationForGeneration(&s, key, max)
+			if publication.Target != current.Target || publication.Kind != current.Kind || publication.CompletionRequired != current.CompletionRequired {
+				return fmt.Errorf("publication key %q has inconsistent target lineage", key)
 			}
 		}
 	}
@@ -545,6 +568,12 @@ func validateInvocation(task TaskExecutionState) error {
 	if task.LogicalWork == nil || task.LogicalWork.LogicalWorkID != inv.LogicalWorkID || task.LogicalWork.Role != inv.Role || task.LogicalWork.BuilderAttempt != task.BuilderAttempt {
 		return errors.New("invocation logical work does not match task")
 	}
+	if task.LogicalWork.LogicalProfile != "" && task.LogicalWork.LogicalProfile != inv.LogicalProfile || task.LogicalWork.RuntimeFingerprint != "" && task.LogicalWork.RuntimeFingerprint != inv.RuntimeFingerprint {
+		return errors.New("invocation execution identity does not match logical work")
+	}
+	if (task.LogicalWork.Worktree == nil) != (task.Worktree == nil) || task.LogicalWork.Worktree != nil && !worktreesEqual(task.LogicalWork.Worktree, task.Worktree) {
+		return errors.New("invocation worktree does not match logical work")
+	}
 	return nil
 }
 
@@ -554,6 +583,23 @@ func validateDiagnostic(value string) error {
 	}
 	if len([]byte(value)) > MaxDiagnosticBytes {
 		return fmt.Errorf("diagnostic exceeds %d bytes", MaxDiagnosticBytes)
+	}
+	return nil
+}
+
+func validateWorktreeIdentity(worktree WorktreeIdentity) error {
+	if strings.TrimSpace(worktree.CanonicalPath) == "" || strings.TrimSpace(worktree.GitCommonDir) == "" || strings.TrimSpace(worktree.Branch) == "" || !validSHA(worktree.BaseSHA) {
+		return errors.New("invalid worktree identity")
+	}
+	seen := make(map[contractv2.TaskID]struct{}, len(worktree.IntegratedDependencies))
+	for id, head := range worktree.IntegratedDependencies {
+		if strings.TrimSpace(string(id)) == "" || !validSHA(head) {
+			return errors.New("invalid integrated dependency head")
+		}
+		if _, ok := seen[id]; ok {
+			return errors.New("duplicate integrated dependency")
+		}
+		seen[id] = struct{}{}
 	}
 	return nil
 }

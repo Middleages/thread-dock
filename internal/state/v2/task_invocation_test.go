@@ -25,7 +25,7 @@ func builderReserveTransition(at time.Time) TaskTransition {
 		TaskID: "task-1", Action: TaskReserveInvocation, InvocationID: "inv-1",
 		LogicalWorkID: "logical-1", Role: "builder", ReturnStage: TaskPending,
 		BuilderAttempt: 1, At: at,
-		Worktree:   &WorktreeIdentity{CanonicalPath: "/worktree", GitCommonDir: "/repo/.git", Branch: "agent/task-1", BaseSHA: "base"},
+		Worktree:   &WorktreeIdentity{CanonicalPath: "/worktree", GitCommonDir: "/repo/.git", Branch: "agent/task-1", BaseSHA: "0123456789012345678901234567890123456789"},
 		Invocation: &InvocationState{LogicalProfile: "builder", RuntimeFingerprint: "runtime-v1"},
 	}
 }
@@ -97,7 +97,7 @@ func TestReviewerUsesSharedLifecycleAndPreservesCandidateAndGate(t *testing.T) {
 	state.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: "candidate"}
 	state.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: "candidate", Passed: true, ObservedAt: invocationAt(1)}
 	s.TaskStates["task-1"] = state
-	reserve := TaskTransition{TaskID: "task-1", Action: TaskReserveInvocation, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(2), Worktree: &WorktreeIdentity{CanonicalPath: "/review", GitCommonDir: "/repo/.git", Branch: "main", BaseSHA: "base"}, Invocation: &InvocationState{LogicalProfile: "reviewer", RuntimeFingerprint: "runtime-v1"}}
+	reserve := TaskTransition{TaskID: "task-1", Action: TaskReserveInvocation, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(2), Worktree: &WorktreeIdentity{CanonicalPath: "/review", GitCommonDir: "/repo/.git", Branch: "main", BaseSHA: "0123456789012345678901234567890123456789"}, Invocation: &InvocationState{LogicalProfile: "reviewer", RuntimeFingerprint: "runtime-v1"}}
 	if err := applyTransition(&s, TransitionRequest{Task: &reserve}); err != nil {
 		t.Fatalf("reviewer reserve: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestReviewerRereservationPreservesExistingLogicalWork(t *testing.T) {
 	state.Gate = &GateEvidence{BuilderAttempt: 3, CandidateSHA: "candidate", Passed: true, ObservedAt: invocationAt(1)}
 	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "review-work", Role: roleReviewer, BuilderAttempt: 3, RepairCount: 2, RecoveryCount: 1, RepairBudgetDebited: true, RecoveryBudgetDebited: true}
 	s.TaskStates["task-1"] = state
-	reserve := TaskTransition{TaskID: "task-1", Action: TaskReserveInvocation, InvocationID: "review-inv-2", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 3, At: invocationAt(2), Worktree: &WorktreeIdentity{CanonicalPath: "/review", GitCommonDir: "/repo/.git", Branch: "main", BaseSHA: "base"}, Invocation: &InvocationState{LogicalProfile: "reviewer", RuntimeFingerprint: "runtime-v1"}}
+	reserve := TaskTransition{TaskID: "task-1", Action: TaskReserveInvocation, InvocationID: "review-inv-2", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 3, At: invocationAt(2), Worktree: &WorktreeIdentity{CanonicalPath: "/review", GitCommonDir: "/repo/.git", Branch: "main", BaseSHA: "0123456789012345678901234567890123456789"}, Invocation: &InvocationState{LogicalProfile: "reviewer", RuntimeFingerprint: "runtime-v1"}}
 	if err := applyTransition(&s, TransitionRequest{Task: &reserve}); err != nil {
 		t.Fatalf("reviewer re-reserve: %v", err)
 	}

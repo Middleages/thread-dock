@@ -33,7 +33,7 @@ func applyWorkTransition(snapshot *WorkSnapshot, transition WorkTransition) erro
 		reduce(snapshot)
 		return nil
 	case WorkPause:
-		if snapshot.Control.ApprovedContractHash == "" || snapshot.State == StateAwaitingApproval || snapshot.State == StatePaused || snapshot.State == StateCompleted || snapshot.State == StateDraft {
+		if !approvedSnapshot(snapshot) || snapshot.State == StateAwaitingApproval || snapshot.State == StatePaused || snapshot.State == StateCompleted || snapshot.State == StateDraft {
 			return invalidTransition("work cannot be paused in state %q", snapshot.State)
 		}
 		if snapshot.Control.PauseRequested {
@@ -209,10 +209,7 @@ func applyRuntimeResolve(snapshot *WorkSnapshot, transition WorkTransition) erro
 		if err := validateDiagnostic(payload.Evidence.Diagnostic); err != nil {
 			return invalidTransition("resolution diagnostic: %v", err)
 		}
-		if len(task.PriorAttempts) >= MaxPriorAttempts {
-			return invalidTransition("prior attempt summary limit reached")
-		}
-		task.PriorAttempts = append(task.PriorAttempts, AttemptSummary{BuilderAttempt: task.BuilderAttempt, Outcome: "abandoned_not_started", Diagnostic: payload.Evidence.Diagnostic})
+		appendAttemptSummary(&task, AttemptSummary{BuilderAttempt: task.BuilderAttempt, Outcome: "abandoned_not_started", Diagnostic: payload.Evidence.Diagnostic})
 		if err := restoreAfterReconcile(&task); err != nil {
 			return err
 		}

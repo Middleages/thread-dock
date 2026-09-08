@@ -10,21 +10,25 @@ type LogicalWorkID string
 type InvocationID string
 
 type LogicalWorkState struct {
-	LogicalWorkID         LogicalWorkID `json:"logicalWorkId"`
-	Role                  string        `json:"role"`
-	BuilderAttempt        uint32        `json:"builderAttempt"`
-	Purpose               string        `json:"purpose"`
-	RepairCount           uint32        `json:"repairCount"`
-	RecoveryCount         uint32        `json:"recoveryCount"`
-	RepairBudgetDebited   bool          `json:"repairBudgetDebited"`
-	RecoveryBudgetDebited bool          `json:"recoveryBudgetDebited"`
+	LogicalWorkID         LogicalWorkID     `json:"logicalWorkId"`
+	Role                  string            `json:"role"`
+	BuilderAttempt        uint32            `json:"builderAttempt"`
+	Purpose               string            `json:"purpose"`
+	LogicalProfile        string            `json:"logicalProfile"`
+	RuntimeFingerprint    string            `json:"runtimeFingerprint"`
+	Worktree              *WorktreeIdentity `json:"worktree,omitempty"`
+	RepairCount           uint32            `json:"repairCount"`
+	RecoveryCount         uint32            `json:"recoveryCount"`
+	RepairBudgetDebited   bool              `json:"repairBudgetDebited"`
+	RecoveryBudgetDebited bool              `json:"recoveryBudgetDebited"`
 }
 
 type WorktreeIdentity struct {
-	CanonicalPath string `json:"canonicalPath"`
-	GitCommonDir  string `json:"gitCommonDir"`
-	Branch        string `json:"branch"`
-	BaseSHA       string `json:"baseSha"`
+	CanonicalPath          string                       `json:"canonicalPath"`
+	GitCommonDir           string                       `json:"gitCommonDir"`
+	Branch                 string                       `json:"branch"`
+	BaseSHA                string                       `json:"baseSha"`
+	IntegratedDependencies map[contractv2.TaskID]string `json:"integratedDependencies,omitempty"`
 }
 
 type ProviderIdentity struct {

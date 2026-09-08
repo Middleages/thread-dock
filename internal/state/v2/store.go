@@ -365,6 +365,12 @@ func validateSnapshot(s WorkSnapshot) error {
 	if s.Receipts == nil {
 		return errors.New("receipts map is required")
 	}
+	if (s.Control.ApprovedContractHash == "") != (s.Control.ApprovalRef == "") {
+		return errors.New("approval hash and reference must be provided together")
+	}
+	if s.Control.ApprovedContractHash != "" && s.Control.ApprovedContractHash != s.ContractHash {
+		return errors.New("approved contract hash does not match contract")
+	}
 	return validateTaskStates(s)
 }
 
