@@ -2,6 +2,7 @@ package statev2
 
 import (
 	"strings"
+	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
 )
@@ -9,6 +10,7 @@ import (
 const (
 	BlockerKindRepairBudgetExhausted   = "repair_budget_exhausted"
 	BlockerKindRecoveryBudgetExhausted = "recovery_budget_exhausted"
+	BlockerKindRuntimeUnknown          = "runtime_unknown"
 )
 
 func applyWorkTransition(snapshot *WorkSnapshot, transition WorkTransition) error {
@@ -51,14 +53,21 @@ func applyWorkTransition(snapshot *WorkSnapshot, transition WorkTransition) erro
 		reduce(snapshot)
 		return nil
 	case WorkResolve:
-		return applyWorkResolve(snapshot, transition.Resolve)
+		return applyWorkResolve(snapshot, transition)
 	default:
 		return invalidTransition("unsupported work action %q", transition.Action)
 	}
 }
 
-func applyWorkResolve(snapshot *WorkSnapshot, payload *ResolvePayload) error {
-	if snapshot.State != StateNeedsOperator || payload == nil || payload.Kind != ResolveExtendBudget {
+func applyWorkResolve(snapshot *WorkSnapshot, transition WorkTransition) error {
+	payload := transition.Resolve
+	if snapshot.State != StateNeedsOperator || payload == nil {
+		return invalidTransition("unsupported work resolve transition")
+	}
+	if payload.Kind == ResolveRuntimeNotStarted || payload.Kind == ResolveRuntimeTerminated {
+		return applyRuntimeResolve(snapshot, transition)
+	}
+	if payload.Kind != ResolveExtendBudget {
 		return invalidTransition("unsupported work resolve transition")
 	}
 	if strings.TrimSpace(payload.OperatorRef) == "" || payload.TaskID == "" || !validBudgetKind(payload.Budget) {
@@ -85,6 +94,69 @@ func applyWorkResolve(snapshot *WorkSnapshot, payload *ResolvePayload) error {
 		task.RecoveryLimit = payload.NewLimit
 	}
 	snapshot.TaskStates[contractv2.TaskID(payload.TaskID)] = task
+	snapshot.Control.Blocker = nil
+	reduce(snapshot)
+	return nil
+}
+
+func applyRuntimeResolve(snapshot *WorkSnapshot, transition WorkTransition) error {
+	payload := transition.Resolve
+	if payload == nil || strings.TrimSpace(payload.OperatorRef) == "" || payload.TaskID == "" || payload.InvocationID == "" || payload.Evidence == nil {
+		return invalidTransition("invalid runtime resolution")
+	}
+	blocker := snapshot.Control.Blocker
+	if blocker == nil || blocker.Kind != BlockerKindRuntimeUnknown || blocker.OperatorRef != payload.OperatorRef || blocker.TaskID != payload.TaskID || blocker.InvocationID != payload.InvocationID {
+		return invalidTransition("runtime resolution does not match blocker")
+	}
+	task, ok := snapshot.TaskStates[payload.TaskID]
+	if !ok || task.Invocation == nil || task.Invocation.InvocationID != payload.InvocationID {
+		return invalidTransition("runtime resolution task does not match invocation")
+	}
+	at := transition.At
+	if at.IsZero() {
+		at = time.Now().UTC()
+	} else if at.Location() != time.UTC {
+		return invalidTransition("runtime resolution time must be UTC")
+	}
+	switch payload.Kind {
+	case ResolveRuntimeNotStarted:
+		if task.Status != TaskInvocationReserved && task.Status != TaskNeedsOperator || task.Invocation.LaunchRequested || hasProviderIdentity(task.Invocation) || !payload.Evidence.OwnerTerminated || payload.Evidence.LaunchRequested || !payload.Evidence.ProviderAbsent {
+			return invalidTransition("positive no-launch proof is required")
+		}
+		if err := validateDiagnostic(payload.Evidence.Diagnostic); err != nil {
+			return invalidTransition("resolution diagnostic: %v", err)
+		}
+		if len(task.PriorAttempts) >= MaxPriorAttempts {
+			return invalidTransition("prior attempt summary limit reached")
+		}
+		task.PriorAttempts = append(task.PriorAttempts, AttemptSummary{BuilderAttempt: task.BuilderAttempt, Outcome: "abandoned_not_started", Diagnostic: payload.Evidence.Diagnostic})
+		if err := restoreAfterReconcile(&task); err != nil {
+			return err
+		}
+	case ResolveRuntimeTerminated:
+		if task.Status != TaskRunning && task.Status != TaskTerminationPending && task.Status != TaskNeedsOperator || !payload.Evidence.OwnerTerminated {
+			return invalidTransition("positive termination proof is required")
+		}
+		if payload.Evidence.Diagnostic != "" && len([]byte(payload.Evidence.Diagnostic)) > MaxDiagnosticBytes {
+			return invalidTransition("termination diagnostic exceeds limit")
+		}
+		if task.Status == TaskRunning || task.Status == TaskTerminationPending {
+			tr := TaskTransition{TaskID: payload.TaskID, Action: TaskConfirmTermination, InvocationID: payload.InvocationID, LogicalWorkID: task.Invocation.LogicalWorkID, Role: task.Invocation.Role, BuilderAttempt: task.BuilderAttempt, At: at, Reason: payload.Evidence.Diagnostic}
+			if err := confirmTermination(&task, tr); err != nil {
+				return err
+			}
+		} else {
+			task.Invocation.EndedAt = &at
+			task.Invocation.TerminationConfirmed = true
+			if payload.Evidence.Diagnostic != "" {
+				task.Invocation.TerminationReason = payload.Evidence.Diagnostic
+			}
+			task.Status = TaskTerminated
+		}
+	default:
+		return invalidTransition("unsupported runtime resolution")
+	}
+	snapshot.TaskStates[payload.TaskID] = task
 	snapshot.Control.Blocker = nil
 	reduce(snapshot)
 	return nil

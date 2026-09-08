@@ -21,6 +21,34 @@ func reduce(snapshot *WorkSnapshot) {
 		}
 		return
 	}
+	for _, contractTask := range snapshot.Contract.Tasks {
+		task, ok := snapshot.TaskStates[contractTask.TaskID]
+		if !ok {
+			continue
+		}
+		switch task.Status {
+		case TaskInvocationReserved:
+			snapshot.State = StateRunning
+			if task.Invocation != nil && task.Invocation.LaunchRequested {
+				snapshot.NextAction = "reconcile"
+			} else {
+				snapshot.NextAction = "launch"
+			}
+			return
+		case TaskRunning:
+			snapshot.State = StateRunning
+			snapshot.NextAction = "observe"
+			return
+		case TaskTerminationPending:
+			snapshot.State = StateRunning
+			snapshot.NextAction = "terminate"
+			return
+		case TaskTerminated:
+			snapshot.State = StateRunning
+			snapshot.NextAction = "inspect_candidate"
+			return
+		}
+	}
 	allPending := true
 	for _, task := range snapshot.TaskStates {
 		if task.Status != TaskPending {

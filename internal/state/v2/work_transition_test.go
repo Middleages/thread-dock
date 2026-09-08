@@ -1,12 +1,25 @@
 package statev2
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
 )
+
+func taskRequest(t *testing.T, snapshot WorkSnapshot, requestID contractv2.RequestID, transition TaskTransition) TransitionRequest {
+	t.Helper()
+	req := TransitionRequest{WorkID: snapshot.WorkID, ExpectedRevision: snapshot.Revision, RequestID: requestID, Task: &transition}
+	hash, err := TransitionPayloadHash(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.PayloadHash = hash
+	return req
+}
 
 func TestWorkApproveRequiresApprovalInputsAndQueues(t *testing.T) {
 	base := validSnapshot()
@@ -175,4 +188,88 @@ func cloneBlocker(blocker *OperatorBlocker) *OperatorBlocker {
 	}
 	clone := *blocker
 	return &clone
+}
+
+func TestRuntimeNotStartedResolutionRestoresTaskInOneApply(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore(t.TempDir())
+	if _, err := createPlan(s, ctx, validSnapshot()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.Load(ctx, "work-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved := transitionRequest(t, snapshot, "approve", WorkTransition{Action: WorkApprove, ApprovalRef: "approval", ContractHash: snapshot.ContractHash})
+	if snapshot, err = s.Apply(ctx, approved); err != nil {
+		t.Fatal(err)
+	}
+	reserve := builderReserveTransition(time.Date(2026, time.January, 2, 3, 4, 1, 0, time.UTC))
+	if snapshot, err = s.Apply(ctx, taskRequest(t, snapshot, "reserve", reserve)); err != nil {
+		t.Fatal(err)
+	}
+	block := TaskTransition{TaskID: "task-1", Action: TaskNeedsOperatorAction, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(2), Blocker: &OperatorBlocker{Kind: BlockerKindRuntimeUnknown, OperatorRef: "operator-1", TaskID: "task-1", InvocationID: "inv-1", Diagnostic: "owner state unknown"}}
+	if snapshot, err = s.Apply(ctx, taskRequest(t, snapshot, "block", block)); err != nil {
+		t.Fatal(err)
+	}
+	resolve := WorkTransition{Action: WorkResolve, At: invocationAt(3), Resolve: &ResolvePayload{Kind: ResolveRuntimeNotStarted, OperatorRef: "operator-1", TaskID: "task-1", InvocationID: "inv-1", Evidence: &ResolutionEvidence{OwnerTerminated: true, ProviderAbsent: true, Diagnostic: "confirmed owner exit before launch"}}}
+	if snapshot, err = s.Apply(ctx, transitionRequest(t, snapshot, "resolve", resolve)); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	state := snapshot.TaskStates["task-1"]
+	if state.Status != TaskPending || state.Invocation != nil || snapshot.Control.Blocker != nil || len(state.PriorAttempts) != 1 {
+		t.Fatalf("resolved snapshot = %#v", snapshot)
+	}
+}
+
+func TestRuntimeTerminatedResolutionConfirmsOnlyMatchingRuntimeBlocker(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore(t.TempDir())
+	if _, err := createPlan(s, ctx, validSnapshot()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := s.Load(ctx, "work-1")
+	if snapshot, err := s.Apply(ctx, transitionRequest(t, snapshot, "approve", WorkTransition{Action: WorkApprove, ApprovalRef: "approval", ContractHash: snapshot.ContractHash})); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = s.Load(ctx, "work-1")
+	reserve := builderReserveTransition(invocationAt(1))
+	if snapshot, err := s.Apply(ctx, taskRequest(t, snapshot, "reserve", reserve)); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = s.Load(ctx, "work-1")
+	launch := TaskTransition{TaskID: "task-1", Action: TaskBeginLaunch, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(2)}
+	if snapshot, err := s.Apply(ctx, taskRequest(t, snapshot, "launch", launch)); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = s.Load(ctx, "work-1")
+	running := TaskTransition{TaskID: "task-1", Action: TaskMarkRunning, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(3), Invocation: &InvocationState{ProviderProcess: "pid"}}
+	if snapshot, err := s.Apply(ctx, taskRequest(t, snapshot, "running", running)); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = s.Load(ctx, "work-1")
+	block := TaskTransition{TaskID: "task-1", Action: TaskNeedsOperatorAction, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: roleBuilder, ReturnStage: TaskPending, BuilderAttempt: 1, At: invocationAt(4), Blocker: &OperatorBlocker{Kind: BlockerKindRuntimeUnknown, OperatorRef: "operator-1", TaskID: "task-1", InvocationID: "inv-1", Diagnostic: "owner state unknown"}}
+	if snapshot, err := s.Apply(ctx, taskRequest(t, snapshot, "block", block)); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = s.Load(ctx, "work-1")
+	resolve := WorkTransition{Action: WorkResolve, At: invocationAt(5), Resolve: &ResolvePayload{Kind: ResolveRuntimeTerminated, OperatorRef: "operator-1", TaskID: "task-1", InvocationID: "inv-1", Evidence: &ResolutionEvidence{OwnerTerminated: true, Diagnostic: "owner exit confirmed"}}}
+	resolved, err := s.Apply(ctx, transitionRequest(t, snapshot, "resolve", resolve))
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	state := resolved.TaskStates["task-1"]
+	if state.Status != TaskTerminated || state.Invocation == nil || !state.Invocation.TerminationConfirmed || resolved.Control.Blocker != nil {
+		t.Fatalf("resolved snapshot = %#v", resolved)
+	}
 }

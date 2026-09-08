@@ -185,6 +185,7 @@ type WorkTransition struct {
 	Action       WorkAction      `json:"action"`
 	ApprovalRef  string          `json:"approvalRef,omitempty"`
 	ContractHash string          `json:"contractHash,omitempty"`
+	At           time.Time       `json:"at,omitempty"`
 	Resolve      *ResolvePayload `json:"resolve,omitempty"`
 }
 
@@ -240,6 +241,8 @@ type TaskTransition struct {
 	Review         *ReviewEvidence      `json:"review,omitempty"`
 	Integration    *IntegrationEvidence `json:"integration,omitempty"`
 	Blocker        *OperatorBlocker     `json:"blocker,omitempty"`
+	Reason         string               `json:"reason,omitempty"`
+	Resolution     *ResolutionEvidence  `json:"resolution,omitempty"`
 	Transient      bool                 `json:"transient"`
 }
 

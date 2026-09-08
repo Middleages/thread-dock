@@ -70,17 +70,32 @@ func validateApplyRequest(request TransitionRequest) error {
 	if request.PayloadHash != hash {
 		return invalidTransition("payload hash does not match transition")
 	}
-	if request.Work == nil {
-		return invalidTransition("task and publication transitions are not supported")
+	if request.Work == nil && request.Task == nil {
+		return invalidTransition("publication transitions are not supported")
 	}
-	switch request.Work.Action {
-	case WorkApprove, WorkPause, WorkResume:
-	case WorkResolve:
-		if request.Work.Resolve == nil || request.Work.Resolve.Kind != ResolveExtendBudget {
-			return invalidTransition("unsupported work resolve transition")
+	if request.Work != nil {
+		switch request.Work.Action {
+		case WorkApprove, WorkPause, WorkResume:
+		case WorkResolve:
+			if request.Work.Resolve == nil {
+				return invalidTransition("unsupported work resolve transition")
+			}
+			switch request.Work.Resolve.Kind {
+			case ResolveExtendBudget, ResolveRuntimeNotStarted, ResolveRuntimeTerminated:
+			default:
+				return invalidTransition("unsupported work resolve transition")
+			}
+		default:
+			return invalidTransition("unsupported work action %q", request.Work.Action)
 		}
-	default:
-		return invalidTransition("unsupported work action %q", request.Work.Action)
+	}
+	if request.Task != nil {
+		switch request.Task.Action {
+		case TaskReserveInvocation, TaskBeginLaunch, TaskMarkRunning, TaskRequestTermination,
+			TaskConfirmTermination, TaskReconcileNotStarted, TaskNeedsOperatorAction:
+		default:
+			return invalidTransition("unsupported task action %q", request.Task.Action)
+		}
 	}
 	return nil
 }
@@ -89,5 +104,8 @@ func applyTransition(snapshot *WorkSnapshot, request TransitionRequest) error {
 	if request.Work != nil {
 		return applyWorkTransition(snapshot, *request.Work)
 	}
-	return invalidTransition("task and publication transitions are not supported")
+	if request.Task != nil {
+		return applyTaskTransition(snapshot, *request.Task, request.RequestID)
+	}
+	return invalidTransition("publication transitions are not supported")
 }
