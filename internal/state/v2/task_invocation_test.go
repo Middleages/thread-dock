@@ -91,6 +91,8 @@ func TestReviewerUsesSharedLifecycleAndPreservesCandidateAndGate(t *testing.T) {
 	state := s.TaskStates["task-1"]
 	state.Status = TaskGatePassed
 	state.BuilderAttempt = 1
+	state.RepairCount = 1
+	state.RecoveryCount = 1
 	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "builder-work", Role: roleBuilder, BuilderAttempt: 1}
 	state.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: "candidate"}
 	state.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: "candidate", Passed: true, ObservedAt: invocationAt(1)}
@@ -102,6 +104,9 @@ func TestReviewerUsesSharedLifecycleAndPreservesCandidateAndGate(t *testing.T) {
 	state = s.TaskStates["task-1"]
 	if state.Status != TaskInvocationReserved || state.LogicalWork == nil || state.LogicalWork.Role != roleReviewer || state.Candidate == nil || state.Gate == nil {
 		t.Fatalf("reviewer reservation did not preserve lifecycle state: %#v", state)
+	}
+	if state.BuilderAttempt != 1 || state.RepairCount != 1 || state.RecoveryCount != 1 {
+		t.Fatalf("reviewer reservation changed builder budgets: attempt=%d repair=%d recovery=%d", state.BuilderAttempt, state.RepairCount, state.RecoveryCount)
 	}
 }
 

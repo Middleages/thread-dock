@@ -197,6 +197,211 @@ func TestValidateSnapshotRejectsCorruptInvocationLifecycle(t *testing.T) {
 	}
 }
 
+func TestValidateSnapshotRejectsCorruptPersistedEvidenceMatrix(t *testing.T) {
+	terminatedBuilder := func() TaskExecutionState {
+		at := invocationAt(1)
+		return TaskExecutionState{
+			TaskID: "task-1", Status: TaskTerminated, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1,
+			LogicalWork:   &LogicalWorkState{LogicalWorkID: "logical", Role: roleBuilder, BuilderAttempt: 1},
+			Invocation:    &InvocationState{InvocationID: "inv", LogicalWorkID: "logical", Role: roleBuilder, ReturnStage: TaskPending, LogicalProfile: "p", RuntimeFingerprint: "r", TerminationConfirmed: true, EndedAt: &at},
+			PriorAttempts: []AttemptSummary{}, InvocationHistory: []InvocationID{"inv"},
+		}
+	}
+	terminatedReviewer := func() TaskExecutionState {
+		at := invocationAt(1)
+		return TaskExecutionState{
+			TaskID: "task-1", Status: TaskTerminated, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1,
+			LogicalWork:   &LogicalWorkState{LogicalWorkID: "review", Role: roleReviewer, BuilderAttempt: 1},
+			Invocation:    &InvocationState{InvocationID: "review-inv", LogicalWorkID: "review", Role: roleReviewer, ReturnStage: TaskGatePassed, LogicalProfile: "p", RuntimeFingerprint: "r", TerminationConfirmed: true, EndedAt: &at},
+			Candidate:     &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}},
+			Gate:          &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"check"}, Outcomes: []string{"pass"}, Passed: true, ObservedAt: invocationAt(1)},
+			PriorAttempts: []AttemptSummary{}, InvocationHistory: []InvocationID{"review-inv"},
+		}
+	}
+	validReview := func() *ReviewEvidence {
+		return &ReviewEvidence{ReviewerInvocationID: "review-inv", BuilderAttempt: 1, CandidateSHA: candidateSHA, ReviewSHA: candidateSHA, Accepted: true, Findings: []ReviewFinding{}, ObservedAt: invocationAt(2)}
+	}
+	validIntegration := func() *IntegrationEvidence {
+		return &IntegrationEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, IntegrationHEAD: integrationSHA, RelationVerified: true, ObservedAt: invocationAt(3)}
+	}
+	cases := []struct {
+		name  string
+		build func() WorkSnapshot
+		want  string
+	}{
+		{"terminated missing invocation", func() WorkSnapshot {
+			s := validSnapshot()
+			state := terminatedBuilder()
+			state.Invocation = nil
+			state.InvocationHistory = []InvocationID{}
+			s.TaskStates["task-1"] = state
+			return s
+		}, "terminated task has no terminated invocation"},
+		{"terminated builder with candidate ahead", func() WorkSnapshot {
+			s := validSnapshot()
+			state := terminatedBuilder()
+			state.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+			s.TaskStates["task-1"] = state
+			return s
+		}, "terminated builder lifecycle is incoherent"},
+		{"terminated reviewer missing gate", func() WorkSnapshot {
+			s := validSnapshot()
+			state := terminatedReviewer()
+			state.Gate = nil
+			s.TaskStates["task-1"] = state
+			return s
+		}, "terminated reviewer lifecycle is incoherent"},
+		{"pending with candidate ahead", func() WorkSnapshot {
+			s := validSnapshot()
+			state := s.TaskStates["task-1"]
+			state.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+			state.BuilderAttempt = 1
+			s.TaskStates["task-1"] = state
+			return s
+		}, "pending task has active invocation or evidence"},
+		{"needs operator without blocker", func() WorkSnapshot {
+			s := validSnapshot()
+			state := s.TaskStates["task-1"]
+			state.Status = TaskNeedsOperator
+			state.BuilderAttempt = 1
+			state.PriorAttempts = []AttemptSummary{}
+			s.TaskStates["task-1"] = state
+			return s
+		}, "operator blocker is required without invocation or evidence"},
+		{"invalid builder return stage", func() WorkSnapshot {
+			s := validSnapshot()
+			state := terminatedBuilder()
+			state.Invocation.ReturnStage = TaskGatePassed
+			s.TaskStates["task-1"] = state
+			return s
+		}, "builder invocation return stage is invalid"},
+		{"gate status mismatch", func() WorkSnapshot {
+			s := validSnapshot()
+			state := terminatedBuilder()
+			state.Status = TaskGatePassed
+			state.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+			state.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"check"}, Outcomes: []string{"fail"}, Passed: false, ObservedAt: invocationAt(2)}
+			s.TaskStates["task-1"] = state
+			return s
+		}, "invalid gate evidence"},
+		{"review status mismatch", func() WorkSnapshot {
+			s := validSnapshot()
+			state := terminatedReviewer()
+			state.Status = TaskAccepted
+			state.Review = validReview()
+			state.Review.Accepted = false
+			state.Review.Findings = []ReviewFinding{{Code: "bad", Severity: "blocking"}}
+			s.TaskStates["task-1"] = state
+			return s
+		}, "invalid review evidence"},
+		{"integrated incomplete chain", func() WorkSnapshot {
+			s := validSnapshot()
+			state := terminatedReviewer()
+			state.Status = TaskIntegrated
+			state.Review = validReview()
+			state.Integration = validIntegration()
+			state.Invocation.EndedAt = nil
+			state.Invocation.TerminationConfirmed = false
+			state.Invocation.StartedAt = ptrTime(invocationAt(2))
+			s.TaskStates["task-1"] = state
+			return s
+		}, "evidence stage lacks terminated invocation"},
+		{"non-UTC gate", func() WorkSnapshot {
+			s := validSnapshot()
+			state := terminatedBuilder()
+			state.Status = TaskGatePassed
+			state.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+			at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("offset", 3600))
+			state.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"check"}, Outcomes: []string{"pass"}, Passed: true, ObservedAt: at}
+			s.TaskStates["task-1"] = state
+			return s
+		}, "invalid gate evidence"},
+		{"non-UTC review", func() WorkSnapshot {
+			s := validSnapshot()
+			state := terminatedReviewer()
+			state.Status = TaskAccepted
+			state.Review = validReview()
+			state.Review.ObservedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("offset", 3600))
+			s.TaskStates["task-1"] = state
+			return s
+		}, "invalid review evidence"},
+		{"non-UTC integration", func() WorkSnapshot {
+			s := validSnapshot()
+			state := terminatedReviewer()
+			state.Status = TaskIntegrated
+			state.Review = validReview()
+			state.Integration = validIntegration()
+			state.Integration.ObservedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("offset", 3600))
+			s.TaskStates["task-1"] = state
+			return s
+		}, "invalid integration evidence"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateSnapshot(tc.build()); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateSnapshot error = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateSnapshotAcceptsNeedsOperatorReviewerEvidenceChains(t *testing.T) {
+	newReviewer := func() (WorkSnapshot, TaskExecutionState) {
+		s := validSnapshot()
+		at := invocationAt(1)
+		state := TaskExecutionState{
+			TaskID: "task-1", Status: TaskNeedsOperator, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1,
+			LogicalWork:   &LogicalWorkState{LogicalWorkID: "review", Role: roleReviewer, BuilderAttempt: 1},
+			Invocation:    &InvocationState{InvocationID: "review-inv", LogicalWorkID: "review", Role: roleReviewer, ReturnStage: TaskGatePassed, LogicalProfile: "p", RuntimeFingerprint: "r", TerminationConfirmed: true, EndedAt: &at},
+			Candidate:     &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}},
+			Gate:          &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"check"}, Outcomes: []string{"pass"}, Passed: true, ObservedAt: invocationAt(1)},
+			PriorAttempts: []AttemptSummary{}, InvocationHistory: []InvocationID{"review-inv"},
+		}
+		s.TaskStates["task-1"] = state
+		s.Control = WorkControl{Blocker: &OperatorBlocker{Kind: BlockerKindRuntimeUnknown, OperatorRef: "op", TaskID: "task-1", InvocationID: "review-inv", Diagnostic: "unknown"}}
+		return s, state
+	}
+	t.Run("active reviewer gate chain", func(t *testing.T) {
+		s, state := newReviewer()
+		state.Invocation.EndedAt = nil
+		state.Invocation.TerminationConfirmed = false
+		state.Invocation.StartedAt = ptrTime(invocationAt(2))
+		s.TaskStates["task-1"] = state
+		if err := validateSnapshot(s); err != nil {
+			t.Fatalf("active reviewer gate chain rejected: %v", err)
+		}
+	})
+	t.Run("terminated accepted review chain", func(t *testing.T) {
+		s, state := newReviewer()
+		state.Status = TaskNeedsOperator
+		state.Review = &ReviewEvidence{ReviewerInvocationID: "review-inv", BuilderAttempt: 1, CandidateSHA: candidateSHA, ReviewSHA: candidateSHA, Accepted: true, Findings: []ReviewFinding{}, ObservedAt: invocationAt(2)}
+		state.Integration = nil
+		s.TaskStates["task-1"] = state
+		if err := validateSnapshot(s); err != nil {
+			t.Fatalf("terminated accepted reviewer chain rejected: %v", err)
+		}
+	})
+	t.Run("terminated builder failed gate chain", func(t *testing.T) {
+		s := validSnapshot()
+		at := invocationAt(1)
+		state := TaskExecutionState{
+			TaskID: "task-1", Status: TaskNeedsOperator, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1,
+			LogicalWork:   &LogicalWorkState{LogicalWorkID: "builder", Role: roleBuilder, BuilderAttempt: 1},
+			Invocation:    &InvocationState{InvocationID: "builder-inv", LogicalWorkID: "builder", Role: roleBuilder, ReturnStage: TaskGateFailed, LogicalProfile: "p", RuntimeFingerprint: "r", TerminationConfirmed: true, EndedAt: &at},
+			Candidate:     &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}},
+			Gate:          &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"check"}, Outcomes: []string{"fail"}, Passed: false, ObservedAt: invocationAt(1)},
+			PriorAttempts: []AttemptSummary{}, InvocationHistory: []InvocationID{"builder-inv"},
+		}
+		s.TaskStates["task-1"] = state
+		s.Control = WorkControl{Blocker: &OperatorBlocker{Kind: BlockerKindRepairBudgetExhausted, OperatorRef: "op", TaskID: "task-1", Diagnostic: "failed gate"}}
+		if err := validateSnapshot(s); err != nil {
+			t.Fatalf("terminated builder failed gate chain rejected: %v", err)
+		}
+	})
+}
+
+func ptrTime(at time.Time) *time.Time { return &at }
+
 func TestStoreLoadRejectsPersistedInvocationCorruption(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

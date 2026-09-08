@@ -102,6 +102,100 @@ func TestRecoveryReservationUsesTransientTerminatedInvocationAndBudget(t *testin
 	}
 }
 
+func TestReviewerTransientRecoveryPreservesEvidenceAndResumesAfterExtension(t *testing.T) {
+	ctx := context.Background()
+	store, snapshot := approvedStore(t)
+	snapshot = advanceBuilderToTerminated(t, store, snapshot, false)
+	if snapshot, err := store.Apply(ctx, taskRequest(t, snapshot, "candidate", candidateTransition())); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	if snapshot, err := store.Apply(ctx, taskRequest(t, snapshot, "gate", TaskTransition{TaskID: "task-1", Action: TaskRecordGate, Role: roleBuilder, BuilderAttempt: 1, At: invocationAt(6), Gate: &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"check"}, Outcomes: []string{"pass"}, Passed: true, ObservedAt: invocationAt(6)}})); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	reviewerReserve := TaskTransition{TaskID: "task-1", Action: TaskReserveInvocation, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(7), Worktree: &WorktreeIdentity{CanonicalPath: "/review", GitCommonDir: "/repo/.git", Branch: "review", BaseSHA: treeSHA}, Invocation: &InvocationState{LogicalProfile: "reviewer", RuntimeFingerprint: "runtime-v1"}}
+	if snapshot, err := store.Apply(ctx, taskRequest(t, snapshot, "review-reserve", reviewerReserve)); err != nil {
+		t.Fatal(err)
+	} else {
+		_ = snapshot
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	for _, tr := range []TaskTransition{
+		{TaskID: "task-1", Action: TaskBeginLaunch, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(8)},
+		{TaskID: "task-1", Action: TaskMarkRunning, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(9), Invocation: &InvocationState{ProviderProcess: "review"}},
+		{TaskID: "task-1", Action: TaskConfirmTermination, InvocationID: "review-inv", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(10), Transient: true},
+	} {
+		var err error
+		if snapshot, err = store.Apply(ctx, taskRequest(t, snapshot, contractv2.RequestID("review-"+string(tr.Action)), tr)); err != nil {
+			t.Fatal(err)
+		}
+		snapshot, _ = store.Load(ctx, "work-1")
+	}
+	state := snapshot.TaskStates["task-1"]
+	wantCandidate, wantGate := *state.Candidate, *state.Gate
+	wantBuilderAttempt, wantRepairCount := state.BuilderAttempt, state.RepairCount
+	wantRecoveryCount := state.RecoveryCount
+	recovery := reviewerReserve
+	recovery.InvocationID = "review-recovery-1"
+	recovery.At = invocationAt(11)
+	recovery.Transient = true
+	var err error
+	if snapshot, err = store.Apply(ctx, taskRequest(t, snapshot, "review-recovery-1", recovery)); err != nil {
+		t.Fatal(err)
+	} else {
+		state = snapshot.TaskStates["task-1"]
+		if state.Status != TaskInvocationReserved || state.RecoveryCount != wantRecoveryCount+1 || state.BuilderAttempt != wantBuilderAttempt || state.RepairCount != wantRepairCount || !reflect.DeepEqual(*state.Candidate, wantCandidate) || !reflect.DeepEqual(*state.Gate, wantGate) {
+			t.Fatalf("first reviewer recovery changed state: %#v", state)
+		}
+	}
+	for _, tr := range []TaskTransition{
+		{TaskID: "task-1", Action: TaskBeginLaunch, InvocationID: "review-recovery-1", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(12)},
+		{TaskID: "task-1", Action: TaskMarkRunning, InvocationID: "review-recovery-1", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(13), Invocation: &InvocationState{ProviderProcess: "review-recovery"}},
+		{TaskID: "task-1", Action: TaskConfirmTermination, InvocationID: "review-recovery-1", LogicalWorkID: "review-work", Role: roleReviewer, ReturnStage: TaskGatePassed, BuilderAttempt: 1, At: invocationAt(14), Transient: true},
+	} {
+		var err error
+		if snapshot, err = store.Apply(ctx, taskRequest(t, snapshot, contractv2.RequestID("recovery-"+string(tr.Action)), tr)); err != nil {
+			t.Fatal(err)
+		}
+		snapshot, _ = store.Load(ctx, "work-1")
+	}
+	exhausted := recovery
+	exhausted.InvocationID = "review-recovery-exhausted"
+	exhausted.At = invocationAt(15)
+	exhausted.Blocker = &OperatorBlocker{Kind: BlockerKindRecoveryBudgetExhausted, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "review recovery exhausted"}
+	if snapshot, err = store.Apply(ctx, taskRequest(t, snapshot, "review-recovery-exhausted", exhausted)); err != nil {
+		t.Fatal(err)
+	} else {
+		state = snapshot.TaskStates["task-1"]
+		if state.Status != TaskNeedsOperator || state.RecoveryCount != wantRecoveryCount+1 || state.BuilderAttempt != wantBuilderAttempt || state.RepairCount != wantRepairCount || !reflect.DeepEqual(*state.Candidate, wantCandidate) || !reflect.DeepEqual(*state.Gate, wantGate) {
+			t.Fatalf("recovery exhaustion changed state: %#v", state)
+		}
+	}
+	if snapshot, err = store.Apply(ctx, transitionRequest(t, snapshot, "extend-recovery", WorkTransition{Action: WorkResolve, Resolve: &ResolvePayload{Kind: ResolveExtendBudget, OperatorRef: "operator", TaskID: "task-1", Budget: BudgetRecovery, NewLimit: 3}})); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ = store.Load(ctx, "work-1")
+	if snapshot.TaskStates["task-1"].Status != TaskTerminated || snapshot.TaskStates["task-1"].RecoveryLimit != 3 || snapshot.Control.Blocker != nil {
+		t.Fatalf("extended recovery state = %#v blocker=%#v", snapshot.TaskStates["task-1"], snapshot.Control.Blocker)
+	}
+	resumed := recovery
+	resumed.InvocationID = "review-recovery-2"
+	resumed.At = invocationAt(16)
+	if snapshot, err := store.Apply(ctx, taskRequest(t, snapshot, "review-recovery-2", resumed)); err != nil {
+		t.Fatal(err)
+	} else {
+		state = snapshot.TaskStates["task-1"]
+		if state.Status != TaskInvocationReserved || state.RecoveryCount != wantRecoveryCount+2 || state.BuilderAttempt != wantBuilderAttempt || state.RepairCount != wantRepairCount || !reflect.DeepEqual(*state.Candidate, wantCandidate) || !reflect.DeepEqual(*state.Gate, wantGate) {
+			t.Fatalf("post-extension recovery state: %#v", state)
+		}
+	}
+}
+
 func TestRecoveryExhaustionPersistsAndExtendBudgetResolves(t *testing.T) {
 	s := validSnapshot()
 	s.Control = WorkControl{ApprovedContractHash: s.ContractHash, ApprovalRef: "approval"}

@@ -151,7 +151,7 @@ func validateTaskStates(s WorkSnapshot) error {
 				return fmt.Errorf("task %q: %w", key, err)
 			}
 		}
-		if err := validateTaskEvidence(task); err != nil {
+		if err := validateTaskEvidence(task, s.Control.Blocker); err != nil {
 			return fmt.Errorf("task %q: %w", key, err)
 		}
 	}
@@ -173,6 +173,19 @@ func validateTaskStates(s WorkSnapshot) error {
 		}
 	}
 	if s.Control.Blocker != nil {
+		if strings.TrimSpace(s.Control.Blocker.Kind) == "" || strings.TrimSpace(s.Control.Blocker.OperatorRef) == "" || strings.TrimSpace(string(s.Control.Blocker.TaskID)) == "" || strings.TrimSpace(s.Control.Blocker.Diagnostic) == "" {
+			return errors.New("operator blocker identity is required")
+		}
+		blockedTask, ok := s.TaskStates[contractv2.TaskID(s.Control.Blocker.TaskID)]
+		if !ok {
+			return errors.New("operator blocker task is not in contract")
+		}
+		if blockedTask.Status != TaskNeedsOperator {
+			return errors.New("operator blocker task is not needs_operator")
+		}
+		if s.Control.Blocker.InvocationID != "" && (blockedTask.Invocation == nil || blockedTask.Invocation.InvocationID != s.Control.Blocker.InvocationID) {
+			return errors.New("operator blocker invocation does not match task")
+		}
 		if err := validateDiagnostic(s.Control.Blocker.Diagnostic); err != nil {
 			return err
 		}
@@ -180,7 +193,7 @@ func validateTaskStates(s WorkSnapshot) error {
 	return nil
 }
 
-func validateTaskEvidence(task TaskExecutionState) error {
+func validateTaskEvidence(task TaskExecutionState, blocker *OperatorBlocker) error {
 	switch task.Status {
 	case TaskCandidateReady:
 		if task.Candidate == nil {
@@ -227,11 +240,14 @@ func validateTaskEvidence(task TaskExecutionState) error {
 			if inv.Role != roleBuilder && inv.Role != roleReviewer {
 				return errors.New("invocation role is invalid")
 			}
+			if !validReturnStage(inv.Role, inv.ReturnStage) {
+				if inv.Role == roleBuilder {
+					return errors.New("builder invocation return stage is invalid")
+				}
+				return errors.New("reviewer invocation return stage is invalid")
+			}
 			if task.LogicalWork == nil || task.LogicalWork.LogicalWorkID != inv.LogicalWorkID || task.LogicalWork.Role != inv.Role || task.LogicalWork.BuilderAttempt != task.BuilderAttempt {
 				return errors.New("invocation logical work does not match task")
-			}
-			if inv.Role == roleReviewer && inv.ReturnStage != TaskGatePassed {
-				return errors.New("reviewer invocation return stage is invalid")
 			}
 		}
 		switch task.Status {
@@ -327,10 +343,10 @@ func validateTaskEvidence(task TaskExecutionState) error {
 			return err
 		}
 	}
-	return validateTaskStageMatrix(task)
+	return validateTaskStageMatrix(task, blocker)
 }
 
-func validateTaskStageMatrix(task TaskExecutionState) error {
+func validateTaskStageMatrix(task TaskExecutionState, blocker *OperatorBlocker) error {
 	inv := task.Invocation
 	terminated := inv != nil && inv.Role != "" && inv.TerminationConfirmed && inv.EndedAt != nil
 	noEvidence := task.Candidate == nil && task.Gate == nil && task.Review == nil && task.Integration == nil
@@ -370,26 +386,62 @@ func validateTaskStageMatrix(task TaskExecutionState) error {
 		if !terminated || inv.Role != roleReviewer || task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Review == nil || !task.Review.Accepted || task.Integration == nil || !task.Integration.RelationVerified {
 			return errors.New("integration lifecycle is incoherent")
 		}
+	case TaskTerminated:
+		if inv == nil || !terminated {
+			return errors.New("terminated task has no terminated invocation")
+		}
+		if inv.Role == roleBuilder {
+			if !noEvidence {
+				return errors.New("terminated builder lifecycle is incoherent")
+			}
+		} else if inv.Role == roleReviewer {
+			if inv.ReturnStage != TaskGatePassed || task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Review != nil || task.Integration != nil {
+				return errors.New("terminated reviewer lifecycle is incoherent")
+			}
+		} else {
+			return errors.New("terminated invocation role is invalid")
+		}
 	case TaskNeedsOperator:
 		if task.Integration != nil {
-			if !terminated || inv.Role != roleReviewer {
+			if !terminated || inv.Role != roleReviewer || task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Review == nil || !task.Review.Accepted || !task.Integration.RelationVerified {
 				return errors.New("operator integration lifecycle is incoherent")
 			}
 		} else if task.Review != nil {
-			if !terminated || inv.Role != roleReviewer || task.Gate == nil || !task.Gate.Passed {
+			if !terminated || inv.Role != roleReviewer || task.Gate == nil || !task.Gate.Passed || task.Candidate == nil {
 				return errors.New("operator review lifecycle is incoherent")
 			}
 		} else if task.Gate != nil {
-			if !terminated || inv.Role != roleBuilder || task.Candidate == nil {
+			if task.Candidate == nil || inv == nil || (inv.Role == roleReviewer && (!task.Gate.Passed || !validInvocationLifecycleShape(inv))) || (inv.Role == roleBuilder && !terminated) || (inv.Role != roleBuilder && inv.Role != roleReviewer) {
 				return errors.New("operator gate lifecycle is incoherent")
 			}
 		} else if task.Candidate != nil {
 			if !terminated || inv.Role != roleBuilder {
 				return errors.New("operator candidate lifecycle is incoherent")
 			}
+		} else if inv == nil {
+			if !validOperatorBlocker(task, blocker) {
+				return errors.New("operator blocker is required without invocation or evidence")
+			}
 		}
 	}
 	return nil
+}
+
+func validInvocationLifecycleShape(inv *InvocationState) bool {
+	if inv == nil {
+		return false
+	}
+	if inv.EndedAt != nil {
+		return inv.TerminationConfirmed
+	}
+	if inv.StartedAt == nil && strings.TrimSpace(inv.TerminationReason) != "" {
+		return false
+	}
+	return !inv.TerminationConfirmed
+}
+
+func validOperatorBlocker(task TaskExecutionState, blocker *OperatorBlocker) bool {
+	return blocker != nil && blocker.TaskID == task.TaskID && strings.TrimSpace(blocker.Kind) != "" && strings.TrimSpace(blocker.OperatorRef) != "" && strings.TrimSpace(blocker.Diagnostic) != ""
 }
 
 func validateDiagnostic(value string) error {
