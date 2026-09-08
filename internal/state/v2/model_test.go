@@ -300,12 +300,10 @@ func TestValidateSnapshotRejectsCorruptPersistedEvidenceMatrix(t *testing.T) {
 			state.Status = TaskIntegrated
 			state.Review = validReview()
 			state.Integration = validIntegration()
-			state.Invocation.EndedAt = nil
-			state.Invocation.TerminationConfirmed = false
-			state.Invocation.StartedAt = ptrTime(invocationAt(2))
+			state.Gate = nil
 			s.TaskStates["task-1"] = state
 			return s
-		}, "evidence stage lacks terminated invocation"},
+		}, "invalid integration evidence"},
 		{"non-UTC gate", func() WorkSnapshot {
 			s := validSnapshot()
 			state := terminatedBuilder()
@@ -342,6 +340,97 @@ func TestValidateSnapshotRejectsCorruptPersistedEvidenceMatrix(t *testing.T) {
 				t.Fatalf("validateSnapshot error = %v, want substring %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateSnapshotRejectsTaskNeedsOperatorInvocationOnlyCorruption(t *testing.T) {
+	base := func(role string, status TaskStatus, started, ended *time.Time, confirmed bool, reason string) WorkSnapshot {
+		s := validSnapshot()
+		state := s.TaskStates["task-1"]
+		state.Status = TaskNeedsOperator
+		state.BuilderAttempt = 1
+		state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical", Role: role, BuilderAttempt: 1}
+		state.Invocation = &InvocationState{
+			InvocationID: "inv", LogicalWorkID: "logical", Role: role, ReturnStage: TaskPending,
+			LogicalProfile: "p", RuntimeFingerprint: "r", StartedAt: started, EndedAt: ended,
+			TerminationConfirmed: confirmed, TerminationReason: reason,
+		}
+		state.InvocationHistory = []InvocationID{"inv"}
+		s.TaskStates["task-1"] = state
+		s.Control.Blocker = &OperatorBlocker{Kind: BlockerKindRuntimeUnknown, OperatorRef: "op", TaskID: "task-1", InvocationID: "inv", Diagnostic: "runtime unknown"}
+		return s
+	}
+	at := invocationAt(1)
+	cases := []struct {
+		name  string
+		build func() WorkSnapshot
+		want  string
+		valid bool
+	}{
+		{"roleless", func() WorkSnapshot {
+			s := base("", TaskPending, nil, nil, false, "")
+			return s
+		}, "invocation role is required", false},
+		{"unknown role", func() WorkSnapshot {
+			s := base("scout", TaskPending, nil, nil, false, "")
+			return s
+		}, "invocation role is invalid", false},
+		{"builder reserved", func() WorkSnapshot {
+			s := base(roleBuilder, TaskPending, nil, nil, false, "")
+			return s
+		}, "", true},
+		{"builder running without reason", func() WorkSnapshot {
+			s := base(roleBuilder, TaskPending, &at, nil, false, "")
+			return s
+		}, "", true},
+		{"builder termination pending", func() WorkSnapshot {
+			s := base(roleBuilder, TaskPending, &at, nil, false, "stopping")
+			return s
+		}, "", true},
+		{"builder terminated", func() WorkSnapshot {
+			s := base(roleBuilder, TaskPending, &at, &at, true, "done")
+			return s
+		}, "", true},
+		{"reviewer invocation-only", func() WorkSnapshot {
+			s := base(roleReviewer, TaskGatePassed, nil, nil, false, "")
+			s.TaskStates["task-1"].Invocation.ReturnStage = TaskGatePassed
+			return s
+		}, "reviewer invocation-only state is invalid", false},
+		{"started and ended without confirmation", func() WorkSnapshot {
+			s := base(roleBuilder, TaskPending, &at, &at, false, "done")
+			return s
+		}, "invocation termination lifecycle is inconsistent", false},
+		{"reserved with termination reason", func() WorkSnapshot {
+			s := base(roleBuilder, TaskPending, nil, nil, false, "stopping")
+			return s
+		}, "operator invocation-only state is invalid", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSnapshot(tc.build())
+			if tc.valid {
+				if err != nil {
+					t.Fatalf("validateSnapshot rejected valid invocation-only state: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateSnapshot error = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateSnapshotRejectsUnknownTaskNeedsOperatorBlockerKind(t *testing.T) {
+	snapshot := validSnapshot()
+	state := snapshot.TaskStates["task-1"]
+	state.Status = TaskNeedsOperator
+	state.BuilderAttempt = 1
+	state.PriorAttempts = []AttemptSummary{}
+	snapshot.TaskStates["task-1"] = state
+	snapshot.Control.Blocker = &OperatorBlocker{Kind: "unknown", OperatorRef: "op", TaskID: "task-1", Diagnostic: "blocked"}
+	if err := validateSnapshot(snapshot); err == nil || !strings.Contains(err.Error(), "operator blocker kind is unknown") {
+		t.Fatalf("validateSnapshot error = %v, want unknown blocker diagnostic", err)
 	}
 }
 

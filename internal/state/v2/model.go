@@ -10,10 +10,11 @@ import (
 )
 
 const (
-	DefaultRepairLimit   = 2
-	DefaultRecoveryLimit = 1
-	MaxPriorAttempts     = 5
-	MaxDiagnosticBytes   = 1024
+	DefaultRepairLimit           = 2
+	DefaultRecoveryLimit         = 1
+	MaxPriorAttempts             = 5
+	MaxDiagnosticBytes           = 1024
+	BlockerKindMalformedArtifact = "malformed_artifact"
 )
 
 type TaskStatus string
@@ -176,6 +177,9 @@ func validateTaskStates(s WorkSnapshot) error {
 		if strings.TrimSpace(s.Control.Blocker.Kind) == "" || strings.TrimSpace(s.Control.Blocker.OperatorRef) == "" || strings.TrimSpace(string(s.Control.Blocker.TaskID)) == "" || strings.TrimSpace(s.Control.Blocker.Diagnostic) == "" {
 			return errors.New("operator blocker identity is required")
 		}
+		if !validOperatorBlockerKind(s.Control.Blocker.Kind) {
+			return fmt.Errorf("operator blocker kind is unknown: %q", s.Control.Blocker.Kind)
+		}
 		blockedTask, ok := s.TaskStates[contractv2.TaskID(s.Control.Blocker.TaskID)]
 		if !ok {
 			return errors.New("operator blocker task is not in contract")
@@ -194,6 +198,14 @@ func validateTaskStates(s WorkSnapshot) error {
 }
 
 func validateTaskEvidence(task TaskExecutionState, blocker *OperatorBlocker) error {
+	if task.Invocation != nil {
+		if err := validateInvocation(task); err != nil {
+			return err
+		}
+	}
+	if task.Status == TaskNeedsOperator && blocker != nil && !validOperatorBlockerKind(blocker.Kind) {
+		return fmt.Errorf("operator blocker kind is unknown: %q", blocker.Kind)
+	}
 	switch task.Status {
 	case TaskCandidateReady:
 		if task.Candidate == nil {
@@ -212,44 +224,8 @@ func validateTaskEvidence(task TaskExecutionState, blocker *OperatorBlocker) err
 			return errors.New("integrated task has incomplete evidence")
 		}
 	}
-	if task.Invocation != nil && !validTaskStatus(task.Invocation.ReturnStage) {
-		return fmt.Errorf("unknown invocation return stage %q", task.Invocation.ReturnStage)
-	}
 	if task.Invocation != nil {
 		inv := task.Invocation
-		if strings.TrimSpace(string(inv.InvocationID)) == "" || strings.TrimSpace(string(inv.LogicalWorkID)) == "" || strings.TrimSpace(inv.Role) == "" || strings.TrimSpace(inv.LogicalProfile) == "" || strings.TrimSpace(inv.RuntimeFingerprint) == "" || (inv.Role != roleBuilder && inv.Role != roleReviewer) {
-			return errors.New("invocation identity and role are required")
-		}
-		if inv.StartedAt != nil && (inv.StartedAt.IsZero() || inv.StartedAt.Location() != time.UTC) || inv.EndedAt != nil && (inv.EndedAt.IsZero() || inv.EndedAt.Location() != time.UTC) {
-			return errors.New("invocation timestamps must be nonzero UTC")
-		}
-		found := false
-		for _, id := range task.InvocationHistory {
-			if id == inv.InvocationID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return errors.New("invocation is absent from history")
-		}
-		if (inv.EndedAt == nil) != !inv.TerminationConfirmed {
-			return errors.New("invocation termination lifecycle is inconsistent")
-		}
-		if inv.Role != "" {
-			if inv.Role != roleBuilder && inv.Role != roleReviewer {
-				return errors.New("invocation role is invalid")
-			}
-			if !validReturnStage(inv.Role, inv.ReturnStage) {
-				if inv.Role == roleBuilder {
-					return errors.New("builder invocation return stage is invalid")
-				}
-				return errors.New("reviewer invocation return stage is invalid")
-			}
-			if task.LogicalWork == nil || task.LogicalWork.LogicalWorkID != inv.LogicalWorkID || task.LogicalWork.Role != inv.Role || task.LogicalWork.BuilderAttempt != task.BuilderAttempt {
-				return errors.New("invocation logical work does not match task")
-			}
-		}
 		switch task.Status {
 		case TaskInvocationReserved:
 			if inv.StartedAt != nil || inv.EndedAt != nil || inv.TerminationConfirmed {
@@ -418,6 +394,13 @@ func validateTaskStageMatrix(task TaskExecutionState, blocker *OperatorBlocker) 
 			if !terminated || inv.Role != roleBuilder {
 				return errors.New("operator candidate lifecycle is incoherent")
 			}
+		} else if inv != nil {
+			if inv.Role != roleBuilder {
+				return errors.New("reviewer invocation-only state is invalid")
+			}
+			if !validBuilderOperatorInvocationShape(inv) {
+				return errors.New("operator invocation-only state is invalid")
+			}
 		} else if inv == nil {
 			if !validOperatorBlocker(task, blocker) {
 				return errors.New("operator blocker is required without invocation or evidence")
@@ -441,7 +424,71 @@ func validInvocationLifecycleShape(inv *InvocationState) bool {
 }
 
 func validOperatorBlocker(task TaskExecutionState, blocker *OperatorBlocker) bool {
-	return blocker != nil && blocker.TaskID == task.TaskID && strings.TrimSpace(blocker.Kind) != "" && strings.TrimSpace(blocker.OperatorRef) != "" && strings.TrimSpace(blocker.Diagnostic) != ""
+	return blocker != nil && blocker.TaskID == task.TaskID && validOperatorBlockerKind(blocker.Kind) && strings.TrimSpace(blocker.OperatorRef) != "" && strings.TrimSpace(blocker.Diagnostic) != ""
+}
+
+func validOperatorBlockerKind(kind string) bool {
+	switch kind {
+	case BlockerKindRepairBudgetExhausted, BlockerKindRecoveryBudgetExhausted, BlockerKindRuntimeUnknown, BlockerKindRetryVerifiedStage, BlockerKindEvidenceMismatch, BlockerKindMalformedArtifact:
+		return true
+	default:
+		return false
+	}
+}
+
+func validBuilderOperatorInvocationShape(inv *InvocationState) bool {
+	if inv == nil || inv.Role != roleBuilder {
+		return false
+	}
+	if inv.EndedAt != nil {
+		return inv.TerminationConfirmed
+	}
+	if inv.StartedAt == nil {
+		return !inv.TerminationConfirmed && strings.TrimSpace(inv.TerminationReason) == ""
+	}
+	return !inv.TerminationConfirmed
+}
+
+func validateInvocation(task TaskExecutionState) error {
+	inv := task.Invocation
+	if strings.TrimSpace(inv.Role) == "" {
+		return errors.New("invocation role is required")
+	}
+	if inv.Role != roleBuilder && inv.Role != roleReviewer {
+		return errors.New("invocation role is invalid")
+	}
+	if !validTaskStatus(inv.ReturnStage) {
+		return fmt.Errorf("unknown invocation return stage %q", inv.ReturnStage)
+	}
+	if !validReturnStage(inv.Role, inv.ReturnStage) {
+		if inv.Role == roleBuilder {
+			return errors.New("builder invocation return stage is invalid")
+		}
+		return errors.New("reviewer invocation return stage is invalid")
+	}
+	if strings.TrimSpace(string(inv.InvocationID)) == "" || strings.TrimSpace(string(inv.LogicalWorkID)) == "" || strings.TrimSpace(inv.LogicalProfile) == "" || strings.TrimSpace(inv.RuntimeFingerprint) == "" {
+		return errors.New("invocation identity is required")
+	}
+	if inv.StartedAt != nil && (inv.StartedAt.IsZero() || inv.StartedAt.Location() != time.UTC) || inv.EndedAt != nil && (inv.EndedAt.IsZero() || inv.EndedAt.Location() != time.UTC) {
+		return errors.New("invocation timestamps must be nonzero UTC")
+	}
+	found := false
+	for _, id := range task.InvocationHistory {
+		if id == inv.InvocationID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errors.New("invocation is absent from history")
+	}
+	if (inv.EndedAt == nil) != !inv.TerminationConfirmed {
+		return errors.New("invocation termination lifecycle is inconsistent")
+	}
+	if task.LogicalWork == nil || task.LogicalWork.LogicalWorkID != inv.LogicalWorkID || task.LogicalWork.Role != inv.Role || task.LogicalWork.BuilderAttempt != task.BuilderAttempt {
+		return errors.New("invocation logical work does not match task")
+	}
+	return nil
 }
 
 func validateDiagnostic(value string) error {
