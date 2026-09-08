@@ -96,18 +96,23 @@ func TestCoordinatorSkipsSettledHistoricalInvocationAndReconcilesPublication(t *
 }
 
 func TestCoordinatorTerminationPendingUnknownDoesNotTerminate(t *testing.T) {
-	st := &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskTerminationPending)}
-	task := st.snapshot.TaskStates["task-1"]
-	task.Invocation.LaunchRequested = true
-	task.Invocation.ProviderIdentity = "provider-1"
-	st.snapshot.TaskStates["task-1"] = task
-	rt := &reconcileTestRuntime{observation: RuntimeObservation{State: RuntimeObservationUnknown}}
-	c := NewCoordinator(st, rt, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
-	if _, err := c.Reconcile(context.Background(), "work-1"); err == nil {
-		t.Fatal("unknown termination observation unexpectedly succeeded")
-	}
-	if rt.terminates != 0 {
-		t.Fatalf("terminate calls = %d, want 0", rt.terminates)
+	for _, observation := range []RuntimeObservation{{State: RuntimeObservationUnknown}, {State: RuntimeObservationNotStarted}, {}, {State: RuntimeObservationActive, ProviderIdentity: "provider-other"}} {
+		st := &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskTerminationPending)}
+		task := st.snapshot.TaskStates["task-1"]
+		task.Invocation.LaunchRequested = true
+		task.Invocation.ProviderIdentity = "provider-1"
+		st.snapshot.TaskStates["task-1"] = task
+		rt := &reconcileTestRuntime{observation: observation}
+		c := NewCoordinator(st, rt, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
+		if _, err := c.Reconcile(context.Background(), "work-1"); err == nil {
+			t.Fatalf("observation %#v unexpectedly succeeded", observation)
+		}
+		if rt.terminates != 0 {
+			t.Fatalf("observation %#v terminate calls = %d, want 0", observation, rt.terminates)
+		}
+		if st.snapshot.State != statev2.StateNeedsOperator || st.snapshot.Control.Blocker == nil || st.snapshot.Control.Blocker.Kind != statev2.BlockerKindRuntimeUnknown {
+			t.Fatalf("observation %#v blocker = %#v state=%q", observation, st.snapshot.Control.Blocker, st.snapshot.State)
+		}
 	}
 }
 
@@ -115,6 +120,7 @@ func TestCoordinatorRunningUnknownObservationsNeverTerminate(t *testing.T) {
 	for _, observation := range []RuntimeObservation{
 		{State: RuntimeObservationUnknown},
 		{State: RuntimeObservationNotStarted},
+		{},
 		{State: RuntimeObservationActive, ProviderIdentity: "provider-other"},
 	} {
 		st := &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskRunning)}
@@ -127,8 +133,12 @@ func TestCoordinatorRunningUnknownObservationsNeverTerminate(t *testing.T) {
 		if _, err := c.Reconcile(context.Background(), "work-1"); err == nil {
 			t.Fatalf("observation %#v unexpectedly succeeded", observation)
 		}
-		if rt.terminates != 0 || st.lastTaskAction != statev2.TaskNeedsOperatorAction {
-			t.Fatalf("observation %#v terminate=%d action=%q", observation, rt.terminates, st.lastTaskAction)
+		if rt.terminates != 0 || st.lastTaskAction != statev2.TaskNeedsOperatorAction || st.snapshot.State != statev2.StateNeedsOperator {
+			t.Fatalf("observation %#v terminate=%d action=%q state=%q", observation, rt.terminates, st.lastTaskAction, st.snapshot.State)
+		}
+		blocker := st.snapshot.Control.Blocker
+		if blocker == nil || blocker.Kind != statev2.BlockerKindRuntimeUnknown || blocker.TaskID != "task-1" || blocker.InvocationID != "inv-1" || blocker.OperatorRef != "owner-1" || blocker.Diagnostic == "" {
+			t.Fatalf("runtime blocker = %#v", blocker)
 		}
 	}
 }
@@ -197,6 +207,56 @@ func TestCoordinatorPausedPublicationAdoptsMatchButDoesNotPublishAbsent(t *testi
 	}
 }
 
+func TestCoordinatorReleasesLeaseOnLoadRuntimePublicationAndCancelReturns(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     State
+		runtime   Runtime
+		publisher Publisher
+		ctx       context.Context
+	}{
+		{name: "load error", state: &reconcileErrorState{snapshot: reconcileSnapshot(statev2.TaskPending), loadErr: errors.New("load failed")}},
+		{name: "runtime observation error", state: &reconcileTestState{snapshot: func() statev2.WorkSnapshot {
+			s := reconcileSnapshot(statev2.TaskInvocationReserved)
+			task := s.TaskStates["task-1"]
+			task.Invocation.LaunchRequested = true
+			s.TaskStates["task-1"] = task
+			return s
+		}()}, runtime: &reconcileTestRuntime{observeErr: errors.New("provider unavailable")}},
+		{name: "publication settlement apply error", state: &reconcileTestState{snapshot: reconcilePublicationSnapshot(), applyErr: errors.New("settlement failed")}, publisher: &reconcileTestPublisher{observation: PublicationObservation{State: PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: reconcileAt}}}},
+		{name: "canceled context", state: &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskPending)}, ctx: func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }()},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			lease := &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}
+			c := NewCoordinator(tc.state, tc.runtime, tc.publisher, &reconcileLocker{lease: lease}, "owner-1", 41, reconcileAt)
+			ctx := tc.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			_, _ = c.Reconcile(ctx, "work-1")
+			if lease.releases != 1 {
+				t.Fatalf("lease releases = %d, want 1", lease.releases)
+			}
+		})
+	}
+}
+
+type reconcileErrorState struct {
+	snapshot statev2.WorkSnapshot
+	loadErr  error
+}
+
+func (s *reconcileErrorState) Load(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error) {
+	if s.loadErr != nil {
+		return statev2.WorkSnapshot{}, s.loadErr
+	}
+	return s.snapshot, nil
+}
+func (s *reconcileErrorState) Apply(context.Context, statev2.TransitionRequest) (statev2.WorkSnapshot, error) {
+	return s.snapshot, errors.New("apply failed")
+}
+
 func TestCoordinatorPublicationObserveErrorIsConflictWithoutPublish(t *testing.T) {
 	st := &reconcileTestState{snapshot: reconcilePublicationSnapshot()}
 	pub := &reconcileTestPublisher{observeErr: errors.New("provider secret should not persist")}
@@ -240,6 +300,7 @@ func reconcilePublicationSnapshot() statev2.WorkSnapshot {
 
 type reconcileTestState struct {
 	snapshot                  statev2.WorkSnapshot
+	applyErr                  error
 	taskActions               int
 	lastTaskAction            statev2.TaskAction
 	lastPublicationAction     statev2.PublicationAction
@@ -250,6 +311,9 @@ func (s *reconcileTestState) Load(context.Context, contractv2.WorkID) (statev2.W
 	return s.snapshot, nil
 }
 func (s *reconcileTestState) Apply(_ context.Context, req statev2.TransitionRequest) (statev2.WorkSnapshot, error) {
+	if s.applyErr != nil {
+		return s.snapshot, s.applyErr
+	}
 	if req.Task != nil {
 		s.taskActions++
 		s.lastTaskAction = req.Task.Action
@@ -265,6 +329,9 @@ func (s *reconcileTestState) Apply(_ context.Context, req statev2.TransitionRequ
 			t.Status = statev2.TaskTerminationPending
 		case statev2.TaskConfirmTermination:
 			t.Status = statev2.TaskTerminated
+		case statev2.TaskNeedsOperatorAction:
+			t.Status = statev2.TaskNeedsOperator
+			s.snapshot.Control.Blocker = req.Task.Blocker
 		}
 		s.snapshot.TaskStates[req.Task.TaskID] = t
 	}
@@ -284,12 +351,13 @@ func (s *reconcileTestState) Apply(_ context.Context, req statev2.TransitionRequ
 
 type reconcileTestRuntime struct {
 	observation                    RuntimeObservation
+	observeErr                     error
 	observes, launches, terminates int
 }
 
 func (r *reconcileTestRuntime) Observe(context.Context, statev2.InvocationState) (RuntimeObservation, error) {
 	r.observes++
-	return r.observation, nil
+	return r.observation, r.observeErr
 }
 func (r *reconcileTestRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity) (string, error) {
 	r.launches++

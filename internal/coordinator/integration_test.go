@@ -1,11 +1,16 @@
 package coordinator_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +23,71 @@ import (
 )
 
 var reconcileAt = time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+
+func TestCoordinatorOwnerLossAcquiresBeforeAnyRuntimeCall(t *testing.T) {
+	if os.Getenv("THREADDOCK_COORDINATOR_OWNER_HELPER") == "1" {
+		root := os.Getenv("THREADDOCK_COORDINATOR_OWNER_ROOT")
+		lease, err := coordinator.NewOwnerLocker(root).Acquire(context.Background(), "work-owner-loss", "helper", os.Getpid(), reconcileAt)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		fmt.Fprintln(os.Stdout, "ready")
+		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+		_ = lease.Release()
+		return
+	}
+	root := t.TempDir()
+	store := statev2.NewStore(root)
+	contract := contractv2.WorkItemContract{Version: 2, WorkID: "work-owner-loss", ProjectID: "project-owner-loss", Revision: 1, Request: "owner", AcceptanceCriteria: []string{"done"}, RepositoryPlans: []contractv2.RepositoryPlan{{RepoKey: "app", BaseSHA: "0123456789012345678901234567890123456789", TargetBranch: "main"}}, Tasks: []contractv2.Task{}, Documentation: contractv2.DocumentationPlan{Reason: "none"}, ExecutionProfiles: contractv2.ExecutionProfiles{Builder: "builder", Reviewer: "reviewer", Documenter: "documenter"}}
+	var encoded bytes.Buffer
+	if err := contractv2.Write(&encoded, contract); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(encoded.Bytes())
+	snapshot := statev2.WorkSnapshot{SchemaVersion: 2, ProjectID: contract.ProjectID, WorkID: contract.WorkID, Revision: 1, State: statev2.StateAwaitingApproval, ContractHash: hex.EncodeToString(sum[:]), Contract: contract, SyncStatus: "local", NextAction: "approve", EvidenceRefs: []string{}, Receipts: map[contractv2.RequestID]statev2.Receipt{}, TaskStates: map[contractv2.TaskID]statev2.TaskExecutionState{}, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}}
+	if _, err := store.CreatePlan(context.Background(), snapshot, "plan", "hash"); err != nil {
+		t.Fatal(err)
+	}
+	ownerHelper := exec.Command(os.Args[0], "-test.run", "^TestCoordinatorOwnerLossAcquiresBeforeAnyRuntimeCall$")
+	ownerHelper.Env = append(os.Environ(), "THREADDOCK_COORDINATOR_OWNER_HELPER=1", "THREADDOCK_COORDINATOR_OWNER_ROOT="+root)
+	stdout, err := ownerHelper.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdin, err := ownerHelper.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ownerHelper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil || ready != "ready\n" {
+		t.Fatalf("helper ready=%q err=%v", ready, err)
+	}
+	if err := ownerHelper.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ownerHelper.Wait(); err == nil {
+		t.Fatal("owner helper unexpectedly exited cleanly")
+	}
+	_ = stdin.Close()
+	rt := &integrationRuntime{}
+	c := coordinator.NewCoordinator(store, rt, nil, coordinator.NewOwnerLocker(root), "successor", 43, reconcileAt)
+	result, err := c.Reconcile(context.Background(), contract.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.WorkID != contract.WorkID || rt.observes != 0 || rt.launches != 0 || rt.terminates != 0 {
+		t.Fatalf("result=%#v runtime=%d/%d/%d", result, rt.observes, rt.launches, rt.terminates)
+	}
+	lease, err := coordinator.NewOwnerLocker(root).Acquire(context.Background(), contract.WorkID, "after", 44, reconcileAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = lease.Release()
+}
 
 func TestCoordinatorIntegrationUsesDurableStateForNoLaunchProof(t *testing.T) {
 	root := t.TempDir()
@@ -127,8 +197,14 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	if rt.terminates != 1 {
 		t.Fatalf("terminate calls = %d, want 1", rt.terminates)
 	}
+	if locker.acquires != 1 || locker.releases != 0 {
+		t.Fatalf("dispatcher owner calls before close = acquire %d release %d", locker.acquires, locker.releases)
+	}
 	if err := dispatcher.Close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if locker.releases != 1 {
+		t.Fatalf("dispatcher owner releases = %d, want 1", locker.releases)
 	}
 	paused, err := service.Status(context.Background(), contract.WorkID)
 	if err != nil {
@@ -143,6 +219,9 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	resumed, err := service.Status(context.Background(), contract.WorkID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(paused.TaskStates, resumed.TaskStates) || !reflect.DeepEqual(paused.EvidenceRefs, resumed.EvidenceRefs) {
+		t.Fatalf("pause/resume changed durable task evidence: paused=%#v resumed=%#v", paused.TaskStates, resumed.TaskStates)
 	}
 	candidateSHA, treeSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	candidate := statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskRecordCandidate, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: reconcileAt.Add(2 * time.Minute), Candidate: &statev2.CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{"internal/example.go"}}}
@@ -170,7 +249,8 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 		t.Fatal(err)
 	}
 	pub := &integrationPublisher{}
-	reconciler := coordinator.NewCoordinator(works, nil, pub, &integrationLocker{}, "owner-reconcile", 42, reconcileAt)
+	reconcileLocker := &integrationLocker{}
+	reconciler := coordinator.NewCoordinator(works, nil, pub, reconcileLocker, "owner-reconcile", 42, reconcileAt)
 	workflowWithCoordinator := workflow.NewWithCoordinator(projects, works, reconciler)
 	statusBefore, err := workflowWithCoordinator.Status(context.Background(), contract.WorkID)
 	if err != nil {
@@ -186,12 +266,33 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	if statusAfter.Revision == statusBefore.Revision || pub.observes != 1 || pub.publishes != 1 || statusAfter.Publications["intent-1"].Status != statev2.PublicationCompleted {
 		t.Fatalf("status revision=%d/%d publication calls=%d/%d status=%q", statusBefore.Revision, statusAfter.Revision, pub.observes, pub.publishes, statusAfter.Publications["intent-1"].Status)
 	}
+	if reconcileLocker.acquires != 1 || reconcileLocker.releases != 1 {
+		t.Fatalf("reconcile owner calls = acquire %d release %d", reconcileLocker.acquires, reconcileLocker.releases)
+	}
 	stable, err := workflowWithCoordinator.Status(context.Background(), contract.WorkID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stable.Revision != statusAfter.Revision {
 		t.Fatalf("repeated status mutated revision %d -> %d", statusAfter.Revision, stable.Revision)
+	}
+	beforeSnapshot, err := workflowWithCoordinator.Snapshot(context.Background(), reconcileAt.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterSnapshot, err := workflowWithCoordinator.Snapshot(context.Background(), reconcileAt.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeSnapshot, afterSnapshot) {
+		t.Fatal("repeated Snapshot mutated its result")
+	}
+	finalStatus, err := workflowWithCoordinator.Status(context.Background(), contract.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalStatus.Revision != statusAfter.Revision {
+		t.Fatalf("Snapshot reads mutated durable revision %d -> %d", statusAfter.Revision, finalStatus.Revision)
 	}
 }
 
@@ -224,13 +325,20 @@ func (p *integrationPublisher) Publish(context.Context, statev2.PublicationState
 	return statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: reconcileAt}, nil
 }
 
-type integrationLocker struct{}
+type integrationLocker struct{ acquires, releases int }
 
 func (l *integrationLocker) Acquire(_ context.Context, workID contractv2.WorkID, ownerID coordinator.OwnerID, pid int, startedAt time.Time) (coordinator.OwnerLease, error) {
-	return &integrationLease{record: coordinator.OwnerRecord{WorkID: workID, OwnerID: ownerID, PID: pid, StartedAt: startedAt}}, nil
+	l.acquires++
+	return &integrationLease{record: coordinator.OwnerRecord{WorkID: workID, OwnerID: ownerID, PID: pid, StartedAt: startedAt}, locker: l}, nil
 }
 
-type integrationLease struct{ record coordinator.OwnerRecord }
+type integrationLease struct {
+	record coordinator.OwnerRecord
+	locker *integrationLocker
+}
 
 func (l *integrationLease) Record() coordinator.OwnerRecord { return l.record }
-func (l *integrationLease) Release() error                  { return nil }
+func (l *integrationLease) Release() error {
+	l.locker.releases++
+	return nil
+}
