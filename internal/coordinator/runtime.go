@@ -79,6 +79,9 @@ type runtimeOperation struct {
 	key     runtimeKey
 	kind    runtimeOperationKind
 	waiters []chan<- CommandResult
+	ctx     context.Context
+	cancel  context.CancelFunc
+	stop    func() bool
 }
 
 type runtimeEvent struct {
@@ -177,6 +180,8 @@ func (d *publicationDispatcher) handleRuntimeCommand(q *publicationQueue, comman
 		return
 	}
 	op := &runtimeOperation{key: key, kind: kind, waiters: []chan<- CommandResult{command.result}}
+	op.ctx, op.cancel = context.WithCancel(q.ctx)
+	op.stop = context.AfterFunc(command.ctx, op.cancel)
 	if q.runtimeOps[key] == nil {
 		q.runtimeOps[key] = make(map[runtimeOperationKind]*runtimeOperation)
 	}
@@ -187,8 +192,14 @@ func (d *publicationDispatcher) handleRuntimeCommand(q *publicationQueue, comman
 
 func (d *publicationDispatcher) runRuntimeWorker(q *publicationQueue, op *runtimeOperation) {
 	defer q.runtimeWG.Done()
+	if op.stop != nil {
+		defer op.stop()
+	}
+	if op.cancel != nil {
+		defer op.cancel()
+	}
 	event := runtimeEvent{key: op.key, operation: op.kind, result: RuntimeResult{InvocationID: op.key.invocationID}}
-	ctx := q.ctx
+	ctx := op.ctx
 	snapshot, err := d.state.Load(ctx, q.workID)
 	if err != nil {
 		event.result.Err = err
@@ -273,12 +284,19 @@ func (d *publicationDispatcher) handleRuntimeEvent(q *publicationQueue, event ru
 	if event.result.Err == nil {
 		result = d.settleRuntimeEvent(q, snapshot, event)
 	} else if event.operation == runtimeObserve && (errors.Is(event.result.Err, context.Canceled) || errors.Is(event.result.Err, context.DeadlineExceeded)) {
-		result = d.requestRuntimeTermination(q, snapshot, event.key, "runtime observation ended", op.waiters...)
-		if result.Err == nil {
-			// The termination operation now owns these completion channels.
-			op.waiters = nil
-			return
+		task := snapshot.TaskStates[event.key.taskID]
+		if task.Status == statev2.TaskInvocationReserved {
+			result = d.runtimeUnknown(q, snapshot, event.key, "runtime observation was canceled before identity was established")
+		} else {
+			result = d.requestRuntimeTermination(q, snapshot, event.key, "runtime observation ended", op.waiters...)
+			if result.Err == nil {
+				// The termination operation now owns these completion channels.
+				op.waiters = nil
+				return
+			}
 		}
+	} else if event.operation == runtimeLaunch && (errors.Is(event.result.Err, context.Canceled) || errors.Is(event.result.Err, context.DeadlineExceeded)) {
+		result = d.runtimeUnknown(q, snapshot, event.key, "runtime launch was canceled after durable launch request")
 	}
 	if result.Err == nil && event.operation != runtimeTerminate && runtimeTerminationPending(result.Snapshot, event.key.taskID) {
 		if terminate := q.runtimeOps[event.key][runtimeTerminate]; terminate != nil {
@@ -299,6 +317,13 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 	task, invocation, err := d.validateRuntimeIdentity(snapshot, q, event.key)
 	if err != nil {
 		return CommandResult{Snapshot: snapshot, Err: err}
+	}
+	if task.Status == statev2.TaskTerminated && invocation.TerminationConfirmed && invocation.EndedAt != nil {
+		return CommandResult{Snapshot: snapshot}
+	}
+	endedAt, endedAtErr := runtimeEndedAt(event.observation.EndedAt)
+	if endedAtErr != nil {
+		return d.runtimeUnknown(q, snapshot, event.key, endedAtErr.Error())
 	}
 	switch event.operation {
 	case runtimeLaunch:
@@ -351,7 +376,7 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 			} else if strings.TrimSpace(event.observation.ProviderIdentity) == "" || event.observation.ProviderIdentity != invocation.ProviderIdentity {
 				return d.runtimeUnknown(q, snapshot, event.key, "runtime ended identity does not match persisted identity")
 			}
-			return d.applyRuntimeAndReload(q.ctx, snapshot, task, invocation, statev2.TaskConfirmTermination, event.observation.Diagnostic)
+			return d.applyRuntimeAndReloadAt(q.ctx, snapshot, task, invocation, statev2.TaskConfirmTermination, event.observation.Diagnostic, endedAt)
 		case RuntimeObservationNotStarted, RuntimeObservationUnknown:
 			return d.runtimeUnknown(q, snapshot, event.key, runtimeDiagnostic(event.observation))
 		default:
@@ -388,6 +413,7 @@ func (d *publicationDispatcher) requestRuntimeTermination(q *publicationQueue, s
 			existing.waiters = append(existing.waiters, waiters...)
 		} else {
 			op := &runtimeOperation{key: key, kind: runtimeTerminate, waiters: append([]chan<- CommandResult(nil), waiters...)}
+			op.ctx, op.cancel = context.WithCancel(q.ctx)
 			q.runtimeOps[key][runtimeTerminate] = op
 			q.runtimeWG.Add(1)
 			go d.runRuntimeWorker(q, op)
@@ -444,7 +470,11 @@ func hasRuntimeProvider(invocation *statev2.InvocationState) bool {
 }
 
 func (d *publicationDispatcher) applyRuntimeTask(ctx context.Context, snapshot statev2.WorkSnapshot, task statev2.TaskExecutionState, invocation *statev2.InvocationState, action statev2.TaskAction, identity string) (statev2.WorkSnapshot, error) {
-	transition := runtimeTransition(task, invocation, action, identity)
+	return d.applyRuntimeTaskAt(ctx, snapshot, task, invocation, action, identity, nil)
+}
+
+func (d *publicationDispatcher) applyRuntimeTaskAt(ctx context.Context, snapshot statev2.WorkSnapshot, task statev2.TaskExecutionState, invocation *statev2.InvocationState, action statev2.TaskAction, identity string, at *time.Time) (statev2.WorkSnapshot, error) {
+	transition := runtimeTransitionAt(task, invocation, action, identity, at)
 	if action == statev2.TaskNeedsOperatorAction {
 		transition.Blocker = &statev2.OperatorBlocker{Kind: statev2.BlockerKindRuntimeUnknown, OperatorRef: string(d.ownerID), TaskID: task.TaskID, InvocationID: invocation.InvocationID, Diagnostic: identity}
 	}
@@ -456,7 +486,11 @@ func (d *publicationDispatcher) applyRuntimeTask(ctx context.Context, snapshot s
 }
 
 func (d *publicationDispatcher) applyRuntimeAndReload(ctx context.Context, snapshot statev2.WorkSnapshot, task statev2.TaskExecutionState, invocation *statev2.InvocationState, action statev2.TaskAction, identity string) CommandResult {
-	updated, err := d.applyRuntimeTask(ctx, snapshot, task, invocation, action, identity)
+	return d.applyRuntimeAndReloadAt(ctx, snapshot, task, invocation, action, identity, nil)
+}
+
+func (d *publicationDispatcher) applyRuntimeAndReloadAt(ctx context.Context, snapshot statev2.WorkSnapshot, task statev2.TaskExecutionState, invocation *statev2.InvocationState, action statev2.TaskAction, identity string, at *time.Time) CommandResult {
+	updated, err := d.applyRuntimeTaskAt(ctx, snapshot, task, invocation, action, identity, at)
 	if err != nil {
 		return CommandResult{Snapshot: snapshot, Err: err}
 	}
@@ -468,7 +502,15 @@ func (d *publicationDispatcher) applyRuntimeAndReload(ctx context.Context, snaps
 }
 
 func runtimeTransition(task statev2.TaskExecutionState, invocation *statev2.InvocationState, action statev2.TaskAction, identity string) statev2.TaskTransition {
-	transition := statev2.TaskTransition{TaskID: task.TaskID, Action: action, InvocationID: invocation.InvocationID, LogicalWorkID: invocation.LogicalWorkID, Role: invocation.Role, ReturnStage: invocation.ReturnStage, BuilderAttempt: task.BuilderAttempt, At: time.Now().UTC()}
+	return runtimeTransitionAt(task, invocation, action, identity, nil)
+}
+
+func runtimeTransitionAt(task statev2.TaskExecutionState, invocation *statev2.InvocationState, action statev2.TaskAction, identity string, at *time.Time) statev2.TaskTransition {
+	transitionAt := time.Now().UTC()
+	if at != nil {
+		transitionAt = *at
+	}
+	transition := statev2.TaskTransition{TaskID: task.TaskID, Action: action, InvocationID: invocation.InvocationID, LogicalWorkID: invocation.LogicalWorkID, Role: invocation.Role, ReturnStage: invocation.ReturnStage, BuilderAttempt: task.BuilderAttempt, At: transitionAt}
 	if task.Worktree != nil {
 		worktree := *task.Worktree
 		transition.Worktree = &worktree
@@ -489,6 +531,17 @@ func runtimeTransition(task statev2.TaskExecutionState, invocation *statev2.Invo
 		transition.Reason = reason
 	}
 	return transition
+}
+
+func runtimeEndedAt(at *time.Time) (*time.Time, error) {
+	if at == nil {
+		return nil, nil
+	}
+	if at.IsZero() || at.Location() != time.UTC {
+		return nil, errors.New("runtime ended timestamp is invalid")
+	}
+	copy := *at
+	return &copy, nil
 }
 
 func (d *publicationDispatcher) runtimeRequest(snapshot statev2.WorkSnapshot, transition statev2.TaskTransition) (statev2.TransitionRequest, error) {

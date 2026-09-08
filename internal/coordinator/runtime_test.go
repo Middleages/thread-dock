@@ -18,6 +18,7 @@ type testRuntime struct {
 	observes   int
 	terminates int
 	ended      bool
+	endedAt    *time.Time
 	identity   string
 }
 
@@ -27,7 +28,7 @@ func (r *testRuntime) Observe(context.Context, statev2.InvocationState) (Runtime
 	ended := r.ended
 	r.mu.Unlock()
 	if ended {
-		return RuntimeObservation{State: RuntimeObservationEnded, ProviderIdentity: r.identity}, nil
+		return RuntimeObservation{State: RuntimeObservationEnded, ProviderIdentity: r.identity, EndedAt: r.endedAt}, nil
 	}
 	return RuntimeObservation{State: RuntimeObservationActive, ProviderIdentity: r.identity}, nil
 }
@@ -430,6 +431,176 @@ func TestRuntimeCloseCancelsWorkersResolvesResultsAndReleasesLease(t *testing.T)
 	}
 }
 
+type cancelRuntime struct {
+	observeEntered chan struct{}
+	launchEntered  chan struct{}
+	mu             sync.Mutex
+	terminateCalls int
+}
+
+func (r *cancelRuntime) Launch(ctx context.Context, _ statev2.InvocationState, _ statev2.WorktreeIdentity) (string, error) {
+	if r.launchEntered != nil {
+		close(r.launchEntered)
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	return "provider-1", nil
+}
+func (r *cancelRuntime) Observe(ctx context.Context, _ statev2.InvocationState) (RuntimeObservation, error) {
+	close(r.observeEntered)
+	<-ctx.Done()
+	return RuntimeObservation{}, ctx.Err()
+}
+func (r *cancelRuntime) Terminate(context.Context, statev2.InvocationState) error {
+	r.mu.Lock()
+	r.terminateCalls++
+	r.mu.Unlock()
+	return nil
+}
+
+func TestRuntimeSubmitCancellationTerminatesRunningInvocation(t *testing.T) {
+	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
+	task := st.snapshot.TaskStates["task-1"]
+	task.Status = statev2.TaskRunning
+	task.Invocation.LaunchRequested = true
+	task.Invocation.ProviderIdentity = "provider-1"
+	st.snapshot.TaskStates["task-1"] = task
+	rt := &cancelRuntime{observeEntered: make(chan struct{})}
+	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	ctx, cancel := context.WithCancel(context.Background())
+	result := d.SubmitRuntime(ctx, "work-1", "task-1", "inv-1")
+	select {
+	case <-rt.observeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("observe did not enter")
+	}
+	cancel()
+	got := <-result
+	if got.Err != nil || got.Snapshot.TaskStates["task-1"].Status != statev2.TaskTerminated {
+		t.Fatalf("canceled running result=%#v", got)
+	}
+	rt.mu.Lock()
+	terminates := rt.terminateCalls
+	rt.mu.Unlock()
+	if terminates != 1 {
+		t.Fatalf("terminate calls=%d, want 1", terminates)
+	}
+	_ = d.Close(context.Background())
+}
+
+func TestRuntimeReplayObserveCancellationNeedsOperatorWithoutStrandedWaiter(t *testing.T) {
+	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
+	st.snapshot.TaskStates["task-1"].Invocation.LaunchRequested = true
+	rt := &cancelRuntime{observeEntered: make(chan struct{})}
+	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	ctx, cancel := context.WithCancel(context.Background())
+	result := d.SubmitRuntime(ctx, "work-1", "task-1", "inv-1")
+	select {
+	case <-rt.observeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("observe did not enter")
+	}
+	cancel()
+	select {
+	case got := <-result:
+		if got.Err == nil || got.Snapshot.TaskStates["task-1"].Status != statev2.TaskNeedsOperator {
+			t.Fatalf("replay cancellation result=%#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replay cancellation result stranded")
+	}
+	_ = d.Close(context.Background())
+}
+
+func TestRuntimeLaunchCancellationAfterBeginNeedsOperator(t *testing.T) {
+	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
+	rt := &cancelRuntime{launchEntered: make(chan struct{})}
+	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	ctx, cancel := context.WithCancel(context.Background())
+	result := d.SubmitRuntime(ctx, "work-1", "task-1", "inv-1")
+	select {
+	case <-rt.launchEntered:
+	case <-time.After(time.Second):
+		t.Fatal("launch did not enter")
+	}
+	cancel()
+	select {
+	case got := <-result:
+		if got.Err == nil || got.Snapshot.TaskStates["task-1"].Status != statev2.TaskNeedsOperator {
+			t.Fatalf("launch cancellation result=%#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("launch cancellation result stranded")
+	}
+	_ = d.Close(context.Background())
+}
+
+func TestRuntimeEndedAtIsPersistedExactly(t *testing.T) {
+	endedAt := time.Date(2026, time.September, 8, 4, 5, 6, 0, time.UTC)
+	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
+	st.snapshot.TaskStates["task-1"].Invocation.LaunchRequested = true
+	rt := &testRuntime{identity: "provider-1", ended: true, endedAt: &endedAt}
+	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	got := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
+	if got.Err != nil {
+		t.Fatalf("ended runtime result: %v", got.Err)
+	}
+	actual := st.snapshot.TaskStates["task-1"].Invocation.EndedAt
+	if actual == nil || !actual.Equal(endedAt) || actual.Location() != time.UTC {
+		t.Fatalf("ended at=%v, want exact %v UTC", actual, endedAt)
+	}
+	_ = d.Close(context.Background())
+}
+
+func TestRuntimeInvalidEndedAtNeedsOperator(t *testing.T) {
+	endedAt := time.Date(2026, time.September, 8, 4, 5, 6, 0, time.FixedZone("invalid", 3600))
+	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
+	st.snapshot.TaskStates["task-1"].Invocation.LaunchRequested = true
+	rt := &testRuntime{identity: "provider-1", ended: true, endedAt: &endedAt}
+	d := NewRuntimeDispatcher(st, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	got := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
+	if got.Err == nil || st.snapshot.TaskStates["task-1"].Status != statev2.TaskNeedsOperator {
+		t.Fatalf("invalid ended at result=%#v", got)
+	}
+	_ = d.Close(context.Background())
+}
+
+func TestRuntimeTerminationSettlementIsIdempotentAcrossEventOrder(t *testing.T) {
+	endedAt := time.Date(2026, time.September, 8, 4, 5, 6, 0, time.UTC)
+	for _, first := range []runtimeOperationKind{runtimeObserve, runtimeTerminate} {
+		t.Run(string(first), func(t *testing.T) {
+			st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
+			task := st.snapshot.TaskStates["task-1"]
+			task.Status = statev2.TaskRunning
+			task.Invocation.LaunchRequested = true
+			task.Invocation.ProviderIdentity = "provider-1"
+			st.snapshot.TaskStates["task-1"] = task
+			startedAt := time.Date(2026, time.September, 8, 4, 0, 0, 0, time.UTC)
+			lease := &fakeOwnerLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 42, StartedAt: startedAt}}
+			d := &publicationDispatcher{state: st, ownerID: "owner-1", pid: 42, startedAt: startedAt}
+			q := &publicationQueue{workID: "work-1", lease: lease, owner: lease.record, ctx: context.Background()}
+			endedEvent := runtimeEvent{key: runtimeKey{taskID: "task-1", invocationID: "inv-1"}, operation: runtimeObserve, result: RuntimeResult{InvocationID: "inv-1"}, observation: RuntimeObservation{State: RuntimeObservationEnded, ProviderIdentity: "provider-1", EndedAt: &endedAt}}
+			terminateEvent := runtimeEvent{key: endedEvent.key, operation: runtimeTerminate, result: RuntimeResult{InvocationID: "inv-1"}}
+			events := []runtimeEvent{endedEvent, terminateEvent}
+			if first == runtimeTerminate {
+				events[0], events[1] = events[1], events[0]
+			}
+			for _, event := range events {
+				result := d.settleRuntimeEvent(q, st.snapshot, event)
+				if result.Err != nil {
+					t.Fatalf("%s event result: %v", event.operation, result.Err)
+				}
+			}
+			if got := st.snapshot.TaskStates["task-1"].Status; got != statev2.TaskTerminated {
+				t.Fatalf("status=%q, want terminated", got)
+			}
+			if len(st.transitions) != 1 || st.transitions[0].Task.Action != statev2.TaskConfirmTermination {
+				t.Fatalf("transitions=%#v, want one confirm", st.transitions)
+			}
+		})
+	}
+}
+
 // runtimeTestState intentionally records typed transitions while applying the
 // small lifecycle mutations needed by dispatcher tests.
 type runtimeTestState struct {
@@ -496,13 +667,13 @@ func (s *runtimeTestState) Apply(_ context.Context, req statev2.TransitionReques
 		started := t.At
 		task.Invocation.StartedAt = &started
 	case statev2.TaskRequestTermination:
-		if t.Reason == "" {
+		if task.Status != statev2.TaskRunning || t.Reason == "" || len([]byte(t.Reason)) > statev2.MaxDiagnosticBytes {
 			return s.snapshot, errors.New("termination reason required")
 		}
 		task.Status = statev2.TaskTerminationPending
 		task.Invocation.TerminationReason = t.Reason
 	case statev2.TaskConfirmTermination:
-		if t.Reason == "" {
+		if (task.Status != statev2.TaskRunning && task.Status != statev2.TaskTerminationPending) || t.Reason == "" || len([]byte(t.Reason)) > statev2.MaxDiagnosticBytes {
 			return s.snapshot, errors.New("termination reason required")
 		}
 		task.Status = statev2.TaskTerminated
