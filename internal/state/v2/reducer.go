@@ -1,13 +1,15 @@
 package statev2
 
 func reduce(snapshot *WorkSnapshot) {
-	publicationPending, publicationFailed, publicationConflict, completionRequiredPending := publicationAggregate(snapshot)
+	publicationPending, publicationFailed, publicationConflict, completionRequiredPending, publicationSettled := publicationAggregate(snapshot)
 	if publicationConflict {
 		snapshot.SyncStatus = "conflict"
 	} else if publicationFailed {
 		snapshot.SyncStatus = "failed"
 	} else if publicationPending {
 		snapshot.SyncStatus = "pending"
+	} else if publicationSettled {
+		snapshot.SyncStatus = "synced"
 	}
 	if snapshot.Control.ApprovedContractHash == "" {
 		snapshot.State = StateAwaitingApproval
@@ -120,21 +122,28 @@ func reduce(snapshot *WorkSnapshot) {
 	snapshot.NextAction = "run"
 }
 
-func publicationAggregate(snapshot *WorkSnapshot) (pending, failed, conflict, completionRequiredPending bool) {
+func publicationAggregate(snapshot *WorkSnapshot) (pending, failed, conflict, completionRequiredPending, settled bool) {
+	if len(snapshot.Publications) == 0 {
+		return false, false, false, false, false
+	}
+	settled = true
 	for _, publication := range snapshot.Publications {
 		switch publication.Status {
 		case PublicationPending:
+			settled = false
 			pending = true
 			if publication.CompletionRequired {
 				completionRequiredPending = true
 			}
 		case PublicationFailed:
+			settled = false
 			failed = true
 			pending = true
 			if publication.CompletionRequired {
 				completionRequiredPending = true
 			}
 		case PublicationConflict:
+			settled = false
 			conflict = true
 			if publication.CompletionRequired {
 				completionRequiredPending = true

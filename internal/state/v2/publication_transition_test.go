@@ -235,3 +235,48 @@ func TestValidateSnapshotRejectsMultiplePublicationConflicts(t *testing.T) {
 		t.Fatal("validateSnapshot accepted multiple publication conflicts")
 	}
 }
+
+func TestUnknownPublicationBeginAtExistingGenerationIsStaleBeforeStatusGuard(t *testing.T) {
+	ctx := context.Background()
+	s, snapshot := approvedPublicationStore(t)
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("3", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget()})
+	pending, err := s.Apply(ctx, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown := publicationRequest(t, pending, "publication-unknown-stale", PublicationTransition{Action: PublicationBegin, IntentID: "intent-unknown", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("4", 64), PayloadRef: "artifact://approved/unknown", Target: publicationTarget()})
+	if _, err := s.Apply(ctx, unknown); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("unknown stale begin error = %v, want ErrStaleGeneration", err)
+	}
+	current, err := s.Load(ctx, pending.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Revision != pending.Revision || len(current.Publications) != 1 {
+		t.Fatalf("unknown stale begin wrote state: %#v", current)
+	}
+}
+
+func TestPublicationCompletionClearsSyncPendingWhilePaused(t *testing.T) {
+	ctx := context.Background()
+	s, snapshot := approvedPublicationStore(t)
+	begin := publicationRequest(t, snapshot, "publication-begin", PublicationTransition{Action: PublicationBegin, IntentID: "intent-1", Key: "issue:1", Kind: PublicationParentIssue, Generation: 1, PayloadHash: strings.Repeat("5", 64), PayloadRef: "artifact://approved/1", Target: publicationTarget()})
+	pending, err := s.Apply(ctx, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pausedReq := transitionRequest(t, pending, "publication-pause", WorkTransition{Action: WorkPause})
+	paused, err := s.Apply(ctx, pausedReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 9, 8, 2, 3, 4, 0, time.UTC)
+	complete := publicationRequest(t, paused, "publication-complete", PublicationTransition{Action: PublicationComplete, IntentID: "intent-1", Key: "issue:1", Generation: 1, Receipt: &PublicationReceipt{NodeID: "node-1", PublishedAt: at}})
+	completed, err := s.Apply(ctx, complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State != StatePaused || completed.SyncStatus != "synced" || !completed.Control.PauseRequested || completed.Publications["intent-1"].Status != PublicationCompleted {
+		t.Fatalf("paused completion = %#v", completed)
+	}
+}
