@@ -40,8 +40,14 @@ func beginPublication(snapshot *WorkSnapshot, transition PublicationTransition) 
 		return invalidTransition("work cannot dispatch publication in state %q", snapshot.State)
 	}
 	if existing, ok := snapshot.Publications[transition.IntentID]; ok {
+		if maxPublicationGeneration(snapshot, existing.Key) != existing.Generation {
+			return ErrStaleGeneration
+		}
 		if existing.Status != PublicationFailed {
 			return invalidTransition("publication intent cannot begin from status %q", existing.Status)
+		}
+		if transition.Key == "" || transition.Key != existing.Key {
+			return invalidTransition("publication key is required and must match intent")
 		}
 		if transition.Generation != existing.Generation {
 			return staleOrInvalidGeneration(snapshot, existing.Key, transition.Generation)
@@ -61,6 +67,12 @@ func beginPublication(snapshot *WorkSnapshot, transition PublicationTransition) 
 		return invalidTransition("publication generation is required")
 	}
 	max := maxPublicationGeneration(snapshot, transition.Key)
+	if max > 0 {
+		current := publicationForGeneration(snapshot, transition.Key, max)
+		if current.Status != PublicationCompleted {
+			return invalidTransition("new publication generation requires completed prior generation")
+		}
+	}
 	if transition.Generation != max+1 {
 		return staleOrInvalidGeneration(snapshot, transition.Key, transition.Generation)
 	}
@@ -74,6 +86,15 @@ func beginPublication(snapshot *WorkSnapshot, transition PublicationTransition) 
 	snapshot.Publications[publication.IntentID] = publication
 	reduce(snapshot)
 	return nil
+}
+
+func publicationForGeneration(snapshot *WorkSnapshot, key PublicationKey, generation uint32) PublicationState {
+	for _, publication := range snapshot.Publications {
+		if publication.Key == key && publication.Generation == generation {
+			return publication
+		}
+	}
+	return PublicationState{}
 }
 
 func validateNewPublicationIdentity(transition PublicationTransition) error {
@@ -231,8 +252,14 @@ func supersedePublication(snapshot *WorkSnapshot, transition PublicationTransiti
 }
 
 func currentPublication(snapshot *WorkSnapshot, transition PublicationTransition) (PublicationState, error) {
+	if transition.Key == "" {
+		return PublicationState{}, invalidTransition("publication key is required")
+	}
 	publication, ok := snapshot.Publications[transition.IntentID]
 	if !ok {
+		if transition.Generation > 0 && transition.Generation <= maxPublicationGeneration(snapshot, transition.Key) {
+			return PublicationState{}, ErrStaleGeneration
+		}
 		return PublicationState{}, invalidTransition("publication intent is unknown")
 	}
 	if transition.Generation < maxPublicationGeneration(snapshot, publication.Key) {

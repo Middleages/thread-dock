@@ -3,6 +3,7 @@ package statev2
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -159,7 +160,7 @@ func validateTaskStates(s WorkSnapshot) error {
 		}
 	}
 	byKey := make(map[PublicationKey]map[uint32]PublicationIntentID)
-	conflictIntent := PublicationIntentID("")
+	conflictIntents := make([]PublicationIntentID, 0, 1)
 	for id, publication := range s.Publications {
 		if id == "" || id != publication.IntentID || strings.TrimSpace(string(publication.IntentID)) != string(publication.IntentID) {
 			return fmt.Errorf("publication key %q does not match intent ID %q", id, publication.IntentID)
@@ -186,10 +187,14 @@ func validateTaskStates(s WorkSnapshot) error {
 		}
 		gens[publication.Generation] = id
 		if publication.Status == PublicationConflict {
-			conflictIntent = publication.IntentID
+			conflictIntents = append(conflictIntents, publication.IntentID)
 		}
 	}
-	if conflictIntent != "" && (s.Control.Blocker == nil || s.Control.Blocker.Kind != BlockerKindPublicationConflict || s.Control.Blocker.IntentID != conflictIntent) {
+	sort.Slice(conflictIntents, func(i, j int) bool { return conflictIntents[i] < conflictIntents[j] })
+	if len(conflictIntents) > 1 {
+		return errors.New("multiple publication conflicts are not allowed")
+	}
+	if len(conflictIntents) == 1 && (s.Control.Blocker == nil || s.Control.Blocker.Kind != BlockerKindPublicationConflict || s.Control.Blocker.IntentID != conflictIntents[0]) {
 		return errors.New("publication conflict requires matching blocker")
 	}
 	for key, gens := range byKey {
