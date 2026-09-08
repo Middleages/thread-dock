@@ -110,7 +110,7 @@ func applyRetryVerifiedStage(snapshot *WorkSnapshot, transition WorkTransition) 
 		return invalidTransition("invalid evidence resolution")
 	}
 	blocker := snapshot.Control.Blocker
-	if blocker == nil || (blocker.Kind != BlockerKindEvidenceMismatch && blocker.Kind != BlockerKindRetryVerifiedStage) || blocker.OperatorRef != payload.OperatorRef || blocker.TaskID != payload.TaskID {
+	if blocker == nil || blocker.Kind != BlockerKindRetryVerifiedStage || blocker.OperatorRef != payload.OperatorRef || blocker.TaskID != payload.TaskID {
 		return invalidTransition("evidence resolution does not match blocker")
 	}
 	task, ok := snapshot.TaskStates[payload.TaskID]

@@ -125,3 +125,18 @@ func TestRecordEvidenceRejectsMismatchedSHAWithoutWrite(t *testing.T) {
 		t.Fatalf("invalid evidence wrote state: after=%#v", after)
 	}
 }
+
+func TestRecordCandidateAcceptsEmptyNonNilChangedFiles(t *testing.T) {
+	ctx := context.Background()
+	store, snapshot := approvedStore(t)
+	snapshot = advanceBuilderToTerminated(t, store, snapshot, false)
+	tr := candidateTransition()
+	tr.Candidate.ChangedFiles = []string{}
+	got, err := store.Apply(ctx, taskRequest(t, snapshot, "empty-files", tr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TaskStates["task-1"].Status != TaskCandidateReady || got.TaskStates["task-1"].Candidate.ChangedFiles == nil {
+		t.Fatalf("candidate = %#v", got.TaskStates["task-1"].Candidate)
+	}
+}

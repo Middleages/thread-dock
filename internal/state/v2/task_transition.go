@@ -5,6 +5,7 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	contractv2 "thread-dock/internal/contract/v2"
 )
@@ -216,15 +217,12 @@ func reserveRepair(snapshot *WorkSnapshot, task *TaskExecutionState, transition 
 			return invalidTransition("matching repair budget blocker is required")
 		}
 		blocker := *transition.Blocker
-		blocker.Diagnostic = transition.Blocker.Diagnostic + "; remaining=0"
+		blocker.Diagnostic = boundedBudgetDiagnostic(transition.Blocker.Diagnostic)
 		snapshot.Control.Blocker = &blocker
 		task.Status = TaskNeedsOperator
 		snapshot.TaskStates[task.TaskID] = *task
 		reduce(snapshot)
 		return nil
-	}
-	if len(task.PriorAttempts) >= MaxPriorAttempts {
-		return invalidTransition("prior attempt summary limit reached")
 	}
 	summary := AttemptSummary{BuilderAttempt: task.BuilderAttempt, Outcome: string(task.Status)}
 	if task.Candidate != nil {
@@ -264,7 +262,7 @@ func reserveRecovery(snapshot *WorkSnapshot, task *TaskExecutionState, transitio
 		}
 		blocker := *transition.Blocker
 		blocker.InvocationID = task.Invocation.InvocationID
-		blocker.Diagnostic = transition.Blocker.Diagnostic + "; remaining=0"
+		blocker.Diagnostic = boundedBudgetDiagnostic(transition.Blocker.Diagnostic)
 		snapshot.Control.Blocker = &blocker
 		task.Status = TaskNeedsOperator
 		snapshot.TaskStates[task.TaskID] = *task
@@ -283,6 +281,19 @@ func reserveRecovery(snapshot *WorkSnapshot, task *TaskExecutionState, transitio
 	snapshot.TaskStates[task.TaskID] = *task
 	reduce(snapshot)
 	return nil
+}
+
+func boundedBudgetDiagnostic(value string) string {
+	suffix := "; remaining=0"
+	limit := MaxDiagnosticBytes - len([]byte(suffix))
+	data := []byte(value)
+	if len(data) > limit {
+		data = data[:limit]
+		for len(data) > 0 && !utf8.Valid(data) {
+			data = data[:len(data)-1]
+		}
+	}
+	return string(data) + suffix
 }
 
 func installInvocation(task *TaskExecutionState, transition TaskTransition, requestID contractv2.RequestID) error {

@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
 )
@@ -145,13 +148,85 @@ func TestValidateSnapshotAcceptsSupportedInvocationReturnStages(t *testing.T) {
 		t.Run(string(stage), func(t *testing.T) {
 			snapshot := validSnapshot()
 			state := snapshot.TaskStates["task-1"]
-			state.Invocation = &InvocationState{InvocationID: "invocation", ReturnStage: stage}
+			role := roleBuilder
+			if stage == TaskGatePassed {
+				role = roleReviewer
+			}
+			state.Status = TaskInvocationReserved
+			state.BuilderAttempt = 1
+			state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical", Role: role, BuilderAttempt: 1}
+			state.Invocation = &InvocationState{InvocationID: "invocation", LogicalWorkID: "logical", Role: role, ReturnStage: stage, LogicalProfile: "profile", RuntimeFingerprint: "runtime"}
 			state.InvocationHistory = []InvocationID{"invocation"}
 			snapshot.TaskStates["task-1"] = state
 			if err := validateSnapshot(snapshot); err != nil {
 				t.Fatalf("supported invocation return stage rejected: %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateSnapshotRejectsCorruptInvocationLifecycle(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*TaskExecutionState)
+	}{
+		{"roleless", func(s *TaskExecutionState) { s.Invocation.Role = "" }},
+		{"history mismatch", func(s *TaskExecutionState) { s.InvocationHistory = []InvocationID{"other"} }},
+		{"ended without confirmation", func(s *TaskExecutionState) { at := invocationAt(1); s.Invocation.EndedAt = &at }},
+		{"non-UTC start", func(s *TaskExecutionState) {
+			at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("x", 3600))
+			s.Invocation.StartedAt = &at
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := validSnapshot()
+			state := snapshot.TaskStates["task-1"]
+			state.Status = TaskInvocationReserved
+			state.BuilderAttempt = 1
+			state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical", Role: roleBuilder, BuilderAttempt: 1}
+			state.Invocation = &InvocationState{InvocationID: "invocation", LogicalWorkID: "logical", Role: roleBuilder, ReturnStage: TaskPending, LogicalProfile: "profile", RuntimeFingerprint: "runtime"}
+			state.InvocationHistory = []InvocationID{"invocation"}
+			tc.mutate(&state)
+			snapshot.TaskStates["task-1"] = state
+			if err := validateSnapshot(snapshot); err == nil {
+				t.Fatal("validateSnapshot accepted corrupt invocation")
+			}
+		})
+	}
+}
+
+func TestStoreLoadRejectsPersistedInvocationCorruption(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store := NewStore(root)
+	if _, err := createPlan(store, ctx, validSnapshot()); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "v2", "work", "work-1", "work.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot WorkSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	state := snapshot.TaskStates["task-1"]
+	state.Status = TaskInvocationReserved
+	state.BuilderAttempt = 1
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical", Role: roleBuilder, BuilderAttempt: 1}
+	state.Invocation = &InvocationState{InvocationID: "inv", LogicalWorkID: "logical", Role: "", ReturnStage: TaskPending, LogicalProfile: "profile", RuntimeFingerprint: "runtime"}
+	state.InvocationHistory = []InvocationID{"inv"}
+	snapshot.TaskStates["task-1"] = state
+	corrupt, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, corrupt, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(ctx, "work-1"); err == nil {
+		t.Fatal("Store.Load accepted persisted invocation corruption")
 	}
 }
 

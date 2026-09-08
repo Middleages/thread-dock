@@ -204,6 +204,22 @@ func validateTaskEvidence(task TaskExecutionState) error {
 	}
 	if task.Invocation != nil {
 		inv := task.Invocation
+		if strings.TrimSpace(string(inv.InvocationID)) == "" || strings.TrimSpace(string(inv.LogicalWorkID)) == "" || strings.TrimSpace(inv.Role) == "" || strings.TrimSpace(inv.LogicalProfile) == "" || strings.TrimSpace(inv.RuntimeFingerprint) == "" || (inv.Role != roleBuilder && inv.Role != roleReviewer) {
+			return errors.New("invocation identity and role are required")
+		}
+		if inv.StartedAt != nil && (inv.StartedAt.IsZero() || inv.StartedAt.Location() != time.UTC) || inv.EndedAt != nil && (inv.EndedAt.IsZero() || inv.EndedAt.Location() != time.UTC) {
+			return errors.New("invocation timestamps must be nonzero UTC")
+		}
+		found := false
+		for _, id := range task.InvocationHistory {
+			if id == inv.InvocationID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return errors.New("invocation is absent from history")
+		}
 		if (inv.EndedAt == nil) != !inv.TerminationConfirmed {
 			return errors.New("invocation termination lifecycle is inconsistent")
 		}
@@ -216,6 +232,20 @@ func validateTaskEvidence(task TaskExecutionState) error {
 			}
 			if inv.Role == roleReviewer && inv.ReturnStage != TaskGatePassed {
 				return errors.New("reviewer invocation return stage is invalid")
+			}
+		}
+		switch task.Status {
+		case TaskInvocationReserved:
+			if inv.StartedAt != nil || inv.EndedAt != nil || inv.TerminationConfirmed {
+				return errors.New("reserved invocation has lifecycle completion")
+			}
+		case TaskRunning, TaskTerminationPending:
+			if inv.StartedAt == nil || inv.EndedAt != nil || inv.TerminationConfirmed {
+				return errors.New("active invocation lifecycle is inconsistent")
+			}
+		case TaskTerminated, TaskCandidateReady, TaskGateFailed, TaskGatePassed, TaskReviewBlocked, TaskAccepted, TaskIntegrated:
+			if inv.EndedAt == nil || !inv.TerminationConfirmed {
+				return errors.New("evidence stage lacks terminated invocation")
 			}
 		}
 	}
@@ -237,10 +267,12 @@ func validateTaskEvidence(task TaskExecutionState) error {
 	if task.Gate != nil {
 		gateStatusMatches := true
 		switch task.Status {
-		case TaskGatePassed, TaskAccepted, TaskReviewBlocked, TaskIntegrated:
+		case TaskGatePassed:
 			gateStatusMatches = task.Gate.Passed
 		case TaskGateFailed:
 			gateStatusMatches = !task.Gate.Passed
+		case TaskAccepted, TaskReviewBlocked, TaskIntegrated:
+			gateStatusMatches = task.Gate.Passed
 		}
 		if task.Candidate == nil || task.Gate.BuilderAttempt != task.BuilderAttempt || task.Gate.BuilderAttempt != task.Candidate.BuilderAttempt || task.Gate.CandidateSHA != task.Candidate.CandidateSHA || !gateStatusMatches || task.Gate.ObservedAt.IsZero() || task.Gate.ObservedAt.Location() != time.UTC || len(task.Gate.Commands) == 0 || len(task.Gate.Commands) != len(task.Gate.Outcomes) {
 			return fmt.Errorf("invalid gate evidence: status=%q candidate=%#v gate=%#v", task.Status, task.Candidate, task.Gate)
@@ -255,7 +287,14 @@ func validateTaskEvidence(task TaskExecutionState) error {
 		}
 	}
 	if task.Review != nil {
-		if task.Candidate == nil || task.Review.BuilderAttempt != task.BuilderAttempt || task.Review.CandidateSHA != task.Candidate.CandidateSHA || task.Review.ReviewSHA != task.Candidate.CandidateSHA || task.Review.ObservedAt.IsZero() || task.Review.ObservedAt.Location() != time.UTC || task.Review.Findings == nil || task.Review.Accepted != (task.Status == TaskAccepted || task.Status == TaskIntegrated) {
+		reviewStatusMatches := true
+		if task.Status == TaskAccepted || task.Status == TaskIntegrated {
+			reviewStatusMatches = task.Review.Accepted
+		}
+		if task.Status == TaskReviewBlocked {
+			reviewStatusMatches = !task.Review.Accepted
+		}
+		if task.Candidate == nil || task.Review.BuilderAttempt != task.BuilderAttempt || task.Review.CandidateSHA != task.Candidate.CandidateSHA || task.Review.ReviewSHA != task.Candidate.CandidateSHA || task.Review.ObservedAt.IsZero() || task.Review.ObservedAt.Location() != time.UTC || task.Review.Findings == nil || !reviewStatusMatches {
 			return errors.New("invalid review evidence")
 		}
 		if task.Invocation == nil || task.Invocation.Role != roleReviewer || !task.Invocation.TerminationConfirmed || task.Invocation.EndedAt == nil || task.Review.ReviewerInvocationID != task.Invocation.InvocationID {

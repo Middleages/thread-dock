@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	contractv2 "thread-dock/internal/contract/v2"
+	"unicode/utf8"
 )
 
 func TestRepairReservationDebitsAndInvalidatesEvidenceAtomically(t *testing.T) {
@@ -40,6 +42,13 @@ func TestRepairReservationDebitsAndInvalidatesEvidenceAtomically(t *testing.T) {
 	}
 	if state.PriorAttempts[0].CandidateSHA != candidateSHA || state.PriorAttempts[0].Outcome != "gate_failed" {
 		t.Fatalf("repair summary = %#v", state.PriorAttempts[0])
+	}
+	replay, err := store.Apply(ctx, taskRequest(t, snapshot, "repair", reserve))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.Revision != snapshot.Revision || replay.TaskStates["task-1"].RepairCount != 1 {
+		t.Fatalf("repair replay changed budget: %#v", replay.TaskStates["task-1"])
 	}
 }
 
@@ -90,6 +99,63 @@ func TestRecoveryReservationUsesTransientTerminatedInvocationAndBudget(t *testin
 	}
 }
 
+func TestRecoveryExhaustionPersistsAndExtendBudgetResolves(t *testing.T) {
+	s := validSnapshot()
+	s.Control = WorkControl{ApprovedContractHash: s.ContractHash, ApprovalRef: "approval"}
+	s.State = StateRunning
+	s.State = StateRunning
+	at := invocationAt(1)
+	state := s.TaskStates["task-1"]
+	state.Status = TaskTerminated
+	state.BuilderAttempt = 1
+	state.RecoveryCount, state.RecoveryLimit = 1, 1
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical", Role: roleBuilder, BuilderAttempt: 1}
+	state.Invocation = &InvocationState{InvocationID: "old", LogicalWorkID: "logical", Role: roleBuilder, ReturnStage: TaskPending, LogicalProfile: "p", RuntimeFingerprint: "r", TerminationConfirmed: true, EndedAt: &at, TransientFailure: true}
+	state.InvocationHistory = []InvocationID{"old"}
+	s.TaskStates["task-1"] = state
+	tr := builderReserveTransition(invocationAt(2))
+	tr.InvocationID = "new"
+	tr.LogicalWorkID = "logical"
+	tr.Transient = true
+	tr.Blocker = &OperatorBlocker{Kind: BlockerKindRecoveryBudgetExhausted, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "recovery exhausted"}
+	if err := applyTaskTransition(&s, tr, "exhaust"); err != nil {
+		t.Fatal(err)
+	}
+	if s.TaskStates["task-1"].Status != TaskNeedsOperator || s.Control.Blocker == nil {
+		t.Fatalf("exhaustion = %#v %#v", s.TaskStates["task-1"], s.Control.Blocker)
+	}
+	if err := applyWorkTransition(&s, WorkTransition{Action: WorkResolve, Resolve: &ResolvePayload{Kind: ResolveExtendBudget, OperatorRef: "operator", TaskID: "task-1", Budget: BudgetRecovery, NewLimit: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	if s.TaskStates["task-1"].RecoveryLimit != 2 || s.Control.Blocker != nil {
+		t.Fatalf("extended recovery = %#v %#v", s.TaskStates["task-1"], s.Control.Blocker)
+	}
+}
+
+func TestPauseResumeLeavesTaskBudgetsAndEvidenceUnchanged(t *testing.T) {
+	s := validSnapshot()
+	s.Control = WorkControl{ApprovedContractHash: s.ContractHash, ApprovalRef: "approval"}
+	s.State = StateRunning
+	state := s.TaskStates["task-1"]
+	state.Status = TaskCandidateReady
+	state.BuilderAttempt = 1
+	state.RepairCount, state.RecoveryCount = 1, 1
+	state.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+	state.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"x"}, Outcomes: []string{"pass"}, Passed: true, ObservedAt: invocationAt(1)}
+	s.TaskStates["task-1"] = state
+	before := cloneSnapshot(t, s)
+	if err := applyWorkTransition(&s, WorkTransition{Action: WorkPause}); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyWorkTransition(&s, WorkTransition{Action: WorkResume}); err != nil {
+		t.Fatal(err)
+	}
+	after := s.TaskStates["task-1"]
+	if before.TaskStates["task-1"].RepairCount != after.RepairCount || before.TaskStates["task-1"].RecoveryCount != after.RecoveryCount || !reflect.DeepEqual(before.TaskStates["task-1"].Candidate, after.Candidate) || !reflect.DeepEqual(before.TaskStates["task-1"].Gate, after.Gate) {
+		t.Fatalf("pause/resume mutated task: before=%#v after=%#v", before.TaskStates["task-1"], after)
+	}
+}
+
 func TestRetryVerifiedStageDerivesTaskStatusFromEvidence(t *testing.T) {
 	_, snapshot := approvedStore(t)
 	state := snapshot.TaskStates["task-1"]
@@ -99,7 +165,7 @@ func TestRetryVerifiedStageDerivesTaskStatusFromEvidence(t *testing.T) {
 	state.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"go test"}, Outcomes: []string{"pass"}, Passed: true, ObservedAt: invocationAt(1)}
 	snapshot.TaskStates["task-1"] = state
 	snapshot.State = StateNeedsOperator
-	snapshot.Control.Blocker = &OperatorBlocker{Kind: "evidence_mismatch", OperatorRef: "operator", TaskID: "task-1", Diagnostic: "repair"}
+	snapshot.Control.Blocker = &OperatorBlocker{Kind: BlockerKindRetryVerifiedStage, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "repair"}
 	if err := validateSnapshot(snapshot); err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +176,85 @@ func TestRetryVerifiedStageDerivesTaskStatusFromEvidence(t *testing.T) {
 	got := snapshot
 	if got.TaskStates["task-1"].Status != TaskGatePassed || got.Control.Blocker != nil {
 		t.Fatalf("resolved state = %#v blocker=%#v", got.TaskStates["task-1"], got.Control.Blocker)
+	}
+}
+
+func TestRetryVerifiedStageRequiresExactBlockerAndEvidence(t *testing.T) {
+	s := validSnapshot()
+	s.Control = WorkControl{ApprovedContractHash: s.ContractHash, ApprovalRef: "approval", Blocker: &OperatorBlocker{Kind: BlockerKindEvidenceMismatch, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "blocked"}}
+	s.State = StateNeedsOperator
+	s.TaskStates["task-1"] = TaskExecutionState{TaskID: "task-1", Status: TaskNeedsOperator, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1, Candidate: &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{"x"}}}
+	before := cloneSnapshot(t, s)
+	err := applyWorkTransition(&s, WorkTransition{Action: WorkResolve, Resolve: &ResolvePayload{Kind: ResolveRetryVerifiedStage, OperatorRef: "operator", TaskID: "task-1", Evidence: &ResolutionEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Diagnostic: "verified"}}})
+	if !errors.Is(err, ErrInvalidTransition) || !reflect.DeepEqual(s, before) {
+		t.Fatalf("wrong blocker err=%v state=%#v", err, s)
+	}
+}
+
+func TestRetryVerifiedStageDerivesEveryEvidenceBranch(t *testing.T) {
+	cases := []struct {
+		name  string
+		want  TaskStatus
+		build func(*TaskExecutionState)
+	}{
+		{"integrated", TaskIntegrated, func(s *TaskExecutionState) {
+			s.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+			s.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Passed: true, Commands: []string{"x"}, Outcomes: []string{"pass"}, ObservedAt: invocationAt(1)}
+			s.Review = &ReviewEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, ReviewSHA: candidateSHA, Accepted: true, Findings: []ReviewFinding{}, ObservedAt: invocationAt(1)}
+			s.Integration = &IntegrationEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, IntegrationHEAD: integrationSHA, RelationVerified: true, ObservedAt: invocationAt(1)}
+		}},
+		{"accepted", TaskAccepted, func(s *TaskExecutionState) {
+			s.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+			s.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Passed: true, Commands: []string{"x"}, Outcomes: []string{"pass"}, ObservedAt: invocationAt(1)}
+			s.Review = &ReviewEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, ReviewSHA: candidateSHA, Accepted: true, Findings: []ReviewFinding{}, ObservedAt: invocationAt(1)}
+		}},
+		{"review_blocked", TaskReviewBlocked, func(s *TaskExecutionState) {
+			s.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+			s.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Passed: true, Commands: []string{"x"}, Outcomes: []string{"pass"}, ObservedAt: invocationAt(1)}
+			s.Review = &ReviewEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, ReviewSHA: candidateSHA, Findings: []ReviewFinding{{Code: "x"}}, ObservedAt: invocationAt(1)}
+		}},
+		{"gate_passed", TaskGatePassed, func(s *TaskExecutionState) {
+			s.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+			s.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Passed: true, Commands: []string{"x"}, Outcomes: []string{"pass"}, ObservedAt: invocationAt(1)}
+		}},
+		{"gate_failed", TaskGateFailed, func(s *TaskExecutionState) {
+			s.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+			s.Gate = &GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Passed: false, Commands: []string{"x"}, Outcomes: []string{"fail"}, ObservedAt: invocationAt(1)}
+		}},
+		{"candidate_ready", TaskCandidateReady, func(s *TaskExecutionState) {
+			s.Candidate = &CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+		}},
+		{"terminated", TaskTerminated, func(s *TaskExecutionState) {
+			at := invocationAt(1)
+			s.LogicalWork = &LogicalWorkState{LogicalWorkID: "logical", Role: roleBuilder, BuilderAttempt: 1}
+			s.Invocation = &InvocationState{InvocationID: "inv", LogicalWorkID: "logical", Role: roleBuilder, ReturnStage: TaskPending, LogicalProfile: "p", RuntimeFingerprint: "r", TerminationConfirmed: true, EndedAt: &at}
+			s.InvocationHistory = []InvocationID{"inv"}
+		}},
+		{"pending", TaskPending, func(*TaskExecutionState) {}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := validSnapshot()
+			s.Control = WorkControl{ApprovedContractHash: s.ContractHash, ApprovalRef: "approval", Blocker: &OperatorBlocker{Kind: BlockerKindRetryVerifiedStage, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "blocked"}}
+			s.State = StateNeedsOperator
+			state := s.TaskStates["task-1"]
+			state.BuilderAttempt = 1
+			tc.build(&state)
+			s.TaskStates["task-1"] = state
+			ev := &ResolutionEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, ReviewSHA: candidateSHA, Diagnostic: "verified"}
+			if tc.name == "pending" || tc.name == "terminated" || tc.name == "gate_passed" || tc.name == "gate_failed" || tc.name == "candidate_ready" {
+				if tc.name == "pending" || tc.name == "terminated" {
+					ev.CandidateSHA = ""
+				}
+				ev.ReviewSHA = ""
+			}
+			if err := applyWorkTransition(&s, WorkTransition{Action: WorkResolve, Resolve: &ResolvePayload{Kind: ResolveRetryVerifiedStage, OperatorRef: "operator", TaskID: "task-1", Evidence: ev}}); err != nil {
+				t.Fatal(err)
+			}
+			if s.TaskStates["task-1"].Status != tc.want {
+				t.Fatalf("derived status=%q want=%q", s.TaskStates["task-1"].Status, tc.want)
+			}
+		})
 	}
 }
 
@@ -198,6 +343,34 @@ func TestBudgetExhaustionRequiresMatchingOperatorBlocker(t *testing.T) {
 	if snapshot.TaskStates["task-1"].Status != TaskNeedsOperator || snapshot.Control.Blocker == nil || snapshot.Control.Blocker.OperatorRef != "operator" {
 		t.Fatalf("blocker = %#v", snapshot.Control.Blocker)
 	}
+	if len([]byte(snapshot.Control.Blocker.Diagnostic)) > MaxDiagnosticBytes {
+		t.Fatalf("diagnostic exceeds bound: %d", len([]byte(snapshot.Control.Blocker.Diagnostic)))
+	}
+}
+
+func TestBudgetExhaustionTruncatesMultibyteDiagnosticAtUTF8Boundary(t *testing.T) {
+	snapshot := validSnapshot()
+	snapshot.Control = WorkControl{ApprovedContractHash: snapshot.ContractHash, ApprovalRef: "approval"}
+	snapshot.State = StateRunning
+	state := snapshot.TaskStates["task-1"]
+	state.Status = TaskGateFailed
+	state.BuilderAttempt = 2
+	state.RepairCount = 2
+	state.RepairLimit = 2
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "old", Role: roleBuilder, BuilderAttempt: 2}
+	snapshot.TaskStates["task-1"] = state
+	tr := builderReserveTransition(invocationAt(1))
+	tr.InvocationID = "new"
+	tr.LogicalWorkID = "new"
+	tr.BuilderAttempt = 3
+	tr.ReturnStage = TaskGateFailed
+	tr.Blocker = &OperatorBlocker{Kind: BlockerKindRepairBudgetExhausted, OperatorRef: "operator", TaskID: "task-1", Diagnostic: strings.Repeat("한", MaxDiagnosticBytes)}
+	if err := applyTaskTransition(&snapshot, tr, "utf8"); err != nil {
+		t.Fatal(err)
+	}
+	if len([]byte(snapshot.Control.Blocker.Diagnostic)) > MaxDiagnosticBytes || !utf8.ValidString(snapshot.Control.Blocker.Diagnostic) {
+		t.Fatalf("bounded diagnostic invalid: bytes=%d value=%q", len([]byte(snapshot.Control.Blocker.Diagnostic)), snapshot.Control.Blocker.Diagnostic)
+	}
 }
 
 func TestReducerMixedIntegratedAndPendingRemainsQueued(t *testing.T) {
@@ -209,6 +382,36 @@ func TestReducerMixedIntegratedAndPendingRemainsQueued(t *testing.T) {
 	reduce(&s)
 	if s.State != StateQueued || s.NextAction != "run" {
 		t.Fatalf("mixed reducer state = %q/%q", s.State, s.NextAction)
+	}
+}
+
+func TestInBudgetRepairRollsPriorAttemptsToNewestFive(t *testing.T) {
+	snapshot := validSnapshot()
+	snapshot.Control = WorkControl{ApprovedContractHash: snapshot.ContractHash, ApprovalRef: "approval"}
+	snapshot.State = StateRunning
+	state := snapshot.TaskStates["task-1"]
+	state.Status = TaskGateFailed
+	state.BuilderAttempt = 6
+	state.RepairCount = 1
+	state.RepairLimit = 2
+	state.LogicalWork = &LogicalWorkState{LogicalWorkID: "old", Role: roleBuilder, BuilderAttempt: 6}
+	state.Candidate = &CandidateEvidence{BuilderAttempt: 6, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{}}
+	state.Gate = &GateEvidence{BuilderAttempt: 6, CandidateSHA: candidateSHA, Commands: []string{"check"}, Outcomes: []string{"fail"}, ObservedAt: invocationAt(1)}
+	for i := 1; i <= MaxPriorAttempts; i++ {
+		state.PriorAttempts = append(state.PriorAttempts, AttemptSummary{BuilderAttempt: uint32(i), Outcome: "old"})
+	}
+	snapshot.TaskStates["task-1"] = state
+	tr := builderReserveTransition(invocationAt(2))
+	tr.InvocationID = "repair"
+	tr.LogicalWorkID = "new"
+	tr.BuilderAttempt = 7
+	tr.ReturnStage = TaskGateFailed
+	if err := applyTaskTransition(&snapshot, tr, "roll"); err != nil {
+		t.Fatal(err)
+	}
+	got := snapshot.TaskStates["task-1"]
+	if got.Status != TaskInvocationReserved || len(got.PriorAttempts) != MaxPriorAttempts || got.PriorAttempts[0].BuilderAttempt != 2 || got.PriorAttempts[MaxPriorAttempts-1].BuilderAttempt != 6 {
+		t.Fatalf("rolled history = %#v", got.PriorAttempts)
 	}
 }
 
