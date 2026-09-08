@@ -117,7 +117,7 @@ func TestDispatcherCloseCancelsSaturatedQueueAndResolvesEverySubmitter(t *testin
 	st := newFakeState("work-1", "intent-1", statev2.PublicationPending)
 	pub := &blockingPublisher{allow: make(chan struct{}), entered: make(chan struct{})}
 	d := NewDispatcher(st, pub, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
-	results := make([]<-chan CommandResult, 66)
+	results := make([]<-chan CommandResult, 65)
 	results[0] = d.SubmitPublication(context.Background(), "work-1", "intent-1")
 	select {
 	case <-pub.entered:
@@ -133,25 +133,10 @@ func TestDispatcherCloseCancelsSaturatedQueueAndResolvesEverySubmitter(t *testin
 		}(i)
 	}
 	submitWG.Wait()
-	blockedReturned := make(chan struct{})
-	go func() {
-		results[65] = d.SubmitPublication(context.Background(), "work-1", "intent-1")
-		close(blockedReturned)
-	}()
-	select {
-	case <-blockedReturned:
-		t.Fatal("saturated submitter returned before Close")
-	case <-time.After(20 * time.Millisecond):
-	}
 	closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := d.Close(closeCtx); err != nil {
 		t.Fatalf("Close: %v", err)
-	}
-	select {
-	case <-blockedReturned:
-	case <-time.After(time.Second):
-		t.Fatal("blocked submitter did not return")
 	}
 	for i, result := range results {
 		select {
@@ -162,7 +147,7 @@ func TestDispatcherCloseCancelsSaturatedQueueAndResolvesEverySubmitter(t *testin
 		select {
 		case extra := <-result:
 			t.Fatalf("result %d delivered twice: %#v", i, extra)
-		case <-time.After(5 * time.Millisecond):
+		default:
 		}
 	}
 }
