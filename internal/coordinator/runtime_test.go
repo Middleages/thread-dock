@@ -347,12 +347,6 @@ func TestRuntimeDuplicateObserveSubmissionsDeduplicateProviderCall(t *testing.T)
 	// accepted into the FIFO before the worker can enqueue its completion event.
 	second := d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
 	close(rt.observeRelease)
-	rt.mu.Lock()
-	observeCalls := rt.observeCalls
-	rt.mu.Unlock()
-	if observeCalls != 1 {
-		t.Fatalf("observe calls = %d, want 1", observeCalls)
-	}
 	for name, result := range map[string]<-chan CommandResult{"first": first, "second": second} {
 		select {
 		case got := <-result:
@@ -362,6 +356,17 @@ func TestRuntimeDuplicateObserveSubmissionsDeduplicateProviderCall(t *testing.T)
 		case <-time.After(time.Second):
 			t.Fatalf("%s result stranded", name)
 		}
+		select {
+		case extra := <-result:
+			t.Fatalf("%s result delivered twice: %#v", name, extra)
+		default:
+		}
+	}
+	rt.mu.Lock()
+	observeCalls := rt.observeCalls
+	rt.mu.Unlock()
+	if observeCalls != 1 {
+		t.Fatalf("observe calls = %d, want 1", observeCalls)
 	}
 	_ = d.Close(context.Background())
 }
