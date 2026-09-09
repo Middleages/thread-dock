@@ -203,7 +203,7 @@ func (s *Service) PublishParentIssue(ctx context.Context, supplied statev2.WorkS
 	if !approved(authoritative) {
 		return statev2.WorkSnapshot{}, errors.New("parent issue publication requires an approved contract")
 	}
-	if !validStableID(draftKey) || !validRequestID(requestID) {
+	if !validMarkerID(draftKey) || !validRequestID(requestID) {
 		return statev2.WorkSnapshot{}, errors.New("parent issue publication identity is invalid")
 	}
 	project, err := s.projects.Load(ctx, authoritative.ProjectID)
@@ -329,7 +329,7 @@ func parsePayloadRef(ref string) (contractv2.WorkID, string, error) {
 		return "", "", errors.New("parent issue payload reference is invalid")
 	}
 	workID, draftKey := rest[:separator], rest[separator+len(":parent-issue="):]
-	if !validStableID(workID) || !validStableID(draftKey) || payloadRef(contractv2.WorkID(workID), draftKey) != ref {
+	if !validMarkerID(workID) || !validMarkerID(draftKey) || payloadRef(contractv2.WorkID(workID), draftKey) != ref {
 		return "", "", errors.New("parent issue payload reference is invalid")
 	}
 	return contractv2.WorkID(workID), draftKey, nil
@@ -358,6 +358,19 @@ func repositoryPlanExists(contract contractv2.WorkItemContract, key contractv2.R
 
 func validStableID(value string) bool {
 	return value != "" && strings.TrimSpace(value) == value && !strings.ContainsAny(value, "/\\:\r\n\t ") && utf8.ValidString(value)
+}
+
+func validMarkerID(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for _, b := range []byte(value) {
+		if b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validRequestID(value contractv2.RequestID) bool { return validStableID(string(value)) }

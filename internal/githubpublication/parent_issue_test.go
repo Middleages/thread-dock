@@ -285,6 +285,7 @@ func TestServiceInterruptedPendingRecoveryPersistsMatchOrConflictWithoutDispatch
 		wantBlocker bool
 	}{
 		{name: "match", observation: coordinator.PublicationObservation{State: coordinator.PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{Number: 11, NodeID: "node-11", URL: "https://ghes/11", PublishedAt: time.Unix(10, 0).UTC()}}, wantStatus: statev2.PublicationCompleted},
+		{name: "invalid receipt", observation: coordinator.PublicationObservation{State: coordinator.PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{Number: 11, NodeID: "node-11", PublishedAt: time.Unix(10, 0).UTC()}}, wantStatus: statev2.PublicationConflict, wantBlocker: true},
 		{name: "absent", observation: coordinator.PublicationObservation{State: coordinator.PublicationObservationAbsent}, wantStatus: statev2.PublicationConflict, wantBlocker: true},
 		{name: "unknown", observation: coordinator.PublicationObservation{State: coordinator.PublicationObservationUnknown}, wantStatus: statev2.PublicationConflict, wantBlocker: true},
 		{name: "error", err: errors.New("observation failed"), wantStatus: statev2.PublicationConflict, wantBlocker: true},

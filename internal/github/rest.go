@@ -303,17 +303,60 @@ func (c *RESTClient) listParentIssueMarkerIssues(ctx context.Context, repo Repos
 const maxParentIssueMarkerBytes = 1024
 
 func validateParentIssueMarkerPrefix(value string) error {
-	if strings.TrimSpace(value) == "" || value != strings.TrimSpace(value) || len(value) > maxParentIssueMarkerBytes || !safeUserText(value) {
+	if !validParentIssueLogicalPrefix(value) {
 		return errors.New("github parent issue marker prefix is invalid")
 	}
 	return nil
 }
 
 func validateParentIssueMarker(value string) error {
-	if strings.TrimSpace(value) == "" || value != strings.TrimSpace(value) || len(value) > maxParentIssueMarkerBytes || !safeUserText(value) {
+	if strings.TrimSpace(value) != value || len(value) > maxParentIssueMarkerBytes || !safeUserText(value) {
+		return errors.New("github parent issue marker is invalid")
+	}
+	separator := strings.Index(value, ":sha256=")
+	if separator < 0 {
+		return errors.New("github parent issue marker is invalid")
+	}
+	prefixEnd := separator + len(":sha256=")
+	if !validParentIssueLogicalPrefix(value[:prefixEnd]) || len(value[prefixEnd:]) != 68 || value[len(value)-4:] != " -->" || !isLowerHex(value[prefixEnd:prefixEnd+64]) {
 		return errors.New("github parent issue marker is invalid")
 	}
 	return nil
+}
+
+func validParentIssueLogicalPrefix(value string) bool {
+	if len(value) > maxParentIssueMarkerBytes || !strings.HasPrefix(value, "<!-- threaddock:v2:parent_issue:work=") || !strings.HasSuffix(value, ":sha256=") {
+		return false
+	}
+	rest := strings.TrimPrefix(value, "<!-- threaddock:v2:parent_issue:work=")
+	rest = strings.TrimSuffix(rest, ":sha256=")
+	parts := strings.Split(rest, ":draft=")
+	return len(parts) == 2 && validParentIssueMarkerID(parts[0]) && validParentIssueMarkerID(parts[1])
+}
+
+func validParentIssueMarkerID(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for _, b := range []byte(value) {
+		if b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isLowerHex(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, b := range []byte(value) {
+		if !(b >= '0' && b <= '9' || b >= 'a' && b <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func validateParentIssueDraft(draft contractv2.IssueDraft) error {
