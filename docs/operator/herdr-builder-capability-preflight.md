@@ -66,7 +66,7 @@ Builder의 native agent는 기존 `build`를 명시적으로 바인딩한다. �
 
 Herdr 연결·agent 시작·권한 규칙 합성 확인까지 진행했다. 실제 파일 편집·결과 회수·candidate_ready·행동 수준 권한 적용은 검증하지 못했다. idle 상태만으로 invocation 종료 또는 prompt 미전달을 확정하지 않는다.
 
-현재 bridge/driver가 오류를 정적으로 축약하므로 최초 Prompt의 정확한 Herdr 오류 코드는 수집되지 않았다. `agent_prompt_stalled`나 인증 문제라고 단정할 근거가 없다. 다음 진단은 raw provider 본문·transcript 없이 오류 code만 수집하는 좁은 진단 경로를 준비하고, 보존된 invocation의 상태를 먼저 조정하는 것이다. 재시도 권한이나 종료 증거 없이 같은 packet을 다시 보내지 않는다.
+당시 bridge/driver가 오류를 정적으로 축약해 최초 Prompt의 정확한 Herdr 오류 코드는 수집되지 않았다. `agent_prompt_stalled`나 인증 문제라고 단정할 근거가 없다. 후속으로 안전한 code 전달과 관찰 정착을 완료했다(아래 절). 재시도 권한이나 종료 증거 없이 같은 packet을 다시 보내지 않는다.
 
 ## 2026-09-09 Prompt 전달 비교 진단
 
@@ -90,3 +90,27 @@ Herdr 연결·agent 시작·권한 규칙 합성 확인까지 진행했다. 실�
 후속으로 checksum 검증한 임시 Herdr 0.9.0 named server에서도 같은 startup 경합을 재현했고, 두 tagged source의 준비 판정을 대조했다. 상세 근거와 upstream 수정 방향은 [시작 readiness 보고서](herdr-opencode-startup-readiness.md)에 기록했다. 설치된 default 서버는 0.8.2 그대로이며, 업그레이드만으로 해결됐다고 주장하지 않는다.
 
 재현 증상은 [Herdr #3813](https://github.com/herdrdev/herdr/issues/3813)으로 보고했다. 기존 실행 상태는 보존하며, upstream 응답과 입력 준비 확인 방법이 확정되기 전까지 실패한 Builder packet을 자동 재전송하지 않는다.
+
+## 보존된 invocation의 관찰 정착
+
+후속 진단에서 원본 WorkPilot에 `Coordinator.Reconcile`을 한 번 적용했다. 임시 helper의 Herdr runner는 정확한 `agent get`과 `agent read`만 허용하며 Activate/Submit/Prompt 경로가 없다. 실행 전 Sol 검토를 받았다.
+
+- 실행 바이너리 SHA256: `037a2d74ea48bc476f707e5508848d66dd6d29237f6f38a7e03e7d03512dd843`.
+- 실제 provider 호출: GetInfo 2회, Read 1회, 금지된 호출 시도 0회.
+- 정착 결과: revision 5, Work/Task 모두 needs_operator, blocker kind runtime_unknown.
+- LaunchRequested=true와 invocation identity는 보존했고 candidate는 없다. Git HEAD는 초기 add7724386f95b3dfa03942d55d8e1909bd694dd 그대로이며 worktree는 clean이다.
+
+이는 조회 결과를 기존 Store transition으로 기록한 것이며 최초 Prompt 오류 코드를 소급 복원하거나 실행 성공을 인정한 것이 아니다. 원본 packet은 재전송하지 않았다.
+
+## Prompt 오류 관찰성 수정 완료
+
+제품 SHA `df7960f009efc7e6410a5d4666b885f33c9b9818`에서 CLI는 sole-channel strict envelope의
+허용된 오류 code만 `PromptError.Code()`로 전달한다. provider message/body는 보존하지 않는다.
+bridge caller는 `ErrRuntimePrompt`와 typed code를 함께 확인할 수 있다. 실제 Launch 호출 뒤의 실패는
+기존 Store transition을 통해 `needs_operator`/`runtime_unknown`으로 정착하며 cancellation 전용 처리는 유지한다.
+
+실제 Store/public Coordinator/scripted Herdr CLI 통합 테스트로 caller 오류, durable blocker,
+waiter 완료, secret 비영속화와 replay no-call을 검증했다. Luna 수정 후 fresh Sol은 최종 SHA를 ACCEPT했다.
+Docker Go 1.27 focused test/vet와 최종 전체 `make check`가 통과했다.
+이는 향후 오류 처리의 코드 검증이다. 원본 오류 복원, startup readiness 해결 또는 live Builder 성공을 뜻하지 않는다.
+새 세션의 구현 순서는 [HANDOFF](../../HANDOFF.md)를 따른다.
