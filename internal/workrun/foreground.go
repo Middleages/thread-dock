@@ -136,6 +136,9 @@ func (s *ForegroundService) RunWork(ctx context.Context, workID contractv2.WorkI
 		snapshot = result.Snapshot
 	}
 	if result.Err != nil {
+		if result.Snapshot.WorkID != "" && !durableRuntimeBoundaryIdentity(result.Snapshot, task.TaskID, invocationID) {
+			return statev2.WorkSnapshot{}, result.Err
+		}
 		latest, loadErr := s.state.Load(ctx, workID)
 		if loadErr == nil {
 			snapshot = latest
@@ -150,6 +153,11 @@ func (s *ForegroundService) RunWork(ctx context.Context, workID contractv2.WorkI
 		return snapshot, loadErr
 	}
 	return latest, nil
+}
+
+func durableRuntimeBoundaryIdentity(snapshot statev2.WorkSnapshot, taskID contractv2.TaskID, invocationID statev2.InvocationID) bool {
+	task, ok := snapshot.TaskStates[taskID]
+	return ok && task.Invocation != nil && task.Invocation.InvocationID == invocationID
 }
 
 func validateForegroundDependencies(s *ForegroundService) error {

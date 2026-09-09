@@ -28,6 +28,26 @@ func TestParseOpenCodeAgents(t *testing.T) {
 	}
 }
 
+func TestParseBuilderRuntimeFingerprintTrimsStrictly(t *testing.T) {
+	data := `{"ghesHost":"https://github.example.test","builderRuntimeFingerprint":"  fingerprint-sentinel  ","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`
+	got, err := Parse(strings.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BuilderRuntimeFingerprint != "fingerprint-sentinel" {
+		t.Fatalf("fingerprint=%q", got.BuilderRuntimeFingerprint)
+	}
+}
+
+func TestParseRejectsUnknownFieldWithoutDumpingFingerprint(t *testing.T) {
+	sentinel := "fingerprint-secret-sentinel"
+	data := `{"ghesHost":"https://github.example.test","unknownField":"` + sentinel + `","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`
+	_, err := Parse(strings.NewReader(data))
+	if err == nil || strings.Contains(err.Error(), sentinel) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestParseOpenCodeAgentsAllowsOmittedObjectAndEmptyFields(t *testing.T) {
 	base := `{"ghesHost":"https://github.example.test","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`
 	for _, value := range []string{"", `{}`, `{"builder":"","reviewer":""}`} {
