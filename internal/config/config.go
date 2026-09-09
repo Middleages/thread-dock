@@ -44,6 +44,7 @@ type Config struct {
 	ProjectStatusFieldID        string            `json:"projectStatusFieldId"`
 	ProjectStatusOptions        map[string]string `json:"projectStatusOptions"`
 	OpenCodeAgents              OpenCodeAgents    `json:"openCodeAgents"`
+	BuilderRuntimeFingerprint   string            `json:"builderRuntimeFingerprint"`
 }
 
 // OpenCodeAgents contains the optional OpenCode Agent names used for each
@@ -150,6 +151,7 @@ func Parse(r io.Reader) (Config, error) {
 		ProjectStatusFieldID:        strings.TrimSpace(raw.ProjectStatusFieldID),
 		ProjectStatusOptions:        cloneOptions(raw.ProjectStatusOptions),
 		OpenCodeAgents:              raw.OpenCodeAgents,
+		BuilderRuntimeFingerprint:   strings.TrimSpace(raw.BuilderRuntimeFingerprint),
 	}
 	if err := validate(c); err != nil {
 		return Config{}, err
@@ -173,6 +175,7 @@ type configJSON struct {
 	ProjectStatusFieldID        string            `json:"projectStatusFieldId"`
 	ProjectStatusOptions        map[string]string `json:"projectStatusOptions"`
 	OpenCodeAgents              OpenCodeAgents    `json:"openCodeAgents"`
+	BuilderRuntimeFingerprint   string            `json:"builderRuntimeFingerprint"`
 }
 
 func decodeDuration(data json.RawMessage) (time.Duration, error) {

@@ -57,6 +57,23 @@ type fakeWorkflowControlService struct {
 	sequence       []string
 }
 
+type fakeWorkflowRunnerService struct {
+	*fakeWorkflowService
+	runID       contractv2.WorkID
+	runRevision contractv2.Revision
+	runRequest  contractv2.RequestID
+	runSnapshot statev2.WorkSnapshot
+	runErr      error
+}
+
+func (f *fakeWorkflowRunnerService) RunWork(_ context.Context, id contractv2.WorkID, revision contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {
+	f.runID, f.runRevision, f.runRequest = id, revision, request
+	if f.runErr != nil {
+		return statev2.WorkSnapshot{}, f.runErr
+	}
+	return f.runSnapshot, nil
+}
+
 func (f *fakeWorkflowControlService) PauseWork(_ context.Context, id contractv2.WorkID, revision contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {
 	f.sequence = append(f.sequence, "pause")
 	f.pauseID, f.pauseRevision, f.pauseRequest = id, revision, request
@@ -258,6 +275,64 @@ func TestWorkflowUsageIncludesControlCommands(t *testing.T) {
 	} {
 		if !strings.Contains(errOut.String(), syntax) {
 			t.Fatalf("usage=%q missing %q", errOut.String(), syntax)
+		}
+	}
+}
+
+func TestWorkflowRunShapeIsDependencyBacked(t *testing.T) {
+	id, revision, request, ok := parseWorkflowRunArgs([]string{"work-1", "--expected-revision", "7", "--request-id", "request-1"})
+	if !ok || id != "work-1" || revision != 7 || request != "request-1" {
+		t.Fatalf("parsed run=(%q,%d,%q,%t)", id, revision, request, ok)
+	}
+	if !NeedsWorkflowDependencies([]string{"work", "run", "work-1", "--expected-revision", "7", "--request-id", "request-1"}) {
+		t.Fatal("valid work run must require workflow dependencies")
+	}
+	if NeedsWorkflowDependencies([]string{"work", "run", "work-1", "--expected-revision", "0", "--request-id", "request-1"}) {
+		t.Fatal("invalid work run must remain dependency-free")
+	}
+}
+
+func TestWorkflowRunRoutesRunnerAndEmitsCanonicalSnapshot(t *testing.T) {
+	service := &fakeWorkflowRunnerService{fakeWorkflowService: &fakeWorkflowService{}, runSnapshot: workflowSnapshot()}
+	code, out, errOut := runWorkflowService(t, service, []string{"work", "run", "work-1", "--expected-revision", "7", "--request-id", "request-run"})
+	if code != 0 || errOut != "" || strings.Count(out, "\n") != 1 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+	if service.runID != "work-1" || service.runRevision != 7 || service.runRequest != "request-run" {
+		t.Fatalf("run args=(%q,%d,%q)", service.runID, service.runRevision, service.runRequest)
+	}
+	var got statev2.WorkSnapshot
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, service.runSnapshot) {
+		t.Fatalf("snapshot=%#v want=%#v", got, service.runSnapshot)
+	}
+}
+
+func TestWorkflowRunErrorsAndMalformedShapesAreBoundedAndDependencyFree(t *testing.T) {
+	service := &fakeWorkflowRunnerService{fakeWorkflowService: &fakeWorkflowService{}, runErr: errors.New("credential token sentinel")}
+	code, out, errOut := runWorkflowService(t, service, []string{"work", "run", "work-1", "--expected-revision", "1", "--request-id", "request-run"})
+	if code != 1 || out != "" || !strings.Contains(errOut, "프로젝트·워크플로 명령을 처리하지 못했습니다.") || strings.Contains(errOut, "sentinel") {
+		t.Fatalf("bounded run error code=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+	if service.runID == "" {
+		// The valid shape reached the runner; malformed cases below must not.
+		t.Fatal("valid run did not reach runner")
+	}
+	for _, args := range [][]string{
+		{"work", "run", "work-1"},
+		{"work", "run", "work-1", "--expected-revision", "0", "--request-id", "id"},
+		{"work", "run", "work-1", "--expected-revision", "x", "--request-id", "id"},
+		{"work", "run", "work-1", "--request-id", "id"},
+		{"work", "run", "work-1", "--expected-revision", "1"},
+		{"work", "run", "-work-1", "--expected-revision", "1", "--request-id", "id"},
+		{"work", "run", "work-1", "--expected-revision", "1", "--request-id", "-id"},
+	} {
+		before := service.runID
+		code, out, errOut := runWorkflowService(t, service, args)
+		if code != 2 || out != "" || !strings.Contains(errOut, "사용법:") || NeedsWorkflowDependencies(args) || service.runID != before {
+			t.Fatalf("args=%v code=%d stdout=%q stderr=%q runID=%q", args, code, out, errOut, service.runID)
 		}
 	}
 }

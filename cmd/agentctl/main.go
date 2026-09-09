@@ -7,10 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"thread-dock/internal/cli"
 	"thread-dock/internal/config"
 	"thread-dock/internal/contract"
+	contractv2 "thread-dock/internal/contract/v2"
+	"thread-dock/internal/coordinator"
 	"thread-dock/internal/github"
 	"thread-dock/internal/herdr"
 	"thread-dock/internal/orchestrator"
@@ -20,13 +23,14 @@ import (
 	"thread-dock/internal/state"
 	statev2 "thread-dock/internal/state/v2"
 	"thread-dock/internal/workflow"
+	"thread-dock/internal/workrun"
 	"thread-dock/internal/worktree"
 )
 
 func main() {
 	args := os.Args[1:]
 	if cli.NeedsWorkflowDependencies(args) {
-		deps, err := productionWorkflowDependencies()
+		deps, err := productionWorkflowDependencies(args)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "agentctl 워크플로 저장소를 준비하지 못했습니다")
 			os.Exit(1)
@@ -51,7 +55,7 @@ func main() {
 // productionWorkflowDependencies wires only the provider-neutral v2 stores
 // and workflow service. Project/work commands must remain usable without a
 // legacy config file, Git checkout, credentials, or runtime adapters.
-func productionWorkflowDependencies() (cli.Dependencies, error) {
+func productionWorkflowDependencies(args ...[]string) (cli.Dependencies, error) {
 	root := os.Getenv("THREADDOCK_STATE_DIR")
 	if root == "" {
 		configDir, err := os.UserConfigDir()
@@ -62,7 +66,74 @@ func productionWorkflowDependencies() (cli.Dependencies, error) {
 	}
 	projects := registry.NewStore(root)
 	works := statev2.NewStore(root)
-	return cli.Dependencies{Workflow: workflow.New(projects, works)}, nil
+	var commandArgs []string
+	if len(args) > 0 {
+		commandArgs = args[0]
+	}
+	if !runtimeWorkflowCommand(commandArgs) {
+		return cli.Dependencies{Workflow: workflow.New(projects, works)}, nil
+	}
+	configPath := os.Getenv("THREADDOCK_CONFIG")
+	if configPath == "" {
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			return cli.Dependencies{}, fmt.Errorf("기본 설정 디렉터리를 확인할 수 없습니다: %w", err)
+		}
+		configPath = filepath.Join(configDir, "threaddock", "config.json")
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return cli.Dependencies{}, fmt.Errorf("설정 파일을 확인하십시오: %w", err)
+	}
+	if strings.TrimSpace(cfg.BuilderRuntimeFingerprint) == "" || strings.TrimSpace(cfg.OpenCodeAgents.Builder) == "" {
+		return cli.Dependencies{}, errors.New("Builder runtime fingerprint and native profile are required")
+	}
+	workID := contractv2.WorkID(commandArgs[2])
+	snapshot, err := works.Load(context.Background(), workID)
+	if err != nil {
+		return cli.Dependencies{}, err
+	}
+	logicalProfile := strings.TrimSpace(snapshot.Contract.ExecutionProfiles.Builder)
+	if logicalProfile == "" {
+		return cli.Dependencies{}, errors.New("Builder logical profile is required")
+	}
+	process := runner.OSRunner{}
+	repositoryPath, err := cli.DiscoverRepositoryPath(context.Background(), process, cfg.GitBinary)
+	if err != nil {
+		return cli.Dependencies{}, err
+	}
+	worktreeRoot := filepath.Join(root, "worktrees")
+	git := worktree.New(process, cfg.GitBinary, worktreeRoot, repositoryPath)
+	herdrClient := herdr.NewCLI(process, cfg.HerdrBinary)
+	builderRuntime := herdr.NewBuilderRuntime(herdrClient, map[string]herdr.ProfileBinding{logicalProfile: {OpenCodeAgent: cfg.OpenCodeAgents.Builder, RuntimeFingerprint: cfg.BuilderRuntimeFingerprint}})
+	locker := coordinator.NewOwnerLocker(root)
+	coordinatorService := coordinator.NewCoordinator(works, builderRuntime, nil, git, locker, "agentctl", 0, time.Time{})
+	preparer := workrun.NewPreparationService(works, git, "agentctl", nil)
+	foreground := workrun.NewForegroundService(works, preparer, git, coordinatorService, workrun.ForegroundBinding{RepositoryPath: repositoryPath, WorktreeRoot: worktreeRoot, RuntimeFingerprint: cfg.BuilderRuntimeFingerprint})
+	service := &productionWorkflowService{Service: workflow.NewWithCoordinator(projects, works, coordinatorService), foreground: foreground}
+	return cli.Dependencies{Workflow: service}, nil
+}
+
+type productionWorkflowService struct {
+	*workflow.Service
+	foreground *workrun.ForegroundService
+}
+
+func (s *productionWorkflowService) RunWork(ctx context.Context, workID contractv2.WorkID, revision contractv2.Revision, requestID contractv2.RequestID) (statev2.WorkSnapshot, error) {
+	return s.foreground.RunWork(ctx, workID, revision, requestID)
+}
+
+func runtimeWorkflowCommand(args []string) bool {
+	if len(args) < 2 || args[0] != "work" {
+		return false
+	}
+	if args[1] == "run" {
+		return cli.NeedsWorkflowDependencies(args)
+	}
+	if args[1] == "reconcile" {
+		return cli.NeedsWorkflowDependencies(args)
+	}
+	return false
 }
 
 func productionDependencies(args []string) (cli.Dependencies, error) {

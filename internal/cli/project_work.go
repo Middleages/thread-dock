@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	contractv2 "thread-dock/internal/contract/v2"
 	"thread-dock/internal/coordinator"
@@ -29,6 +31,10 @@ type workflowResumer interface {
 
 type workflowReconcilerService interface {
 	ReconcileWork(context.Context, contractv2.WorkID) (coordinator.ReconcileResult, error)
+}
+
+type workflowRunnerService interface {
+	RunWork(context.Context, contractv2.WorkID, contractv2.Revision, contractv2.RequestID) (statev2.WorkSnapshot, error)
 }
 
 func runProjectWork(ctx context.Context, args []string, stdout, stderr io.Writer, service WorkflowService) int {
@@ -106,6 +112,17 @@ func runProjectWork(ctx context.Context, args []string, stdout, stderr io.Writer
 			return reportWorkflowError(stderr, err)
 		}
 		value, err = service.Status(ctx, id)
+	case args[0] == "work" && args[1] == "run":
+		id, revision, request, ok := parseWorkflowRunArgs(args[2:])
+		if !ok {
+			printUsage(stderr)
+			return 2
+		}
+		runner, ok := service.(workflowRunnerService)
+		if !ok {
+			return reportWorkflowError(stderr, errors.New("workflow runner is not configured"))
+		}
+		value, err = runner.RunWork(ctx, id, revision, request)
 	case args[0] == "work" && args[1] == "status":
 		value, err = service.Status(ctx, contractv2.WorkID(args[2]))
 	}
@@ -116,6 +133,21 @@ func runProjectWork(ctx context.Context, args []string, stdout, stderr io.Writer
 		return reportWorkflowError(stderr, err)
 	}
 	return 0
+}
+
+func parseWorkflowRunArgs(args []string) (contractv2.WorkID, contractv2.Revision, contractv2.RequestID, bool) {
+	if len(args) != 5 || !workflowIDArg(args[0]) || args[1] != "--expected-revision" || args[3] != "--request-id" || !workflowIDArg(args[4]) {
+		return "", 0, "", false
+	}
+	revision, err := strconv.ParseUint(args[2], 10, 64)
+	if err != nil || revision == 0 {
+		return "", 0, "", false
+	}
+	return contractv2.WorkID(args[0]), contractv2.Revision(revision), contractv2.RequestID(args[4]), true
+}
+
+func workflowIDArg(value string) bool {
+	return nonFlagArg(value) && !strings.ContainsFunc(value, unicode.IsSpace)
 }
 
 func workflowRegister(ctx context.Context, path string, revision contractv2.Revision, request contractv2.RequestID, service WorkflowService) (registry.Project, error) {

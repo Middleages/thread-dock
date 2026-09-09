@@ -38,6 +38,23 @@ func TestFetchRemoteHeadUsesExplicitRemoteRef(t *testing.T) {
 	}
 }
 
+func TestInspectRepositoryBindingReturnsCanonicalCommonDir(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "repo")
+	if err := os.Mkdir(repository, 0700); err != nil {
+		t.Fatal(err)
+	}
+	commonDir := filepath.Join(repository, ".git")
+	if err := os.Mkdir(commonDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := New(&fakeRunner{results: []runner.Result{{Stdout: ".git\n"}}}, "git", repository)
+	common, err := git.InspectRepositoryBinding(context.Background(), repository)
+	if err != nil || common != commonDir {
+		t.Fatalf("common=%q err=%v", common, err)
+	}
+}
+
 func (f *fakeRunner) Run(_ context.Context, cwd, executable string, args ...string) (runner.Result, error) {
 	f.calls = append(f.calls, fakeCall{cwd: cwd, exec: executable, args: append([]string(nil), args...)})
 	var result runner.Result
