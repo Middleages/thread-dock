@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -53,27 +54,47 @@ type preparationGitFake struct {
 }
 
 type concurrentPreparationState struct {
-	mu       sync.Mutex
-	snapshot statev2.WorkSnapshot
-	beginWon bool
-	applies  int
+	mu             sync.Mutex
+	snapshot       statev2.WorkSnapshot
+	loadRelease    chan struct{}
+	beginRelease   chan struct{}
+	pendingLoads   int
+	beginAttempts  int
+	beginSuccesses int
+	beginRevisions []contractv2.Revision
 }
 
-func (s *concurrentPreparationState) Load(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error) {
+func (s *concurrentPreparationState) Load(ctx context.Context, _ contractv2.WorkID) (statev2.WorkSnapshot, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.snapshot, nil
+	s.pendingLoads++
+	if s.pendingLoads == 2 {
+		close(s.loadRelease)
+	}
+	release := s.loadRelease
+	s.mu.Unlock()
+	select {
+	case <-release:
+		return immutableSnapshot(s.snapshot), nil
+	case <-ctx.Done():
+		return statev2.WorkSnapshot{}, ctx.Err()
+	}
 }
 
-func (s *concurrentPreparationState) Apply(_ context.Context, request statev2.TransitionRequest) (statev2.WorkSnapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.applies++
+func (s *concurrentPreparationState) Apply(ctx context.Context, request statev2.TransitionRequest) (statev2.WorkSnapshot, error) {
 	if request.Task.Action == statev2.TaskBeginWorktreePreparation {
-		if s.beginWon {
-			return statev2.WorkSnapshot{}, &statev2.StaleRevisionError{CurrentRevision: s.snapshot.Revision + 1, CurrentState: statev2.StateRunning}
+		select {
+		case <-s.beginRelease:
+		case <-ctx.Done():
+			return statev2.WorkSnapshot{}, ctx.Err()
 		}
-		s.beginWon = true
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.beginAttempts++
+		s.beginRevisions = append(s.beginRevisions, request.ExpectedRevision)
+		if s.beginSuccesses == 1 {
+			return statev2.WorkSnapshot{}, &statev2.StaleRevisionError{CurrentRevision: s.snapshot.Revision, CurrentState: statev2.StateRunning}
+		}
+		s.beginSuccesses++
 		task := s.snapshot.TaskStates[request.Task.TaskID]
 		task.Status, task.BuilderAttempt = statev2.TaskWorktreePreparing, 1
 		task.Worktree = request.Task.Worktree
@@ -82,28 +103,46 @@ func (s *concurrentPreparationState) Apply(_ context.Context, request statev2.Tr
 		task.LogicalWork = &statev2.LogicalWorkState{LogicalWorkID: request.Task.LogicalWorkID, Role: "builder", BuilderAttempt: 1, LogicalProfile: request.Task.Invocation.LogicalProfile, RuntimeFingerprint: request.Task.Invocation.RuntimeFingerprint, Worktree: request.Task.Worktree}
 		task.InvocationHistory = []statev2.InvocationID{request.Task.InvocationID}
 		s.snapshot.TaskStates[request.Task.TaskID], s.snapshot.Revision = task, s.snapshot.Revision+1
-		return s.snapshot, nil
+		return immutableSnapshot(s.snapshot), nil
 	}
 	if request.Task.Action == statev2.TaskReconcileWorktreePreparation {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		task := s.snapshot.TaskStates[request.Task.TaskID]
 		task.Status = statev2.TaskInvocationReserved
 		s.snapshot.TaskStates[request.Task.TaskID], s.snapshot.Revision = task, s.snapshot.Revision+1
-		return s.snapshot, nil
+		return immutableSnapshot(s.snapshot), nil
 	}
 	return statev2.WorkSnapshot{}, errors.New("unexpected transition")
 }
 
+func immutableSnapshot(snapshot statev2.WorkSnapshot) statev2.WorkSnapshot {
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		panic(err)
+	}
+	var copy statev2.WorkSnapshot
+	if err := json.Unmarshal(data, &copy); err != nil {
+		panic(err)
+	}
+	return copy
+}
+
 type concurrentPreparationGit struct {
-	mu           sync.Mutex
-	inspectCount int
-	createCalls  int
+	mu                   sync.Mutex
+	absentPreInspections int
+	createCalls          int
+	preRelease           chan struct{}
 }
 
 func (g *concurrentPreparationGit) InspectTaskWorktree(_ context.Context, _ string, path string, _ string, _ string) (worktree.TaskWorktreeInspection, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.inspectCount++
-	if g.inspectCount <= 2 {
+	if g.absentPreInspections < 2 {
+		g.absentPreInspections++
+		if g.absentPreInspections == 2 {
+			close(g.preRelease)
+		}
 		return worktree.TaskWorktreeInspection{CanonicalPath: path, GitCommonDir: "/repo/.git"}, nil
 	}
 	return worktree.TaskWorktreeInspection{CanonicalPath: path, GitCommonDir: "/repo/.git", Exists: true, IdentityMatches: true}, nil
@@ -475,24 +514,57 @@ func TestPrepareStaleBeginDoesNotCreate(t *testing.T) {
 
 func TestPrepareConcurrentCallsOnlyOneBeginAndCreateWins(t *testing.T) {
 	service, _, _, snapshot, request := preparationFixture(t, nil, nil)
-	state := &concurrentPreparationState{snapshot: snapshot}
-	git := &concurrentPreparationGit{}
+	git := &concurrentPreparationGit{preRelease: make(chan struct{})}
+	state := &concurrentPreparationState{snapshot: snapshot, loadRelease: make(chan struct{}), beginRelease: git.preRelease}
 	service.state, service.git = state, git
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	type outcome struct{ err error }
+	outcomes := make(chan outcome, 2)
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); _, _ = service.Prepare(context.Background(), request) }()
+		go func() { defer wg.Done(); _, err := service.Prepare(ctx, request); outcomes <- outcome{err: err} }()
+	}
+	select {
+	case <-state.loadRelease:
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for two pending loads")
+	}
+	select {
+	case <-git.preRelease:
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for two absent pre-inspections")
+	}
+	results := make([]error, 0, 2)
+	for i := 0; i < 2; i++ {
+		select {
+		case result := <-outcomes:
+			results = append(results, result.err)
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for Prepare outcomes")
+		}
 	}
 	wg.Wait()
 	git.mu.Lock()
-	creates, inspections := git.createCalls, git.inspectCount
+	creates, inspections := git.createCalls, git.absentPreInspections
 	git.mu.Unlock()
 	state.mu.Lock()
-	beginWon, applies := state.beginWon, state.applies
+	beginAttempts, beginSuccesses := state.beginAttempts, state.beginSuccesses
+	beginRevisions := append([]contractv2.Revision(nil), state.beginRevisions...)
 	finalStatus := state.snapshot.TaskStates[request.TaskID].Status
 	state.mu.Unlock()
-	if !beginWon || creates != 1 || applies < 2 || inspections < 3 || finalStatus != statev2.TaskInvocationReserved {
-		t.Fatalf("begin=%v creates=%d applies=%d inspections=%d status=%s", beginWon, creates, applies, inspections, finalStatus)
+	var succeeded, stale int
+	for _, err := range results {
+		if err == nil {
+			succeeded++
+		}
+		if errors.Is(err, statev2.ErrStaleRevision) {
+			stale++
+		}
+	}
+	if creates != 1 || inspections != 2 || beginAttempts != 2 || beginSuccesses != 1 || len(beginRevisions) != 2 || beginRevisions[0] != snapshot.Revision || beginRevisions[1] != snapshot.Revision || finalStatus != statev2.TaskInvocationReserved || succeeded != 1 || stale != 1 {
+		t.Fatalf("creates=%d absentPreInspections=%d beginAttempts=%d successes=%d revisions=%v status=%s succeeded=%d stale=%d results=%v", creates, inspections, beginAttempts, beginSuccesses, beginRevisions, finalStatus, succeeded, stale, results)
 	}
 }
 
