@@ -1016,13 +1016,22 @@ func validEvidenceSHA(value string) bool {
 func (c *CLI) GetInfo(ctx context.Context, name string) (AgentInfo, error) {
 	result, err := c.run(ctx, "agent get", "agent", "get", name)
 	if err != nil {
-		var failure struct {
-			Error struct {
-				Code string `json:"code"`
-			} `json:"error"`
-		}
-		if json.Unmarshal([]byte(result.Stdout), &failure) == nil && failure.Error.Code == "agent_not_found" {
-			return AgentInfo{}, ErrAgentNotFound
+		if resultPayload, hasPayload := herdrResponsePayload(result); hasPayload {
+			if strings.TrimSpace(result.Stderr) != "" {
+				envelope, envelopeErr := decodeHerdrEnvelope(resultPayload)
+				if envelopeErr == nil && envelope.Error != nil && envelope.Error.Code == "agent_not_found" {
+					return AgentInfo{}, ErrAgentNotFound
+				}
+			} else {
+				var failure struct {
+					Error struct {
+						Code string `json:"code"`
+					} `json:"error"`
+				}
+				if json.Unmarshal([]byte(resultPayload), &failure) == nil && failure.Error.Code == "agent_not_found" {
+					return AgentInfo{}, ErrAgentNotFound
+				}
+			}
 		}
 		return AgentInfo{}, err
 	}

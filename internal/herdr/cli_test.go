@@ -1128,6 +1128,41 @@ func TestGetInfoClassifiesAgentNotFoundFromStructuredStdout(t *testing.T) {
 	}
 }
 
+func TestGetInfoClassifiesAgentNotFoundFromStructuredStderr(t *testing.T) {
+	r := &responseErrorRunner{
+		stderr: `{"id":"cli:agent:get","error":{"code":"agent_not_found","message":"not found"}}`,
+		err:    &testError{"runner failure"},
+	}
+	_, err := NewCLI(r, "herdr").GetInfo(context.Background(), "threaddock-definitely-missing-agent")
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGetInfoRejectsAmbiguousOrMalformedProviderErrors(t *testing.T) {
+	const notFound = `{"id":"cli:agent:get","error":{"code":"agent_not_found","message":"not found"}}`
+	const safeError = "herdr agent get failed (exit code 1)"
+	secret := "provider-secret-42"
+	for _, tc := range []struct {
+		name   string
+		stdout string
+		stderr string
+	}{
+		{name: "mixed channels", stdout: notFound, stderr: notFound},
+		{name: "other provider code", stderr: `{"id":"cli:agent:get","error":{"code":"provider_failure","message":"` + secret + `"}}`},
+		{name: "malformed body", stderr: "not-json-" + secret},
+		{name: "trailing data", stderr: notFound + " trailing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &responseErrorRunner{stdout: tc.stdout, stderr: tc.stderr, err: &testError{"runner failure"}}
+			_, err := NewCLI(r, "herdr").GetInfo(context.Background(), "threaddock-definitely-missing-agent")
+			if err == nil || errors.Is(err, ErrAgentNotFound) || err.Error() != safeError || strings.Contains(err.Error(), secret) {
+				t.Fatalf("err=%v, want safe generic error", err)
+			}
+		})
+	}
+}
+
 func TestGetInfoParsesStateChangeSequence(t *testing.T) {
 	r := fixtureRunner(t, map[string]string{
 		"herdr\x00agent\x00get\x00builder_api": readFixture(t, "testdata/v0.8.2/agent-get.txt"),
