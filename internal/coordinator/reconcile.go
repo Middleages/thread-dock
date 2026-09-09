@@ -12,6 +12,7 @@ import (
 
 	contractv2 "thread-dock/internal/contract/v2"
 	statev2 "thread-dock/internal/state/v2"
+	"thread-dock/internal/worktree"
 )
 
 // ReconcileResult is the immutable projection returned by one reconcile pass.
@@ -34,6 +35,7 @@ type Coordinator struct {
 	OwnerID     OwnerID
 	PID         int
 	StartedAt   time.Time
+	Inspector   CandidateInspector
 
 	mu         sync.Mutex
 	closed     bool
@@ -43,7 +45,11 @@ type Coordinator struct {
 
 // NewCoordinator constructs a coordinator with stable process metadata. A
 // zero PID, start time, or owner ID is filled once at construction time.
-func NewCoordinator(state State, runtime Runtime, publisher Publisher, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) *Coordinator {
+type CandidateInspector interface {
+	InspectCommit(context.Context, string, string, string, string) (worktree.CommitInspection, error)
+}
+
+func NewCoordinator(state State, runtime Runtime, publisher Publisher, inspector CandidateInspector, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) *Coordinator {
 	if pid == 0 {
 		pid = os.Getpid()
 	}
@@ -55,7 +61,7 @@ func NewCoordinator(state State, runtime Runtime, publisher Publisher, locker Ow
 	if ownerID == "" {
 		ownerID = OwnerID(fmt.Sprintf("coordinator-%d-%d", pid, startedAt.UnixNano()))
 	}
-	return &Coordinator{State: state, Runtime: runtime, Publisher: publisher, OwnerLocker: locker, OwnerID: ownerID, PID: pid, StartedAt: startedAt, dispatcher: newDispatcher(state, publisher, runtime, locker, ownerID, pid, startedAt), activated: make(map[contractv2.WorkID]ReconcileResult)}
+	return &Coordinator{State: state, Runtime: runtime, Publisher: publisher, Inspector: inspector, OwnerLocker: locker, OwnerID: ownerID, PID: pid, StartedAt: startedAt, dispatcher: newDispatcher(state, publisher, runtime, inspector, locker, ownerID, pid, startedAt), activated: make(map[contractv2.WorkID]ReconcileResult)}
 }
 
 var (
@@ -96,7 +102,7 @@ func (c *Coordinator) reconcileWithLease(ctx context.Context, workID contractv2.
 	}
 	d := c.dispatcher
 	if d == nil {
-		d = newDispatcher(c.State, c.Publisher, c.Runtime, c.OwnerLocker, c.OwnerID, c.PID, c.StartedAt)
+		d = newDispatcher(c.State, c.Publisher, c.Runtime, c.Inspector, c.OwnerLocker, c.OwnerID, c.PID, c.StartedAt)
 	}
 	snapshot, err := c.State.Load(ctx, workID)
 	if err != nil {
@@ -187,7 +193,7 @@ func (c *Coordinator) Activate(ctx context.Context, workID contractv2.WorkID) (R
 		return cached, nil
 	}
 	if c.dispatcher == nil {
-		c.dispatcher = newDispatcher(c.State, c.Publisher, c.Runtime, c.OwnerLocker, c.OwnerID, c.PID, c.StartedAt)
+		c.dispatcher = newDispatcher(c.State, c.Publisher, c.Runtime, c.Inspector, c.OwnerLocker, c.OwnerID, c.PID, c.StartedAt)
 	}
 	c.dispatcher.mu.Lock()
 	closed := c.dispatcher.closed
@@ -315,6 +321,13 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, err.Error())
 	}
 	invocation := *task.Invocation
+	if task.Worktree == nil {
+		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "runtime worktree identity is missing")
+	}
+	runtimeInvocation, invocationBuildErr := buildRuntimeInvocation(snapshot, taskID, invocation, *task.Worktree)
+	if invocationBuildErr != nil {
+		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, invocationBuildErr.Error())
+	}
 	if task.Status == statev2.TaskInvocationReserved && !invocation.LaunchRequested {
 		// The successor owns the Work exclusively and the durable false bit is
 		// proof that this process never authorized a provider launch.
@@ -328,7 +341,7 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 
 	// LaunchRequested is an intent, never a permission to relaunch after a
 	// restart. Every path below therefore begins with Observe.
-	observation, observeErr := c.Runtime.Observe(ctx, invocation)
+	observation, observeErr := c.Runtime.Observe(ctx, invocation, runtimeInvocation)
 	if observeErr != nil {
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, observeErr.Error())
 	}
@@ -381,7 +394,12 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 			at = &now
 		}
 		transition := runtimeTransitionAt(task, task.Invocation, statev2.TaskConfirmTermination, observation.Diagnostic, at)
-		return c.applyTask(ctx, d, snapshot, transition)
+		updated, applyErr := c.applyTask(ctx, d, snapshot, transition)
+		if applyErr != nil || observation.Artifact == nil {
+			return updated, applyErr
+		}
+		result, ingestErr := d.ingestBuilderArtifact(ctx, updated, taskID, observation.Artifact)
+		return result.Snapshot, ingestErr
 	case RuntimeObservationNotStarted, RuntimeObservationUnknown, "":
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, runtimeDiagnostic(observation))
 	default:
@@ -395,6 +413,9 @@ func (c *Coordinator) terminateInvocation(ctx context.Context, d *publicationDis
 	}
 	if observation.State != RuntimeObservationActive && observation.State != RuntimeObservationEnded {
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, runtimeDiagnostic(observation))
+	}
+	if observation.Artifact != nil && observation.State == RuntimeObservationActive {
+		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "active runtime returned an artifact before termination")
 	}
 	if observation.State == RuntimeObservationEnded {
 		if strings.TrimSpace(observation.ProviderIdentity) == "" || observation.ProviderIdentity != task.Invocation.ProviderIdentity {
@@ -450,7 +471,12 @@ func (c *Coordinator) terminateInvocation(ctx context.Context, d *publicationDis
 		at = &now
 	}
 	transition := runtimeTransitionAt(current, invocation, statev2.TaskConfirmTermination, "runtime terminated", at)
-	return c.applyTask(ctx, d, latest, transition)
+	updated, applyErr := c.applyTask(ctx, d, latest, transition)
+	if applyErr != nil || observation.Artifact == nil {
+		return updated, applyErr
+	}
+	result, ingestErr := d.ingestBuilderArtifact(ctx, updated, taskID, observation.Artifact)
+	return result.Snapshot, ingestErr
 }
 
 func (c *Coordinator) runtimeUnknown(ctx context.Context, d *publicationDispatcher, snapshot statev2.WorkSnapshot, taskID contractv2.TaskID, invocation *statev2.InvocationState, diagnostic string) (statev2.WorkSnapshot, error) {

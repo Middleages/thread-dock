@@ -19,6 +19,7 @@ import (
 	contractv2 "thread-dock/internal/contract/v2"
 	coordinator "thread-dock/internal/coordinator"
 	"thread-dock/internal/registry"
+	runtimecontract "thread-dock/internal/runtime"
 	statev2 "thread-dock/internal/state/v2"
 	"thread-dock/internal/workflow"
 )
@@ -89,7 +90,7 @@ func TestCoordinatorOwnerLossAcquiresBeforeAnyRuntimeCall(t *testing.T) {
 	realLocker := coordinator.NewOwnerLocker(root)
 	countingLocker := &countingOwnerLocker{delegate: realLocker}
 	rt := &integrationRuntime{identity: "provider-1", phase: "reconcile", events: &[]string{}}
-	c := coordinator.NewCoordinator(store, rt, nil, countingLocker, "successor", 43, reconcileAt)
+	c := coordinator.NewCoordinator(store, rt, nil, nil, countingLocker, "successor", 43, reconcileAt)
 	result, err := c.Reconcile(context.Background(), contract.WorkID)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +103,7 @@ func TestCoordinatorOwnerLossAcquiresBeforeAnyRuntimeCall(t *testing.T) {
 		t.Fatalf("successor owner calls = acquire %d release %d, want 1/1", successorAcquires, successorReleases)
 	}
 	rt.phase = "dispatcher"
-	queueCoordinator := coordinator.NewCoordinator(store, rt, nil, countingLocker, "queue", 44, reconcileAt)
+	queueCoordinator := coordinator.NewCoordinator(store, rt, nil, nil, countingLocker, "queue", 44, reconcileAt)
 	if _, err := queueCoordinator.Activate(context.Background(), contract.WorkID); err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +269,7 @@ func TestCoordinatorIntegrationUsesDurableStateForNoLaunchProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	locker := coordinator.NewOwnerLocker(root)
-	c := coordinator.NewCoordinator(store, &integrationRuntime{}, nil, locker, "owner-actual", 41, reconcileAt)
+	c := coordinator.NewCoordinator(store, &integrationRuntime{}, nil, nil, locker, "owner-actual", 41, reconcileAt)
 	result, err := c.Reconcile(context.Background(), contract.WorkID)
 	if err != nil {
 		t.Fatal(err)
@@ -291,7 +292,7 @@ func TestCoordinatorRealStoreRuntimeUnknownMatrixPersistsOperatorBlocker(t *test
 			root := t.TempDir()
 			works, contract := setupRunningOwnerWork(t, root)
 			rt := &integrationRuntime{identity: "provider-1", observation: observation, observationSet: true}
-			c := coordinator.NewCoordinator(works, rt, nil, coordinator.NewOwnerLocker(root), "owner", 43, reconcileAt)
+			c := coordinator.NewCoordinator(works, rt, nil, nil, coordinator.NewOwnerLocker(root), "owner", 43, reconcileAt)
 			if _, err := c.Reconcile(context.Background(), contract.WorkID); err == nil {
 				t.Fatal("unknown runtime unexpectedly reconciled")
 			}
@@ -321,7 +322,7 @@ func TestCoordinatorRealStoreTerminationPendingUnknownDoesNotTerminate(t *testin
 	task := snapshot.TaskStates["task-1"]
 	snapshot = applyOwnerTransition(t, works, contract.WorkID, snapshot, "request-termination", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskRequestTermination, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: reconcileAt, Reason: "operator pause"}, nil)
 	rt := &integrationRuntime{identity: "provider-1", observation: coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown}, observationSet: true}
-	c := coordinator.NewCoordinator(works, rt, nil, coordinator.NewOwnerLocker(root), "owner", 43, reconcileAt)
+	c := coordinator.NewCoordinator(works, rt, nil, nil, coordinator.NewOwnerLocker(root), "owner", 43, reconcileAt)
 	if _, err := c.Reconcile(context.Background(), contract.WorkID); err == nil {
 		t.Fatal("unknown termination unexpectedly reconciled")
 	}
@@ -354,7 +355,7 @@ func TestCoordinatorRealStoreHistoricalInvocationSkippedAndPublicationSettles(t 
 	applyOwnerTransition(t, works, contract.WorkID, snapshot, "begin-history-publication", nil, publication)
 	rt := &integrationRuntime{identity: "provider-1", observation: coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown}}
 	pub := &integrationPublisher{observation: integrationMatch}
-	c := coordinator.NewCoordinator(works, rt, pub, coordinator.NewOwnerLocker(root), "owner", 43, reconcileAt)
+	c := coordinator.NewCoordinator(works, rt, pub, nil, coordinator.NewOwnerLocker(root), "owner", 43, reconcileAt)
 	if _, err := c.Reconcile(context.Background(), contract.WorkID); err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +381,7 @@ func TestCoordinatorRealStorePausedReservedFalseReconcilesLocally(t *testing.T) 
 	}
 	rt := &integrationRuntime{identity: "provider-1"}
 	pub := &integrationPublisher{}
-	c := coordinator.NewCoordinator(works, rt, pub, coordinator.NewOwnerLocker(root), "owner", 43, reconcileAt)
+	c := coordinator.NewCoordinator(works, rt, pub, nil, coordinator.NewOwnerLocker(root), "owner", 43, reconcileAt)
 	if _, err := c.Reconcile(context.Background(), contract.WorkID); err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +416,7 @@ func TestCoordinatorRealStorePausedPublicationMatchOrAbsent(t *testing.T) {
 				observation = integrationMatch
 			}
 			pub := &integrationPublisher{observation: observation}
-			c := coordinator.NewCoordinator(works, nil, pub, coordinator.NewOwnerLocker(root), "owner", 43, reconcileAt)
+			c := coordinator.NewCoordinator(works, nil, pub, nil, coordinator.NewOwnerLocker(root), "owner", 43, reconcileAt)
 			if _, err := c.Reconcile(context.Background(), contract.WorkID); err != nil {
 				t.Fatal(err)
 			}
@@ -480,7 +481,7 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	}
 	rt := &integrationRuntime{identity: "provider-1"}
 	locker := &integrationLocker{}
-	runtimeCoordinator := coordinator.NewCoordinator(works, rt, nil, locker, "owner-dispatch", 41, reconcileAt)
+	runtimeCoordinator := coordinator.NewCoordinator(works, rt, nil, nil, locker, "owner-dispatch", 41, reconcileAt)
 	if _, err := runtimeCoordinator.Activate(context.Background(), contract.WorkID); err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +561,7 @@ func TestCoordinatorIntegrationLaunchTerminateCandidatePublication(t *testing.T)
 	}
 	pub := &integrationPublisher{}
 	reconcileLocker := &integrationLocker{}
-	reconciler := coordinator.NewCoordinator(works, nil, pub, reconcileLocker, "owner-reconcile", 42, reconcileAt)
+	reconciler := coordinator.NewCoordinator(works, nil, pub, nil, reconcileLocker, "owner-reconcile", 42, reconcileAt)
 	workflowWithCoordinator := workflow.NewWithCoordinator(projects, works, reconciler)
 	statusBefore, err := workflowWithCoordinator.Status(context.Background(), contract.WorkID)
 	if err != nil {
@@ -615,7 +616,7 @@ type integrationRuntime struct {
 	events                         *[]string
 }
 
-func (r *integrationRuntime) Observe(context.Context, statev2.InvocationState) (coordinator.RuntimeObservation, error) {
+func (r *integrationRuntime) Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (coordinator.RuntimeObservation, error) {
 	r.observes++
 	if r.events != nil {
 		*r.events = append(*r.events, r.phase+"-observe")
@@ -625,7 +626,7 @@ func (r *integrationRuntime) Observe(context.Context, statev2.InvocationState) (
 	}
 	return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationActive, ProviderIdentity: r.identity}, nil
 }
-func (r *integrationRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity) (string, error) {
+func (r *integrationRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
 	r.launches++
 	if r.events != nil {
 		*r.events = append(*r.events, "dispatcher-launch")

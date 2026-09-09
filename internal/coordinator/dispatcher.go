@@ -50,6 +50,7 @@ type publicationDispatcher struct {
 	pid       int
 	startedAt time.Time
 	runtime   Runtime
+	inspector CandidateInspector
 
 	mu     sync.Mutex
 	closed bool
@@ -59,17 +60,17 @@ type publicationDispatcher struct {
 // NewDispatcher creates a Work-scoped publication dispatcher. Owner metadata
 // is stable for the process lifetime and each Work queue retains one lease.
 func NewDispatcher(state State, publisher Publisher, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
-	return newDispatcher(state, publisher, nil, locker, ownerID, pid, startedAt)
+	return newDispatcher(state, publisher, nil, nil, locker, ownerID, pid, startedAt)
 }
 
-func newDispatcher(state State, publisher Publisher, runtime Runtime, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) *publicationDispatcher {
+func newDispatcher(state State, publisher Publisher, runtime Runtime, inspector CandidateInspector, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) *publicationDispatcher {
 	if pid == 0 {
 		pid = os.Getpid()
 	}
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
-	return &publicationDispatcher{state: state, publisher: publisher, runtime: runtime, locker: locker, ownerID: ownerID, pid: pid, startedAt: startedAt, queues: make(map[contractv2.WorkID]*publicationQueue)}
+	return &publicationDispatcher{state: state, publisher: publisher, runtime: runtime, inspector: inspector, locker: locker, ownerID: ownerID, pid: pid, startedAt: startedAt, queues: make(map[contractv2.WorkID]*publicationQueue)}
 }
 
 func (d *publicationDispatcher) installQueueLocked(lease OwnerLease) (*publicationQueue, error) {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
+	runtimecontract "thread-dock/internal/runtime"
 	statev2 "thread-dock/internal/state/v2"
 )
 
@@ -17,7 +18,7 @@ func TestCoordinatorReconcileReservedFalseProvesNotStartedWithoutRuntimeIO(t *te
 	lease := &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}
 	locker := &reconcileLocker{lease: lease}
 	rt := &reconcileTestRuntime{}
-	c := NewCoordinator(st, rt, nil, locker, "owner-1", 41, reconcileAt)
+	c := NewCoordinator(st, rt, nil, nil, locker, "owner-1", 41, reconcileAt)
 
 	got, err := c.Reconcile(context.Background(), "work-1")
 	if err != nil {
@@ -45,7 +46,7 @@ func TestCoordinatorReconcileLaunchRequestedObservesAndSettlesExactIdentity(t *t
 	task.Invocation = inv
 	st.snapshot.TaskStates["task-1"] = task
 	rt := &reconcileTestRuntime{observation: RuntimeObservation{State: RuntimeObservationActive, ProviderIdentity: "provider-1"}}
-	c := NewCoordinator(st, rt, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
+	c := NewCoordinator(st, rt, nil, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
 
 	if _, err := c.Reconcile(context.Background(), "work-1"); err != nil {
 		t.Fatal(err)
@@ -61,7 +62,7 @@ func TestCoordinatorReconcileLaunchRequestedObservesAndSettlesExactIdentity(t *t
 func TestCoordinatorReconcilePublicationMatchAdoptsReceipt(t *testing.T) {
 	st := &reconcileTestState{snapshot: reconcilePublicationSnapshot()}
 	pub := &reconcileTestPublisher{observation: PublicationObservation{State: PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: reconcileAt}}}
-	c := NewCoordinator(st, nil, pub, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
+	c := NewCoordinator(st, nil, pub, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
 
 	result, err := c.Reconcile(context.Background(), "work-1")
 	if err != nil {
@@ -88,7 +89,7 @@ func TestCoordinatorRunningUnknownObservationsNeverTerminate(t *testing.T) {
 		task.Invocation.ProviderIdentity = "provider-1"
 		st.snapshot.TaskStates["task-1"] = task
 		rt := &reconcileTestRuntime{observation: observation}
-		c := NewCoordinator(st, rt, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
+		c := NewCoordinator(st, rt, nil, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
 		if _, err := c.Reconcile(context.Background(), "work-1"); err == nil {
 			t.Fatalf("observation %#v unexpectedly succeeded", observation)
 		}
@@ -105,7 +106,7 @@ func TestCoordinatorRunningUnknownObservationsNeverTerminate(t *testing.T) {
 func TestCoordinatorProvenAbsentPublishesExactlyOnce(t *testing.T) {
 	st := &reconcileTestState{snapshot: reconcilePublicationSnapshot()}
 	pub := &reconcileTestPublisher{observation: PublicationObservation{State: PublicationObservationAbsent}, publishReceipt: &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: reconcileAt}}
-	c := NewCoordinator(st, nil, pub, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
+	c := NewCoordinator(st, nil, pub, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
 	if _, err := c.Reconcile(context.Background(), "work-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +137,7 @@ func TestCoordinatorReleasesLeaseOnLoadRuntimePublicationAndCancelReturns(t *tes
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			lease := &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}
-			c := NewCoordinator(tc.state, tc.runtime, tc.publisher, &reconcileLocker{lease: lease}, "owner-1", 41, reconcileAt)
+			c := NewCoordinator(tc.state, tc.runtime, tc.publisher, nil, &reconcileLocker{lease: lease}, "owner-1", 41, reconcileAt)
 			ctx := tc.ctx
 			if ctx == nil {
 				ctx = context.Background()
@@ -167,7 +168,7 @@ func (s *reconcileErrorState) Apply(context.Context, statev2.TransitionRequest) 
 func TestCoordinatorPublicationObserveErrorIsConflictWithoutPublish(t *testing.T) {
 	st := &reconcileTestState{snapshot: reconcilePublicationSnapshot()}
 	pub := &reconcileTestPublisher{observeErr: errors.New("provider secret should not persist")}
-	c := NewCoordinator(st, nil, pub, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
+	c := NewCoordinator(st, nil, pub, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
 	if _, err := c.Reconcile(context.Background(), "work-1"); err == nil {
 		t.Fatal("observe error unexpectedly succeeded")
 	}
@@ -179,7 +180,7 @@ func TestCoordinatorPublicationObserveErrorIsConflictWithoutPublish(t *testing.T
 func TestCoordinatorPublicationUnknownIsConflictWithoutPublish(t *testing.T) {
 	st := &reconcileTestState{snapshot: reconcilePublicationSnapshot()}
 	pub := &reconcileTestPublisher{observation: PublicationObservation{State: PublicationObservationUnknown}, publishReceipt: &statev2.PublicationReceipt{NodeID: "should-not-publish", PublishedAt: reconcileAt}}
-	c := NewCoordinator(st, nil, pub, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
+	c := NewCoordinator(st, nil, pub, nil, &reconcileLocker{lease: &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}}, "owner-1", 41, reconcileAt)
 	if _, err := c.Reconcile(context.Background(), "work-1"); err == nil {
 		t.Fatal("unknown observation unexpectedly succeeded")
 	}
@@ -193,7 +194,7 @@ func TestCoordinatorActivateOwnsOneLeaseAndRejectsPreActivationSubmission(t *tes
 	pub := &reconcileTestPublisher{observation: PublicationObservation{State: PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{NodeID: "node-1", PublishedAt: reconcileAt}}}
 	lease := &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}
 	locker := &reconcileLocker{lease: lease}
-	c := NewCoordinator(st, nil, pub, locker, "owner-1", 41, reconcileAt)
+	c := NewCoordinator(st, nil, pub, nil, locker, "owner-1", 41, reconcileAt)
 
 	if result := <-c.SubmitPublication(context.Background(), "work-1", "intent-1"); !errors.Is(result.Err, ErrWorkNotActivated) {
 		t.Fatalf("pre-activation submission error = %v", result.Err)
@@ -231,7 +232,7 @@ func TestCoordinatorSubmitWrapperDoesNotHoldCoordinatorLockDuringQueueSaturation
 	allow := make(chan struct{})
 	entered := make(chan struct{})
 	pub := &blockingPublisher{allow: allow, entered: entered}
-	c := NewCoordinator(st, nil, pub, locker, "owner-1", 41, reconcileAt)
+	c := NewCoordinator(st, nil, pub, nil, locker, "owner-1", 41, reconcileAt)
 	if _, err := c.Activate(context.Background(), "work-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +300,7 @@ func TestCoordinatorCloseIsIdempotentAndDisablesActivationAndSubmission(t *testi
 	st.snapshot.TaskStates["task-1"] = statev2.TaskExecutionState{TaskID: "task-1", Status: statev2.TaskIntegrated, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1, InvocationHistory: []statev2.InvocationID{}}
 	lease := &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}
 	locker := &reconcileLocker{lease: lease}
-	c := NewCoordinator(st, nil, nil, locker, "owner-1", 41, reconcileAt)
+	c := NewCoordinator(st, nil, nil, nil, locker, "owner-1", 41, reconcileAt)
 	if _, err := c.Activate(context.Background(), "work-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +328,7 @@ func TestCoordinatorActivatedPublicationWithoutPublisherReturnsStableError(t *te
 	st := &reconcileTestState{snapshot: reconcileSnapshot(statev2.TaskIntegrated)}
 	st.snapshot.TaskStates["task-1"] = statev2.TaskExecutionState{TaskID: "task-1", Status: statev2.TaskIntegrated, BuilderAttempt: 1, RepairLimit: 2, RecoveryLimit: 1, InvocationHistory: []statev2.InvocationID{}}
 	lease := &reconcileLease{record: OwnerRecord{WorkID: "work-1", OwnerID: "owner-1", PID: 41, StartedAt: reconcileAt}}
-	c := NewCoordinator(st, nil, nil, &reconcileLocker{lease: lease}, "owner-1", 41, reconcileAt)
+	c := NewCoordinator(st, nil, nil, nil, &reconcileLocker{lease: lease}, "owner-1", 41, reconcileAt)
 	if _, err := c.Activate(context.Background(), "work-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -417,11 +418,11 @@ type reconcileTestRuntime struct {
 	observes, launches, terminates int
 }
 
-func (r *reconcileTestRuntime) Observe(context.Context, statev2.InvocationState) (RuntimeObservation, error) {
+func (r *reconcileTestRuntime) Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (RuntimeObservation, error) {
 	r.observes++
 	return r.observation, r.observeErr
 }
-func (r *reconcileTestRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity) (string, error) {
+func (r *reconcileTestRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
 	r.launches++
 	return "provider-1", nil
 }

@@ -115,13 +115,14 @@ func TestMergeUsesBranchArgument(t *testing.T) {
 
 func TestInspectCommitReturnsActualBoundedPatch(t *testing.T) {
 	sha := "0123456789abcdef0123456789abcdef01234567"
-	r := &fakeRunner{results: []runner.Result{{Stdout: sha + "\n"}, {Stdout: ""}, {Stdout: "src/payments/retry.go\n"}, {Stdout: "diff --git a/src/payments/retry.go b/src/payments/retry.go\n"}}}
+	tree := "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	r := &fakeRunner{results: []runner.Result{{Stdout: sha + "\n"}, {Stdout: ""}, {Stdout: tree + "\n"}, {Stdout: "src/payments/retry.go\n"}, {Stdout: "diff --git a/src/payments/retry.go b/src/payments/retry.go\n"}}}
 	git := New(r, "git")
 	got, err := git.InspectCommit(context.Background(), "/work/integration", sha, "agent/api", sha)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.CommitSHA != sha || got.Branch != "agent/api" || len(got.ChangedFiles) != 1 || got.Patch == "" {
+	if got.CommitSHA != sha || got.TreeSHA != tree || got.Branch != "agent/api" || len(got.ChangedFiles) != 1 || got.Patch == "" {
 		t.Fatalf("inspection=%#v", got)
 	}
 }

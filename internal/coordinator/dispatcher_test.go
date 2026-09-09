@@ -12,7 +12,7 @@ import (
 )
 
 func newRuntimeDispatcherForTest(state State, publisher Publisher, runtime Runtime, locker OwnerLocker, ownerID OwnerID, pid int, startedAt time.Time) Dispatcher {
-	return newDispatcher(state, publisher, runtime, locker, ownerID, pid, startedAt)
+	return newDispatcher(state, publisher, runtime, nil, locker, ownerID, pid, startedAt)
 }
 
 func TestDispatcherDeduplicatesPublicationAndReleasesOwner(t *testing.T) {
