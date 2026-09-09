@@ -315,7 +315,7 @@ func TestServiceInterruptedPendingRecoveryPersistsMatchOrConflictWithoutDispatch
 					t.Fatalf("blocker=%+v", blocker)
 				}
 				for name, diagnostic := range map[string]string{"blocker": blocker.Diagnostic, "lastError": publication.LastError} {
-					if strings.TrimSpace(diagnostic) == "" || len([]byte(diagnostic)) > statev2.MaxDiagnosticBytes || strings.Contains(diagnostic, "provider-secret") || strings.Contains(diagnostic, "receipt-secret") {
+					if diagnostic == "" || strings.TrimSpace(diagnostic) != diagnostic || len([]byte(diagnostic)) > statev2.MaxDiagnosticBytes || strings.Contains(diagnostic, "provider-secret") || strings.Contains(diagnostic, "receipt-secret") {
 						t.Fatalf("unsafe %s diagnostic=%q", name, diagnostic)
 					}
 				}
