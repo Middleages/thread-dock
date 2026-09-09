@@ -3,6 +3,7 @@ package workrun
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	contractv2 "thread-dock/internal/contract/v2"
 	"thread-dock/internal/runner"
@@ -134,6 +136,9 @@ func (s *VerificationService) VerifyCandidate(ctx context.Context, supplied stat
 	if applyErr != nil {
 		return statev2.WorkSnapshot{}, applyErr
 	}
+	if inspectErr != nil || postErr != nil {
+		return resultSnapshot, errors.New("verification worktree inspection failed")
+	}
 	if processErr != nil {
 		return resultSnapshot, errors.New("verification command execution failed")
 	}
@@ -180,6 +185,12 @@ func verificationInputs(snapshot statev2.WorkSnapshot, taskID contractv2.TaskID)
 		return statev2.TaskExecutionState{}, nil, "", "", errors.New("verification repository is not in contract")
 	}
 	state := snapshot.TaskStates[taskID]
+	if state.Worktree == nil || state.Worktree.Branch != taskContract.Branch {
+		return statev2.TaskExecutionState{}, nil, "", "", errors.New("verification worktree branch does not match contract")
+	}
+	if state.Worktree.BaseSHA != plan.BaseSHA {
+		return statev2.TaskExecutionState{}, nil, "", "", errors.New("verification worktree base does not match contract")
+	}
 	return state, taskContract.Verification, filepath.Dir(state.Worktree.GitCommonDir), taskContract.RepoKey, nil
 }
 
@@ -191,20 +202,48 @@ func verificationCommandLabel(spec contractv2.CommandSpec, repoKey contractv2.Re
 		if strings.TrimSpace(spec.Argv[0]) == "" {
 			return "", errors.New("invalid executable")
 		}
-		encoded, err := json.Marshal(spec.Argv)
+		if _, err := json.Marshal(spec.Argv); err != nil {
+			return "", err
+		}
+		encoded, err := json.Marshal(spec)
 		if err != nil {
 			return "", err
 		}
-		return "argv:" + string(encoded), nil
+		sum := sha256.Sum256(encoded)
+		label, err := json.Marshal(struct {
+			SHA            string `json:"sha256"`
+			Argc           int    `json:"argc"`
+			TimeoutSeconds uint32 `json:"timeoutSeconds"`
+		}{SHA: hex.EncodeToString(sum[:]), Argc: len(spec.Argv), TimeoutSeconds: spec.TimeoutSeconds})
+		if err != nil {
+			return "", err
+		}
+		return validateVerificationCommandLabel("argv:" + string(label))
 	}
 	if strings.TrimSpace(spec.ShellScript) == "" || strings.TrimSpace(spec.ShellScript) != spec.ShellScript {
 		return "", errors.New("invalid shell script")
 	}
-	encoded, err := json.Marshal(spec.ShellScript)
+	encoded, err := json.Marshal(spec)
 	if err != nil {
 		return "", err
 	}
-	return "shell:" + string(encoded), nil
+	sum := sha256.Sum256(encoded)
+	label, err := json.Marshal(struct {
+		SHA            string `json:"sha256"`
+		Bytes          int    `json:"bytes"`
+		TimeoutSeconds uint32 `json:"timeoutSeconds"`
+	}{SHA: hex.EncodeToString(sum[:]), Bytes: len([]byte(spec.ShellScript)), TimeoutSeconds: spec.TimeoutSeconds})
+	if err != nil {
+		return "", err
+	}
+	return validateVerificationCommandLabel("shell:" + string(label))
+}
+
+func validateVerificationCommandLabel(label string) (string, error) {
+	if strings.TrimSpace(label) != label || label == "" || !utf8.ValidString(label) || len(label) > statev2.MaxDiagnosticBytes {
+		return "", errors.New("invalid command binding")
+	}
+	return label, nil
 }
 
 func runVerificationCommand(ctx context.Context, process runner.Runner, cwd string, spec contractv2.CommandSpec) (runner.Result, error) {
