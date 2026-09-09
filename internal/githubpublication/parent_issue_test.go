@@ -189,6 +189,7 @@ func (s *serviceState) Apply(_ context.Context, request statev2.TransitionReques
 			current.Receipt = request.Publication.Receipt
 		} else if request.Publication.Action == statev2.PublicationActionConflict {
 			current.Status = statev2.PublicationConflict
+			current.LastError = request.Publication.Diagnostic
 			s.snapshot.Control.Blocker = request.Publication.Blocker
 		}
 		s.snapshot.Publications = map[statev2.PublicationIntentID]statev2.PublicationState{request.Publication.IntentID: current}
@@ -197,14 +198,18 @@ func (s *serviceState) Apply(_ context.Context, request statev2.TransitionReques
 }
 
 type serviceObserver struct {
-	observation coordinator.PublicationObservation
-	err         error
+	observation  coordinator.PublicationObservation
+	err          error
+	publishCalls *int
 }
 
 func (o serviceObserver) Observe(context.Context, statev2.PublicationState) (coordinator.PublicationObservation, error) {
 	return o.observation, o.err
 }
-func (serviceObserver) Publish(context.Context, statev2.PublicationState) (statev2.PublicationReceipt, error) {
+func (o serviceObserver) Publish(context.Context, statev2.PublicationState) (statev2.PublicationReceipt, error) {
+	if o.publishCalls != nil {
+		*o.publishCalls = *o.publishCalls + 1
+	}
 	return statev2.PublicationReceipt{}, errors.New("unexpected publish")
 }
 
@@ -212,9 +217,11 @@ type serviceDispatcher struct {
 	snapshot statev2.WorkSnapshot
 	workID   contractv2.WorkID
 	intentID statev2.PublicationIntentID
+	calls    int
 }
 
 func (d *serviceDispatcher) SubmitPublication(_ context.Context, workID contractv2.WorkID, intentID statev2.PublicationIntentID) <-chan coordinator.CommandResult {
+	d.calls++
 	d.workID, d.intentID = workID, intentID
 	result := make(chan coordinator.CommandResult, 1)
 	result <- coordinator.CommandResult{Snapshot: d.snapshot}
@@ -285,7 +292,7 @@ func TestServiceInterruptedPendingRecoveryPersistsMatchOrConflictWithoutDispatch
 		wantBlocker bool
 	}{
 		{name: "match", observation: coordinator.PublicationObservation{State: coordinator.PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{Number: 11, NodeID: "node-11", URL: "https://ghes/11", PublishedAt: time.Unix(10, 0).UTC()}}, wantStatus: statev2.PublicationCompleted},
-		{name: "invalid receipt", observation: coordinator.PublicationObservation{State: coordinator.PublicationObservationMatch, Receipt: &statev2.PublicationReceipt{Number: 11, NodeID: "node-11", PublishedAt: time.Unix(10, 0).UTC()}}, wantStatus: statev2.PublicationConflict, wantBlocker: true},
+		{name: "invalid receipt", observation: coordinator.PublicationObservation{State: coordinator.PublicationObservationMatch, Diagnostic: "provider-secret", Receipt: &statev2.PublicationReceipt{Number: 11, NodeID: "receipt-secret", PublishedAt: time.Unix(10, 0).UTC()}}, wantStatus: statev2.PublicationConflict, wantBlocker: true},
 		{name: "absent", observation: coordinator.PublicationObservation{State: coordinator.PublicationObservationAbsent}, wantStatus: statev2.PublicationConflict, wantBlocker: true},
 		{name: "unknown", observation: coordinator.PublicationObservation{State: coordinator.PublicationObservationUnknown}, wantStatus: statev2.PublicationConflict, wantBlocker: true},
 		{name: "error", err: errors.New("observation failed"), wantStatus: statev2.PublicationConflict, wantBlocker: true},
@@ -294,10 +301,27 @@ func TestServiceInterruptedPendingRecoveryPersistsMatchOrConflictWithoutDispatch
 			seed := base
 			seed.Publications = map[statev2.PublicationIntentID]statev2.PublicationState{pending.IntentID: pending}
 			state := &serviceState{snapshot: seed}
-			service := NewService(state, publisherProjects{project: publisherProject()}, nil, serviceObserver{observation: tc.observation, err: tc.err}, "operator")
+			dispatcher := &serviceDispatcher{}
+			publishCalls := 0
+			service := NewService(state, publisherProjects{project: publisherProject()}, dispatcher, serviceObserver{observation: tc.observation, err: tc.err, publishCalls: &publishCalls}, "operator")
 			got, err := service.PublishParentIssue(context.Background(), seed, "design", "req-1")
 			if err != nil || got.Publications[pending.IntentID].Status != tc.wantStatus || (got.Control.Blocker != nil) != tc.wantBlocker {
 				t.Fatalf("got=%+v blocker=%+v err=%v", got.Publications[pending.IntentID], got.Control.Blocker, err)
+			}
+			if tc.name == "invalid receipt" {
+				publication := got.Publications[pending.IntentID]
+				blocker := got.Control.Blocker
+				if blocker == nil || blocker.Kind != statev2.BlockerKindPublicationConflict || blocker.IntentID != pending.IntentID || blocker.OperatorRef != "operator" {
+					t.Fatalf("blocker=%+v", blocker)
+				}
+				for name, diagnostic := range map[string]string{"blocker": blocker.Diagnostic, "lastError": publication.LastError} {
+					if strings.TrimSpace(diagnostic) == "" || len([]byte(diagnostic)) > statev2.MaxDiagnosticBytes || strings.Contains(diagnostic, "provider-secret") || strings.Contains(diagnostic, "receipt-secret") {
+						t.Fatalf("unsafe %s diagnostic=%q", name, diagnostic)
+					}
+				}
+				if dispatcher.calls != 0 || publishCalls != 0 {
+					t.Fatalf("dispatch calls=%d publish calls=%d", dispatcher.calls, publishCalls)
+				}
 			}
 		})
 	}
