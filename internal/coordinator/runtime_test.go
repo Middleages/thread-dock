@@ -188,6 +188,29 @@ func (r reviewerInspector) InspectCommit(context.Context, string, string, string
 	return r.inspection, nil
 }
 
+type sequenceRuntime struct {
+	observations []RuntimeObservation
+	launches     int
+	observes     int
+}
+
+func (r *sequenceRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
+	r.launches++
+	return "sequence-provider", nil
+}
+
+func (r *sequenceRuntime) Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (RuntimeObservation, error) {
+	r.observes++
+	if len(r.observations) == 0 {
+		return RuntimeObservation{State: RuntimeObservationUnknown, Diagnostic: "sequence exhausted"}, nil
+	}
+	observation := r.observations[0]
+	r.observations = r.observations[1:]
+	return observation, nil
+}
+
+func (r *sequenceRuntime) Terminate(context.Context, statev2.InvocationState) error { return nil }
+
 func TestRuntimeLaunchRequestReplayObservesWithoutRelaunch(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
 	st.snapshot.TaskStates["task-1"].Invocation.LaunchRequested = true
