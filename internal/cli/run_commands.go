@@ -63,7 +63,7 @@ type Dependencies struct {
 	Reverter   RevertRunService
 }
 
-// NeedsWorkflowDependencies is true only for the six accepted v2 command
+// NeedsWorkflowDependencies is true only for the accepted v2 command
 // shapes. Malformed and unknown invocations remain dependency-free so they
 // can print usage without loading configuration or provider adapters.
 func NeedsWorkflowDependencies(args []string) bool {
@@ -88,6 +88,12 @@ func NeedsWorkflowDependencies(args []string) bool {
 			return ok
 		case "approve":
 			_, _, _, ok := parseWorkflowApproveArgs(args[2:])
+			return ok
+		case "pause", "resume":
+			_, _, _, ok := parseWorkflowApproveArgs(args[2:])
+			return ok
+		case "reconcile":
+			_, ok := parseWorkflowReconcileArgs(args[2:])
 			return ok
 		case "status":
 			return len(args) == 4 && nonFlagArg(args[2]) && args[3] == "--json"
