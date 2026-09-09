@@ -53,9 +53,126 @@ func TestReviewIntegrationRealStoreReviewerReplayAccept(t *testing.T) {
 	_ = coordinatorRuntime.Close(context.Background())
 }
 
+func TestReviewIntegrationRealStoreReviewerReplayBlockNoGit(t *testing.T) {
+	store, snapshot, candidate, repo, root := realReviewerEvidenceFixture(t)
+	git := worktree.New(runner.OSRunner{}, "git", root, repo)
+	runtime := &realReviewerRuntime{candidateSHA: candidate, decision: "block"}
+	coord := coordinator.NewCoordinator(store, runtime, nil, git, coordinator.NewOwnerLocker(root), "block-owner", 0, time.Now().UTC())
+	service := NewReviewIntegrationService(store, coord, &countingReviewGit{}, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: repo, IntegrationPath: filepath.Join(root, "integration"), IntegrationBranch: "integration", RuntimeFingerprint: "review-runtime"})
+	first, err := service.Advance(context.Background(), snapshot, "task-1", "caller-1")
+	if err != nil || first.TaskStates["task-1"].Status != statev2.TaskRunning {
+		t.Fatalf("first=%#v err=%v", first, err)
+	}
+	secondInput, err := store.Load(context.Background(), snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Advance(context.Background(), secondInput, "task-1", "caller-2")
+	if err != nil || second.TaskStates["task-1"].Status != statev2.TaskReviewBlocked || second.TaskStates["task-1"].Review == nil || len(second.TaskStates["task-1"].Review.Findings) != 1 {
+		t.Fatalf("second=%#v err=%v", second, err)
+	}
+}
+
+func TestReviewIntegrationRealStoreAcceptedCandidateRealGitIntegration(t *testing.T) {
+	store, snapshot, candidate, repo, root := realReviewerEvidenceFixture(t)
+	git := worktree.New(runner.OSRunner{}, "git", root, repo)
+	runtime := &realReviewerRuntime{candidateSHA: candidate}
+	coord := coordinator.NewCoordinator(store, runtime, nil, git, coordinator.NewOwnerLocker(root), "integration-owner", 0, time.Now().UTC())
+	binding := ReviewIntegrationBinding{RepositoryPath: repo, IntegrationPath: filepath.Join(root, "integration"), IntegrationBranch: "integration", RuntimeFingerprint: "review-runtime"}
+	service := NewReviewIntegrationService(store, coord, git, "operator", time.Now, binding)
+	first, err := service.Advance(context.Background(), snapshot, "task-1", "caller-1")
+	if err != nil || first.TaskStates["task-1"].Status != statev2.TaskRunning {
+		t.Fatalf("first=%#v err=%v", first, err)
+	}
+	current, err := store.Load(context.Background(), snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := service.Advance(context.Background(), current, "task-1", "caller-2")
+	if err != nil || accepted.TaskStates["task-1"].Status != statev2.TaskAccepted {
+		t.Fatalf("accepted=%#v err=%v", accepted, err)
+	}
+	integrated, err := service.Advance(context.Background(), accepted, "task-1", "caller-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.Load(context.Background(), snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := persisted.TaskStates["task-1"].Integration
+	if integrated.TaskStates["task-1"].Status != statev2.TaskIntegrated || evidence == nil || evidence.CandidateSHA != candidate || evidence.IntegrationHEAD == candidate || !evidence.RelationVerified {
+		t.Fatalf("integrated=%#v evidence=%#v", integrated.TaskStates["task-1"], evidence)
+	}
+	isAncestor, err := git.IsAncestor(context.Background(), binding.IntegrationPath, candidate)
+	if err != nil || !isAncestor {
+		t.Fatalf("ancestor=%v err=%v", isAncestor, err)
+	}
+}
+
+func TestReviewIntegrationRealStoreConflictAbortsAndPersistsBlocker(t *testing.T) {
+	store, snapshot, candidate, repo, root := realReviewerEvidenceFixture(t)
+	accepted, err := applyRealReviewerAccept(t, store, snapshot, candidate, repo, root, "conflict", "accept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git := &countingReviewGit{mergeErr: worktree.ErrConflict}
+	service := NewReviewIntegrationService(store, &countingReviewRuntime{}, git, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: "/repo", IntegrationPath: "/integration", IntegrationBranch: "integration", RuntimeFingerprint: "review-runtime"})
+	got, err := service.Advance(context.Background(), accepted, "task-1", "conflict-caller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.Load(context.Background(), snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := persisted.TaskStates["task-1"]
+	if git.abort != 1 || task.Status != statev2.TaskNeedsOperator || persisted.Control.Blocker == nil || persisted.Control.Blocker.TaskID != "task-1" || task.Integration != nil || got.TaskStates["task-1"].Status != statev2.TaskNeedsOperator {
+		t.Fatalf("task=%#v blocker=%#v abort=%d", task, persisted.Control.Blocker, git.abort)
+	}
+}
+
+func TestReviewIntegrationRealStoreRejectsStaleAndIntegratedReplayWithoutIO(t *testing.T) {
+	store, snapshot, candidate, repo, root := realReviewerEvidenceFixture(t)
+	countingRuntime := &countingReviewRuntime{}
+	countingGit := &countingReviewGit{}
+	service := NewReviewIntegrationService(store, countingRuntime, countingGit, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: repo, IntegrationPath: filepath.Join(root, "integration"), IntegrationBranch: "integration", RuntimeFingerprint: "review-runtime"})
+	stale := snapshot
+	stale.Revision = 0
+	if _, err := service.Advance(context.Background(), stale, "task-1", "stale"); err == nil || countingRuntime.calls != 0 || countingGit.calls != 0 {
+		t.Fatalf("stale err=%v runtime=%d git=%d", err, countingRuntime.calls, countingGit.calls)
+	}
+	accepted, err := applyRealReviewerAccept(t, store, snapshot, candidate, repo, root, "integrated", "accept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Persist integration through the real service and real reducer before the idempotency replay.
+	realGit := worktree.New(runner.OSRunner{}, "git", root, repo)
+	integration := NewReviewIntegrationService(store, &countingReviewRuntime{}, realGit, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: repo, IntegrationPath: filepath.Join(root, "integration"), IntegrationBranch: "integration", RuntimeFingerprint: "review-runtime"})
+	integrated, err := integration.Advance(context.Background(), accepted, "task-1", "integrated-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if integrated.TaskStates["task-1"].Status != statev2.TaskIntegrated {
+		t.Fatalf("status=%q", integrated.TaskStates["task-1"].Status)
+	}
+	beforeRuntime, beforeGit := countingRuntime.calls, countingGit.calls
+	current, err := store.Load(context.Background(), snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Advance(context.Background(), current, "task-1", "replay"); err != nil {
+		t.Fatal(err)
+	}
+	if countingRuntime.calls != beforeRuntime || countingGit.calls != beforeGit {
+		t.Fatalf("integrated replay performed I/O runtime=%d/%d git=%d/%d", beforeRuntime, countingRuntime.calls, beforeGit, countingGit.calls)
+	}
+}
+
 type realReviewerRuntime struct {
 	candidateSHA       string
 	launches, observes int
+	decision           string
 }
 
 func (r *realReviewerRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
@@ -64,11 +181,78 @@ func (r *realReviewerRuntime) Launch(context.Context, statev2.InvocationState, s
 }
 func (r *realReviewerRuntime) Observe(_ context.Context, invocation statev2.InvocationState, _ runtimecontract.Invocation) (coordinator.RuntimeObservation, error) {
 	r.observes++
-	result, _ := json.Marshal(runtimecontract.ReviewerResult{ReviewedSHA: r.candidateSHA, Decision: "accept", BlockingFindings: []runtimecontract.ReviewerFinding{}})
+	decision := "accept"
+	findings := []runtimecontract.ReviewerFinding{}
+	if r.decision == "block" {
+		decision = "block"
+		findings = []runtimecontract.ReviewerFinding{{Code: "unsafe", Diagnostic: "unsafe change"}}
+	}
+	result, _ := json.Marshal(runtimecontract.ReviewerResult{ReviewedSHA: r.candidateSHA, Decision: decision, BlockingFindings: findings})
 	at := time.Now().UTC()
 	return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationEnded, ProviderIdentity: "review-provider", EndedAt: &at, Artifact: &runtimecontract.ArtifactEnvelope{RequestID: contractv2.RequestID(invocation.InvocationID), Role: runtimecontract.RoleReviewer, Status: "success", Result: result}}, nil
 }
 func (r *realReviewerRuntime) Terminate(context.Context, statev2.InvocationState) error { return nil }
+
+func applyRealReviewerAccept(t *testing.T, store statev2.Store, snapshot statev2.WorkSnapshot, candidate, repo, root, owner, decision string) (statev2.WorkSnapshot, error) {
+	t.Helper()
+	git := worktree.New(runner.OSRunner{}, "git", root, repo)
+	runtime := &realReviewerRuntime{candidateSHA: candidate, decision: decision}
+	coord := coordinator.NewCoordinator(store, runtime, nil, git, coordinator.NewOwnerLocker(root), coordinator.OwnerID(owner), 0, time.Now().UTC())
+	service := NewReviewIntegrationService(store, coord, git, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: repo, IntegrationPath: filepath.Join(root, "integration"), IntegrationBranch: "integration", RuntimeFingerprint: "review-runtime"})
+	first, err := service.Advance(context.Background(), snapshot, "task-1", contractv2.RequestID(owner+"-first"))
+	if err != nil {
+		return first, err
+	}
+	current, err := store.Load(context.Background(), snapshot.WorkID)
+	if err != nil {
+		return current, err
+	}
+	second, err := service.Advance(context.Background(), current, "task-1", contractv2.RequestID(owner+"-second"))
+	return second, err
+}
+
+type countingReviewRuntime struct{ calls int }
+
+func (r *countingReviewRuntime) Activate(context.Context, contractv2.WorkID) (coordinator.ReconcileResult, error) {
+	r.calls++
+	return coordinator.ReconcileResult{}, nil
+}
+func (r *countingReviewRuntime) SubmitRuntime(context.Context, contractv2.WorkID, contractv2.TaskID, statev2.InvocationID) <-chan coordinator.CommandResult {
+	r.calls++
+	return nil
+}
+func (r *countingReviewRuntime) Close(context.Context) error { r.calls++; return nil }
+
+type countingReviewGit struct {
+	calls, abort int
+	mergeErr     error
+}
+
+func (g *countingReviewGit) CreateManagedWorktree(context.Context, string, string, string, string) error {
+	g.calls++
+	return nil
+}
+func (g *countingReviewGit) ReconcileIntegrationWorktree(context.Context, string, string, string) (bool, error) {
+	g.calls++
+	return false, nil
+}
+func (g *countingReviewGit) MergeCommitNoFF(context.Context, string, string) error {
+	g.calls++
+	return g.mergeErr
+}
+func (g *countingReviewGit) AbortMerge(context.Context, string) error {
+	g.calls++
+	g.abort++
+	return nil
+}
+func (g *countingReviewGit) CurrentCommit(context.Context, string) (string, error) {
+	g.calls++
+	return strings.Repeat("3", 40), nil
+}
+func (g *countingReviewGit) IsAncestor(context.Context, string, string) (bool, error) {
+	g.calls++
+	return true, nil
+}
 
 func realReviewerEvidenceFixture(t *testing.T) (statev2.Store, statev2.WorkSnapshot, string, string, string) {
 	t.Helper()
@@ -136,10 +320,11 @@ func TestReviewIntegrationLaunchesReviewerAndMergesExactCandidate(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.TaskStates["task-1"].Status != statev2.TaskIntegrated || runtime.activate != 1 || runtime.submit != 1 || git.mergedSHA != candidate || git.create != 1 || git.abort != 0 {
+	if got.TaskStates["task-1"].Status != statev2.TaskAccepted || runtime.activate != 1 || runtime.submit != 1 || git.mergedSHA != "" || git.create != 0 || git.abort != 0 {
 		t.Fatalf("status=%q runtime=%d/%d git create/merge/abort=%d/%s/%d", got.TaskStates["task-1"].Status, runtime.activate, runtime.submit, git.create, git.mergedSHA, git.abort)
 	}
-	if _, err := service.Advance(context.Background(), got, "task-1", "caller-1"); err != nil {
+	got, err = service.Advance(context.Background(), got, "task-1", "caller-1")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if runtime.activate != 1 || runtime.submit != 1 || git.create != 1 || git.mergedSHA != candidate {
@@ -157,7 +342,7 @@ func TestReviewIntegrationBlockDoesNotMerge(t *testing.T) {
 	git := &reviewIntegrationGitFake{head: strings.Repeat("3", 40)}
 	service := NewReviewIntegrationService(state, runtime, git, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: "/repo", IntegrationPath: "/integration", IntegrationBranch: "main", RuntimeFingerprint: "review-runtime"})
 	got, err := service.Advance(context.Background(), snapshot, "task-1", "caller")
-	if err == nil || got.TaskStates["task-1"].Status != statev2.TaskReviewBlocked || git.mergedSHA != "" {
+	if err != nil || got.TaskStates["task-1"].Status != statev2.TaskReviewBlocked || git.mergedSHA != "" {
 		t.Fatalf("status=%q err=%v merge=%q", got.TaskStates["task-1"].Status, err, git.mergedSHA)
 	}
 }
@@ -196,7 +381,7 @@ func TestReviewIntegrationReplayUsesExistingReviewerInvocation(t *testing.T) {
 	git := &reviewIntegrationGitFake{head: strings.Repeat("3", 40)}
 	service := NewReviewIntegrationService(state, runtime, git, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: "/repo", IntegrationPath: "/integration", IntegrationBranch: "main", RuntimeFingerprint: "review-runtime"})
 	got, err := service.Advance(context.Background(), snapshot, "task-1", "fresh-caller")
-	if err != nil || runtime.lastInvocation != "review-inv" || state.reserves != 0 || got.TaskStates["task-1"].Status != statev2.TaskIntegrated {
+	if err != nil || runtime.lastInvocation != "review-inv" || state.reserves != 0 || got.TaskStates["task-1"].Status != statev2.TaskAccepted {
 		t.Fatalf("status=%q err=%v invocation=%q reserves=%d", got.TaskStates["task-1"].Status, err, runtime.lastInvocation, state.reserves)
 	}
 }

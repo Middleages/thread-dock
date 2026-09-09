@@ -84,7 +84,9 @@ func (s *ReviewIntegrationService) Advance(ctx context.Context, supplied statev2
 	if task.Status == statev2.TaskIntegrated {
 		return current, nil
 	}
+	reviewerAdvanced := false
 	if task.Review == nil && task.Gate != nil && task.Gate.Passed && (task.Status == statev2.TaskGatePassed || task.Status == statev2.TaskInvocationReserved || task.Status == statev2.TaskRunning || task.Status == statev2.TaskTerminationPending || task.Status == statev2.TaskTerminated) {
+		reviewerAdvanced = true
 		current, err = s.launchReviewer(ctx, current, taskID, requestID)
 		if err != nil {
 			return current, err
@@ -96,6 +98,18 @@ func (s *ReviewIntegrationService) Advance(ctx context.Context, supplied statev2
 	}
 	task = current.TaskStates[taskID]
 	if task.Status == statev2.TaskIntegrated {
+		return current, nil
+	}
+	if reviewerAdvanced && task.Status == statev2.TaskAccepted {
+		return current, nil
+	}
+	if task.Status == statev2.TaskReviewBlocked {
+		return current, nil
+	}
+	if task.Status == statev2.TaskNeedsOperator {
+		return current, errors.New("review integration requires operator action")
+	}
+	if task.Status == statev2.TaskInvocationReserved || task.Status == statev2.TaskRunning || task.Status == statev2.TaskTerminationPending || task.Status == statev2.TaskTerminated {
 		return current, nil
 	}
 	if task.Status != statev2.TaskAccepted || task.Review == nil || !task.Review.Accepted || task.Candidate == nil {
@@ -120,7 +134,14 @@ func (s *ReviewIntegrationService) launchReviewer(ctx context.Context, snapshot 
 	resultSnapshot = snapshot
 	activated := false
 	defer func() {
-		if activated {
+		closeRuntime := true
+		if task, ok := resultSnapshot.TaskStates[taskID]; ok {
+			switch task.Status {
+			case statev2.TaskInvocationReserved, statev2.TaskRunning, statev2.TaskTerminationPending, statev2.TaskTerminated:
+				closeRuntime = false
+			}
+		}
+		if activated && closeRuntime {
 			if closeErr := s.runtime.Close(ctx); resultErr == nil && closeErr != nil {
 				resultErr = closeErr
 			}
