@@ -47,6 +47,8 @@ Herdr가 관리하는 OpenCode Builder 하나를 ThreadDock v2 업무 흐름에 
 
 로컬 Herdr 0.8.2의 버전·help만 확인됐다. 실제 agent 실행, native profile 권한, 정확한 invocation 중단/종료 확인은 미검증이다.
 
+2026-09-09 구현 착수 시 OpenCode 1.18.27과 Herdr agent 도움말을 확인했다. `prompt --wait`는 turn을 추적하지 않는다고 명시하며, `agent stop` 명령은 없다. 이번 bridge의 Terminate는 확인 불가능한 종료를 성공으로 만들지 않고 명시적인 미지원 오류를 반환한다. 현재 requestId의 marked result 회수는 Builder 완료 프로토콜로 구현하되 live 검증 전에는 실제 실행·취소 지원이 검증됐다고 표시하지 않는다.
+
 구현계획은 설치된 Herdr/OpenCode 도움말과 기존 CLI 테스트를 읽어 다음을 고정한다: 기존 Worktree 열기, profile 선택, packet 전달 완료 의미, agent/session 재조회, 현재 invocation 중단과 종료 확인, publication credential·MCP 쓰기 제한 적용 방법. 지원하지 않는 명령을 추측하지 않는다. 필요한 capability가 없으면 해당 연결의 구체적 제약을 보고하며 session/process 관리 대체 시스템을 추가하지 않는다.
 
 ## 구현 단위와 검증

@@ -149,7 +149,17 @@ assertion도 더 엄밀하게 만들 수 있다. final review가 찾은 실제 a
 
 각 Task는 Luna high 구현과 fresh Sol medium review로 진행했지만 resolved model/effort metadata는 계속 `unverified`다. Task 2의 일부 test-only 보정과 Task 3 shutdown 보정은 사전 RED를 캡처하지 못해 audit gap으로 정직하게 남겼다. 실제 provider adapter, runtime Artifact ingestion, GitHub Projects/Wiki 쓰기, native WSL Go, Windows/Wails bridge는 아직 검증하지 않았다.
 
-다음 구현은 coordinator를 더 확장하지 않는다. 먼저 실제 runtime adapter 하나와 `RuntimeResult.Artifact`→candidate/review evidence ingestion 계약을 별도 작은 계획으로 고정하고 fake coordinator 뒤에 연결한다. 그 검토가 끝난 뒤 GitHub Publisher adapter와 실제 Projects/Wiki 권한·marker reconciliation을 별도 slice로 진행한다. 두 외부 adapter를 동시에 시작하지 않는다.
+후속 Herdr 연결 작업은 아래 절을 따른다. GitHub Publisher adapter와 실제 Projects/Wiki 권한·marker reconciliation은 별도 slice다.
+
+### Herdr Builder 연결 (2026-09-09)
+
+[설계](docs/superpowers/specs/2026-09-09-herdr-builder-bridge-design.md)와 [구현계획](docs/superpowers/plans/2026-09-09-herdr-builder-bridge.md)에 따라 Builder 연결을 구현했다. `internal/herdr.NewBuilderRuntime`은 기존 Herdr CLI와 Evidence parser를 조합하며 별도 session/process registry를 만들지 않는다. 논리 profile을 native OpenCode agent와 fingerprint에 명시적으로 바인딩한다.
+
+기존 `runtime.Invocation`과 `ArtifactEnvelope`가 coordinator lifecycle을 통과한다. queue와 restart reconcile은 공통 Builder 수용 함수에서 현재 invocation, 승인, 종료, strict 결과를 대조하고 실제 Git TreeSHA·branch 관계·허용 경로로 candidate를 검증한다. 종료 저장 후 Artifact 저장 전 crash도 재관찰해 회수한다. 실제 Store·임시 Git·기존 Herdr CLI에 command runner 대역을 연결한 테스트에서 정상 candidate와 잘못된 evidence의 durable blocker를 확인했다.
+
+Herdr 0.8.2의 `prompt --wait`는 turn 완료 증거가 아니며 native exact stop 명령도 확인되지 않았다. `Terminate`는 명시적 미지원 오류를 반환한다. 따라서 이 구현은 Builder bridge와 결과 수용의 코드 연결이며, 실제 Herdr 실행·취소·profile 권한·credential/MCP 제한을 검증한 상태는 아니다. CLI 사용자 명령에 실행 연결을 추가하지 않았으며 Reviewer·Documenter ingestion도 후속이다.
+
+다음 작업은 지정된 작은 Worktree에서 profile 권한과 실제 Builder 결과 프로토콜을 검증하는 capability pilot이다. 최초 ingestion 테스트가 production 뒤에 작성된 절차 누락은 audit gap으로 남겼고, 후속 재시작/모순 상태 수정에는 실제 RED/GREEN 근거가 있다. Luna high 구현과 fresh Sol medium 검토를 요청했으며 resolved model/effort는 `unverified`다.
 
 기존 contract, state, pathscope, worktree, integration과 Herdr의 좁은 기능을 검토해
 재사용한다. 기존 자동 병합·세션 복구 상태 기계 전체를 보존할 의무는 없다.
