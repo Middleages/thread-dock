@@ -246,7 +246,7 @@ func validateSnapshotRequest(snapshot statev2.WorkSnapshot, request PreparationR
 			break
 		}
 	}
-	if plan == nil || plan.BaseSHA != request.BaseSHA || plan.TargetBranch != request.Branch {
+	if plan == nil || plan.BaseSHA != request.BaseSHA {
 		return nil, nil, errors.New("task repository plan does not match preparation request")
 	}
 	if contractTask.Branch != "" && contractTask.Branch != request.Branch {
