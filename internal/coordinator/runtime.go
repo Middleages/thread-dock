@@ -96,11 +96,12 @@ type runtimeWaiter struct {
 }
 
 type runtimeEvent struct {
-	key         runtimeKey
-	operation   runtimeOperationKind
-	result      RuntimeResult
-	observation RuntimeObservation
-	identity    string
+	key           runtimeKey
+	operation     runtimeOperationKind
+	result        RuntimeResult
+	observation   RuntimeObservation
+	identity      string
+	launchStarted bool
 }
 
 func (d *publicationDispatcher) handleRuntimeCommand(q *publicationQueue, command runtimeCommand) {
@@ -269,6 +270,7 @@ func (d *publicationDispatcher) runRuntimeWorker(q *publicationQueue, op *runtim
 	}
 	switch op.kind {
 	case runtimeLaunch:
+		event.launchStarted = true
 		event.identity, event.result.Err = d.runtime.Launch(ctx, invocationCopy, worktreeCopy, runtimeInvocation)
 	case runtimeObserve:
 		observeCtx, cancel := context.WithTimeout(ctx, runtimeObservationTimeout)
@@ -317,6 +319,18 @@ func (d *publicationDispatcher) handleRuntimeEvent(q *publicationQueue, event ru
 	result := CommandResult{Snapshot: snapshot, Err: event.result.Err}
 	if event.result.Err == nil {
 		result = d.settleRuntimeEvent(q, snapshot, event)
+	} else if event.operation == runtimeLaunch && event.launchStarted && !errors.Is(event.result.Err, context.Canceled) && !errors.Is(event.result.Err, context.DeadlineExceeded) {
+		// A provider call may have created an unobservable runtime even when it
+		// returns an error. Settle only the still-current invocation, and keep
+		// the bounded caller error while recording a static durable diagnostic.
+		if _, _, identityErr := d.validateRuntimeIdentity(snapshot, q, event.key); identityErr == nil {
+			result = d.runtimeUnknown(q, snapshot, event.key, "runtime launch failed; operator action required")
+			if result.Err == nil {
+				result.Err = event.result.Err
+			} else {
+				result.Err = errors.Join(event.result.Err, result.Err)
+			}
+		}
 	} else if event.operation == runtimeObserve && (errors.Is(event.result.Err, context.Canceled) || errors.Is(event.result.Err, context.DeadlineExceeded)) {
 		task := snapshot.TaskStates[event.key.taskID]
 		if task.Status == statev2.TaskInvocationReserved {

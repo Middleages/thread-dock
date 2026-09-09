@@ -26,6 +26,27 @@ var (
 	ErrRuntimePrompt               = errors.New("Herdr Builder prompt delivery is unconfirmed")
 )
 
+// PromptError carries only a validated, bounded Herdr prompt failure code.
+// Provider messages and command output are deliberately not retained.
+type PromptError struct {
+	code     string
+	exitCode int
+}
+
+func (e *PromptError) Code() string {
+	if e == nil {
+		return ""
+	}
+	return e.code
+}
+
+func (e *PromptError) Error() string {
+	if e == nil {
+		return safeError("agent prompt", 0).Error()
+	}
+	return safeError("agent prompt", e.exitCode).Error()
+}
+
 // ProfileBinding pins a logical runtime profile to a native OpenCode agent and
 // the fingerprint that was approved with the durable invocation.
 type ProfileBinding struct {
@@ -98,6 +119,10 @@ func (r *Runtime) Launch(ctx context.Context, state statev2.InvocationState, wor
 	if err := r.client.Prompt(ctx, name, promptFor(invocation)); err != nil {
 		// Prompt receipt is deliberately not retried: a second prompt could
 		// start a second turn against the same invocation.
+		var promptErr *PromptError
+		if errors.As(err, &promptErr) && allowedPromptCode(promptErr.Code()) {
+			return "", fmt.Errorf("%w: %w", ErrRuntimePrompt, promptErr)
+		}
 		return "", ErrRuntimePrompt
 	}
 	return identity, nil

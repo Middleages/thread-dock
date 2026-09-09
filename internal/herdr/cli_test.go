@@ -261,6 +261,56 @@ func TestRunnerFailureDoesNotExposeSecrets(t *testing.T) {
 	}
 }
 
+func TestPromptReturnsKnownPromptCodeWithoutProviderMessage(t *testing.T) {
+	secret := "provider-secret-184"
+	for _, tc := range []struct {
+		name   string
+		stdout string
+		stderr string
+	}{
+		{name: "stderr", stderr: `{"id":"prompt-1","error":{"code":"agent_prompt_stalled","message":"` + secret + `"}}`},
+		{name: "legacy stdout", stdout: `{"id":"prompt-1","error":{"code":"agent_prompt_failed","message":"` + secret + `"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &responseErrorRunner{stdout: tc.stdout, stderr: tc.stderr, err: &testError{"runner body " + secret}}
+			err := NewCLI(r, "herdr").Prompt(context.Background(), "builder_api", "packet")
+			var promptErr *PromptError
+			if !errors.As(err, &promptErr) {
+				t.Fatalf("error=%v, want PromptError", err)
+			}
+			if promptErr.Code() == "" || strings.Contains(promptErr.Error(), secret) || strings.Contains(err.Error(), secret) {
+				t.Fatalf("error=%v code=%q, provider details leaked or code missing", err, promptErr.Code())
+			}
+		})
+	}
+}
+
+func TestPromptRejectsUntrustedOrAmbiguousPromptCode(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stdout string
+		stderr string
+	}{
+		{name: "mixed", stdout: `{"id":"prompt-1","error":{"code":"agent_prompt_stalled"}}`, stderr: "provider secret"},
+		{name: "empty", stdout: "", stderr: ""},
+		{name: "malformed", stderr: `{"id":"prompt-1","error":{"code":"agent_prompt_stalled"}`},
+		{name: "trailing", stderr: `{"id":"prompt-1","error":{"code":"agent_prompt_stalled"}} trailing`},
+		{name: "unknown", stderr: `{"id":"prompt-1","error":{"code":"provider_secret_code"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &responseErrorRunner{stdout: tc.stdout, stderr: tc.stderr, err: &testError{"runner body"}}
+			err := NewCLI(r, "herdr").Prompt(context.Background(), "builder_api", "packet")
+			var promptErr *PromptError
+			if errors.As(err, &promptErr) && promptErr.Code() != "" {
+				t.Fatalf("error=%v, got untrusted code %q", err, promptErr.Code())
+			}
+			if err == nil || err.Error() != "herdr agent prompt failed (exit code 1)" {
+				t.Fatalf("error=%v, want safe generic prompt error", err)
+			}
+		})
+	}
+}
+
 func TestReadRecentReturnsRawStdout(t *testing.T) {
 	r := fixtureRunner(t, map[string]string{
 		"herdr\x00agent\x00read\x00builder_api\x00--source\x00recent-unwrapped\x00--lines\x00120": readFixture(t, "testdata/v0.8.2/recent-output.txt"),
@@ -1125,6 +1175,41 @@ func TestGetInfoClassifiesAgentNotFoundFromStructuredStdout(t *testing.T) {
 	_, err := NewCLI(stdoutErrorRunner{}, "herdr").GetInfo(context.Background(), "threaddock-definitely-missing-agent")
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGetInfoClassifiesAgentNotFoundFromStructuredStderr(t *testing.T) {
+	r := &responseErrorRunner{
+		stderr: `{"id":"cli:agent:get","error":{"code":"agent_not_found","message":"not found"}}`,
+		err:    &testError{"runner failure"},
+	}
+	_, err := NewCLI(r, "herdr").GetInfo(context.Background(), "threaddock-definitely-missing-agent")
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGetInfoRejectsAmbiguousOrMalformedProviderErrors(t *testing.T) {
+	const notFound = `{"id":"cli:agent:get","error":{"code":"agent_not_found","message":"not found"}}`
+	const safeError = "herdr agent get failed (exit code 1)"
+	secret := "provider-secret-42"
+	for _, tc := range []struct {
+		name   string
+		stdout string
+		stderr string
+	}{
+		{name: "mixed channels", stdout: notFound, stderr: notFound},
+		{name: "other provider code", stderr: `{"id":"cli:agent:get","error":{"code":"provider_failure","message":"` + secret + `"}}`},
+		{name: "malformed body", stderr: "not-json-" + secret},
+		{name: "trailing data", stderr: notFound + " trailing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &responseErrorRunner{stdout: tc.stdout, stderr: tc.stderr, err: &testError{"runner failure"}}
+			_, err := NewCLI(r, "herdr").GetInfo(context.Background(), "threaddock-definitely-missing-agent")
+			if err == nil || errors.Is(err, ErrAgentNotFound) || err.Error() != safeError || strings.Contains(err.Error(), secret) {
+				t.Fatalf("err=%v, want safe generic error", err)
+			}
+		})
 	}
 }
 

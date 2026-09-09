@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ type testRuntime struct {
 	endedAt      *time.Time
 	identity     string
 	terminateErr error
+	launchErr    error
 }
 
 func (r *testRuntime) Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (RuntimeObservation, error) {
@@ -39,7 +41,22 @@ func (r *testRuntime) Launch(context.Context, statev2.InvocationState, statev2.W
 	r.launches++
 	identity := r.identity
 	r.mu.Unlock()
-	return identity, nil
+	return identity, r.launchErr
+}
+
+func TestRuntimeLaunchFailureSettlesUnknownWithoutPersistingProviderError(t *testing.T) {
+	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
+	secret := "provider-secret-184"
+	rt := &testRuntime{identity: "provider-1", launchErr: errors.New(secret)}
+	d := newRuntimeDispatcherForTest(st, nil, rt, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, time.Now().UTC())
+	got := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
+	if got.Err == nil || st.snapshot.TaskStates["task-1"].Status != statev2.TaskNeedsOperator {
+		t.Fatalf("result=%#v task=%#v, want durable operator settlement", got, st.snapshot.TaskStates["task-1"])
+	}
+	if blocker := st.snapshot.Control.Blocker; blocker == nil || blocker.Kind != statev2.BlockerKindRuntimeUnknown || strings.Contains(blocker.Diagnostic, secret) {
+		t.Fatalf("blocker=%#v, provider error leaked or blocker missing", blocker)
+	}
+	_ = d.Close(context.Background())
 }
 func (r *testRuntime) Terminate(context.Context, statev2.InvocationState) error {
 	r.mu.Lock()
@@ -626,6 +643,10 @@ func TestRuntimeLaunchCancellationAfterBeginNeedsOperator(t *testing.T) {
 	case got := <-result:
 		if got.Err == nil || got.Snapshot.TaskStates["task-1"].Status != statev2.TaskNeedsOperator {
 			t.Fatalf("launch cancellation result=%#v", got)
+		}
+		blocker := got.Snapshot.Control.Blocker
+		if blocker == nil || blocker.Diagnostic != "runtime launch was canceled after durable launch request" || strings.Contains(blocker.Diagnostic, "provider") {
+			t.Fatalf("launch cancellation blocker=%#v, want bounded cancellation diagnostic", blocker)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("launch cancellation result stranded")

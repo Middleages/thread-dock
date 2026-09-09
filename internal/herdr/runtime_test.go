@@ -25,6 +25,7 @@ type runtimeScriptRunner struct {
 	responses  []string
 	calls      [][]string
 	failAt     int
+	failResult runner.Result
 	notFoundAt int
 }
 
@@ -34,6 +35,9 @@ func (r *runtimeScriptRunner) Run(_ context.Context, _ string, executable string
 		return runner.Result{Stdout: `{"error":{"code":"agent_not_found","message":"missing"}}`, ExitCode: 1}, errors.New("agent missing")
 	}
 	if r.failAt > 0 && len(r.calls) == r.failAt {
+		if r.failResult.ExitCode != 0 || r.failResult.Stdout != "" || r.failResult.Stderr != "" {
+			return r.failResult, errors.New("prompt timeout")
+		}
 		return runner.Result{ExitCode: 1}, errors.New("prompt timeout")
 	}
 	if len(r.responses) == 0 {
@@ -152,6 +156,29 @@ func TestBuilderRuntimePromptFailureDoesNotRetry(t *testing.T) {
 	}
 	if len(r.calls) != 6 {
 		t.Fatalf("prompt was retried: %#v", r.calls)
+	}
+}
+
+func TestBuilderRuntimePreservesValidatedPromptCodeWhileKeepingStaticSentinel(t *testing.T) {
+	r := &runtimeScriptRunner{notFoundAt: 1, responses: []string{
+		readFixture(t, "testdata/v0.8.2/runtime-worktree-open.txt"),
+		readFixture(t, "testdata/v0.8.2/runtime-pane-list.txt"),
+		`{}`,
+		readFixture(t, "testdata/v0.8.2/runtime-agent-get.txt"),
+	}}
+	// The scripted runner's final response is deliberately an error returned
+	// after the provider has already accepted all launch setup calls.
+	r.failAt = 6
+	r.failResult = runner.Result{ExitCode: 1, Stderr: `{"id":"prompt-1","error":{"code":"agent_prompt_stalled","message":"provider secret"}}`}
+	rt, state, inv, _ := builderRuntimeFixture(t)
+	rt.client = NewCLI(r, "herdr")
+	_, err := rt.Launch(context.Background(), state, statev2.WorktreeIdentity{CanonicalPath: "/repo/worktree", GitCommonDir: "/repo/.git", Branch: "agent/inv-1", BaseSHA: strings.Repeat("a", 40)}, inv)
+	if !errors.Is(err, ErrRuntimePrompt) {
+		t.Fatalf("error=%v, want ErrRuntimePrompt", err)
+	}
+	var promptErr *PromptError
+	if !errors.As(err, &promptErr) || promptErr.Code() != "agent_prompt_stalled" {
+		t.Fatalf("error=%v, prompt error=%#v", err, promptErr)
 	}
 }
 
@@ -285,12 +312,14 @@ func TestBuilderRuntimeTerminateIsUnsupportedWithoutCLIEffects(t *testing.T) {
 }
 
 type coordinatorHerdrRunner struct {
-	path      string
-	name      string
-	candidate string
-	malformed bool
-	gets      int
-	calls     [][]string
+	path          string
+	name          string
+	candidate     string
+	malformed     bool
+	promptFailure bool
+	gets          int
+	prompts       int
+	calls         [][]string
 }
 
 func (r *coordinatorHerdrRunner) Run(_ context.Context, _ string, executable string, args ...string) (runner.Result, error) {
@@ -313,6 +342,10 @@ func (r *coordinatorHerdrRunner) Run(_ context.Context, _ string, executable str
 	case len(args) >= 2 && args[0] == "agent" && args[1] == "start":
 		return runner.Result{Stdout: `{}`}, nil
 	case len(args) >= 2 && args[0] == "agent" && args[1] == "prompt":
+		r.prompts++
+		if r.promptFailure {
+			return runner.Result{Stderr: `{"id":"prompt-1","error":{"code":"agent_prompt_stalled","message":"prompt-provider-secret"}}`, ExitCode: 1}, errors.New("prompt provider failed")
+		}
 		return runner.Result{Stdout: `{}`}, nil
 	case len(args) >= 2 && args[0] == "agent" && args[1] == "read":
 		if r.malformed {
@@ -325,14 +358,23 @@ func (r *coordinatorHerdrRunner) Run(_ context.Context, _ string, executable str
 }
 
 func TestBuilderRuntimeCoordinatorStoreSmoke(t *testing.T) {
-	runBuilderRuntimeCoordinatorStoreSmoke(t, false)
+	runBuilderRuntimeCoordinatorStoreSmoke(t, coordinatorStoreSmokeConfig{})
 }
 
 func TestBuilderRuntimeCoordinatorMalformedEvidencePersistsBlocker(t *testing.T) {
-	runBuilderRuntimeCoordinatorStoreSmoke(t, true)
+	runBuilderRuntimeCoordinatorStoreSmoke(t, coordinatorStoreSmokeConfig{malformed: true})
 }
 
-func runBuilderRuntimeCoordinatorStoreSmoke(t *testing.T, malformed bool) {
+func TestBuilderRuntimeCoordinatorStorePromptFailurePersistsBoundedBlocker(t *testing.T) {
+	runBuilderRuntimeCoordinatorStoreSmoke(t, coordinatorStoreSmokeConfig{promptFailure: true})
+}
+
+type coordinatorStoreSmokeConfig struct {
+	malformed     bool
+	promptFailure bool
+}
+
+func runBuilderRuntimeCoordinatorStoreSmoke(t *testing.T, config coordinatorStoreSmokeConfig) {
 	ctx := context.Background()
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
@@ -398,7 +440,7 @@ func runBuilderRuntimeCoordinatorStoreSmoke(t *testing.T, malformed bool) {
 		t.Fatal(err)
 	}
 	name := deterministicAgentName("inv-1", worktreePath)
-	provider := &coordinatorHerdrRunner{path: worktreePath, name: name, candidate: candidateSHA, malformed: malformed}
+	provider := &coordinatorHerdrRunner{path: worktreePath, name: name, candidate: candidateSHA, malformed: config.malformed, promptFailure: config.promptFailure}
 	rt := NewBuilderRuntime(NewCLI(provider, "herdr"), map[string]ProfileBinding{"builder-profile": {OpenCodeAgent: "threaddock-builder", RuntimeFingerprint: "fp-1"}})
 	inspector := worktree.New(runner.OSRunner{}, repo)
 	c := coordinator.NewCoordinator(store, rt, nil, inspector, coordinator.NewOwnerLocker(root), "owner-smoke", 41, time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC))
@@ -416,6 +458,31 @@ func runBuilderRuntimeCoordinatorStoreSmoke(t *testing.T, malformed bool) {
 	}
 
 	first := <-c.SubmitRuntime(ctx, contract.WorkID, "task-1", "inv-1")
+	if config.promptFailure {
+		if first.Err == nil || !errors.Is(first.Err, ErrRuntimePrompt) {
+			t.Fatalf("prompt failure result=%v, want ErrRuntimePrompt", first.Err)
+		}
+		var promptErr *PromptError
+		if !errors.As(first.Err, &promptErr) || promptErr.Code() != "agent_prompt_stalled" {
+			t.Fatalf("prompt failure result=%v prompt error=%#v", first.Err, promptErr)
+		}
+		blocked, loadErr := store.Load(ctx, contract.WorkID)
+		if loadErr != nil || blocked.State != statev2.StateNeedsOperator || blocked.TaskStates["task-1"].Status != statev2.TaskNeedsOperator || blocked.TaskStates["task-1"].Candidate != nil || !blocked.TaskStates["task-1"].Invocation.LaunchRequested {
+			t.Fatalf("prompt failure state=%#v err=%v", blocked, loadErr)
+		}
+		if blocked.Control.Blocker == nil || blocked.Control.Blocker.Kind != statev2.BlockerKindRuntimeUnknown || strings.Contains(blocked.Control.Blocker.Diagnostic, "prompt-provider-secret") {
+			t.Fatalf("prompt failure blocker=%#v, provider secret leaked or blocker missing", blocked.Control.Blocker)
+		}
+		calls := len(provider.calls)
+		second := <-c.SubmitRuntime(ctx, contract.WorkID, "task-1", "inv-1")
+		if !errors.Is(second.Err, coordinator.ErrRuntimeBlocked) || len(provider.calls) != calls || provider.prompts != 1 {
+			t.Fatalf("replay result=%#v calls=%d prompts=%d, want blocked without provider retry", second, len(provider.calls), provider.prompts)
+		}
+		if err := c.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 	if first.Err != nil {
 		t.Fatalf("launch result: %v", first.Err)
 	}
@@ -424,7 +491,7 @@ func runBuilderRuntimeCoordinatorStoreSmoke(t *testing.T, malformed bool) {
 		t.Fatalf("running snapshot=%#v err=%v", running.TaskStates["task-1"], err)
 	}
 	second := <-c.SubmitRuntime(ctx, contract.WorkID, "task-1", "inv-1")
-	if malformed {
+	if config.malformed {
 		if second.Err == nil {
 			t.Fatal("malformed evidence unexpectedly settled")
 		}

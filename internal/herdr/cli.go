@@ -336,6 +336,15 @@ func canonicalProviderCode(value string) bool {
 	return providerSessionIDPattern.MatchString(value)
 }
 
+func allowedPromptCode(value string) bool {
+	switch value {
+	case "agent_prompt_stalled", "agent_prompt_failed", "agent_blocked", "agent_not_ready", "agent_not_found", "timeout":
+		return true
+	default:
+		return false
+	}
+}
+
 func safeWorkspaceState(state AgentState) bool {
 	return state == AgentStateIdle || state == AgentStateDone
 }
@@ -522,7 +531,15 @@ func validHerdrName(value string) bool {
 }
 
 func (c *CLI) Prompt(ctx context.Context, name, packet string) error {
-	_, err := c.run(ctx, "agent prompt", "agent", "prompt", name, packet, "--wait", "--timeout", promptTimeout)
+	result, err := c.run(ctx, "agent prompt", "agent", "prompt", name, packet, "--wait", "--timeout", promptTimeout)
+	if err == nil {
+		return nil
+	}
+	if payload, ok := herdrResponsePayload(result); ok {
+		if envelope, envelopeErr := decodeHerdrEnvelope(payload); envelopeErr == nil && envelope.Error != nil && allowedPromptCode(envelope.Error.Code) {
+			return &PromptError{code: envelope.Error.Code, exitCode: result.ExitCode}
+		}
+	}
 	return err
 }
 
@@ -1016,13 +1033,22 @@ func validEvidenceSHA(value string) bool {
 func (c *CLI) GetInfo(ctx context.Context, name string) (AgentInfo, error) {
 	result, err := c.run(ctx, "agent get", "agent", "get", name)
 	if err != nil {
-		var failure struct {
-			Error struct {
-				Code string `json:"code"`
-			} `json:"error"`
-		}
-		if json.Unmarshal([]byte(result.Stdout), &failure) == nil && failure.Error.Code == "agent_not_found" {
-			return AgentInfo{}, ErrAgentNotFound
+		if resultPayload, hasPayload := herdrResponsePayload(result); hasPayload {
+			if strings.TrimSpace(result.Stderr) != "" {
+				envelope, envelopeErr := decodeHerdrEnvelope(resultPayload)
+				if envelopeErr == nil && envelope.Error != nil && envelope.Error.Code == "agent_not_found" {
+					return AgentInfo{}, ErrAgentNotFound
+				}
+			} else {
+				var failure struct {
+					Error struct {
+						Code string `json:"code"`
+					} `json:"error"`
+				}
+				if json.Unmarshal([]byte(resultPayload), &failure) == nil && failure.Error.Code == "agent_not_found" {
+					return AgentInfo{}, ErrAgentNotFound
+				}
+			}
 		}
 		return AgentInfo{}, err
 	}
