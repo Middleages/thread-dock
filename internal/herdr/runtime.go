@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"thread-dock/internal/coordinator"
+	"thread-dock/internal/opencodeagent"
 	runtimecontract "thread-dock/internal/runtime"
 	statev2 "thread-dock/internal/state/v2"
 )
@@ -56,13 +57,8 @@ func NewBuilderRuntime(client builderClient, profiles map[string]ProfileBinding)
 	return &Runtime{client: client, profiles: copied}
 }
 
-// NewRuntime is kept as the concise constructor for coordinator wiring.
-func NewRuntime(client builderClient, profiles map[string]ProfileBinding) *Runtime {
-	return NewBuilderRuntime(client, profiles)
-}
-
 func (r *Runtime) Launch(ctx context.Context, state statev2.InvocationState, worktree statev2.WorktreeIdentity, invocation runtimecontract.Invocation) (string, error) {
-	if state.LaunchRequested || state.ProviderIdentity != "" || state.ProviderSession != "" || state.ProviderPane != "" || state.ProviderProcess != "" {
+	if !state.LaunchRequested || state.ProviderIdentity != "" || state.ProviderSession != "" || state.ProviderPane != "" || state.ProviderProcess != "" {
 		return "", ErrRuntimeConfiguration
 	}
 	binding, name, err := r.validate(state, worktree, invocation)
@@ -71,6 +67,12 @@ func (r *Runtime) Launch(ctx context.Context, state statev2.InvocationState, wor
 	}
 	if r.client == nil {
 		return "", ErrRuntimeConfiguration
+	}
+	if existing, probeErr := r.client.GetInfo(ctx, name); probeErr == nil {
+		_ = existing
+		return "", ErrRuntimeIdentity
+	} else if !errors.Is(probeErr, ErrAgentNotFound) {
+		return "", ErrRuntimeIdentity
 	}
 	cwd := filepath.Dir(worktree.GitCommonDir)
 	if worktree.GitCommonDir == "" {
@@ -116,43 +118,46 @@ func (r *Runtime) Observe(ctx context.Context, state statev2.InvocationState, in
 	}
 	info, err := r.client.GetInfo(ctx, name)
 	if err != nil {
-		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, Diagnostic: "provider identity could not be observed"}, ErrRuntimeIdentity
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, Diagnostic: "provider identity could not be observed"}, nil
 	}
 	opened := Worktree{WorkspaceID: "", PaneID: info.PaneID, Path: invocation.Worktree}
 	identity, err := exactIdentity(info, name, opened)
 	if err != nil {
-		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, Diagnostic: "provider identity changed"}, err
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, Diagnostic: "provider identity changed"}, nil
 	}
 	if state.ProviderIdentity != "" && state.ProviderIdentity != identity {
-		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "provider identity changed"}, ErrRuntimeIdentity
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "provider identity changed"}, nil
 	}
 
 	evidence, evidenceErr := r.client.ReadEvidence(ctx, name)
 	post, postErr := r.client.GetInfo(ctx, name)
 	if postErr != nil {
-		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "provider identity could not be re-observed"}, ErrRuntimeIdentity
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "provider identity could not be re-observed"}, nil
 	}
 	postIdentity, identityErr := exactIdentity(post, name, opened)
 	if identityErr != nil || postIdentity != identity {
-		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "provider identity changed during evidence read"}, ErrRuntimeIdentity
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "provider identity changed during evidence read"}, nil
 	}
 	if evidenceErr != nil {
 		if isEvidenceAbsent(evidenceErr) {
-			if info.State == AgentStateWorking || info.State == AgentStateBlocked {
+			if info.State == AgentStateWorking || info.State == AgentStateBlocked || post.State == AgentStateWorking || post.State == AgentStateBlocked {
 				return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationActive, ProviderIdentity: identity}, nil
 			}
 			return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "current builder evidence is not available"}, nil
 		}
-		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "builder evidence is malformed or stale"}, ErrRuntimeEvidence
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "builder evidence is malformed or stale"}, nil
 	}
 	if evidence.RequestID != string(invocation.RequestID) {
-		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "builder evidence request does not match invocation"}, ErrRuntimeEvidence
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "builder evidence request does not match invocation"}, nil
 	}
-	if info.State == AgentStateWorking || info.State == AgentStateBlocked {
+	if info.State == AgentStateWorking || info.State == AgentStateBlocked || post.State == AgentStateWorking || post.State == AgentStateBlocked {
 		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationActive, ProviderIdentity: identity}, nil
 	}
 	if info.State != AgentStateIdle && info.State != AgentStateDone {
-		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "provider state is unknown"}, ErrRuntimeEvidence
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "provider state is unknown"}, nil
+	}
+	if post.State != AgentStateIdle && post.State != AgentStateDone {
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "provider state is unknown"}, nil
 	}
 	result := runtimecontract.BuilderResult{CommitSHA: evidence.CommitSHA}
 	for _, check := range evidence.Verification {
@@ -163,11 +168,11 @@ func (r *Runtime) Observe(ctx context.Context, state statev2.InvocationState, in
 		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity}, ErrRuntimeEvidence
 	}
 	if _, err := runtimecontract.DecodeBuilderResult(encoded); err != nil {
-		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "builder evidence is malformed"}, ErrRuntimeEvidence
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "builder evidence is malformed"}, nil
 	}
 	artifact := &runtimecontract.ArtifactEnvelope{RequestID: invocation.RequestID, Role: runtimecontract.RoleBuilder, Status: "success", Result: encoded}
 	if err := runtimecontract.ValidateEnvelope(invocation, *artifact); err != nil {
-		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity}, ErrRuntimeEvidence
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationUnknown, ProviderIdentity: identity, Diagnostic: "builder artifact is invalid"}, nil
 	}
 	return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationEnded, ProviderIdentity: identity, Artifact: artifact}, nil
 }
@@ -181,7 +186,7 @@ func (r *Runtime) validate(state statev2.InvocationState, worktree statev2.Workt
 		return ProfileBinding{}, "", ErrRuntimeConfiguration
 	}
 	binding, ok := r.profiles[invocation.ProfileID]
-	if !ok || strings.TrimSpace(binding.OpenCodeAgent) == "" || strings.TrimSpace(binding.RuntimeFingerprint) == "" || binding.RuntimeFingerprint != state.RuntimeFingerprint || !validHerdrName(binding.OpenCodeAgent) {
+	if !ok || strings.TrimSpace(binding.OpenCodeAgent) == "" || strings.TrimSpace(binding.RuntimeFingerprint) == "" || binding.RuntimeFingerprint != state.RuntimeFingerprint || !opencodeagent.ValidName(binding.OpenCodeAgent) {
 		return ProfileBinding{}, "", ErrRuntimeConfiguration
 	}
 	if worktree.GitCommonDir != "" && (filepath.Clean(worktree.GitCommonDir) != worktree.GitCommonDir || !filepath.IsAbs(worktree.GitCommonDir)) {
