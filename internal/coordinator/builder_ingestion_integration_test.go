@@ -105,6 +105,32 @@ func TestCoordinatorReconcileRecoversConfirmedBuilderArtifactAfterCrash(t *testi
 	}
 }
 
+func TestCoordinatorReconcileRejectsActiveBuilderArtifactWhileRunning(t *testing.T) {
+	store, git, snapshot, candidate, root := newRunningBuilderFixture(t)
+	rt := &recoveryArtifactRuntime{
+		state:    RuntimeObservationActive,
+		artifact: &runtimecontract.ArtifactEnvelope{RequestID: "inv-1", Role: runtimecontract.RoleBuilder, Status: "success", Result: []byte(`{"commitSha":"` + candidate + `","verification":[{"command":"go test","outcome":"passed","duration":"1s"}]}`)},
+	}
+	c := NewCoordinator(store, rt, nil, git, NewOwnerLocker(root), "owner-active-artifact", os.Getpid(), time.Now().UTC())
+	if _, err := c.Reconcile(context.Background(), snapshot.WorkID); err == nil {
+		t.Fatal("active Builder artifact unexpectedly reconciled")
+	}
+	after, err := store.Load(context.Background(), snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := after.TaskStates["task-1"]
+	if task.Status != statev2.TaskNeedsOperator || after.Control.Blocker == nil {
+		t.Fatalf("task=%#v blocker=%#v", task, after.Control.Blocker)
+	}
+	if task.Candidate != nil {
+		t.Fatalf("candidate=%#v, want nil", task.Candidate)
+	}
+	if rt.terminates != 0 {
+		t.Fatalf("terminate calls=%d, want 0", rt.terminates)
+	}
+}
+
 func TestCoordinatorQueueSettlesEndedBuilderArtifactWithRealStoreAndGit(t *testing.T) {
 	_, git, terminated, candidate, _ := newConfirmedBuilderFixture(t)
 	worktreeIdentity := *terminated.TaskStates["task-1"].Worktree
@@ -274,9 +300,10 @@ func (s secretInspector) InspectCommit(context.Context, string, string, string, 
 }
 
 type recoveryArtifactRuntime struct {
-	artifact *runtimecontract.ArtifactEnvelope
-	observes int
-	state    string
+	artifact   *runtimecontract.ArtifactEnvelope
+	observes   int
+	terminates int
+	state      string
 }
 
 func (r *recoveryArtifactRuntime) Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (RuntimeObservation, error) {
@@ -291,10 +318,21 @@ func (r *recoveryArtifactRuntime) Launch(context.Context, statev2.InvocationStat
 	return "provider-1", nil
 }
 func (r *recoveryArtifactRuntime) Terminate(context.Context, statev2.InvocationState) error {
+	r.terminates++
 	return nil
 }
 
 func newConfirmedBuilderFixture(t *testing.T) (statev2.Store, *worktree.Git, statev2.WorkSnapshot, string, string) {
+	store, git, running, candidate, root := newRunningBuilderFixture(t)
+	started := running.TaskStates["task-1"].Invocation.StartedAt
+	if started == nil {
+		t.Fatal("running invocation has no start time")
+	}
+	terminated := applyBuilderTask(t, store, running, &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskConfirmTermination, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: started.Add(time.Second), Reason: "finished"}, "terminated")
+	return store, git, terminated, candidate, root
+}
+
+func newRunningBuilderFixture(t *testing.T) (statev2.Store, *worktree.Git, statev2.WorkSnapshot, string, string) {
 	t.Helper()
 	ctx := context.Background()
 	root := t.TempDir()
@@ -335,8 +373,7 @@ func newConfirmedBuilderFixture(t *testing.T) (statev2.Store, *worktree.Git, sta
 	running := applyBuilderTask(t, store, reserved, &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskBeginLaunch, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: time.Now().UTC()}, "begin")
 	started := time.Now().UTC()
 	running = applyBuilderTask(t, store, running, &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskMarkRunning, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: started, Invocation: &statev2.InvocationState{ProviderIdentity: "provider-1"}}, "running")
-	terminated := applyBuilderTask(t, store, running, &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskConfirmTermination, InvocationID: "inv-1", LogicalWorkID: "logical-1", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: started.Add(time.Second), Reason: "finished"}, "terminated")
-	return store, worktree.New(runner.OSRunner{}, "git", root, repo), terminated, candidate, root
+	return store, worktree.New(runner.OSRunner{}, "git", root, repo), running, candidate, root
 }
 
 func ptrTime(at time.Time) *time.Time { return &at }

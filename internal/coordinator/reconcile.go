@@ -351,6 +351,9 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 	if _, _, err := d.validateRuntimeIdentity(snapshot, q, key); err != nil {
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, err.Error())
 	}
+	if observation.State != RuntimeObservationEnded && observation.Artifact != nil {
+		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "active runtime returned an artifact before termination")
+	}
 
 	if task.Status == statev2.TaskTerminationPending {
 		if observation.State != RuntimeObservationActive && observation.State != RuntimeObservationEnded {
