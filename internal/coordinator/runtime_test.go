@@ -12,18 +12,20 @@ import (
 	contractv2 "thread-dock/internal/contract/v2"
 	runtimecontract "thread-dock/internal/runtime"
 	statev2 "thread-dock/internal/state/v2"
+	"thread-dock/internal/worktree"
 )
 
 type testRuntime struct {
-	mu           sync.Mutex
-	launches     int
-	observes     int
-	terminates   int
-	ended        bool
-	endedAt      *time.Time
-	identity     string
-	terminateErr error
-	launchErr    error
+	mu                  sync.Mutex
+	launches            int
+	observes            int
+	terminates          int
+	ended               bool
+	endedAt             *time.Time
+	identity            string
+	terminateErr        error
+	launchErr           error
+	observationArtifact *runtimecontract.ArtifactEnvelope
 }
 
 func (r *testRuntime) Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (RuntimeObservation, error) {
@@ -32,7 +34,7 @@ func (r *testRuntime) Observe(context.Context, statev2.InvocationState, runtimec
 	ended := r.ended
 	r.mu.Unlock()
 	if ended {
-		return RuntimeObservation{State: RuntimeObservationEnded, ProviderIdentity: r.identity, EndedAt: r.endedAt}, nil
+		return RuntimeObservation{State: RuntimeObservationEnded, ProviderIdentity: r.identity, EndedAt: r.endedAt, Artifact: r.observationArtifact}, nil
 	}
 	return RuntimeObservation{State: RuntimeObservationActive, ProviderIdentity: r.identity}, nil
 }
@@ -114,6 +116,100 @@ func TestBuildRuntimeInvocationDerivesBuilderPacketFromContract(t *testing.T) {
 		t.Fatalf("packet=%#v", packet)
 	}
 }
+
+func TestBuildRuntimeInvocationDerivesExactReviewerPacket(t *testing.T) {
+	snapshot := runtimeTestSnapshot()
+	candidateSHA := "0123456789abcdef0123456789abcdef01234567"
+	treeSHA := "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	snapshot.Contract.AcceptanceCriteria = []string{"work acceptance"}
+	snapshot.Contract.ExecutionProfiles.Reviewer = "review-profile"
+	snapshot.Contract.Tasks = []contractv2.Task{{TaskID: "task-1", AcceptanceCriteria: []string{"task acceptance"}}}
+	task := snapshot.TaskStates["task-1"]
+	task.Status = statev2.TaskGatePassed
+	task.Invocation = &statev2.InvocationState{InvocationID: "review-inv", LogicalWorkID: task.LogicalWork.LogicalWorkID, Role: "reviewer", ReturnStage: statev2.TaskGatePassed, LogicalProfile: "review-profile", RuntimeFingerprint: "runtime-v1"}
+	task.LogicalWork.Role = "reviewer"
+	task.LogicalWork.LogicalProfile = "review-profile"
+	task.Candidate = &statev2.CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{"internal/x.go"}}
+	task.Gate = &statev2.GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"go test ./internal"}, Outcomes: []string{"passed"}, Passed: true, ObservedAt: time.Now().UTC()}
+	snapshot.TaskStates["task-1"] = task
+	inspector := reviewerInspector{inspection: worktree.CommitInspection{CommitSHA: candidateSHA, TreeSHA: treeSHA, Branch: "agent/task-1", ChangedFiles: []string{"internal/x.go"}, Patch: "diff --git a/internal/x.go b/internal/x.go\n"}}
+	d := &publicationDispatcher{inspector: inspector}
+	got, err := d.buildRuntimeInvocation(context.Background(), snapshot, "task-1", *task.Invocation, *task.Worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Role != runtimecontract.RoleReviewer || !got.ReadOnly || got.ProfileID != "review-profile" || got.OutputSchema != runtimecontract.ReviewerOutputSchema {
+		t.Fatalf("invocation=%#v", got)
+	}
+	var packet runtimecontract.ReviewPacket
+	if err := json.Unmarshal(got.Packet, &packet); err != nil {
+		t.Fatal(err)
+	}
+	if packet.TaskID != "task-1" || packet.CandidateSHA != candidateSHA || packet.TreeSHA != treeSHA || packet.Patch == "" || len(packet.ChangedFiles) != 1 || len(packet.Gate.Commands) != 1 || packet.Gate.Outcomes[0] != "passed" || packet.WorkAcceptanceCriteria[0] != "work acceptance" {
+		t.Fatalf("packet=%#v", packet)
+	}
+}
+
+func TestRuntimeTerminatedReviewerWithCandidateIsObservedAndIngested(t *testing.T) {
+	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
+	st.snapshot.Contract.AcceptanceCriteria = []string{"work"}
+	st.snapshot.Contract.Tasks = []contractv2.Task{{TaskID: "task-1", AcceptanceCriteria: []string{"task"}}}
+	task := st.snapshot.TaskStates["task-1"]
+	at := time.Date(2026, 9, 9, 1, 0, 0, 0, time.UTC)
+	task.Status = statev2.TaskTerminated
+	task.LogicalWork.Role = "reviewer"
+	task.LogicalWork.LogicalProfile = "reviewer"
+	task.Invocation.Role = "reviewer"
+	task.Invocation.LogicalProfile = "reviewer"
+	task.Invocation.TerminationConfirmed = true
+	task.Invocation.ProviderIdentity = "provider-1"
+	task.Invocation.EndedAt = &at
+	task.Candidate = &statev2.CandidateEvidence{BuilderAttempt: 1, CandidateSHA: "0123456789abcdef0123456789abcdef01234567", TreeSHA: "abcdefabcdefabcdefabcdefabcdefabcdefabcd", ChangedFiles: []string{"internal/x.go"}}
+	task.Gate = &statev2.GateEvidence{BuilderAttempt: 1, CandidateSHA: task.Candidate.CandidateSHA, Commands: []string{"check"}, Outcomes: []string{"passed"}, Passed: true, ObservedAt: at}
+	st.snapshot.TaskStates["task-1"] = task
+	rt := &testRuntime{identity: "provider-1", ended: true, endedAt: &at}
+	rtArtifact := &runtimecontract.ArtifactEnvelope{RequestID: "inv-1", Role: runtimecontract.RoleReviewer, Status: "success", Result: []byte(`{"reviewedSha":"0123456789abcdef0123456789abcdef01234567","decision":"accept","blockingFindings":[]}`)}
+	// The runtime fixture returns the strict Reviewer artifact on termination.
+	rtArtifactCopy := rtArtifact
+	rt.endedAt = &at
+	d := newDispatcher(st, nil, rt, reviewerInspector{inspection: worktree.CommitInspection{CommitSHA: task.Candidate.CandidateSHA, TreeSHA: task.Candidate.TreeSHA, Branch: task.Worktree.Branch, ChangedFiles: task.Candidate.ChangedFiles, Patch: "diff"}}, &fakeOwnerLocker{}, OwnerID("owner-1"), 42, at)
+	// Inject the artifact through the scripted observation path.
+	rt.observationArtifact = rtArtifactCopy
+	got := <-d.SubmitRuntime(context.Background(), "work-1", "task-1", "inv-1")
+	if got.Err != nil || rt.observes != 1 || st.snapshot.TaskStates["task-1"].Review == nil || st.snapshot.TaskStates["task-1"].Status != statev2.TaskAccepted {
+		t.Fatalf("result=%#v observes=%d task=%#v", got, rt.observes, st.snapshot.TaskStates["task-1"])
+	}
+	_ = d.Close(context.Background())
+}
+
+type reviewerInspector struct{ inspection worktree.CommitInspection }
+
+func (r reviewerInspector) InspectCommit(context.Context, string, string, string, string) (worktree.CommitInspection, error) {
+	return r.inspection, nil
+}
+
+type sequenceRuntime struct {
+	observations []RuntimeObservation
+	launches     int
+	observes     int
+}
+
+func (r *sequenceRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
+	r.launches++
+	return "sequence-provider", nil
+}
+
+func (r *sequenceRuntime) Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (RuntimeObservation, error) {
+	r.observes++
+	if len(r.observations) == 0 {
+		return RuntimeObservation{State: RuntimeObservationUnknown, Diagnostic: "sequence exhausted"}, nil
+	}
+	observation := r.observations[0]
+	r.observations = r.observations[1:]
+	return observation, nil
+}
+
+func (r *sequenceRuntime) Terminate(context.Context, statev2.InvocationState) error { return nil }
 
 func TestRuntimeLaunchRequestReplayObservesWithoutRelaunch(t *testing.T) {
 	st := &runtimeTestState{snapshot: runtimeTestSnapshot()}
@@ -799,6 +895,9 @@ func (s *runtimeTestState) Apply(_ context.Context, req statev2.TransitionReques
 		task.Invocation.TerminationConfirmed = true
 		ended := t.At
 		task.Invocation.EndedAt = &ended
+	case statev2.TaskRecordReview:
+		task.Status = statev2.TaskAccepted
+		task.Review = req.Task.Review
 	case statev2.TaskNeedsOperatorAction:
 		if t.Blocker == nil || t.Blocker.Kind != statev2.BlockerKindRuntimeUnknown || t.Blocker.OperatorRef == "" || t.Blocker.TaskID != t.TaskID || t.Blocker.InvocationID != t.InvocationID || t.Blocker.Diagnostic == "" || len([]byte(t.Blocker.Diagnostic)) > statev2.MaxDiagnosticBytes {
 			return s.snapshot, errors.New("runtime unknown blocker required")

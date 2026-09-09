@@ -317,7 +317,9 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 		return snapshot, nil
 	}
 	if task.Status == statev2.TaskTerminated && (task.Candidate != nil || c.Inspector == nil || task.Invocation.Role != "builder" || !task.Invocation.TerminationConfirmed || task.Invocation.EndedAt == nil) {
-		return snapshot, nil
+		if task.Invocation.Role != "reviewer" || task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || !task.Invocation.TerminationConfirmed || task.Invocation.EndedAt == nil {
+			return snapshot, nil
+		}
 	}
 	key := runtimeKey{taskID: taskID, invocationID: task.Invocation.InvocationID}
 	if _, _, err := d.validateRuntimeIdentity(snapshot, q, key); err != nil {
@@ -327,7 +329,12 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 	if task.Worktree == nil {
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "runtime worktree identity is missing")
 	}
-	runtimeInvocation, invocationBuildErr := buildRuntimeInvocation(snapshot, taskID, invocation, *task.Worktree)
+	if task.Status == statev2.TaskInvocationReserved && !invocation.LaunchRequested && invocation.Role == "reviewer" {
+		// A current Reviewer reservation is replayable work, not proof that a
+		// prior owner abandoned it. The queue will authorize its launch.
+		return snapshot, nil
+	}
+	runtimeInvocation, invocationBuildErr := d.buildRuntimeInvocation(ctx, snapshot, taskID, invocation, *task.Worktree)
 	if invocationBuildErr != nil {
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, invocationBuildErr.Error())
 	}
@@ -352,6 +359,9 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, err.Error())
 	}
 	if observation.State != RuntimeObservationEnded && observation.Artifact != nil {
+		if task.Invocation.Role == "reviewer" {
+			return snapshot, nil
+		}
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "active runtime returned an artifact before termination")
 	}
 
@@ -392,7 +402,7 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 			if observation.Artifact == nil {
 				return snapshot, nil
 			}
-			result, ingestErr := d.ingestBuilderArtifact(ctx, snapshot, taskID, observation.Artifact)
+			result, ingestErr := d.ingestArtifact(ctx, snapshot, taskID, task.Invocation.Role, observation.Artifact)
 			return result.Snapshot, ingestErr
 		}
 		if strings.TrimSpace(observation.ProviderIdentity) == "" || (invocation.ProviderIdentity != "" && invocation.ProviderIdentity != observation.ProviderIdentity) {
@@ -417,7 +427,7 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 		if applyErr != nil || observation.Artifact == nil {
 			return updated, applyErr
 		}
-		result, ingestErr := d.ingestBuilderArtifact(ctx, updated, taskID, observation.Artifact)
+		result, ingestErr := d.ingestArtifact(ctx, updated, taskID, task.Invocation.Role, observation.Artifact)
 		return result.Snapshot, ingestErr
 	case RuntimeObservationNotStarted, RuntimeObservationUnknown, "":
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, runtimeDiagnostic(observation))
@@ -494,7 +504,7 @@ func (c *Coordinator) terminateInvocation(ctx context.Context, d *publicationDis
 	if applyErr != nil || observation.Artifact == nil {
 		return updated, applyErr
 	}
-	result, ingestErr := d.ingestBuilderArtifact(ctx, updated, taskID, observation.Artifact)
+	result, ingestErr := d.ingestArtifact(ctx, updated, taskID, task.Invocation.Role, observation.Artifact)
 	return result.Snapshot, ingestErr
 }
 

@@ -41,6 +41,35 @@ func TestDecodeBuilderResultAcceptsStrictResult(t *testing.T) {
 	}
 }
 
+func TestDecodeReviewerResultStrictContract(t *testing.T) {
+	validSHA := "0123456789abcdef0123456789abcdef01234567"
+	tests := []struct {
+		name    string
+		data    string
+		wantErr bool
+	}{
+		{"valid accept", `{"reviewedSha":"` + validSHA + `","decision":"accept","blockingFindings":[]}`, false},
+		{"valid block", `{"reviewedSha":"` + validSHA + `","decision":"block","blockingFindings":[{"code":"unsafe","diagnostic":"unsafe change"}]}`, false},
+		{"missing findings", `{"reviewedSha":"` + validSHA + `","decision":"accept"}`, true},
+		{"nil findings", `{"reviewedSha":"` + validSHA + `","decision":"accept","blockingFindings":null}`, true},
+		{"unknown field", `{"reviewedSha":"` + validSHA + `","decision":"accept","blockingFindings":[],"extra":true}`, true},
+		{"trailing JSON", `{"reviewedSha":"` + validSHA + `","decision":"accept","blockingFindings":[]} {}`, true},
+		{"invalid SHA", `{"reviewedSha":"0123456789ABCDEF0123456789ABCDEF01234567","decision":"accept","blockingFindings":[]}`, true},
+		{"invalid decision", `{"reviewedSha":"` + validSHA + `","decision":"maybe","blockingFindings":[]}`, true},
+		{"accept with findings", `{"reviewedSha":"` + validSHA + `","decision":"accept","blockingFindings":[{"code":"x","diagnostic":"y"}]}`, true},
+		{"block without findings", `{"reviewedSha":"` + validSHA + `","decision":"block","blockingFindings":[]}`, true},
+		{"empty finding fields", `{"reviewedSha":"` + validSHA + `","decision":"block","blockingFindings":[{"code":"","diagnostic":"x"}]}`, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := DecodeReviewerResult([]byte(tc.data))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err=%v wantErr=%v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateEnvelopeRejectsIdentityAndMalformedResults(t *testing.T) {
 	invocation := Invocation{RequestID: contractv2.RequestID("request-1"), Role: RoleBuilder}
 	tests := []struct {
