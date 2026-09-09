@@ -262,6 +262,19 @@ func TestWorkflowUsageIncludesControlCommands(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunShapeIsDependencyBacked(t *testing.T) {
+	id, revision, request, ok := parseWorkflowRunArgs([]string{"work-1", "--expected-revision", "7", "--request-id", "request-1"})
+	if !ok || id != "work-1" || revision != 7 || request != "request-1" {
+		t.Fatalf("parsed run=(%q,%d,%q,%t)", id, revision, request, ok)
+	}
+	if !NeedsWorkflowDependencies([]string{"work", "run", "work-1", "--expected-revision", "7", "--request-id", "request-1"}) {
+		t.Fatal("valid work run must require workflow dependencies")
+	}
+	if NeedsWorkflowDependencies([]string{"work", "run", "work-1", "--expected-revision", "0", "--request-id", "request-1"}) {
+		t.Fatal("invalid work run must remain dependency-free")
+	}
+}
+
 func TestWorkflowCommandsRouteAndSerializeOneJSONDocument(t *testing.T) {
 	contractFile := t.TempDir() + "/contract.json"
 	if err := writeTestFile(contractFile, `{"version":2}`); err != nil {
