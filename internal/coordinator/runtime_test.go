@@ -12,6 +12,7 @@ import (
 	contractv2 "thread-dock/internal/contract/v2"
 	runtimecontract "thread-dock/internal/runtime"
 	statev2 "thread-dock/internal/state/v2"
+	"thread-dock/internal/worktree"
 )
 
 type testRuntime struct {
@@ -113,6 +114,45 @@ func TestBuildRuntimeInvocationDerivesBuilderPacketFromContract(t *testing.T) {
 	if packet.TaskID != "task-1" || len(packet.AllowedPaths) != 1 || len(packet.AcceptanceCriteria) != 1 || len(packet.Verification) != 1 {
 		t.Fatalf("packet=%#v", packet)
 	}
+}
+
+func TestBuildRuntimeInvocationDerivesExactReviewerPacket(t *testing.T) {
+	snapshot := runtimeTestSnapshot()
+	candidateSHA := "0123456789abcdef0123456789abcdef01234567"
+	treeSHA := "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	snapshot.Contract.AcceptanceCriteria = []string{"work acceptance"}
+	snapshot.Contract.ExecutionProfiles.Reviewer = "review-profile"
+	snapshot.Contract.Tasks = []contractv2.Task{{TaskID: "task-1", AcceptanceCriteria: []string{"task acceptance"}}}
+	task := snapshot.TaskStates["task-1"]
+	task.Status = statev2.TaskGatePassed
+	task.Invocation = &statev2.InvocationState{InvocationID: "review-inv", LogicalWorkID: task.LogicalWork.LogicalWorkID, Role: "reviewer", ReturnStage: statev2.TaskGatePassed, LogicalProfile: "review-profile", RuntimeFingerprint: "runtime-v1"}
+	task.LogicalWork.Role = "reviewer"
+	task.LogicalWork.LogicalProfile = "review-profile"
+	task.Candidate = &statev2.CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, TreeSHA: treeSHA, ChangedFiles: []string{"internal/x.go"}}
+	task.Gate = &statev2.GateEvidence{BuilderAttempt: 1, CandidateSHA: candidateSHA, Commands: []string{"go test ./internal"}, Outcomes: []string{"passed"}, Passed: true, ObservedAt: time.Now().UTC()}
+	snapshot.TaskStates["task-1"] = task
+	inspector := reviewerInspector{inspection: worktree.CommitInspection{CommitSHA: candidateSHA, TreeSHA: treeSHA, Branch: "agent/task-1", ChangedFiles: []string{"internal/x.go"}, Patch: "diff --git a/internal/x.go b/internal/x.go\n"}}
+	d := &publicationDispatcher{inspector: inspector}
+	got, err := d.buildRuntimeInvocation(context.Background(), snapshot, "task-1", *task.Invocation, *task.Worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Role != runtimecontract.RoleReviewer || !got.ReadOnly || got.ProfileID != "review-profile" || got.OutputSchema != runtimecontract.ReviewerOutputSchema {
+		t.Fatalf("invocation=%#v", got)
+	}
+	var packet runtimecontract.ReviewPacket
+	if err := json.Unmarshal(got.Packet, &packet); err != nil {
+		t.Fatal(err)
+	}
+	if packet.TaskID != "task-1" || packet.CandidateSHA != candidateSHA || packet.TreeSHA != treeSHA || packet.Patch == "" || len(packet.ChangedFiles) != 1 || len(packet.Gate.Commands) != 1 || packet.Gate.Outcomes[0] != "passed" || packet.WorkAcceptanceCriteria[0] != "work acceptance" {
+		t.Fatalf("packet=%#v", packet)
+	}
+}
+
+type reviewerInspector struct{ inspection worktree.CommitInspection }
+
+func (r reviewerInspector) InspectCommit(context.Context, string, string, string, string) (worktree.CommitInspection, error) {
+	return r.inspection, nil
 }
 
 func TestRuntimeLaunchRequestReplayObservesWithoutRelaunch(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	contractv2 "thread-dock/internal/contract/v2"
 )
@@ -39,6 +40,87 @@ type ArtifactEnvelope struct {
 }
 
 const BuilderOutputSchema = "thread-dock.builder-result.v1"
+
+const ReviewerOutputSchema = "thread-dock.reviewer-result.v1"
+
+type ReviewGate struct {
+	Commands []string `json:"commands"`
+	Outcomes []string `json:"outcomes"`
+}
+
+type ReviewPacket struct {
+	TaskID                 contractv2.TaskID `json:"taskId"`
+	CandidateSHA           string            `json:"candidateSha"`
+	TreeSHA                string            `json:"treeSha"`
+	ChangedFiles           []string          `json:"changedFiles"`
+	Patch                  string            `json:"patch"`
+	WorkAcceptanceCriteria []string          `json:"workAcceptanceCriteria"`
+	TaskAcceptanceCriteria []string          `json:"taskAcceptanceCriteria"`
+	Gate                   ReviewGate        `json:"gate"`
+}
+
+type ReviewerFinding struct {
+	Code       string `json:"code"`
+	Diagnostic string `json:"diagnostic"`
+}
+
+type ReviewerResult struct {
+	ReviewedSHA      string            `json:"reviewedSha"`
+	Decision         string            `json:"decision"`
+	BlockingFindings []ReviewerFinding `json:"blockingFindings"`
+}
+
+const (
+	maxReviewerDiagnosticBytes  = 1024
+	maxReviewerFindingCodeBytes = 1024
+)
+
+func DecodeReviewerResult(data []byte) (ReviewerResult, error) {
+	var result ReviewerResult
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return ReviewerResult{}, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return ReviewerResult{}, fmt.Errorf("trailing JSON is not allowed")
+		}
+		return ReviewerResult{}, err
+	}
+	if err := ValidateReviewerResult(result); err != nil {
+		return ReviewerResult{}, err
+	}
+	return result, nil
+}
+
+func ValidateReviewerResult(result ReviewerResult) error {
+	if !validSHA(result.ReviewedSHA) {
+		return fmt.Errorf("reviewedSha must be a lowercase 40-character SHA")
+	}
+	if result.Decision != "accept" && result.Decision != "block" {
+		return fmt.Errorf("decision must be accept or block")
+	}
+	if result.BlockingFindings == nil {
+		return fmt.Errorf("blockingFindings is required")
+	}
+	if result.Decision == "accept" && len(result.BlockingFindings) != 0 {
+		return fmt.Errorf("accept cannot include blocking findings")
+	}
+	if result.Decision == "block" && len(result.BlockingFindings) == 0 {
+		return fmt.Errorf("block requires blocking findings")
+	}
+	for _, finding := range result.BlockingFindings {
+		if strings.TrimSpace(finding.Code) != finding.Code || finding.Code == "" || len([]byte(finding.Code)) > maxReviewerFindingCodeBytes || !utf8.ValidString(finding.Code) {
+			return fmt.Errorf("finding code is invalid")
+		}
+		if strings.TrimSpace(finding.Diagnostic) != finding.Diagnostic || finding.Diagnostic == "" || len([]byte(finding.Diagnostic)) > maxReviewerDiagnosticBytes || !utf8.ValidString(finding.Diagnostic) {
+			return fmt.Errorf("finding diagnostic is invalid")
+		}
+	}
+	return nil
+}
 
 type VerificationResult struct {
 	Command  string `json:"command"`

@@ -262,7 +262,7 @@ func (d *publicationDispatcher) runRuntimeWorker(q *publicationQueue, op *runtim
 			worktreeCopy.IntegratedDependencies[id] = head
 		}
 	}
-	runtimeInvocation, invocationErr := buildRuntimeInvocation(snapshot, task.TaskID, invocationCopy, worktreeCopy)
+	runtimeInvocation, invocationErr := d.buildRuntimeInvocation(ctx, snapshot, task.TaskID, invocationCopy, worktreeCopy)
 	if invocationErr != nil {
 		event.result.Err = invocationErr
 		d.sendRuntimeEvent(q, event)
@@ -367,7 +367,17 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 		return CommandResult{Snapshot: snapshot, Err: err}
 	}
 	if task.Status == statev2.TaskTerminated && invocation.TerminationConfirmed && invocation.EndedAt != nil {
-		if invocation.Role != "builder" || task.Candidate != nil || event.operation != runtimeObserve {
+		if invocation.Role == string(runtimecontract.RoleReviewer) {
+			if event.operation != runtimeObserve || event.observation.State != RuntimeObservationEnded || strings.TrimSpace(event.observation.ProviderIdentity) == "" || event.observation.ProviderIdentity != invocation.ProviderIdentity {
+				return d.runtimeUnknown(q, snapshot, event.key, "runtime ended identity does not match persisted identity")
+			}
+			if event.observation.Artifact == nil {
+				return CommandResult{Snapshot: snapshot}
+			}
+			result, _ := d.ingestReviewerArtifact(q.ctx, snapshot, event.key.taskID, event.observation.Artifact)
+			return result
+		}
+		if invocation.Role != string(runtimecontract.RoleBuilder) || task.Candidate != nil || event.operation != runtimeObserve {
 			return CommandResult{Snapshot: snapshot}
 		}
 		if event.observation.State != RuntimeObservationEnded {
@@ -379,7 +389,7 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 		if event.observation.Artifact == nil {
 			return CommandResult{Snapshot: snapshot}
 		}
-		result, _ := d.ingestBuilderArtifact(q.ctx, snapshot, event.key.taskID, event.observation.Artifact)
+		result, _ := d.ingestArtifact(q.ctx, snapshot, event.key.taskID, invocation.Role, event.observation.Artifact)
 		return result
 	}
 	endedAt, endedAtErr := runtimeEndedAt(event.observation.EndedAt)
@@ -400,7 +410,7 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 		switch event.observation.State {
 		case RuntimeObservationActive:
 			if event.observation.Artifact != nil {
-				blocked, _ := d.blockBuilderArtifact(q.ctx, snapshot, task, invocation, errors.New("active runtime returned an artifact before termination"))
+				blocked, _ := d.blockActiveArtifact(q.ctx, snapshot, task, invocation)
 				return blocked
 			}
 			if task.Status != statev2.TaskInvocationReserved && (strings.TrimSpace(event.observation.ProviderIdentity) == "" || event.observation.ProviderIdentity != invocation.ProviderIdentity) {
@@ -445,7 +455,7 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 			if settled.Err != nil || event.observation.Artifact == nil {
 				return settled
 			}
-			ingested, _ := d.ingestBuilderArtifact(q.ctx, settled.Snapshot, event.key.taskID, event.observation.Artifact)
+			ingested, _ := d.ingestArtifact(q.ctx, settled.Snapshot, event.key.taskID, invocation.Role, event.observation.Artifact)
 			return ingested
 		case RuntimeObservationNotStarted, RuntimeObservationUnknown:
 			return d.runtimeUnknown(q, snapshot, event.key, runtimeDiagnostic(event.observation))
@@ -457,6 +467,13 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 	default:
 		return CommandResult{Snapshot: snapshot, Err: ErrRuntimeStale}
 	}
+}
+
+func (d *publicationDispatcher) ingestArtifact(ctx context.Context, snapshot statev2.WorkSnapshot, taskID contractv2.TaskID, role string, artifact *runtimecontract.ArtifactEnvelope) (CommandResult, error) {
+	if role == string(runtimecontract.RoleReviewer) {
+		return d.ingestReviewerArtifact(ctx, snapshot, taskID, artifact)
+	}
+	return d.ingestBuilderArtifact(ctx, snapshot, taskID, artifact)
 }
 
 func (d *publicationDispatcher) requestRuntimeTermination(q *publicationQueue, snapshot statev2.WorkSnapshot, key runtimeKey, reason string, waiters ...runtimeWaiter) CommandResult {
@@ -561,6 +578,47 @@ func buildRuntimeInvocation(snapshot statev2.WorkSnapshot, taskID contractv2.Tas
 		return runtimecontract.Invocation{}, fmt.Errorf("marshal builder packet: %w", err)
 	}
 	result.OutputSchema = runtimecontract.BuilderOutputSchema
+	result.Packet = packet
+	return result, nil
+}
+
+const maxReviewPacketPatchBytes = 512 * 1024
+
+// buildRuntimeInvocation enriches the provider-neutral Reviewer invocation
+// from durable candidate/gate evidence and a fresh Git inspection. Builder
+// invocation construction remains in the provider-neutral helper above.
+func (d *publicationDispatcher) buildRuntimeInvocation(ctx context.Context, snapshot statev2.WorkSnapshot, taskID contractv2.TaskID, invocation statev2.InvocationState, worktree statev2.WorktreeIdentity) (runtimecontract.Invocation, error) {
+	result, err := buildRuntimeInvocation(snapshot, taskID, invocation, worktree)
+	if err != nil || invocation.Role != string(runtimecontract.RoleReviewer) {
+		return result, err
+	}
+	task, ok := snapshot.TaskStates[taskID]
+	if !ok || task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Candidate.ChangedFiles == nil || task.Gate.Commands == nil || task.Gate.Outcomes == nil || d.inspector == nil {
+		return runtimecontract.Invocation{}, ErrRuntimeStale
+	}
+	if task.Candidate.CandidateSHA == "" || task.Gate.CandidateSHA != task.Candidate.CandidateSHA || task.Gate.BuilderAttempt != task.BuilderAttempt || task.Candidate.BuilderAttempt != task.BuilderAttempt || len(task.Gate.Commands) != len(task.Gate.Outcomes) {
+		return runtimecontract.Invocation{}, ErrRuntimeStale
+	}
+	inspection, inspectErr := d.inspector.InspectCommit(ctx, worktree.CanonicalPath, worktree.BaseSHA, worktree.Branch, task.Candidate.CandidateSHA)
+	if inspectErr != nil || inspection.CommitSHA != task.Candidate.CandidateSHA || inspection.TreeSHA != task.Candidate.TreeSHA || inspection.Branch != worktree.Branch || !reflect.DeepEqual(inspection.ChangedFiles, task.Candidate.ChangedFiles) || len([]byte(inspection.Patch)) > maxReviewPacketPatchBytes {
+		return runtimecontract.Invocation{}, ErrRuntimeStale
+	}
+	contractTask, found := contractTask(snapshot.Contract, taskID)
+	if !found || snapshot.Contract.AcceptanceCriteria == nil || contractTask.AcceptanceCriteria == nil {
+		return runtimecontract.Invocation{}, ErrRuntimeStale
+	}
+	packet, marshalErr := json.Marshal(runtimecontract.ReviewPacket{
+		TaskID: taskID, CandidateSHA: task.Candidate.CandidateSHA, TreeSHA: task.Candidate.TreeSHA,
+		ChangedFiles: append([]string{}, task.Candidate.ChangedFiles...), Patch: inspection.Patch,
+		WorkAcceptanceCriteria: append([]string{}, snapshot.Contract.AcceptanceCriteria...),
+		TaskAcceptanceCriteria: append([]string{}, contractTask.AcceptanceCriteria...),
+		Gate:                   runtimecontract.ReviewGate{Commands: append([]string{}, task.Gate.Commands...), Outcomes: append([]string{}, task.Gate.Outcomes...)},
+	})
+	if marshalErr != nil {
+		return runtimecontract.Invocation{}, fmt.Errorf("marshal reviewer packet: %w", marshalErr)
+	}
+	result.OutputSchema = runtimecontract.ReviewerOutputSchema
+	result.ReadOnly = true
 	result.Packet = packet
 	return result, nil
 }
