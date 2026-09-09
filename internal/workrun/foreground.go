@@ -40,11 +40,12 @@ type ForegroundService struct {
 	preparer  Preparer
 	inspector BindingInspector
 	runtime   RuntimeCoordinator
+	verifier  CandidateVerifier
 	binding   ForegroundBinding
 }
 
-func NewForegroundService(state State, preparer Preparer, inspector BindingInspector, runtime RuntimeCoordinator, binding ForegroundBinding) *ForegroundService {
-	return &ForegroundService{state: state, preparer: preparer, inspector: inspector, runtime: runtime, binding: binding}
+func NewForegroundService(state State, preparer Preparer, inspector BindingInspector, runtime RuntimeCoordinator, verifier CandidateVerifier, binding ForegroundBinding) *ForegroundService {
+	return &ForegroundService{state: state, preparer: preparer, inspector: inspector, runtime: runtime, verifier: verifier, binding: binding}
 }
 
 func (s *ForegroundService) RunWork(ctx context.Context, workID contractv2.WorkID, expected contractv2.Revision, requestID contractv2.RequestID) (snapshot statev2.WorkSnapshot, err error) {
@@ -78,6 +79,12 @@ func (s *ForegroundService) RunWork(ctx context.Context, workID contractv2.WorkI
 	}
 	if err := validateFreshSnapshot(snapshot, workID, expected); err != nil {
 		return statev2.WorkSnapshot{}, err
+	}
+	if taskID, ok := candidateReadyForegroundTask(snapshot); ok {
+		if s.verifier == nil {
+			return statev2.WorkSnapshot{}, errors.New("candidate verifier is required")
+		}
+		return s.verifier.VerifyCandidate(ctx, snapshot, taskID)
 	}
 	if _, err = s.runtime.Activate(ctx, workID); err != nil {
 		return statev2.WorkSnapshot{}, err
@@ -162,7 +169,7 @@ func durableRuntimeBoundaryIdentity(snapshot statev2.WorkSnapshot, taskID contra
 }
 
 func validateForegroundDependencies(s *ForegroundService) error {
-	if s == nil || s.state == nil || s.preparer == nil || s.inspector == nil || s.runtime == nil {
+	if s == nil || s.state == nil || s.preparer == nil || s.inspector == nil || s.runtime == nil || s.verifier == nil {
 		return errors.New("foreground work dependencies are required")
 	}
 	return nil
@@ -264,6 +271,15 @@ func outstandingLifecycle(snapshot statev2.WorkSnapshot) bool {
 		}
 	}
 	return false
+}
+
+func candidateReadyForegroundTask(snapshot statev2.WorkSnapshot) (contractv2.TaskID, bool) {
+	for _, task := range snapshot.Contract.Tasks {
+		if state, ok := snapshot.TaskStates[task.TaskID]; ok && state.Status == statev2.TaskCandidateReady {
+			return task.TaskID, true
+		}
+	}
+	return "", false
 }
 
 func selectForegroundTask(snapshot statev2.WorkSnapshot) (*contractv2.Task, *contractv2.RepositoryPlan, error) {

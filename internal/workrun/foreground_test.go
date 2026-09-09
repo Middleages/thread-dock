@@ -142,6 +142,48 @@ func (f *foregroundRuntimeFake) Close(context.Context) error {
 	return f.closeErr
 }
 
+type foregroundCandidateVerifierFake struct{}
+
+func (foregroundCandidateVerifierFake) VerifyCandidate(_ context.Context, snapshot statev2.WorkSnapshot, _ contractv2.TaskID) (statev2.WorkSnapshot, error) {
+	return snapshot, nil
+}
+
+func newForegroundService(state State, preparer Preparer, inspector BindingInspector, runtime RuntimeCoordinator, binding ForegroundBinding) *ForegroundService {
+	return NewForegroundService(state, preparer, inspector, runtime, foregroundCandidateVerifierFake{}, binding)
+}
+
+type recordingCandidateVerifier struct {
+	calls int
+}
+
+func (f *recordingCandidateVerifier) VerifyCandidate(_ context.Context, snapshot statev2.WorkSnapshot, taskID contractv2.TaskID) (statev2.WorkSnapshot, error) {
+	f.calls++
+	task := snapshot.TaskStates[taskID]
+	task.Status = statev2.TaskGatePassed
+	snapshot.TaskStates[taskID] = task
+	return snapshot, nil
+}
+
+func TestForegroundCandidateReadyVerifiesBeforeRuntimeActivation(t *testing.T) {
+	repo, root := t.TempDir(), t.TempDir()
+	state, preparer, runtime := foregroundSnapshot(t, repo, root)
+	task := state.snapshot.TaskStates["task-1"]
+	task.Status = statev2.TaskCandidateReady
+	task.BuilderAttempt = 1
+	task.Candidate = &statev2.CandidateEvidence{BuilderAttempt: 1, CandidateSHA: strings.Repeat("b", 40), TreeSHA: strings.Repeat("c", 40), ChangedFiles: []string{}}
+	task.Worktree = &statev2.WorktreeIdentity{CanonicalPath: filepath.Join(root, "candidate"), GitCommonDir: filepath.Join(repo, ".git"), Branch: "agent/task-1", BaseSHA: strings.Repeat("a", 40)}
+	state.snapshot.TaskStates["task-1"] = task
+	verifier := &recordingCandidateVerifier{}
+	service := NewForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, verifier, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	got, err := service.RunWork(context.Background(), "work-1", 3, "request-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifier.calls != 1 || runtime.activate != 0 || runtime.submit != 0 || runtime.close != 0 || got.TaskStates["task-1"].Status != statev2.TaskGatePassed {
+		t.Fatalf("verifier=%d runtime activate/submit/close=%d/%d/%d status=%q", verifier.calls, runtime.activate, runtime.submit, runtime.close, got.TaskStates["task-1"].Status)
+	}
+}
+
 func foregroundSnapshot(t *testing.T, repo, worktreeRoot string) (*foregroundStateFake, *foregroundPreparerFake, *foregroundRuntimeFake) {
 	t.Helper()
 	base := strings.Repeat("a", 40)
@@ -165,7 +207,7 @@ func TestForegroundRunActivatesPreparesSubmitsOnceClosesAndReplays(t *testing.T)
 	events := []string{}
 	inspector := &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git"), events: &events}
 	preparer.events, runtime.events = &events, &events
-	service := NewForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	service := newForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 	first, err := service.RunWork(context.Background(), "work-1", 3, "request-1")
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +232,7 @@ func TestForegroundRunRejectsNoncanonicalBindingBeforeActivation(t *testing.T) {
 	root := t.TempDir()
 	state, preparer, runtime := foregroundSnapshot(t, repo, root)
 	inspector := &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}
-	service := NewForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo + string(os.PathSeparator) + ".", WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	service := newForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo + string(os.PathSeparator) + ".", WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 	if _, err := service.RunWork(context.Background(), "work-1", 3, "request-1"); err == nil {
 		t.Fatal("noncanonical repository path was accepted")
 	}
@@ -213,7 +255,7 @@ func TestForegroundRunRejectsPersistedRepositoryBindingBeforeReplayAndCoordinato
 	task.InvocationHistory = []statev2.InvocationID{"old-invocation"}
 	state.snapshot.TaskStates["task-1"] = task
 	inspector := &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}
-	service := NewForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	service := newForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 	if _, err := service.RunWork(context.Background(), "work-1", 3, "request-1"); err == nil {
 		t.Fatal("mismatched persisted repository binding was accepted")
 	}
@@ -238,7 +280,7 @@ func TestForegroundActivationObservedLifecycleMatrixNeverPreparesOrSubmits(t *te
 				snapshot.TaskStates["task-1"] = task
 			}
 			inspector := &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}
-			service := NewForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+			service := newForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 			if _, err := service.RunWork(context.Background(), "work-1", 3, "request-1"); err != nil {
 				t.Fatalf("status=%q err=%v", status, err)
 			}
@@ -290,7 +332,7 @@ func TestForegroundContractOrderAndExactIntegratedDependencySelection(t *testing
 				state.snapshot.Contract.Tasks[0].DependsOn = []contractv2.TaskID{"dependency"}
 			}
 			inspector := &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}
-			service := NewForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+			service := newForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 			_, err := service.RunWork(context.Background(), "work-1", 3, "request-1")
 			if tc.wantErr {
 				if err == nil || preparer.calls != 0 || runtime.submit != 0 {
@@ -343,7 +385,7 @@ func TestForegroundRejectsBeforeProviderMutationMatrix(t *testing.T) {
 			state, preparer, runtime := foregroundSnapshot(t, repo, root)
 			inspector := &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}
 			tc.mutate(&state.snapshot, inspector)
-			service := NewForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+			service := newForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 			expected := contractv2.Revision(3)
 			if tc.name == "stale revision" {
 				expected = 99
@@ -369,7 +411,7 @@ func TestForegroundSubmitErrorBoundariesAndClosePrecedence(t *testing.T) {
 			canonical := matchingReservedSnapshot(state.snapshot, repo, root, status, false)
 			runtime.submitResult = &coordinator.CommandResult{Snapshot: canonical, Err: errors.New("scripted runtime error")}
 			inspector := &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}
-			service := NewForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+			service := newForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 			got, err := service.RunWork(context.Background(), "work-1", 3, "request-1")
 			if err != nil || got.TaskStates["task-1"].Status != status || runtime.close != 1 {
 				t.Fatalf("status=%q got=%#v err=%v close=%d", status, got.TaskStates["task-1"].Status, err, runtime.close)
@@ -381,7 +423,7 @@ func TestForegroundSubmitErrorBoundariesAndClosePrecedence(t *testing.T) {
 		state, preparer, runtime := foregroundSnapshot(t, repo, root)
 		wrong := matchingReservedSnapshot(state.snapshot, repo, root, statev2.TaskRunning, true)
 		runtime.submitResult = &coordinator.CommandResult{Snapshot: wrong, Err: errors.New("runtime error")}
-		service := NewForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+		service := newForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 		got, err := service.RunWork(context.Background(), "work-1", 3, "request-1")
 		if err == nil || got.WorkID != "" || runtime.close != 1 {
 			t.Fatalf("different invocation fabricated result=%#v err=%v close=%d", got, err, runtime.close)
@@ -394,7 +436,7 @@ func TestForegroundPreparationAndCloseErrorsPreservePrimaryError(t *testing.T) {
 	state, preparer, runtime := foregroundSnapshot(t, repo, root)
 	preparer.err = errors.New("prepare failed")
 	runtime.closeErr = errors.New("close failed")
-	service := NewForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	service := newForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 	_, err := service.RunWork(context.Background(), "work-1", 3, "request-1")
 	if err == nil || !strings.Contains(err.Error(), "prepare failed") || strings.Contains(err.Error(), "close failed") || runtime.close != 1 {
 		t.Fatalf("primary error err=%v close=%d", err, runtime.close)
@@ -420,7 +462,7 @@ func TestForegroundRejectsPreparationIdentityMismatchAndInvalidSubmitChannels(t 
 				preparer.result = &wrong
 			}
 			runtime.nilChannel, runtime.closedChannel = tc.nilChannel, tc.closedChannel
-			service := NewForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+			service := newForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 			got, err := service.RunWork(context.Background(), "work-1", 3, "request-1")
 			wantSubmit := 1
 			if tc.prepareMismatch {
@@ -437,7 +479,7 @@ func TestForegroundTreatsIntegratedTaskEvidenceAsSettledAndSelectsNextTask(t *te
 	repo, root := t.TempDir(), t.TempDir()
 	state, preparer, runtime := foregroundSnapshot(t, repo, root)
 	state.snapshot = integratedForegroundSnapshot(t, repo, root)
-	service := NewForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	service := newForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 	if _, err := service.RunWork(context.Background(), "work-1", state.snapshot.Revision, "request-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +565,7 @@ func TestForegroundSubmitErrorReloadFailureKeepsOriginalRuntimeError(t *testing.
 	runtime.submitResult = &coordinator.CommandResult{Snapshot: canonical, Err: errors.New("original runtime error")}
 	state.failLoadAt = 3
 	state.loadErr = errors.New("post-submit load failed")
-	service := NewForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	service := newForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 	got, err := service.RunWork(context.Background(), "work-1", 3, "request-1")
 	if err == nil || !strings.Contains(err.Error(), "original runtime error") || strings.Contains(err.Error(), "post-submit load failed") || got.WorkID != "" || runtime.close != 1 {
 		t.Fatalf("reload failure result=%#v err=%v close=%d loads=%d", got, err, runtime.close, state.loads)

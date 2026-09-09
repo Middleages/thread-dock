@@ -101,7 +101,7 @@ func TestForegroundRunRealStoreGitAndCoordinatorReplaysWithoutLaunch(t *testing.
 	rt := &scriptedForegroundRuntime{}
 	coord := coordinator.NewCoordinator(store, rt, nil, git, coordinator.NewOwnerLocker(filepath.Join(root, "state")), "foreground-test", 0, timeNowUTC())
 	prep := NewPreparationService(store, git, "foreground-test", nil)
-	service := NewForegroundService(store, prep, git, coord, ForegroundBinding{RepositoryPath: repository, WorktreeRoot: managed, RuntimeFingerprint: "runtime-1"})
+	service := NewForegroundService(store, prep, git, coord, foregroundCandidateVerifierFake{}, ForegroundBinding{RepositoryPath: repository, WorktreeRoot: managed, RuntimeFingerprint: "runtime-1"})
 	first, err := service.RunWork(ctx, contract.WorkID, approved.Revision, "request-real")
 	if err != nil || first.TaskStates["task-real"].Status != statev2.TaskRunning || rt.launches != 1 {
 		t.Fatalf("first status=%q launch=%d observe=%d err=%v", first.TaskStates["task-real"].Status, rt.launches, rt.observes, err)
