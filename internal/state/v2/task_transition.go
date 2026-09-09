@@ -782,7 +782,7 @@ func approvedSnapshot(snapshot *WorkSnapshot) bool {
 
 func taskCleanupAction(action TaskAction) bool {
 	switch action {
-	case TaskMarkRunning, TaskRequestTermination, TaskConfirmTermination, TaskReconcileNotStarted:
+	case TaskMarkRunning, TaskRequestTermination, TaskConfirmTermination, TaskReconcileNotStarted, TaskReconcileWorktreePreparation:
 		return true
 	default:
 		return false

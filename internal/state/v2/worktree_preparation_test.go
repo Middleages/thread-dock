@@ -2,6 +2,8 @@ package statev2
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"strings"
@@ -36,6 +38,33 @@ func approvedPreparationStore(t *testing.T) (Store, WorkSnapshot) {
 		t.Fatal(err)
 	}
 	snapshot, err = store.Apply(ctx, transitionRequest(t, snapshot, "approve-preparation", WorkTransition{Action: WorkApprove, ApprovalRef: "approval", ContractHash: snapshot.ContractHash}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store, snapshot
+}
+
+func twoTaskApprovedPreparationStore(t *testing.T) (Store, WorkSnapshot) {
+	t.Helper()
+	ctx := context.Background()
+	store := NewStore(t.TempDir())
+	snapshot := validSnapshot()
+	snapshot.Contract.Tasks = append(snapshot.Contract.Tasks, contractv2.Task{TaskID: "task-2", RepoKey: "app", AllowedPaths: []string{"docs/task-2"}, AcceptanceCriteria: []string{"works"}})
+	snapshot.TaskStates["task-2"] = TaskExecutionState{TaskID: "task-2", Status: TaskPending, RepairLimit: DefaultRepairLimit, RecoveryLimit: DefaultRecoveryLimit, PriorAttempts: []AttemptSummary{}}
+	canonical, err := canonicalContract(snapshot.Contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(canonical)
+	snapshot.ContractHash = hex.EncodeToString(sum[:])
+	if _, err := createPlan(store, ctx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = store.Load(ctx, snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = store.Apply(ctx, transitionRequest(t, snapshot, "approve-two-task-preparation", WorkTransition{Action: WorkApprove, ApprovalRef: "approval", ContractHash: snapshot.ContractHash}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +116,49 @@ func TestWorktreePreparationReconcilePresentPromotesReserved(t *testing.T) {
 	state := reconciled.TaskStates["task-1"]
 	if state.Status != TaskInvocationReserved || state.BuilderAttempt != before.BuilderAttempt || !reflect.DeepEqual(state.LogicalWork, before.LogicalWork) || !reflect.DeepEqual(state.Worktree, before.Worktree) || !reflect.DeepEqual(state.Invocation, before.Invocation) || len(state.InvocationHistory) != 1 {
 		t.Fatalf("present reconciliation changed identity: before=%#v after=%#v", before, state)
+	}
+}
+
+func TestWorktreePreparationReconcileRemainsAllowedForOtherTaskUnderGlobalBlocker(t *testing.T) {
+	ctx := context.Background()
+	store, snapshot := twoTaskApprovedPreparationStore(t)
+	begin := preparationTransition("prepare-task-2")
+	begin.TaskID = "task-2"
+	begin.LogicalWorkID = "logical-preparation-2"
+	begin.Worktree.Branch = "agent/task-2"
+	prepared, err := store.Apply(ctx, taskRequest(t, snapshot, "begin-task-2", begin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := TaskTransition{TaskID: "task-1", Action: TaskNeedsOperatorAction, Role: roleBuilder, ReturnStage: TaskPending, At: invocationAt(2), Blocker: &OperatorBlocker{Kind: BlockerKindEvidenceMismatch, OperatorRef: "operator", TaskID: "task-1", Diagnostic: "task 1 requires inspection"}}
+	blocked, err := store.Apply(ctx, taskRequest(t, prepared, "block-task-1", block))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Load(ctx, blocked.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconcile := begin
+	reconcile.Action = TaskReconcileWorktreePreparation
+	reconcile.Preparation = &WorktreePreparationEvidence{OperationTerminated: true, WorktreeExists: true, IdentityMatches: false, Diagnostic: "worktree identity mismatch"}
+	if _, err := store.Apply(ctx, taskRequest(t, before, "reconcile-task-2-invalid", reconcile)); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("invalid reconcile under unrelated blocker: %v", err)
+	}
+	afterInvalid, err := store.Load(ctx, blocked.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(afterInvalid, before) {
+		t.Fatalf("invalid reconcile mutated state: before=%#v after=%#v", before, afterInvalid)
+	}
+	reconcile.Preparation = &WorktreePreparationEvidence{OperationTerminated: true, WorktreeExists: true, IdentityMatches: true, Diagnostic: "worktree preparation completed"}
+	reconciled, err := store.Apply(ctx, taskRequest(t, before, "reconcile-task-2", reconcile))
+	if err != nil {
+		t.Fatalf("reconcile under unrelated blocker: %v", err)
+	}
+	if reconciled.TaskStates["task-2"].Status != TaskInvocationReserved || reconciled.TaskStates["task-1"].Status != TaskNeedsOperator || reconciled.Control.Blocker == nil || reconciled.Revision != before.Revision+1 {
+		t.Fatalf("reconcile under blocker = %#v", reconciled)
 	}
 }
 
