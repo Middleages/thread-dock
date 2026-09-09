@@ -25,6 +25,7 @@ type runtimeScriptRunner struct {
 	responses  []string
 	calls      [][]string
 	failAt     int
+	failResult runner.Result
 	notFoundAt int
 }
 
@@ -34,6 +35,9 @@ func (r *runtimeScriptRunner) Run(_ context.Context, _ string, executable string
 		return runner.Result{Stdout: `{"error":{"code":"agent_not_found","message":"missing"}}`, ExitCode: 1}, errors.New("agent missing")
 	}
 	if r.failAt > 0 && len(r.calls) == r.failAt {
+		if r.failResult.ExitCode != 0 || r.failResult.Stdout != "" || r.failResult.Stderr != "" {
+			return r.failResult, errors.New("prompt timeout")
+		}
 		return runner.Result{ExitCode: 1}, errors.New("prompt timeout")
 	}
 	if len(r.responses) == 0 {
@@ -152,6 +156,29 @@ func TestBuilderRuntimePromptFailureDoesNotRetry(t *testing.T) {
 	}
 	if len(r.calls) != 6 {
 		t.Fatalf("prompt was retried: %#v", r.calls)
+	}
+}
+
+func TestBuilderRuntimePreservesValidatedPromptCodeWhileKeepingStaticSentinel(t *testing.T) {
+	r := &runtimeScriptRunner{notFoundAt: 1, responses: []string{
+		readFixture(t, "testdata/v0.8.2/runtime-worktree-open.txt"),
+		readFixture(t, "testdata/v0.8.2/runtime-pane-list.txt"),
+		`{}`,
+		readFixture(t, "testdata/v0.8.2/runtime-agent-get.txt"),
+	}}
+	// The scripted runner's final response is deliberately an error returned
+	// after the provider has already accepted all launch setup calls.
+	r.failAt = 6
+	r.failResult = runner.Result{ExitCode: 1, Stderr: `{"id":"prompt-1","error":{"code":"agent_prompt_stalled","message":"provider secret"}}`}
+	rt, state, inv, _ := builderRuntimeFixture(t)
+	rt.client = NewCLI(r, "herdr")
+	_, err := rt.Launch(context.Background(), state, statev2.WorktreeIdentity{CanonicalPath: "/repo/worktree", GitCommonDir: "/repo/.git", Branch: "agent/inv-1", BaseSHA: strings.Repeat("a", 40)}, inv)
+	if !errors.Is(err, ErrRuntimePrompt) {
+		t.Fatalf("error=%v, want ErrRuntimePrompt", err)
+	}
+	var promptErr *PromptError
+	if !errors.As(err, &promptErr) || promptErr.Code() != "agent_prompt_stalled" {
+		t.Fatalf("error=%v, prompt error=%#v", err, promptErr)
 	}
 }
 

@@ -336,6 +336,15 @@ func canonicalProviderCode(value string) bool {
 	return providerSessionIDPattern.MatchString(value)
 }
 
+func allowedPromptCode(value string) bool {
+	switch value {
+	case "agent_prompt_stalled", "agent_prompt_failed", "agent_blocked", "agent_not_ready", "agent_not_found", "timeout":
+		return true
+	default:
+		return false
+	}
+}
+
 func safeWorkspaceState(state AgentState) bool {
 	return state == AgentStateIdle || state == AgentStateDone
 }
@@ -522,7 +531,15 @@ func validHerdrName(value string) bool {
 }
 
 func (c *CLI) Prompt(ctx context.Context, name, packet string) error {
-	_, err := c.run(ctx, "agent prompt", "agent", "prompt", name, packet, "--wait", "--timeout", promptTimeout)
+	result, err := c.run(ctx, "agent prompt", "agent", "prompt", name, packet, "--wait", "--timeout", promptTimeout)
+	if err == nil {
+		return nil
+	}
+	if payload, ok := herdrResponsePayload(result); ok {
+		if envelope, envelopeErr := decodeHerdrEnvelope(payload); envelopeErr == nil && envelope.Error != nil && allowedPromptCode(envelope.Error.Code) {
+			return &PromptError{code: envelope.Error.Code, exitCode: result.ExitCode}
+		}
+	}
 	return err
 }
 
