@@ -459,6 +459,7 @@ func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstReceipt := firstSnapshot.Publications["parent-issue:request-publish"].Receipt
+	assertReceipt(t, firstReceipt)
 	getBeforeReplay, postBeforeReplay, auth, _ := httpState.counts()
 	if !auth {
 		t.Fatal("server did not receive the expected Authorization header")
@@ -481,6 +482,15 @@ func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
 	}
 	assertReceipt(t, replaySnapshot.Publications["parent-issue:request-publish"].Receipt)
 	assertNoPublicationSecrets(t, replaySnapshot, out.String(), errOut.String())
+	replayedDurable, err := works.Load(context.Background(), "work-publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(replayedDurable.Publications["parent-issue:request-publish"].Receipt, firstReceipt) {
+		t.Fatalf("durable replay receipt=%+v first=%+v", replayedDurable.Publications["parent-issue:request-publish"].Receipt, firstReceipt)
+	}
+	assertReceipt(t, replayedDurable.Publications["parent-issue:request-publish"].Receipt)
+	assertNoPublicationSecrets(t, replayedDurable, out.String(), errOut.String())
 	getAfterReplay, postAfterReplay, _, _ := httpState.counts()
 	if getAfterReplay != getBeforeReplay || postAfterReplay != postBeforeReplay {
 		t.Fatalf("replay I/O changed GET %d->%d POST %d->%d", getBeforeReplay, getAfterReplay, postBeforeReplay, postAfterReplay)
@@ -525,6 +535,11 @@ func TestProductionPublishIssuesLostResponseAdoptsExactMarker(t *testing.T) {
 	if code := cli.RunWithDependencies(context.Background(), args, &out, &errOut, deps); code != 0 || out.Len() == 0 || errOut.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
 	}
+	var cliSnapshot statev2.WorkSnapshot
+	if err := json.Unmarshal(out.Bytes(), &cliSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	assertReceipt(t, cliSnapshot.Publications["parent-issue:request-lost"].Receipt)
 	snapshot, err := works.Load(context.Background(), "work-publish")
 	if err != nil {
 		t.Fatal(err)
@@ -566,7 +581,7 @@ func TestProductionPublishIssuesAmbiguousOutcomeBlocksWithoutRepublish(t *testin
 			if publication.Status != statev2.PublicationConflict || snapshot.Control.Blocker == nil || snapshot.Control.Blocker.Kind != statev2.BlockerKindPublicationConflict || snapshot.Control.Blocker.IntentID != publication.IntentID || snapshot.Control.Blocker.Diagnostic == "" || strings.Contains(snapshot.Control.Blocker.Diagnostic, "provider-body-sentinel") {
 				t.Fatalf("snapshot publication=%+v blocker=%+v", publication, snapshot.Control.Blocker)
 			}
-			if strings.TrimSpace(publication.LastError) == "" || len([]byte(publication.LastError)) > statev2.MaxDiagnosticBytes || strings.Contains(publication.LastError, "publish-token") || strings.Contains(publication.LastError, "provider-body-sentinel") || strings.Contains(snapshot.Control.Blocker.Diagnostic, "publish-token") {
+			if strings.TrimSpace(publication.LastError) == "" || publication.LastError != strings.TrimSpace(publication.LastError) || len([]byte(publication.LastError)) > statev2.MaxDiagnosticBytes || strings.Contains(publication.LastError, "publish-token") || strings.Contains(publication.LastError, "provider-body-sentinel") || strings.TrimSpace(snapshot.Control.Blocker.Diagnostic) == "" || snapshot.Control.Blocker.Diagnostic != strings.TrimSpace(snapshot.Control.Blocker.Diagnostic) || len([]byte(snapshot.Control.Blocker.Diagnostic)) > statev2.MaxDiagnosticBytes || strings.Contains(snapshot.Control.Blocker.Diagnostic, "publish-token") || strings.Contains(snapshot.Control.Blocker.Diagnostic, "provider-body-sentinel") {
 				t.Fatalf("unsafe diagnostics lastError=%q blocker=%q", publication.LastError, snapshot.Control.Blocker.Diagnostic)
 			}
 			assertNoPublicationSecrets(t, snapshot, out.String(), errOut.String())
