@@ -7,9 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"thread-dock/internal/cli"
@@ -17,6 +22,7 @@ import (
 	"thread-dock/internal/contract"
 	contractv2 "thread-dock/internal/contract/v2"
 	"thread-dock/internal/coordinator"
+	"thread-dock/internal/github"
 	"thread-dock/internal/registry"
 	"thread-dock/internal/runner"
 	"thread-dock/internal/state"
@@ -260,6 +266,278 @@ func TestMalformedPublishIssuesDoesNotEnterProductionPublicationBranch(t *testin
 	if _, ok := deps.Workflow.(*productionParentIssuePublisher); ok {
 		t.Fatal("malformed publish unexpectedly composed provider publication")
 	}
+}
+
+type productionPublicationHTTP struct {
+	mu             sync.Mutex
+	token          string
+	issues         []github.Issue
+	postedBody     string
+	getCalls       int
+	postCalls      int
+	authorization  bool
+	postStarted    chan struct{}
+	unblockPost    chan struct{}
+	responseMode   string
+	postWasInvalid bool
+}
+
+func (h *productionPublicationHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	h.authorization = r.Header.Get("Authorization") == "Bearer "+h.token
+	if r.URL.Path != "/api/v3/repos/acme/app/issues" {
+		h.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		h.getCalls++
+		issues := append([]github.Issue(nil), h.issues...)
+		h.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(issues)
+	case http.MethodPost:
+		h.postCalls++
+		var payload struct {
+			Title string `json:"title"`
+			Body  string `json:"body"`
+		}
+		data, err := io.ReadAll(r.Body)
+		if err == nil {
+			err = json.Unmarshal(data, &payload)
+		}
+		h.postedBody = payload.Body
+		mode := h.responseMode
+		started, unblock := h.postStarted, h.unblockPost
+		if mode == "lost" {
+			h.issues = []github.Issue{{Number: 17, NodeID: "node-17", HTMLURL: "https://github.example.test/issues/17", Title: payload.Title, Body: payload.Body}}
+		} else if mode == "multiple" {
+			h.issues = []github.Issue{{Number: 17, NodeID: "node-17", HTMLURL: "https://github.example.test/issues/17", Title: payload.Title, Body: payload.Body}, {Number: 18, NodeID: "node-18", HTMLURL: "https://github.example.test/issues/18", Title: payload.Title, Body: payload.Body}}
+		} else if mode == "mismatch" {
+			prefixEnd := strings.Index(payload.Body, ":sha256=")
+			if prefixEnd >= 0 {
+				prefix := payload.Body[:prefixEnd+len(":sha256=")]
+				h.issues = []github.Issue{{Number: 19, NodeID: "node-19", HTMLURL: "https://github.example.test/issues/19", Title: payload.Title, Body: prefix + strings.Repeat("0", 64) + " -->"}}
+			}
+		}
+		h.mu.Unlock()
+		if err != nil {
+			http.Error(w, "invalid payload", http.StatusBadRequest)
+			return
+		}
+		if started != nil {
+			close(started)
+		}
+		if unblock != nil {
+			<-unblock
+		}
+		if mode == "absent" || mode == "lost" || mode == "multiple" || mode == "mismatch" {
+			h.mu.Lock()
+			h.postWasInvalid = true
+			h.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]string{"providerBody": "provider-body-sentinel"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(github.Issue{Number: 17, NodeID: "node-17", HTMLURL: "https://github.example.test/issues/17", Title: payload.Title, Body: payload.Body})
+	default:
+		h.mu.Unlock()
+		http.NotFound(w, r)
+	}
+}
+
+func (h *productionPublicationHTTP) counts() (get, post int, auth bool, invalid bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.getCalls, h.postCalls, h.authorization, h.postWasInvalid
+}
+
+func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
+	httpState := &productionPublicationHTTP{token: "publish-token", postStarted: make(chan struct{}), unblockPost: make(chan struct{}), responseMode: "pending"}
+	server := httptest.NewServer(httpState)
+	defer server.Close()
+	works := seedProductionPublicationFixture(t, server.URL, "publish-token")
+	args := []string{"work", "publish-issues", "work-publish", "parent-a", "--expected-revision", "2", "--request-id", "request-publish"}
+	deps, err := productionWorkflowDependencies(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	done := make(chan int, 1)
+	go func() { done <- cli.RunWithDependencies(context.Background(), args, &out, &errOut, deps) }()
+	<-httpState.postStarted
+	pending, err := works.Load(context.Background(), "work-publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication := pending.Publications["parent-issue:request-publish"]
+	if publication.Status != statev2.PublicationPending || pending.State != statev2.StatePublicationPending {
+		t.Fatalf("pending state=%q publication=%q", pending.State, publication.Status)
+	}
+	close(httpState.unblockPost)
+	if code := <-done; code != 0 || out.Len() == 0 || errOut.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+	}
+	completed, err := works.Load(context.Background(), "work-publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, posts, _, _ := httpState.counts()
+	if completed.Publications["parent-issue:request-publish"].Status != statev2.PublicationCompleted || completed.Publications["parent-issue:request-publish"].Receipt == nil || posts != 1 {
+		t.Fatalf("completed publication=%+v posts=%d", completed.Publications["parent-issue:request-publish"], posts)
+	}
+	var firstSnapshot statev2.WorkSnapshot
+	if err := json.Unmarshal(out.Bytes(), &firstSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	firstReceipt := firstSnapshot.Publications["parent-issue:request-publish"].Receipt
+	getBeforeReplay, postBeforeReplay, auth, _ := httpState.counts()
+	if !auth {
+		t.Fatal("server did not receive the expected Authorization header")
+	}
+	deps, err = productionWorkflowDependencies(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := cli.RunWithDependencies(context.Background(), args, &out, &errOut, deps); code != 0 || out.Len() == 0 || errOut.Len() != 0 {
+		t.Fatalf("replay code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+	}
+	var replaySnapshot statev2.WorkSnapshot
+	if err := json.Unmarshal(out.Bytes(), &replaySnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(replaySnapshot.Publications["parent-issue:request-publish"].Receipt, firstReceipt) {
+		t.Fatalf("replay receipt=%+v first=%+v", replaySnapshot.Publications["parent-issue:request-publish"].Receipt, firstReceipt)
+	}
+	getAfterReplay, postAfterReplay, _, _ := httpState.counts()
+	if getAfterReplay != getBeforeReplay || postAfterReplay != postBeforeReplay {
+		t.Fatalf("replay I/O changed GET %d->%d POST %d->%d", getBeforeReplay, getAfterReplay, postBeforeReplay, postAfterReplay)
+	}
+	priorReceipt := completed.Publications["parent-issue:request-publish"].Receipt
+	deps, err = productionWorkflowDependencies([]string{"work", "publish-issues", "work-publish", "parent-b", "--expected-revision", "3", "--request-id", "request-publish"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	conflictArgs := []string{"work", "publish-issues", "work-publish", "parent-b", "--expected-revision", "3", "--request-id", "request-publish"}
+	if code := cli.RunWithDependencies(context.Background(), conflictArgs, &out, &errOut, deps); code != 1 || out.Len() != 0 || errOut.String() != "프로젝트·워크플로 명령을 처리하지 못했습니다.\n" {
+		t.Fatalf("conflict code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+	}
+	conflicted, err := works.Load(context.Background(), "work-publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(conflicted.Publications["parent-issue:request-publish"].Receipt, priorReceipt) || conflicted.Publications["parent-issue:request-publish"].Status != statev2.PublicationCompleted {
+		t.Fatalf("prior receipt changed: %+v", conflicted.Publications["parent-issue:request-publish"])
+	}
+	getAfterConflict, postAfterConflict, _, _ := httpState.counts()
+	if getAfterConflict != getAfterReplay || postAfterConflict != postAfterReplay {
+		t.Fatalf("conflict performed I/O GET=%d POST=%d", getAfterConflict, postAfterConflict)
+	}
+}
+
+func TestProductionPublishIssuesLostResponseAdoptsExactMarker(t *testing.T) {
+	httpState := &productionPublicationHTTP{token: "publish-token", responseMode: "lost"}
+	server := httptest.NewServer(httpState)
+	defer server.Close()
+	works := seedProductionPublicationFixture(t, server.URL, "publish-token")
+	args := []string{"work", "publish-issues", "work-publish", "parent-a", "--expected-revision", "2", "--request-id", "request-lost"}
+	deps, err := productionWorkflowDependencies(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := cli.RunWithDependencies(context.Background(), args, &out, &errOut, deps); code != 0 || out.Len() == 0 || errOut.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+	}
+	snapshot, err := works.Load(context.Background(), "work-publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Publications["parent-issue:request-lost"].Status != statev2.PublicationCompleted || snapshot.Publications["parent-issue:request-lost"].Receipt == nil {
+		t.Fatalf("publication=%+v", snapshot.Publications["parent-issue:request-lost"])
+	}
+	gets, posts, auth, invalid := httpState.counts()
+	if posts != 1 || !auth || !invalid || strings.Contains(out.String(), "provider-body-sentinel") || strings.Contains(errOut.String(), "provider-body-sentinel") {
+		t.Fatalf("GET=%d POST=%d auth=%t invalid=%t stdout=%q stderr=%q", gets, posts, auth, invalid, out.String(), errOut.String())
+	}
+}
+
+func TestProductionPublishIssuesAmbiguousOutcomeBlocksWithoutRepublish(t *testing.T) {
+	for _, mode := range []string{"absent", "multiple", "mismatch"} {
+		t.Run(mode, func(t *testing.T) {
+			httpState := &productionPublicationHTTP{token: "publish-token", responseMode: mode}
+			server := httptest.NewServer(httpState)
+			defer server.Close()
+			works := seedProductionPublicationFixture(t, server.URL, "publish-token")
+			args := []string{"work", "publish-issues", "work-publish", "parent-a", "--expected-revision", "2", "--request-id", "request-ambiguous"}
+			deps, err := productionWorkflowDependencies(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out, errOut bytes.Buffer
+			if code := cli.RunWithDependencies(context.Background(), args, &out, &errOut, deps); code != 1 || out.Len() != 0 || errOut.String() != "프로젝트·워크플로 명령을 처리하지 못했습니다.\n" {
+				t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+			}
+			snapshot, err := works.Load(context.Background(), "work-publish")
+			if err != nil {
+				t.Fatal(err)
+			}
+			publication := snapshot.Publications["parent-issue:request-ambiguous"]
+			if publication.Status != statev2.PublicationConflict || snapshot.Control.Blocker == nil || snapshot.Control.Blocker.Kind != statev2.BlockerKindPublicationConflict || snapshot.Control.Blocker.IntentID != publication.IntentID || snapshot.Control.Blocker.Diagnostic == "" || strings.Contains(snapshot.Control.Blocker.Diagnostic, "provider-body-sentinel") {
+				t.Fatalf("snapshot publication=%+v blocker=%+v", publication, snapshot.Control.Blocker)
+			}
+			gets, posts, auth, invalid := httpState.counts()
+			if posts != 1 || !auth || !invalid {
+				t.Fatalf("GET=%d POST=%d auth=%t invalid=%t", gets, posts, auth, invalid)
+			}
+		})
+	}
+}
+
+func seedProductionPublicationFixture(t *testing.T, apiBase, token string) statev2.Store {
+	t.Helper()
+	root := t.TempDir()
+	projects := registry.NewStore(root)
+	works := statev2.NewStore(root)
+	project := registry.Project{ProjectID: "project-publish", Name: "Publish", PrimaryRepoKey: "primary", Repositories: map[contractv2.RepoKey]contractv2.RepositoryIdentity{"primary": {Host: apiBase, Owner: "acme", Name: "app", DefaultBranch: "main"}}}
+	projectBytes, err := json.Marshal(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectSum := sha256.Sum256(projectBytes)
+	if _, err := projects.Create(context.Background(), project, 0, "request-project", hex.EncodeToString(projectSum[:])); err != nil {
+		t.Fatal(err)
+	}
+	contract := contractv2.WorkItemContract{Version: 2, WorkID: "work-publish", ProjectID: project.ProjectID, Revision: 1, Request: "publish", AcceptanceCriteria: []string{"publish"}, RepositoryPlans: []contractv2.RepositoryPlan{{RepoKey: "primary", BaseSHA: strings.Repeat("a", 40), TargetBranch: "main"}}, Tasks: []contractv2.Task{{TaskID: "task-publish", RepoKey: "primary", AllowedPaths: []string{"internal"}, AcceptanceCriteria: []string{"publish"}}}, IssueDrafts: []contractv2.IssueDraft{{Key: "parent-a", Title: "Parent A", Body: "Body A", RepoKey: "primary"}, {Key: "parent-b", Title: "Parent B", Body: "Body B", RepoKey: "primary"}}, Documentation: contractv2.DocumentationPlan{Reason: "not needed"}, ExecutionProfiles: contractv2.ExecutionProfiles{Builder: "builder", Reviewer: "reviewer", Documenter: "documenter"}}
+	var canonical bytes.Buffer
+	if err := contractv2.Write(&canonical, contract); err != nil {
+		t.Fatal(err)
+	}
+	contractSum := sha256.Sum256(canonical.Bytes())
+	initial := statev2.WorkSnapshot{SchemaVersion: 2, ProjectID: project.ProjectID, WorkID: contract.WorkID, Revision: 1, State: statev2.StateAwaitingApproval, Contract: contract, ContractHash: hex.EncodeToString(contractSum[:]), SyncStatus: "local", NextAction: "approve", EvidenceRefs: []string{}, Receipts: map[contractv2.RequestID]statev2.Receipt{}, Control: statev2.WorkControl{}, TaskStates: map[contractv2.TaskID]statev2.TaskExecutionState{"task-publish": {TaskID: "task-publish", Status: statev2.TaskPending, RepairLimit: statev2.DefaultRepairLimit, RecoveryLimit: statev2.DefaultRecoveryLimit, PriorAttempts: []statev2.AttemptSummary{}, InvocationHistory: []statev2.InvocationID{}}}, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}}
+	if _, err := works.CreatePlan(context.Background(), initial, "request-plan", "plan-hash"); err != nil {
+		t.Fatal(err)
+	}
+	approval := statev2.TransitionRequest{WorkID: contract.WorkID, ExpectedRevision: 1, RequestID: "request-approve", Work: &statev2.WorkTransition{Action: statev2.WorkApprove, ApprovalRef: "approval", ContractHash: initial.ContractHash}}
+	approval.PayloadHash, err = statev2.TransitionPayloadHash(approval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := works.Apply(context.Background(), approval); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "config.json")
+	configData := `{"ghesHost":"` + apiBase + `","apiBase":"` + apiBase + `/api/v3","stateDir":"` + root + `","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`
+	if err := os.WriteFile(configPath, []byte(configData), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("THREADDOCK_STATE_DIR", root)
+	t.Setenv("THREADDOCK_CONFIG", configPath)
+	t.Setenv("THREADDOCK_GH_TOKEN", token)
+	return works
 }
 
 func TestProductionWorkflowDependenciesRuntimeBindingAndRequiredProfiles(t *testing.T) {
