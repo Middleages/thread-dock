@@ -86,3 +86,5 @@ Herdr 연결·agent 시작·권한 규칙 합성 확인까지 진행했다. 실�
 다음 수정 검토 대상은 Herdr의 agent-start 준비 완료 판정과 실제 입력 전달 시점이다. ThreadDock의 기존 invocation 재전송이나 자동 재시도는 수행하지 않았다. 이번 비교는 Prompt 전달 진단이며 Builder candidate_ready나 exact 취소 기능의 성공 검증은 아니다.
 
 비교용 workspace는 경로를 대조한 뒤 닫았다. 이는 임시 진단 프로세스 정리이며 bridge의 Terminate 성공 근거로 사용하지 않는다. 원래 Builder pilot workspace/state와 두 진단용 Git 저장소는 보존했다.
+
+후속으로 checksum 검증한 임시 Herdr 0.9.0 named server에서도 같은 startup 경합을 재현했고, 두 tagged source의 준비 판정을 대조했다. 상세 근거와 upstream 수정 방향은 [시작 readiness 보고서](herdr-opencode-startup-readiness.md)에 기록했다. 설치된 default 서버는 0.8.2 그대로이며, 업그레이드만으로 해결됐다고 주장하지 않는다.
