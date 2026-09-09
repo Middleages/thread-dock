@@ -208,6 +208,60 @@ func TestProductionWorkflowDependenciesStatusStaysProviderNeutralWithoutConfig(t
 	}
 }
 
+func TestProductionWorkflowDependenciesPublishIssuesRequiresToken(t *testing.T) {
+	t.Setenv("THREADDOCK_STATE_DIR", t.TempDir())
+	t.Setenv("THREADDOCK_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
+	t.Setenv("THREADDOCK_GH_TOKEN", "")
+	args := []string{"work", "publish-issues", "work-1", "parent-draft", "--expected-revision", "1", "--request-id", "request-1"}
+	deps, err := productionWorkflowDependencies(args)
+	if err == nil || deps.Workflow != nil || !strings.Contains(err.Error(), "THREADDOCK_GH_TOKEN") || strings.Contains(err.Error(), "missing-config") {
+		t.Fatalf("deps=%#v err=%v", deps, err)
+	}
+}
+
+func TestProductionWorkflowDependenciesPublishIssuesComposesPrivatePublisher(t *testing.T) {
+	stateDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData := `{"ghesHost":"https://github.example.test","stateDir":"` + stateDir + `","projectId":"PVT_1","projectStatusFieldId":"PVTSSF_1","projectStatusOptions":{"Backlog":"opt-1","Ready":"opt-2","In Progress":"opt-3","Review":"opt-4","Done":"opt-5"}}`
+	if err := os.WriteFile(configPath, []byte(configData), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("THREADDOCK_STATE_DIR", stateDir)
+	t.Setenv("THREADDOCK_CONFIG", configPath)
+	t.Setenv("THREADDOCK_GH_TOKEN", "composition-token-sentinel")
+	args := []string{"work", "publish-issues", "work-1", "parent-draft", "--expected-revision", "1", "--request-id", "request-1"}
+	deps, err := productionWorkflowDependencies(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps.Runs != nil || deps.Confirmer != nil || deps.Reverter != nil {
+		t.Fatalf("publish deps unexpectedly include legacy/runtime services: %#v", deps)
+	}
+	publisher, ok := deps.Workflow.(interface {
+		PublishParentIssue(context.Context, contractv2.WorkID, string, contractv2.Revision, contractv2.RequestID) (statev2.WorkSnapshot, error)
+	})
+	if !ok || publisher == nil {
+		t.Fatalf("publish workflow capability=%T", deps.Workflow)
+	}
+	if _, ok := deps.Workflow.(*productionParentIssuePublisher); !ok {
+		t.Fatalf("publish workflow is not private production bridge: %T", deps.Workflow)
+	}
+}
+
+func TestMalformedPublishIssuesDoesNotEnterProductionPublicationBranch(t *testing.T) {
+	t.Setenv("THREADDOCK_STATE_DIR", t.TempDir())
+	t.Setenv("THREADDOCK_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
+	t.Setenv("THREADDOCK_GH_TOKEN", "")
+	malformed := []string{"work", "publish-issues", "work-1", "parent-draft", "--expected-revision", "0", "--request-id", "request-1"}
+	deps, err := productionWorkflowDependencies(malformed)
+	if err != nil || deps.Workflow == nil {
+		t.Fatalf("deps=%#v err=%v", deps, err)
+	}
+	if _, ok := deps.Workflow.(*productionParentIssuePublisher); ok {
+		t.Fatal("malformed publish unexpectedly composed provider publication")
+	}
+}
+
 func TestProductionWorkflowDependenciesRuntimeBindingAndRequiredProfiles(t *testing.T) {
 	root := t.TempDir()
 	repository := filepath.Join(root, "repo")

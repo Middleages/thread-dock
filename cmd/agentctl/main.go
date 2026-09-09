@@ -15,6 +15,7 @@ import (
 	contractv2 "thread-dock/internal/contract/v2"
 	"thread-dock/internal/coordinator"
 	"thread-dock/internal/github"
+	"thread-dock/internal/githubpublication"
 	"thread-dock/internal/herdr"
 	"thread-dock/internal/orchestrator"
 	"thread-dock/internal/registry"
@@ -69,6 +70,30 @@ func productionWorkflowDependencies(args ...[]string) (cli.Dependencies, error) 
 	var commandArgs []string
 	if len(args) > 0 {
 		commandArgs = args[0]
+	}
+	if cli.NeedsWorkflowDependencies(commandArgs) && commandArgs[0] == "work" && commandArgs[1] == "publish-issues" {
+		token := strings.TrimSpace(os.Getenv("THREADDOCK_GH_TOKEN"))
+		if token == "" {
+			return cli.Dependencies{}, errors.New("THREADDOCK_GH_TOKEN이 없습니다. GHES 자격 증명을 agentctl 프로세스 환경에 설정한 뒤 다시 실행하십시오")
+		}
+		configPath := os.Getenv("THREADDOCK_CONFIG")
+		if configPath == "" {
+			configDir, err := os.UserConfigDir()
+			if err != nil {
+				return cli.Dependencies{}, fmt.Errorf("기본 설정 디렉터리를 확인할 수 없습니다: %w", err)
+			}
+			configPath = filepath.Join(configDir, "threaddock", "config.json")
+		}
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return cli.Dependencies{}, fmt.Errorf("설정 파일을 확인하십시오: %w", err)
+		}
+		remote := github.NewRESTClient(cfg.APIBase, token, cfg.APIVersion, nil)
+		publisher := githubpublication.NewPublisher(works, projects, remote, cfg.GHESHost, nil)
+		dispatcher := coordinator.NewDispatcher(works, publisher, coordinator.NewOwnerLocker(root), "agentctl-publisher", 0, time.Time{})
+		publication := githubpublication.NewService(works, projects, dispatcher, publisher, "agentctl")
+		service := &productionParentIssuePublisher{Service: workflow.New(projects, works), publication: publication, dispatcher: dispatcher}
+		return cli.Dependencies{Workflow: service}, nil
 	}
 	if !runtimeWorkflowCommand(commandArgs) {
 		return cli.Dependencies{Workflow: workflow.New(projects, works)}, nil

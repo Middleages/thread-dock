@@ -37,6 +37,10 @@ type workflowRunnerService interface {
 	RunWork(context.Context, contractv2.WorkID, contractv2.Revision, contractv2.RequestID) (statev2.WorkSnapshot, error)
 }
 
+type workflowParentIssuePublisher interface {
+	PublishParentIssue(context.Context, contractv2.WorkID, string, contractv2.Revision, contractv2.RequestID) (statev2.WorkSnapshot, error)
+}
+
 func runProjectWork(ctx context.Context, args []string, stdout, stderr io.Writer, service WorkflowService) int {
 	if ctx == nil {
 		ctx = context.Background()
@@ -123,6 +127,17 @@ func runProjectWork(ctx context.Context, args []string, stdout, stderr io.Writer
 			return reportWorkflowError(stderr, errors.New("workflow runner is not configured"))
 		}
 		value, err = runner.RunWork(ctx, id, revision, request)
+	case args[0] == "work" && args[1] == "publish-issues":
+		id, draftKey, revision, request, ok := parseWorkflowPublishIssuesArgs(args[2:])
+		if !ok {
+			printUsage(stderr)
+			return 2
+		}
+		publisher, ok := service.(workflowParentIssuePublisher)
+		if !ok {
+			return reportWorkflowError(stderr, errors.New("parent issue publisher is not configured"))
+		}
+		value, err = publisher.PublishParentIssue(ctx, id, draftKey, revision, request)
 	case args[0] == "work" && args[1] == "status":
 		value, err = service.Status(ctx, contractv2.WorkID(args[2]))
 	}
@@ -144,6 +159,17 @@ func parseWorkflowRunArgs(args []string) (contractv2.WorkID, contractv2.Revision
 		return "", 0, "", false
 	}
 	return contractv2.WorkID(args[0]), contractv2.Revision(revision), contractv2.RequestID(args[4]), true
+}
+
+func parseWorkflowPublishIssuesArgs(args []string) (contractv2.WorkID, string, contractv2.Revision, contractv2.RequestID, bool) {
+	if len(args) != 6 || !workflowIDArg(args[0]) || !workflowIDArg(args[1]) || args[2] != "--expected-revision" || args[4] != "--request-id" || !workflowIDArg(args[5]) {
+		return "", "", 0, "", false
+	}
+	revision, err := strconv.ParseUint(args[3], 10, 64)
+	if err != nil || revision == 0 {
+		return "", "", 0, "", false
+	}
+	return contractv2.WorkID(args[0]), args[1], contractv2.Revision(revision), contractv2.RequestID(args[5]), true
 }
 
 func workflowIDArg(value string) bool {
