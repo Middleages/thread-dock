@@ -98,6 +98,9 @@ func NeedsWorkflowDependencies(args []string) bool {
 		case "run":
 			_, _, _, ok := parseWorkflowRunArgs(args[2:])
 			return ok
+		case "publish-issues":
+			_, _, _, _, ok := parseWorkflowPublishIssuesArgs(args[2:])
+			return ok
 		case "status":
 			return len(args) == 4 && nonFlagArg(args[2]) && args[3] == "--json"
 		}

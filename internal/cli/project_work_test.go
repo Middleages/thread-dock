@@ -66,6 +66,26 @@ type fakeWorkflowRunnerService struct {
 	runErr      error
 }
 
+type fakeWorkflowParentIssuePublisher struct {
+	*fakeWorkflowService
+	publishID       contractv2.WorkID
+	publishDraftKey string
+	publishRevision contractv2.Revision
+	publishRequest  contractv2.RequestID
+	publishSnapshot statev2.WorkSnapshot
+	publishErr      error
+	publishCalls    int
+}
+
+func (f *fakeWorkflowParentIssuePublisher) PublishParentIssue(_ context.Context, id contractv2.WorkID, draftKey string, revision contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {
+	f.publishCalls++
+	f.publishID, f.publishDraftKey, f.publishRevision, f.publishRequest = id, draftKey, revision, request
+	if f.publishErr != nil {
+		return statev2.WorkSnapshot{}, f.publishErr
+	}
+	return f.publishSnapshot, nil
+}
+
 func (f *fakeWorkflowRunnerService) RunWork(_ context.Context, id contractv2.WorkID, revision contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {
 	f.runID, f.runRevision, f.runRequest = id, revision, request
 	if f.runErr != nil {
@@ -219,6 +239,70 @@ func TestWorkflowControlCommandsRouteAndSerializeArgs(t *testing.T) {
 	}
 }
 
+func TestWorkflowPublishIssuesRoutesCanonicalArgumentsAndSnapshot(t *testing.T) {
+	service := &fakeWorkflowParentIssuePublisher{
+		fakeWorkflowService: &fakeWorkflowService{},
+		publishSnapshot:     workflowSnapshot(),
+	}
+	args := []string{"work", "publish-issues", "work-1", "parent-draft", "--expected-revision", "7", "--request-id", "request-publish"}
+	code, out, errOut := runWorkflowService(t, service, args)
+	if code != 0 || out == "" || errOut != "" {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+	if service.publishCalls != 1 || service.publishID != "work-1" || service.publishDraftKey != "parent-draft" || service.publishRevision != 7 || service.publishRequest != "request-publish" {
+		t.Fatalf("publish=(%d,%q,%q,%d,%q)", service.publishCalls, service.publishID, service.publishDraftKey, service.publishRevision, service.publishRequest)
+	}
+	var got statev2.WorkSnapshot
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, service.publishSnapshot) {
+		t.Fatalf("snapshot=%#v want=%#v", got, service.publishSnapshot)
+	}
+}
+
+func TestPublishIssuesMalformedFormsRemainDependencyFree(t *testing.T) {
+	valid := []string{"work", "publish-issues", "work-1", "draft", "--expected-revision", "1", "--request-id", "request-1"}
+	malformed := [][]string{
+		{"work", "publish-issues", "work-1", "draft"},
+		{"work", "publish-issues", "work-1", "draft", "--expected-revision", "0", "--request-id", "request-1"},
+		{"work", "publish-issues", "work-1", "draft", "--expected-revision", "-1", "--request-id", "request-1"},
+		{"work", "publish-issues", "work-1", "draft", "--expected-revision", "x", "--request-id", "request-1"},
+		{"work", "publish-issues", "work-1", "draft", "--request-id", "request-1", "--expected-revision", "1"},
+		{"work", "publish-issues", "-work-1", "draft", "--expected-revision", "1", "--request-id", "request-1"},
+		{"work", "publish-issues", "work-1", "-draft", "--expected-revision", "1", "--request-id", "request-1"},
+		{"work", "publish-issues", "work-1", "draft", "--expected-revision", "1", "--request-id", ""},
+		{"work", "publish-issues", "work-1", "draft", "--expected-revision", "1", "--request-id", " request-1"},
+		{"work", "publish-issues", "work-1", "draft with space", "--expected-revision", "1", "--request-id", "request-1"},
+	}
+	if !NeedsWorkflowDependencies(valid) {
+		t.Fatal("valid publish-issues form must require workflow dependencies")
+	}
+	for _, args := range malformed {
+		if NeedsWorkflowDependencies(args) {
+			t.Fatalf("malformed publish form requires dependencies: %v", args)
+		}
+		service := &fakeWorkflowParentIssuePublisher{fakeWorkflowService: &fakeWorkflowService{}}
+		code, out, errOut := runWorkflowService(t, service, args)
+		if code != 2 || out != "" || !strings.Contains(errOut, "사용법:") || service.publishCalls != 0 {
+			t.Fatalf("args=%v code=%d stdout=%q stderr=%q calls=%d", args, code, out, errOut, service.publishCalls)
+		}
+	}
+}
+
+func TestPublishIssuesCapabilityMissingAndErrorsAreBounded(t *testing.T) {
+	args := []string{"work", "publish-issues", "work-1", "draft", "--expected-revision", "1", "--request-id", "request-1"}
+	for _, service := range []WorkflowService{
+		&fakeWorkflowService{},
+		&fakeWorkflowParentIssuePublisher{fakeWorkflowService: &fakeWorkflowService{}, publishErr: errors.New("provider token sentinel")},
+	} {
+		code, out, errOut := runWorkflowService(t, service, args)
+		if code != 1 || out != "" || errOut != "프로젝트·워크플로 명령을 처리하지 못했습니다.\n" || strings.Contains(errOut, "sentinel") || strings.Contains(errOut, "token") {
+			t.Fatalf("service=%T code=%d stdout=%q stderr=%q", service, code, out, errOut)
+		}
+	}
+}
+
 func TestWorkflowReconcileSettlesBeforeCanonicalStatus(t *testing.T) {
 	service := &fakeWorkflowControlService{
 		fakeWorkflowService: &fakeWorkflowService{status: workflowSnapshot()},
@@ -269,6 +353,7 @@ func TestWorkflowUsageIncludesControlCommands(t *testing.T) {
 	var errOut bytes.Buffer
 	printUsage(&errOut)
 	for _, syntax := range []string{
+		"work publish-issues WORK PARENT_DRAFT_KEY --expected-revision N --request-id ID",
 		"work pause WORK --expected-revision N --request-id ID",
 		"work resume WORK --expected-revision N --request-id ID",
 		"work reconcile WORK --json",
