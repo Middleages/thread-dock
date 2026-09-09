@@ -1,6 +1,6 @@
 # Herdr/OpenCode 시작 직후 Prompt 누락 재현 보고서
 
-상태: upstream 보고용 초안. 2026-09-09 실제 비교 진단 및 tagged source 검토. 외부 이슈는 아직 등록하지 않았다.
+상태: 2026-09-09 실제 비교 진단 및 tagged source 검토. [Herdr upstream #3813](https://github.com/herdrdev/herdr/issues/3813)에 재현 버그를 등록했다. 공개 보고에는 upstream 템플릿에 따라 관찰 결과·재현 절차·환경만 담고, 아래 소스 분석과 수정 방향은 로컬 조사 기록으로 유지했다.
 
 ## 문제
 
@@ -39,6 +39,6 @@ Herdr의 interactive_ready가 OpenCode 입력 가능 상태를 보장하지 못�
 
 Herdr/OpenCode integration에서 입력 준비 완료의 양의 신호 또는 prompt 수락 acknowledgement를 연결하는 방향을 검토해야 한다. ThreadDock에는 별도 화면 감지기·session manager·고정 sleep·자동 prompt 재전송을 추가하지 않았다.
 
-외부 Herdr 저장소에 이슈/PR을 게시하거나 사용자 주 서버를 교체하는 작업은 이 보고서 작성에 포함되지 않는다.
+사용자 승인으로 upstream 재현 이슈를 등록했다. Herdr 구현 PR 제출이나 사용자 주 서버 교체는 수행하지 않았다.
 
 비교용 named server는 종료를 확인했다. 기존 default 서버는 0.8.2로 계속 실행 중이며, 전후 OpenCode integration 파일 SHA256도 동일했다.

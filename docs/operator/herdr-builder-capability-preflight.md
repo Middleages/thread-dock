@@ -88,3 +88,5 @@ Herdr 연결·agent 시작·권한 규칙 합성 확인까지 진행했다. 실�
 비교용 workspace는 경로를 대조한 뒤 닫았다. 이는 임시 진단 프로세스 정리이며 bridge의 Terminate 성공 근거로 사용하지 않는다. 원래 Builder pilot workspace/state와 두 진단용 Git 저장소는 보존했다.
 
 후속으로 checksum 검증한 임시 Herdr 0.9.0 named server에서도 같은 startup 경합을 재현했고, 두 tagged source의 준비 판정을 대조했다. 상세 근거와 upstream 수정 방향은 [시작 readiness 보고서](herdr-opencode-startup-readiness.md)에 기록했다. 설치된 default 서버는 0.8.2 그대로이며, 업그레이드만으로 해결됐다고 주장하지 않는다.
+
+재현 증상은 [Herdr #3813](https://github.com/herdrdev/herdr/issues/3813)으로 보고했다. 기존 실행 상태는 보존하며, upstream 응답과 입력 준비 확인 방법이 확정되기 전까지 실패한 Builder packet을 자동 재전송하지 않는다.
