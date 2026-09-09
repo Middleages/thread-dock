@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -53,12 +54,56 @@ func TestReviewIntegrationRealStoreReviewerReplayAccept(t *testing.T) {
 	_ = coordinatorRuntime.Close(context.Background())
 }
 
+func TestReviewIntegrationRealStoreRestartActivateConvergesBeforeSubmit(t *testing.T) {
+	store, snapshot, candidate, repo, root := realReviewerTerminatedFixture(t)
+	inspector := worktree.New(runner.OSRunner{}, "git", root, repo)
+	runtime := &realReviewerRuntime{candidateSHA: candidate}
+	coord := coordinator.NewCoordinator(store, runtime, nil, inspector, coordinator.NewOwnerLocker(root), "restart-owner", 0, time.Now().UTC())
+	git := &reviewIntegrationGitFake{head: strings.Repeat("3", 40)}
+	service := NewReviewIntegrationService(store, coord, git, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: repo, IntegrationPath: filepath.Join(root, "integration"), IntegrationBranch: "integration", RuntimeFingerprint: "review-runtime"})
+	got, err := service.Advance(context.Background(), snapshot, "task-1", "restart-caller")
+	if err != nil || got.TaskStates["task-1"].Status != statev2.TaskIntegrated || runtime.launches != 0 || runtime.observes != 1 || git.mergedSHA != candidate {
+		t.Fatalf("status=%q err=%v launches/observes=%d/%d merge=%q", got.TaskStates["task-1"].Status, err, runtime.launches, runtime.observes, git.mergedSHA)
+	}
+}
+
+func TestReviewerActiveArtifactDoesNotMutateRealStore(t *testing.T) {
+	store, snapshot, candidate, repo, root := realReviewerGateFixture(t)
+	state := applyForegroundTransition(t, store, snapshot, "review-reserve", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskReserveInvocation, InvocationID: "review-inv", LogicalWorkID: "review-logical", Role: "reviewer", ReturnStage: statev2.TaskGatePassed, BuilderAttempt: 1, At: time.Now().UTC(), Worktree: snapshot.TaskStates["task-1"].Worktree, Invocation: &statev2.InvocationState{LogicalProfile: "reviewer", RuntimeFingerprint: "review-runtime"}})
+	state = applyForegroundTransition(t, store, state, "review-begin", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskBeginLaunch, InvocationID: "review-inv", LogicalWorkID: "review-logical", Role: "reviewer", ReturnStage: statev2.TaskGatePassed, BuilderAttempt: 1, At: time.Now().UTC()})
+	state = applyForegroundTransition(t, store, state, "review-running", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskMarkRunning, InvocationID: "review-inv", LogicalWorkID: "review-logical", Role: "reviewer", ReturnStage: statev2.TaskGatePassed, BuilderAttempt: 1, At: time.Now().UTC(), Invocation: &statev2.InvocationState{ProviderIdentity: "review-provider"}})
+	before, err := store.Load(context.Background(), state.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &realReviewerRuntime{candidateSHA: candidate, active: true}
+	git := worktree.New(runner.OSRunner{}, "git", root, repo)
+	coord := coordinator.NewCoordinator(store, runtime, nil, git, coordinator.NewOwnerLocker(root), "active-owner", 0, time.Now().UTC())
+	if _, err := coord.Activate(context.Background(), state.WorkID); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.Load(context.Background(), state.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("active artifact mutated durable store\nbefore=%#v\nafter=%#v", before, after)
+	}
+	runtime.active = false
+	result := <-coord.SubmitRuntime(context.Background(), state.WorkID, "task-1", "review-inv")
+	if result.Err != nil || result.Snapshot.TaskStates["task-1"].Status != statev2.TaskAccepted || result.Snapshot.TaskStates["task-1"].Review == nil {
+		t.Fatalf("ended result=%#v", result)
+	}
+	_ = coord.Close(context.Background())
+}
+
 func TestReviewIntegrationRealStoreReviewerReplayBlockNoGit(t *testing.T) {
 	store, snapshot, candidate, repo, root := realReviewerEvidenceFixture(t)
 	git := worktree.New(runner.OSRunner{}, "git", root, repo)
 	runtime := &realReviewerRuntime{candidateSHA: candidate, decision: "block"}
 	coord := coordinator.NewCoordinator(store, runtime, nil, git, coordinator.NewOwnerLocker(root), "block-owner", 0, time.Now().UTC())
-	service := NewReviewIntegrationService(store, coord, &countingReviewGit{}, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: repo, IntegrationPath: filepath.Join(root, "integration"), IntegrationBranch: "integration", RuntimeFingerprint: "review-runtime"})
+	countingGit := &countingReviewGit{}
+	service := NewReviewIntegrationService(store, coord, countingGit, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: repo, IntegrationPath: filepath.Join(root, "integration"), IntegrationBranch: "integration", RuntimeFingerprint: "review-runtime"})
 	first, err := service.Advance(context.Background(), snapshot, "task-1", "caller-1")
 	if err != nil || first.TaskStates["task-1"].Status != statev2.TaskRunning {
 		t.Fatalf("first=%#v err=%v", first, err)
@@ -68,7 +113,7 @@ func TestReviewIntegrationRealStoreReviewerReplayBlockNoGit(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, err := service.Advance(context.Background(), secondInput, "task-1", "caller-2")
-	if err != nil || second.TaskStates["task-1"].Status != statev2.TaskReviewBlocked || second.TaskStates["task-1"].Review == nil || len(second.TaskStates["task-1"].Review.Findings) != 1 {
+	if err != nil || second.TaskStates["task-1"].Status != statev2.TaskReviewBlocked || second.TaskStates["task-1"].Review == nil || second.TaskStates["task-1"].Review.Accepted || len(second.TaskStates["task-1"].Review.Findings) != 1 || second.TaskStates["task-1"].Integration != nil || countingGit.calls != 0 {
 		t.Fatalf("second=%#v err=%v", second, err)
 	}
 }
@@ -173,6 +218,7 @@ type realReviewerRuntime struct {
 	candidateSHA       string
 	launches, observes int
 	decision           string
+	active             bool
 }
 
 func (r *realReviewerRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
@@ -189,6 +235,9 @@ func (r *realReviewerRuntime) Observe(_ context.Context, invocation statev2.Invo
 	}
 	result, _ := json.Marshal(runtimecontract.ReviewerResult{ReviewedSHA: r.candidateSHA, Decision: decision, BlockingFindings: findings})
 	at := time.Now().UTC()
+	if r.active {
+		return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationActive, ProviderIdentity: "review-provider", Artifact: &runtimecontract.ArtifactEnvelope{RequestID: contractv2.RequestID(invocation.InvocationID), Role: runtimecontract.RoleReviewer, Status: "success", Result: result}}, nil
+	}
 	return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationEnded, ProviderIdentity: "review-provider", EndedAt: &at, Artifact: &runtimecontract.ArtifactEnvelope{RequestID: contractv2.RequestID(invocation.InvocationID), Role: runtimecontract.RoleReviewer, Status: "success", Result: result}}, nil
 }
 func (r *realReviewerRuntime) Terminate(context.Context, statev2.InvocationState) error { return nil }
@@ -297,6 +346,20 @@ func realReviewerEvidenceFixture(t *testing.T) (statev2.Store, statev2.WorkSnaps
 	snapshot = applyForegroundTransition(t, store, snapshot, "terminated", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskConfirmTermination, InvocationID: "builder-inv", LogicalWorkID: "builder-logical", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: time.Now().UTC(), Reason: "finished"})
 	snapshot = applyForegroundTransition(t, store, snapshot, "candidate", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskRecordCandidate, InvocationID: "builder-inv", LogicalWorkID: "builder-logical", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: time.Now().UTC(), Candidate: &statev2.CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidate, TreeSHA: tree, ChangedFiles: []string{"change.txt"}}})
 	snapshot = applyForegroundTransition(t, store, snapshot, "gate", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskRecordGate, Role: "builder", BuilderAttempt: 1, At: time.Now().UTC(), Gate: &statev2.GateEvidence{BuilderAttempt: 1, CandidateSHA: candidate, Commands: []string{"check"}, Outcomes: []string{"passed"}, Passed: true, ObservedAt: time.Now().UTC()}})
+	return store, snapshot, candidate, repo, root
+}
+
+func realReviewerGateFixture(t *testing.T) (statev2.Store, statev2.WorkSnapshot, string, string, string) {
+	return realReviewerEvidenceFixture(t)
+}
+
+func realReviewerTerminatedFixture(t *testing.T) (statev2.Store, statev2.WorkSnapshot, string, string, string) {
+	store, snapshot, candidate, repo, root := realReviewerEvidenceFixture(t)
+	wt := snapshot.TaskStates["task-1"].Worktree
+	snapshot = applyForegroundTransition(t, store, snapshot, "review-reserve", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskReserveInvocation, InvocationID: "review-inv", LogicalWorkID: "review-logical", Role: "reviewer", ReturnStage: statev2.TaskGatePassed, BuilderAttempt: 1, At: time.Now().UTC(), Worktree: wt, Invocation: &statev2.InvocationState{LogicalProfile: "reviewer", RuntimeFingerprint: "review-runtime"}})
+	snapshot = applyForegroundTransition(t, store, snapshot, "review-begin", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskBeginLaunch, InvocationID: "review-inv", LogicalWorkID: "review-logical", Role: "reviewer", ReturnStage: statev2.TaskGatePassed, BuilderAttempt: 1, At: time.Now().UTC()})
+	snapshot = applyForegroundTransition(t, store, snapshot, "review-running", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskMarkRunning, InvocationID: "review-inv", LogicalWorkID: "review-logical", Role: "reviewer", ReturnStage: statev2.TaskGatePassed, BuilderAttempt: 1, At: time.Now().UTC(), Invocation: &statev2.InvocationState{ProviderIdentity: "review-provider"}})
+	snapshot = applyForegroundTransition(t, store, snapshot, "review-terminated", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskConfirmTermination, InvocationID: "review-inv", LogicalWorkID: "review-logical", Role: "reviewer", ReturnStage: statev2.TaskGatePassed, BuilderAttempt: 1, At: time.Now().UTC(), Reason: "finished"})
 	return store, snapshot, candidate, repo, root
 }
 

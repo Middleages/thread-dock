@@ -360,8 +360,7 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 	}
 	if observation.State != RuntimeObservationEnded && observation.Artifact != nil {
 		if task.Invocation.Role == "reviewer" {
-			_, blockErr := d.blockReviewerArtifact(ctx, snapshot, task, task.Invocation, errReviewerEvidenceMismatch)
-			return snapshot, blockErr
+			return snapshot, nil
 		}
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "active runtime returned an artifact before termination")
 	}

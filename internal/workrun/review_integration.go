@@ -84,6 +84,7 @@ func (s *ReviewIntegrationService) Advance(ctx context.Context, supplied statev2
 	if task.Status == statev2.TaskIntegrated {
 		return current, nil
 	}
+	initialTaskStatus := task.Status
 	reviewerAdvanced := false
 	if task.Review == nil && task.Gate != nil && task.Gate.Passed && (task.Status == statev2.TaskGatePassed || task.Status == statev2.TaskInvocationReserved || task.Status == statev2.TaskRunning || task.Status == statev2.TaskTerminationPending || task.Status == statev2.TaskTerminated) {
 		reviewerAdvanced = true
@@ -100,7 +101,7 @@ func (s *ReviewIntegrationService) Advance(ctx context.Context, supplied statev2
 	if task.Status == statev2.TaskIntegrated {
 		return current, nil
 	}
-	if reviewerAdvanced && task.Status == statev2.TaskAccepted {
+	if reviewerAdvanced && task.Status == statev2.TaskAccepted && initialTaskStatus != statev2.TaskTerminated {
 		return current, nil
 	}
 	if task.Status == statev2.TaskReviewBlocked {
@@ -155,6 +156,18 @@ func (s *ReviewIntegrationService) launchReviewer(ctx context.Context, snapshot 
 		return snapshot, activateErr
 	}
 	activated = true
+	canonical, loadErr := s.state.Load(ctx, snapshot.WorkID)
+	if loadErr != nil {
+		return snapshot, loadErr
+	}
+	snapshot = canonical
+	task = snapshot.TaskStates[taskID]
+	if task.Status == statev2.TaskIntegrated || task.Status == statev2.TaskAccepted || task.Status == statev2.TaskReviewBlocked {
+		return snapshot, nil
+	}
+	if task.Status == statev2.TaskNeedsOperator {
+		return snapshot, errors.New("review integration requires operator action")
+	}
 	invocationID, logicalWorkID := reviewIDs(snapshot.WorkID, taskID, callerRequestID)
 	if task.Invocation == nil || task.Invocation.Role != "reviewer" {
 		contractTask, found := contractTaskByID(snapshot.Contract, taskID)

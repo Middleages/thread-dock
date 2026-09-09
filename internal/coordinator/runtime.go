@@ -420,6 +420,9 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 		switch event.observation.State {
 		case RuntimeObservationActive:
 			if event.observation.Artifact != nil {
+				if invocation.Role == string(runtimecontract.RoleReviewer) {
+					return CommandResult{Snapshot: snapshot}
+				}
 				blocked, _ := d.blockActiveArtifact(q.ctx, snapshot, task, invocation)
 				return blocked
 			}
