@@ -273,6 +273,39 @@ func TestNewOperationsRejectUnmanagedTargetsWithoutCommands(t *testing.T) {
 	}
 }
 
+func TestInspectCommitReturnsActualTreeAndChangedFilesFromRepository(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "repo")
+	runSetupGit(t, "", "init", repository)
+	runSetupGit(t, repository, "config", "user.email", "test@example.com")
+	runSetupGit(t, repository, "config", "user.name", "ThreadDock Test")
+	writeTestFile(t, filepath.Join(repository, "README.md"), "base\n")
+	runSetupGit(t, repository, "add", "README.md")
+	runSetupGit(t, repository, "commit", "-m", "base")
+	base := strings.TrimSpace(runSetupGit(t, repository, "rev-parse", "HEAD"))
+	runSetupGit(t, repository, "checkout", "-b", "agent/builder")
+	if err := os.Mkdir(filepath.Join(repository, "internal"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(repository, "internal", "builder.go"), "package internal\n")
+	runSetupGit(t, repository, "add", "internal/builder.go")
+	runSetupGit(t, repository, "commit", "-m", "builder")
+	candidate := strings.TrimSpace(runSetupGit(t, repository, "rev-parse", "HEAD"))
+	managed := filepath.Join(root, "managed")
+	if err := os.Mkdir(managed, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := New(runner.OSRunner{}, "git", managed, repository)
+	inspection, err := git.InspectCommit(context.Background(), repository, base, "agent/builder", candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTree := strings.TrimSpace(runSetupGit(t, repository, "rev-parse", candidate+"^{tree}"))
+	if inspection.CommitSHA != candidate || inspection.TreeSHA != wantTree || inspection.Branch != "agent/builder" || !reflect.DeepEqual(inspection.ChangedFiles, []string{"internal/builder.go"}) {
+		t.Fatalf("inspection=%#v tree=%q", inspection, wantTree)
+	}
+}
+
 func TestRunChecksHonorsContextAndDistinguishesProcessExit(t *testing.T) {
 	git, _, target := configuredGit(t, &fakeRunner{})
 	ctx, cancel := context.WithCancel(context.Background())

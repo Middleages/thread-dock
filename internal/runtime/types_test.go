@@ -8,6 +8,39 @@ import (
 	"thread-dock/internal/contract/v2"
 )
 
+func TestDecodeBuilderResultRejectsNonCanonicalResults(t *testing.T) {
+	validSHA := "0123456789abcdef0123456789abcdef01234567"
+	tests := []struct {
+		name string
+		data string
+	}{
+		{"empty commit", `{"commitSha":"","verification":[{"command":"go test","outcome":"passed","duration":"1s"}]}`},
+		{"uppercase commit", `{"commitSha":"0123456789ABCDEF0123456789ABCDEF01234567","verification":[{"command":"go test","outcome":"passed","duration":"1s"}]}`},
+		{"empty verification", `{"commitSha":"` + validSHA + `","verification":[]}`},
+		{"unknown field", `{"commitSha":"` + validSHA + `","verification":[{"command":"go test","outcome":"passed","duration":"1s","extra":true}]}`},
+		{"trailing JSON", `{"commitSha":"` + validSHA + `","verification":[{"command":"go test","outcome":"passed","duration":"1s"}]} {}`},
+		{"invalid outcome", `{"commitSha":"` + validSHA + `","verification":[{"command":"go test","outcome":"ok","duration":"1s"}]}`},
+		{"invalid duration", `{"commitSha":"` + validSHA + `","verification":[{"command":"go test","outcome":"passed","duration":"soon"}]}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := DecodeBuilderResult([]byte(tc.data)); err == nil {
+				t.Fatalf("accepted %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestDecodeBuilderResultAcceptsStrictResult(t *testing.T) {
+	got, err := DecodeBuilderResult([]byte(`{"commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test","outcome":"passed","duration":"1s"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CommitSHA == "" || len(got.Verification) != 1 {
+		t.Fatalf("result=%#v", got)
+	}
+}
+
 func TestValidateEnvelopeRejectsIdentityAndMalformedResults(t *testing.T) {
 	invocation := Invocation{RequestID: contractv2.RequestID("request-1"), Role: RoleBuilder}
 	tests := []struct {

@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	contractv2 "thread-dock/internal/contract/v2"
+	runtimecontract "thread-dock/internal/runtime"
 	statev2 "thread-dock/internal/state/v2"
 )
 
@@ -21,11 +22,12 @@ type RuntimeObservation struct {
 	ProviderIdentity string
 	EndedAt          *time.Time
 	Diagnostic       string
+	Artifact         *runtimecontract.ArtifactEnvelope
 }
 
 type Runtime interface {
-	Observe(context.Context, statev2.InvocationState) (RuntimeObservation, error)
-	Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity) (string, error)
+	Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (RuntimeObservation, error)
+	Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error)
 	// Terminate returns nil only after the provider has confirmed that this
 	// exact invocation ended. An adapter that only sends a signal or request
 	// must continue observing and return a non-nil error until confirmation.
@@ -181,8 +183,18 @@ func (d *publicationDispatcher) handleRuntimeCommand(q *publicationQueue, comman
 	case statev2.TaskTerminationPending:
 		kind = runtimeTerminate
 	case statev2.TaskTerminated:
-		command.result <- CommandResult{Snapshot: snapshot}
-		return
+		if task.Candidate != nil || invocation.InvocationID == "" || d.inspector == nil {
+			command.result <- CommandResult{Snapshot: snapshot}
+			return
+		}
+		// A confirmed Builder may have been persisted immediately before the
+		// process crashed while ingesting its artifact. Re-observe only that
+		// narrow case; never relaunch or terminate it again.
+		if invocation.Role != "builder" || !invocation.TerminationConfirmed || invocation.EndedAt == nil {
+			command.result <- CommandResult{Snapshot: snapshot}
+			return
+		}
+		kind = runtimeObserve
 	case statev2.TaskNeedsOperator:
 		command.result <- CommandResult{Snapshot: snapshot, Err: ErrRuntimeStale}
 		return
@@ -249,12 +261,18 @@ func (d *publicationDispatcher) runRuntimeWorker(q *publicationQueue, op *runtim
 			worktreeCopy.IntegratedDependencies[id] = head
 		}
 	}
+	runtimeInvocation, invocationErr := buildRuntimeInvocation(snapshot, task.TaskID, invocationCopy, worktreeCopy)
+	if invocationErr != nil {
+		event.result.Err = invocationErr
+		d.sendRuntimeEvent(q, event)
+		return
+	}
 	switch op.kind {
 	case runtimeLaunch:
-		event.identity, event.result.Err = d.runtime.Launch(ctx, invocationCopy, worktreeCopy)
+		event.identity, event.result.Err = d.runtime.Launch(ctx, invocationCopy, worktreeCopy, runtimeInvocation)
 	case runtimeObserve:
 		observeCtx, cancel := context.WithTimeout(ctx, runtimeObservationTimeout)
-		event.observation, event.result.Err = d.runtime.Observe(observeCtx, invocationCopy)
+		event.observation, event.result.Err = d.runtime.Observe(observeCtx, invocationCopy, runtimeInvocation)
 		cancel()
 	case runtimeTerminate:
 		event.result.Err = d.runtime.Terminate(ctx, invocationCopy)
@@ -335,7 +353,20 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 		return CommandResult{Snapshot: snapshot, Err: err}
 	}
 	if task.Status == statev2.TaskTerminated && invocation.TerminationConfirmed && invocation.EndedAt != nil {
-		return CommandResult{Snapshot: snapshot}
+		if invocation.Role != "builder" || task.Candidate != nil || event.operation != runtimeObserve {
+			return CommandResult{Snapshot: snapshot}
+		}
+		if event.observation.State != RuntimeObservationEnded {
+			return d.runtimeUnknown(q, snapshot, event.key, "confirmed terminated Builder was observed active")
+		}
+		if strings.TrimSpace(event.observation.ProviderIdentity) == "" || event.observation.ProviderIdentity != invocation.ProviderIdentity {
+			return d.runtimeUnknown(q, snapshot, event.key, "runtime ended identity does not match persisted identity")
+		}
+		if event.observation.Artifact == nil {
+			return CommandResult{Snapshot: snapshot}
+		}
+		result, _ := d.ingestBuilderArtifact(q.ctx, snapshot, event.key.taskID, event.observation.Artifact)
+		return result
 	}
 	endedAt, endedAtErr := runtimeEndedAt(event.observation.EndedAt)
 	if endedAtErr != nil {
@@ -354,6 +385,10 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 	case runtimeObserve:
 		switch event.observation.State {
 		case RuntimeObservationActive:
+			if event.observation.Artifact != nil {
+				blocked, _ := d.blockBuilderArtifact(q.ctx, snapshot, task, invocation, errors.New("active runtime returned an artifact before termination"))
+				return blocked
+			}
 			if task.Status != statev2.TaskInvocationReserved && (strings.TrimSpace(event.observation.ProviderIdentity) == "" || event.observation.ProviderIdentity != invocation.ProviderIdentity) {
 				return d.runtimeUnknown(q, snapshot, event.key, "runtime active identity does not match persisted identity")
 			}
@@ -392,7 +427,12 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 			} else if strings.TrimSpace(event.observation.ProviderIdentity) == "" || event.observation.ProviderIdentity != invocation.ProviderIdentity {
 				return d.runtimeUnknown(q, snapshot, event.key, "runtime ended identity does not match persisted identity")
 			}
-			return d.applyRuntimeAndReloadAt(q.ctx, snapshot, task, invocation, statev2.TaskConfirmTermination, event.observation.Diagnostic, endedAt)
+			settled := d.applyRuntimeAndReloadAt(q.ctx, snapshot, task, invocation, statev2.TaskConfirmTermination, event.observation.Diagnostic, endedAt)
+			if settled.Err != nil || event.observation.Artifact == nil {
+				return settled
+			}
+			ingested, _ := d.ingestBuilderArtifact(q.ctx, settled.Snapshot, event.key.taskID, event.observation.Artifact)
+			return ingested
 		case RuntimeObservationNotStarted, RuntimeObservationUnknown:
 			return d.runtimeUnknown(q, snapshot, event.key, runtimeDiagnostic(event.observation))
 		default:
@@ -464,6 +504,51 @@ func runtimeDiagnostic(observation RuntimeObservation) string {
 		return observation.Diagnostic
 	}
 	return "runtime state is unknown; operator inspection required"
+}
+
+// buildRuntimeInvocation derives the provider payload from the durable
+// contract and invocation identity. It deliberately does not consult agent
+// output or mutable provider state.
+func buildRuntimeInvocation(snapshot statev2.WorkSnapshot, taskID contractv2.TaskID, invocation statev2.InvocationState, worktree statev2.WorktreeIdentity) (runtimecontract.Invocation, error) {
+	requestID := contractv2.RequestID(invocation.InvocationID)
+	result := runtimecontract.Invocation{
+		RequestID: requestID,
+		Role:      runtimecontract.Role(invocation.Role),
+		ProfileID: invocation.LogicalProfile,
+		Worktree:  worktree.CanonicalPath,
+		ReadOnly:  invocation.Role != string(runtimecontract.RoleBuilder),
+	}
+	if invocation.Role != string(runtimecontract.RoleBuilder) {
+		return result, nil
+	}
+	var task contractv2.Task
+	for _, candidate := range snapshot.Contract.Tasks {
+		if candidate.TaskID == taskID {
+			task = candidate
+			break
+		}
+	}
+	if task.TaskID == "" {
+		// A few lifecycle-only callers use a provider-neutral snapshot without
+		// the contract projection. Preserve that legacy path; durable v2 work
+		// snapshots always contain the task and therefore still fail closed.
+		if len(snapshot.Contract.Tasks) != 0 {
+			return runtimecontract.Invocation{}, ErrRuntimeStale
+		}
+		task.TaskID = taskID
+	}
+	packet, err := json.Marshal(runtimecontract.BuilderPacket{
+		TaskID:             task.TaskID,
+		AllowedPaths:       append([]string(nil), task.AllowedPaths...),
+		AcceptanceCriteria: append([]string(nil), task.AcceptanceCriteria...),
+		Verification:       append([]contractv2.CommandSpec(nil), task.Verification...),
+	})
+	if err != nil {
+		return runtimecontract.Invocation{}, fmt.Errorf("marshal builder packet: %w", err)
+	}
+	result.OutputSchema = runtimecontract.BuilderOutputSchema
+	result.Packet = packet
+	return result, nil
 }
 
 func (d *publicationDispatcher) validateRuntimeIdentity(snapshot statev2.WorkSnapshot, q *publicationQueue, key runtimeKey) (statev2.TaskExecutionState, *statev2.InvocationState, error) {

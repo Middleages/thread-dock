@@ -9,6 +9,7 @@ import (
 	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
+	runtimecontract "thread-dock/internal/runtime"
 	statev2 "thread-dock/internal/state/v2"
 )
 
@@ -23,7 +24,7 @@ type testRuntime struct {
 	terminateErr error
 }
 
-func (r *testRuntime) Observe(context.Context, statev2.InvocationState) (RuntimeObservation, error) {
+func (r *testRuntime) Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (RuntimeObservation, error) {
 	r.mu.Lock()
 	r.observes++
 	ended := r.ended
@@ -33,7 +34,7 @@ func (r *testRuntime) Observe(context.Context, statev2.InvocationState) (Runtime
 	}
 	return RuntimeObservation{State: RuntimeObservationActive, ProviderIdentity: r.identity}, nil
 }
-func (r *testRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity) (string, error) {
+func (r *testRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
 	r.mu.Lock()
 	r.launches++
 	identity := r.identity
@@ -74,6 +75,27 @@ func TestRuntimeReserveAloneDoesNotLaunchAndSubmitBeginsBeforeOneLaunch(t *testi
 		t.Fatalf("transitions = %#v", st.transitions)
 	}
 	_ = d.Close(context.Background())
+}
+
+func TestBuildRuntimeInvocationDerivesBuilderPacketFromContract(t *testing.T) {
+	snapshot := runtimeTestSnapshot()
+	snapshot.Contract = contractv2.WorkItemContract{Tasks: []contractv2.Task{{TaskID: "task-1", AllowedPaths: []string{"internal/**"}, AcceptanceCriteria: []string{"build"}, Verification: []contractv2.CommandSpec{{Argv: []string{"go", "test"}, CwdRepoKey: "app", TimeoutSeconds: 120}}}}}
+	invocation := *snapshot.TaskStates["task-1"].Invocation
+	worktree := *snapshot.TaskStates["task-1"].Worktree
+	got, err := buildRuntimeInvocation(snapshot, "task-1", invocation, worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RequestID != "inv-1" || got.Role != runtimecontract.RoleBuilder || got.ProfileID != "builder" || got.Worktree != "/work" || got.OutputSchema != runtimecontract.BuilderOutputSchema || got.ReadOnly {
+		t.Fatalf("invocation=%#v", got)
+	}
+	var packet runtimecontract.BuilderPacket
+	if err := json.Unmarshal(got.Packet, &packet); err != nil {
+		t.Fatal(err)
+	}
+	if packet.TaskID != "task-1" || len(packet.AllowedPaths) != 1 || len(packet.AcceptanceCriteria) != 1 || len(packet.Verification) != 1 {
+		t.Fatalf("packet=%#v", packet)
+	}
 }
 
 func TestRuntimeLaunchRequestReplayObservesWithoutRelaunch(t *testing.T) {
@@ -223,7 +245,7 @@ type barrierRuntime struct {
 	terminateOnce    sync.Once
 }
 
-func (r *barrierRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity) (string, error) {
+func (r *barrierRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
 	r.mu.Lock()
 	r.launchCalls++
 	r.mu.Unlock()
@@ -235,7 +257,7 @@ func (r *barrierRuntime) Launch(context.Context, statev2.InvocationState, statev
 	}
 	return "provider-1", nil
 }
-func (r *barrierRuntime) Observe(context.Context, statev2.InvocationState) (RuntimeObservation, error) {
+func (r *barrierRuntime) Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (RuntimeObservation, error) {
 	r.mu.Lock()
 	r.observeCalls++
 	r.mu.Unlock()
@@ -456,7 +478,7 @@ type cancelRuntime struct {
 	terminateCalls int
 }
 
-func (r *cancelRuntime) Launch(ctx context.Context, _ statev2.InvocationState, _ statev2.WorktreeIdentity) (string, error) {
+func (r *cancelRuntime) Launch(ctx context.Context, _ statev2.InvocationState, _ statev2.WorktreeIdentity, _ runtimecontract.Invocation) (string, error) {
 	if r.launchEntered != nil {
 		close(r.launchEntered)
 		<-ctx.Done()
@@ -464,7 +486,7 @@ func (r *cancelRuntime) Launch(ctx context.Context, _ statev2.InvocationState, _
 	}
 	return "provider-1", nil
 }
-func (r *cancelRuntime) Observe(ctx context.Context, _ statev2.InvocationState) (RuntimeObservation, error) {
+func (r *cancelRuntime) Observe(ctx context.Context, _ statev2.InvocationState, _ runtimecontract.Invocation) (RuntimeObservation, error) {
 	close(r.observeEntered)
 	<-ctx.Done()
 	return RuntimeObservation{}, ctx.Err()
@@ -512,10 +534,10 @@ type coalescedCancelRuntime struct {
 	terminateCalls int
 }
 
-func (r *coalescedCancelRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity) (string, error) {
+func (r *coalescedCancelRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
 	return "provider-1", nil
 }
-func (r *coalescedCancelRuntime) Observe(ctx context.Context, _ statev2.InvocationState) (RuntimeObservation, error) {
+func (r *coalescedCancelRuntime) Observe(ctx context.Context, _ statev2.InvocationState, _ runtimecontract.Invocation) (RuntimeObservation, error) {
 	close(r.observeEntered)
 	<-ctx.Done()
 	return RuntimeObservation{}, ctx.Err()

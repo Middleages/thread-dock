@@ -49,6 +49,7 @@ type Git struct {
 // bounded unified diff that a Reviewer may inspect.
 type CommitInspection struct {
 	CommitSHA    string
+	TreeSHA      string
 	Branch       string
 	ChangedFiles []string
 	Patch        string
@@ -430,7 +431,11 @@ func (g *Git) InspectCommit(ctx context.Context, worktreePath, base, branch, sha
 	if _, err := g.command(ctx, worktreePath, "merge-base", "--is-ancestor", sha, branch); err != nil {
 		return CommitInspection{}, errors.New("commit is not contained in the Builder branch")
 	}
-	names, err := g.command(ctx, worktreePath, "diff", "--name-only", base+".."+sha)
+	tree, err := g.command(ctx, worktreePath, "rev-parse", sha+"^{tree}")
+	if err != nil || !isTreeSHA(strings.TrimSpace(tree.Stdout)) {
+		return CommitInspection{}, errors.New("commit tree SHA could not be resolved")
+	}
+	names, err := g.command(ctx, worktreePath, "diff", "--name-only", "-z", base+".."+sha)
 	if err != nil {
 		return CommitInspection{}, err
 	}
@@ -441,8 +446,22 @@ func (g *Git) InspectCommit(ctx context.Context, worktreePath, base, branch, sha
 	if len(patch.Stdout) > maxReviewerPatchBytes {
 		return CommitInspection{}, errors.New("reviewer patch exceeds the size limit")
 	}
-	files := splitLines(names.Stdout)
-	return CommitInspection{CommitSHA: sha, Branch: branch, ChangedFiles: files, Patch: patch.Stdout}, nil
+	files := splitNULOrLines(names.Stdout)
+	return CommitInspection{CommitSHA: sha, TreeSHA: strings.TrimSpace(tree.Stdout), Branch: branch, ChangedFiles: files, Patch: patch.Stdout}, nil
+}
+
+func splitNULOrLines(value string) []string {
+	if strings.Contains(value, "\x00") {
+		parts := strings.Split(value, "\x00")
+		files := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if part != "" {
+				files = append(files, part)
+			}
+		}
+		return files
+	}
+	return splitLines(value)
 }
 
 // MergeCommit merges the immutable, already-inspected SHA rather than a
@@ -1265,6 +1284,8 @@ func isCommitSHA(value string) bool {
 	}
 	return true
 }
+
+func isTreeSHA(value string) bool { return isCommitSHA(value) }
 
 func splitLines(output string) []string {
 	var result []string
