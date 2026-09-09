@@ -43,7 +43,7 @@ func reduce(snapshot *WorkSnapshot) {
 	}
 	if snapshot.Control.PauseRequested {
 		for _, task := range snapshot.TaskStates {
-			if task.Status == TaskInvocationReserved {
+			if task.Status == TaskWorktreePreparing || task.Status == TaskInvocationReserved {
 				snapshot.State = StateRunning
 				snapshot.NextAction = "reconcile"
 				return
@@ -84,6 +84,10 @@ func reduce(snapshot *WorkSnapshot) {
 			continue
 		}
 		switch task.Status {
+		case TaskWorktreePreparing:
+			snapshot.State = StateRunning
+			snapshot.NextAction = "reconcile"
+			return
 		case TaskInvocationReserved:
 			snapshot.State = StateRunning
 			if snapshot.Control.PauseRequested {
@@ -201,7 +205,7 @@ func publicationAggregate(snapshot *WorkSnapshot) (pending, failed, conflict, co
 func hasActiveInvocation(snapshot *WorkSnapshot) bool {
 	for _, task := range snapshot.TaskStates {
 		switch task.Status {
-		case TaskInvocationReserved, TaskRunning, TaskTerminationPending:
+		case TaskWorktreePreparing, TaskInvocationReserved, TaskRunning, TaskTerminationPending:
 			return true
 		}
 	}
@@ -211,7 +215,7 @@ func hasActiveInvocation(snapshot *WorkSnapshot) bool {
 func hasActiveOrUnknownInvocation(snapshot *WorkSnapshot) bool {
 	for _, task := range snapshot.TaskStates {
 		switch task.Status {
-		case TaskInvocationReserved, TaskRunning, TaskTerminationPending:
+		case TaskWorktreePreparing, TaskInvocationReserved, TaskRunning, TaskTerminationPending:
 			return true
 		}
 		if task.Invocation != nil {

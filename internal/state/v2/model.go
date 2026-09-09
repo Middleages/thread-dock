@@ -23,6 +23,7 @@ type TaskStatus string
 
 const (
 	TaskPending            TaskStatus = "pending"
+	TaskWorktreePreparing  TaskStatus = "worktree_preparing"
 	TaskInvocationReserved TaskStatus = "invocation_reserved"
 	TaskRunning            TaskStatus = "running"
 	TaskTerminationPending TaskStatus = "termination_pending"
@@ -286,6 +287,11 @@ func validateTaskEvidence(task TaskExecutionState, blocker *OperatorBlocker) err
 	if task.Status == TaskNeedsOperator && blocker != nil && !validOperatorBlockerKind(blocker.Kind) {
 		return fmt.Errorf("operator blocker kind is unknown: %q", blocker.Kind)
 	}
+	if task.Status == TaskWorktreePreparing {
+		if err := validateWorktreePreparingState(task); err != nil {
+			return err
+		}
+	}
 	switch task.Status {
 	case TaskCandidateReady:
 		if task.Candidate == nil {
@@ -411,6 +417,10 @@ func validateTaskStageMatrix(task TaskExecutionState, blocker *OperatorBlocker) 
 		if inv != nil || !noEvidence {
 			return errors.New("pending task has active invocation or evidence")
 		}
+	case TaskWorktreePreparing:
+		if !noEvidence || !validPreparingInvocationShape(inv) {
+			return errors.New("worktree preparing lifecycle is incoherent")
+		}
 	case TaskInvocationReserved, TaskRunning, TaskTerminationPending:
 		if inv == nil {
 			return errors.New("active task has no invocation")
@@ -486,6 +496,28 @@ func validateTaskStageMatrix(task TaskExecutionState, blocker *OperatorBlocker) 
 				return errors.New("operator blocker is required without invocation or evidence")
 			}
 		}
+	}
+	return nil
+}
+
+func validPreparingInvocationShape(inv *InvocationState) bool {
+	return inv != nil && inv.Role == roleBuilder && inv.ReturnStage == TaskPending &&
+		!hasProviderIdentity(inv) && inv.StartedAt == nil && inv.EndedAt == nil &&
+		!inv.LaunchRequested && !inv.TerminationConfirmed && !inv.TransientFailure && inv.TerminationReason == ""
+}
+
+func validateWorktreePreparingState(task TaskExecutionState) error {
+	if task.BuilderAttempt != 1 || task.Invocation == nil || task.LogicalWork == nil || task.Worktree == nil {
+		return errors.New("worktree preparing state requires complete builder identity")
+	}
+	if task.Invocation.Role != roleBuilder || task.Invocation.ReturnStage != TaskPending || task.LogicalWork.Role != roleBuilder || task.LogicalWork.BuilderAttempt != 1 || task.LogicalWork.LogicalWorkID != task.Invocation.LogicalWorkID || task.LogicalWork.LogicalProfile == "" || task.LogicalWork.RuntimeFingerprint == "" {
+		return errors.New("worktree preparing identity is incoherent")
+	}
+	if !validPreparingInvocationShape(task.Invocation) || !worktreesEqual(task.LogicalWork.Worktree, task.Worktree) {
+		return errors.New("worktree preparing invocation is not pre-side-effect")
+	}
+	if err := validateWorktreeIdentity(*task.Worktree); err != nil {
+		return fmt.Errorf("worktree preparing worktree: %w", err)
 	}
 	return nil
 }
@@ -651,7 +683,7 @@ func validPublicationReceipt(receipt PublicationReceipt) bool {
 
 func validTaskStatus(status TaskStatus) bool {
 	switch status {
-	case TaskPending, TaskInvocationReserved, TaskRunning, TaskTerminationPending, TaskTerminated, TaskCandidateReady, TaskGateFailed, TaskGatePassed, TaskReviewBlocked, TaskAccepted, TaskIntegrated, TaskNeedsOperator:
+	case TaskPending, TaskWorktreePreparing, TaskInvocationReserved, TaskRunning, TaskTerminationPending, TaskTerminated, TaskCandidateReady, TaskGateFailed, TaskGatePassed, TaskReviewBlocked, TaskAccepted, TaskIntegrated, TaskNeedsOperator:
 		return true
 	default:
 		return false

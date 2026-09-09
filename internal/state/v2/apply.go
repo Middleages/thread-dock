@@ -94,7 +94,8 @@ func validateApplyRequest(request TransitionRequest) error {
 		switch request.Task.Action {
 		case TaskReserveInvocation, TaskBeginLaunch, TaskMarkRunning, TaskRequestTermination,
 			TaskConfirmTermination, TaskReconcileNotStarted, TaskRecordCandidate, TaskRecordGate,
-			TaskRecordReview, TaskRecordIntegration, TaskNeedsOperatorAction:
+			TaskRecordReview, TaskRecordIntegration, TaskNeedsOperatorAction,
+			TaskBeginWorktreePreparation, TaskReconcileWorktreePreparation:
 		default:
 			return invalidTransition("unsupported task action %q", request.Task.Action)
 		}
