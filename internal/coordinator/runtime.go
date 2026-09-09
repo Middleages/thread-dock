@@ -184,6 +184,16 @@ func (d *publicationDispatcher) handleRuntimeCommand(q *publicationQueue, comman
 	case statev2.TaskTerminationPending:
 		kind = runtimeTerminate
 	case statev2.TaskTerminated:
+		if invocation.Role == string(runtimecontract.RoleReviewer) {
+			if task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Review != nil || invocation.InvocationID == "" || !invocation.TerminationConfirmed || invocation.EndedAt == nil || d.inspector == nil {
+				command.result <- CommandResult{Snapshot: snapshot}
+				return
+			}
+			// A confirmed Reviewer may have been persisted immediately before
+			// ingesting its artifact. Re-observe only this exact invocation.
+			kind = runtimeObserve
+			break
+		}
 		if task.Candidate != nil || invocation.InvocationID == "" || d.inspector == nil {
 			command.result <- CommandResult{Snapshot: snapshot}
 			return

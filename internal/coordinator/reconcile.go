@@ -329,6 +329,11 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 	if task.Worktree == nil {
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "runtime worktree identity is missing")
 	}
+	if task.Status == statev2.TaskInvocationReserved && !invocation.LaunchRequested && invocation.Role == "reviewer" {
+		// A current Reviewer reservation is replayable work, not proof that a
+		// prior owner abandoned it. The queue will authorize its launch.
+		return snapshot, nil
+	}
 	runtimeInvocation, invocationBuildErr := d.buildRuntimeInvocation(ctx, snapshot, taskID, invocation, *task.Worktree)
 	if invocationBuildErr != nil {
 		return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, invocationBuildErr.Error())

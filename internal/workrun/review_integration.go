@@ -84,7 +84,7 @@ func (s *ReviewIntegrationService) Advance(ctx context.Context, supplied statev2
 	if task.Status == statev2.TaskIntegrated {
 		return current, nil
 	}
-	if task.Status == statev2.TaskGatePassed && task.Review == nil {
+	if task.Review == nil && task.Gate != nil && task.Gate.Passed && (task.Status == statev2.TaskGatePassed || task.Status == statev2.TaskInvocationReserved || task.Status == statev2.TaskRunning || task.Status == statev2.TaskTerminationPending || task.Status == statev2.TaskTerminated) {
 		current, err = s.launchReviewer(ctx, current, taskID, requestID)
 		if err != nil {
 			return current, err
@@ -130,11 +130,12 @@ func (s *ReviewIntegrationService) launchReviewer(ctx context.Context, snapshot 
 	if task.Candidate == nil || task.Gate == nil || !task.Gate.Passed || task.Worktree == nil {
 		return snapshot, errors.New("gate-passed candidate evidence is required")
 	}
-	if task.Invocation != nil && task.Invocation.Role != "reviewer" {
-		return snapshot, errors.New("reviewer invocation identity is invalid")
+	if _, activateErr := s.runtime.Activate(ctx, snapshot.WorkID); activateErr != nil {
+		return snapshot, activateErr
 	}
+	activated = true
 	invocationID, logicalWorkID := reviewIDs(snapshot.WorkID, taskID, callerRequestID)
-	if task.Invocation == nil {
+	if task.Invocation == nil || task.Invocation.Role != "reviewer" {
 		contractTask, found := contractTaskByID(snapshot.Contract, taskID)
 		if !found {
 			return snapshot, errors.New("task is not in contract")
@@ -157,10 +158,6 @@ func (s *ReviewIntegrationService) launchReviewer(ctx context.Context, snapshot 
 	if task := snapshot.TaskStates[taskID]; task.Invocation == nil || task.Invocation.Role != "reviewer" {
 		return snapshot, errors.New("reviewer invocation was not reserved")
 	} else {
-		if _, activateErr := s.runtime.Activate(ctx, snapshot.WorkID); activateErr != nil {
-			return snapshot, activateErr
-		}
-		activated = true
 		resultChannel := s.runtime.SubmitRuntime(ctx, snapshot.WorkID, taskID, task.Invocation.InvocationID)
 		if resultChannel == nil {
 			return snapshot, errors.New("runtime coordinator returned no result")
