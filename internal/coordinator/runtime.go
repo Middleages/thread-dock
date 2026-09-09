@@ -319,7 +319,7 @@ func (d *publicationDispatcher) handleRuntimeEvent(q *publicationQueue, event ru
 	result := CommandResult{Snapshot: snapshot, Err: event.result.Err}
 	if event.result.Err == nil {
 		result = d.settleRuntimeEvent(q, snapshot, event)
-	} else if event.operation == runtimeLaunch && event.launchStarted {
+	} else if event.operation == runtimeLaunch && event.launchStarted && !errors.Is(event.result.Err, context.Canceled) && !errors.Is(event.result.Err, context.DeadlineExceeded) {
 		// A provider call may have created an unobservable runtime even when it
 		// returns an error. Settle only the still-current invocation, and keep
 		// the bounded caller error while recording a static durable diagnostic.

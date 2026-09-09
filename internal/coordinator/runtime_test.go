@@ -644,6 +644,10 @@ func TestRuntimeLaunchCancellationAfterBeginNeedsOperator(t *testing.T) {
 		if got.Err == nil || got.Snapshot.TaskStates["task-1"].Status != statev2.TaskNeedsOperator {
 			t.Fatalf("launch cancellation result=%#v", got)
 		}
+		blocker := got.Snapshot.Control.Blocker
+		if blocker == nil || blocker.Diagnostic != "runtime launch was canceled after durable launch request" || strings.Contains(blocker.Diagnostic, "provider") {
+			t.Fatalf("launch cancellation blocker=%#v, want bounded cancellation diagnostic", blocker)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("launch cancellation result stranded")
 	}
