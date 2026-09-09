@@ -7,11 +7,13 @@ import (
 	"errors"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
+	"thread-dock/internal/coordinator"
 	"thread-dock/internal/monitor"
 	"thread-dock/internal/registry"
 	statev2 "thread-dock/internal/state/v2"
@@ -35,6 +37,56 @@ type fakeWorkflowService struct {
 	registerRequest  contractv2.RequestID
 	planRevision     contractv2.Revision
 	planRequest      contractv2.RequestID
+}
+
+type fakeWorkflowControlService struct {
+	*fakeWorkflowService
+	paused         statev2.WorkSnapshot
+	resumed        statev2.WorkSnapshot
+	reconcile      coordinator.ReconcileResult
+	pauseErr       error
+	resumeErr      error
+	reconcileErr   error
+	pauseID        contractv2.WorkID
+	pauseRevision  contractv2.Revision
+	pauseRequest   contractv2.RequestID
+	resumeID       contractv2.WorkID
+	resumeRevision contractv2.Revision
+	resumeRequest  contractv2.RequestID
+	reconcileID    contractv2.WorkID
+	sequence       []string
+}
+
+func (f *fakeWorkflowControlService) PauseWork(_ context.Context, id contractv2.WorkID, revision contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {
+	f.sequence = append(f.sequence, "pause")
+	f.pauseID, f.pauseRevision, f.pauseRequest = id, revision, request
+	if f.pauseErr != nil {
+		return statev2.WorkSnapshot{}, f.pauseErr
+	}
+	return f.paused, nil
+}
+
+func (f *fakeWorkflowControlService) ResumeWork(_ context.Context, id contractv2.WorkID, revision contractv2.Revision, request contractv2.RequestID) (statev2.WorkSnapshot, error) {
+	f.sequence = append(f.sequence, "resume")
+	f.resumeID, f.resumeRevision, f.resumeRequest = id, revision, request
+	if f.resumeErr != nil {
+		return statev2.WorkSnapshot{}, f.resumeErr
+	}
+	return f.resumed, nil
+}
+
+func (f *fakeWorkflowControlService) ReconcileWork(_ context.Context, id contractv2.WorkID) (coordinator.ReconcileResult, error) {
+	f.sequence = append(f.sequence, "reconcile")
+	f.reconcileID = id
+	if f.reconcileErr != nil {
+		return coordinator.ReconcileResult{}, f.reconcileErr
+	}
+	return f.reconcile, nil
+}
+
+func (f *fakeWorkflowControlService) Status(ctx context.Context, id contractv2.WorkID) (statev2.WorkSnapshot, error) {
+	f.sequence = append(f.sequence, "status")
+	return f.fakeWorkflowService.Status(ctx, id)
 }
 
 func (f *fakeWorkflowService) RegisterProject(_ context.Context, p registry.Project, revision contractv2.Revision, request contractv2.RequestID) (registry.Project, error) {
@@ -107,9 +159,107 @@ func workflowSnapshot() statev2.WorkSnapshot {
 
 func runWorkflow(t *testing.T, service *fakeWorkflowService, args []string) (int, string, string) {
 	t.Helper()
+	return runWorkflowService(t, service, args)
+}
+
+func runWorkflowService(t *testing.T, service WorkflowService, args []string) (int, string, string) {
+	t.Helper()
 	var out, errOut bytes.Buffer
 	code := RunWithDependencies(context.Background(), args, &out, &errOut, Dependencies{Workflow: service})
 	return code, out.String(), errOut.String()
+}
+
+func TestWorkflowControlCommandsRouteAndSerializeArgs(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		want  string
+		check func(*fakeWorkflowControlService)
+	}{
+		{name: "pause", args: []string{"work", "pause", "work-1", "--expected-revision", "7", "--request-id", "request-pause"}, want: "pause", check: func(f *fakeWorkflowControlService) {
+			if f.pauseID != "work-1" || f.pauseRevision != 7 || f.pauseRequest != "request-pause" {
+				t.Fatalf("pause args=(%q,%d,%q)", f.pauseID, f.pauseRevision, f.pauseRequest)
+			}
+		}},
+		{name: "resume", args: []string{"work", "resume", "work-1", "--expected-revision", "8", "--request-id", "request-resume"}, want: "resume", check: func(f *fakeWorkflowControlService) {
+			if f.resumeID != "work-1" || f.resumeRevision != 8 || f.resumeRequest != "request-resume" {
+				t.Fatalf("resume args=(%q,%d,%q)", f.resumeID, f.resumeRevision, f.resumeRequest)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := &fakeWorkflowControlService{fakeWorkflowService: &fakeWorkflowService{}}
+			code, out, errOut := runWorkflowService(t, service, tc.args)
+			if code != 0 || errOut != "" || !strings.HasSuffix(out, "\n") || strings.Count(out, "\n") != 1 {
+				t.Fatalf("code=%d stdout=%q stderr=%q", code, out, errOut)
+			}
+			if len(service.sequence) != 1 || service.sequence[0] != tc.want {
+				t.Fatalf("sequence=%v want [%s]", service.sequence, tc.want)
+			}
+			checkJSONKeys("schemaVersion", "workId", "revision", "state")(t, out)
+			tc.check(service)
+		})
+	}
+}
+
+func TestWorkflowReconcileSettlesBeforeCanonicalStatus(t *testing.T) {
+	service := &fakeWorkflowControlService{
+		fakeWorkflowService: &fakeWorkflowService{status: workflowSnapshot()},
+		reconcile:           coordinator.ReconcileResult{WorkID: "work-1", State: statev2.StateRunning, NextAction: "continue"},
+	}
+	code, out, errOut := runWorkflowService(t, service, []string{"work", "reconcile", "work-1", "--json"})
+	if code != 0 || errOut != "" {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+	if !reflect.DeepEqual(service.sequence, []string{"reconcile", "status"}) {
+		t.Fatalf("sequence=%v", service.sequence)
+	}
+	if service.reconcileID != "work-1" || len(service.fakeWorkflowService.calls) != 1 || service.fakeWorkflowService.calls[0] != "status:work-1" {
+		t.Fatalf("reconcileID=%q calls=%v", service.reconcileID, service.fakeWorkflowService.calls)
+	}
+	var got statev2.WorkSnapshot
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, service.status) {
+		t.Fatalf("snapshot=%#v want=%#v", got, service.status)
+	}
+}
+
+func TestWorkflowControlMissingCapabilityAndErrorsAreBounded(t *testing.T) {
+	tests := []struct {
+		name    string
+		service WorkflowService
+		args    []string
+	}{
+		{name: "missing pause capability", service: &fakeWorkflowService{}, args: []string{"work", "pause", "work-1", "--expected-revision", "1", "--request-id", "request-1"}},
+		{name: "missing resume capability", service: &fakeWorkflowService{}, args: []string{"work", "resume", "work-1", "--expected-revision", "1", "--request-id", "request-1"}},
+		{name: "missing reconcile capability", service: &fakeWorkflowService{}, args: []string{"work", "reconcile", "work-1", "--json"}},
+		{name: "pause error", service: &fakeWorkflowControlService{fakeWorkflowService: &fakeWorkflowService{}, pauseErr: errors.New("provider token secret")}, args: []string{"work", "pause", "work-1", "--expected-revision", "1", "--request-id", "request-1"}},
+		{name: "reconcile error", service: &fakeWorkflowControlService{fakeWorkflowService: &fakeWorkflowService{}, reconcileErr: errors.New("filesystem credential secret")}, args: []string{"work", "reconcile", "work-1", "--json"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, out, errOut := runWorkflowService(t, tt.service, tt.args)
+			if code != 1 || out != "" || errOut == "" || strings.Contains(errOut, "provider") || strings.Contains(errOut, "token") || strings.Contains(errOut, "filesystem") || strings.Contains(errOut, "credential") {
+				t.Fatalf("code=%d stdout=%q stderr=%q", code, out, errOut)
+			}
+		})
+	}
+}
+
+func TestWorkflowUsageIncludesControlCommands(t *testing.T) {
+	var errOut bytes.Buffer
+	printUsage(&errOut)
+	for _, syntax := range []string{
+		"work pause WORK --expected-revision N --request-id ID",
+		"work resume WORK --expected-revision N --request-id ID",
+		"work reconcile WORK --json",
+	} {
+		if !strings.Contains(errOut.String(), syntax) {
+			t.Fatalf("usage=%q missing %q", errOut.String(), syntax)
+		}
+	}
 }
 
 func TestWorkflowCommandsRouteAndSerializeOneJSONDocument(t *testing.T) {
@@ -215,6 +365,11 @@ func TestWorkflowMalformedCommandsStayDependencyFree(t *testing.T) {
 		{"work", "plan", "contract.json"}, {"work", "plan", "contract.json", "--expected-revision", "1", "--request-id", "request-1"},
 		{"work", "approve", "work-1", "--expected-revision", "0", "--request-id", "request-1"},
 		{"work", "status", "work-1"},
+		{"work", "pause", "work-1"},
+		{"work", "pause", "work-1", "--expected-revision", "0", "--request-id", "request-1"},
+		{"work", "resume", "work-1", "--expected-revision", "1", "--request-id", ""},
+		{"work", "reconcile", "work-1"},
+		{"work", "reconcile", "work-1", "--json", "extra"},
 	} {
 		service := &fakeWorkflowService{}
 		code, out, errOut := runWorkflow(t, service, args)
@@ -239,6 +394,7 @@ func TestNeedsWorkflowDependenciesOnlyForExactShapes(t *testing.T) {
 	valid := [][]string{
 		{"project", "register", "project.json", "--expected-revision", "0", "--request-id", "request-1"}, {"project", "list", "--json"}, {"project", "status", "--all", "--json"},
 		{"work", "plan", "contract.json", "--expected-revision", "0", "--request-id", "request-1"}, {"work", "approve", "work-1", "--expected-revision", "1", "--request-id", "request-1"}, {"work", "status", "work-1", "--json"},
+		{"work", "pause", "work-1", "--expected-revision", "1", "--request-id", "request-1"}, {"work", "resume", "work-1", "--expected-revision", "1", "--request-id", "request-1"}, {"work", "reconcile", "work-1", "--json"},
 	}
 	for _, args := range valid {
 		if !NeedsWorkflowDependencies(args) {

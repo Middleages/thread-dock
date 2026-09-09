@@ -12,11 +12,24 @@ import (
 	"time"
 
 	contractv2 "thread-dock/internal/contract/v2"
+	"thread-dock/internal/coordinator"
 	"thread-dock/internal/registry"
 	statev2 "thread-dock/internal/state/v2"
 )
 
 var errWorkflowServiceMissing = errors.New("workflow service is not configured")
+
+type workflowPauser interface {
+	PauseWork(context.Context, contractv2.WorkID, contractv2.Revision, contractv2.RequestID) (statev2.WorkSnapshot, error)
+}
+
+type workflowResumer interface {
+	ResumeWork(context.Context, contractv2.WorkID, contractv2.Revision, contractv2.RequestID) (statev2.WorkSnapshot, error)
+}
+
+type workflowReconcilerService interface {
+	ReconcileWork(context.Context, contractv2.WorkID) (coordinator.ReconcileResult, error)
+}
 
 func runProjectWork(ctx context.Context, args []string, stdout, stderr io.Writer, service WorkflowService) int {
 	if ctx == nil {
@@ -60,6 +73,39 @@ func runProjectWork(ctx context.Context, args []string, stdout, stderr io.Writer
 			return 2
 		}
 		value, err = service.ApproveWork(ctx, id, revision, request)
+	case args[0] == "work" && (args[1] == "pause" || args[1] == "resume"):
+		id, revision, request, ok := parseWorkflowApproveArgs(args[2:])
+		if !ok {
+			printUsage(stderr)
+			return 2
+		}
+		if args[1] == "pause" {
+			control, ok := service.(workflowPauser)
+			if !ok {
+				return reportWorkflowError(stderr, errors.New("workflow pause is not configured"))
+			}
+			value, err = control.PauseWork(ctx, id, revision, request)
+		} else {
+			control, ok := service.(workflowResumer)
+			if !ok {
+				return reportWorkflowError(stderr, errors.New("workflow resume is not configured"))
+			}
+			value, err = control.ResumeWork(ctx, id, revision, request)
+		}
+	case args[0] == "work" && args[1] == "reconcile":
+		id, ok := parseWorkflowReconcileArgs(args[2:])
+		if !ok {
+			printUsage(stderr)
+			return 2
+		}
+		reconciler, ok := service.(workflowReconcilerService)
+		if !ok {
+			return reportWorkflowError(stderr, errors.New("workflow reconciler is not configured"))
+		}
+		if _, err = reconciler.ReconcileWork(ctx, id); err != nil {
+			return reportWorkflowError(stderr, err)
+		}
+		value, err = service.Status(ctx, id)
 	case args[0] == "work" && args[1] == "status":
 		value, err = service.Status(ctx, contractv2.WorkID(args[2]))
 	}
@@ -145,6 +191,13 @@ func parseWorkflowApproveArgs(args []string) (contractv2.WorkID, contractv2.Revi
 		return "", 0, "", false
 	}
 	return contractv2.WorkID(args[0]), contractv2.Revision(revision), contractv2.RequestID(args[4]), true
+}
+
+func parseWorkflowReconcileArgs(args []string) (contractv2.WorkID, bool) {
+	if len(args) != 2 || !nonFlagArg(args[0]) || args[1] != "--json" {
+		return "", false
+	}
+	return contractv2.WorkID(args[0]), true
 }
 
 func writeWorkflowJSON(stdout io.Writer, value any) error {
