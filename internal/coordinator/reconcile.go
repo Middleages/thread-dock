@@ -313,7 +313,10 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 	}
 	// An invocation retained on a settled evidence stage is historical
 	// provenance, not an outstanding runtime operation.
-	if task.Status != statev2.TaskInvocationReserved && task.Status != statev2.TaskRunning && task.Status != statev2.TaskTerminationPending {
+	if task.Status != statev2.TaskInvocationReserved && task.Status != statev2.TaskRunning && task.Status != statev2.TaskTerminationPending && task.Status != statev2.TaskTerminated {
+		return snapshot, nil
+	}
+	if task.Status == statev2.TaskTerminated && (task.Candidate != nil || c.Inspector == nil || task.Invocation.Role != "builder" || !task.Invocation.TerminationConfirmed || task.Invocation.EndedAt == nil) {
 		return snapshot, nil
 	}
 	key := runtimeKey{taskID: taskID, invocationID: task.Invocation.InvocationID}
@@ -357,6 +360,9 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 	}
 	switch observation.State {
 	case RuntimeObservationActive:
+		if task.Status == statev2.TaskTerminated {
+			return snapshot, nil
+		}
 		if strings.TrimSpace(observation.ProviderIdentity) == "" || (invocation.ProviderIdentity != "" && invocation.ProviderIdentity != observation.ProviderIdentity) {
 			return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "runtime active identity does not match persisted identity")
 		}
@@ -376,6 +382,16 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 		}
 		return snapshot, nil
 	case RuntimeObservationEnded:
+		if task.Status == statev2.TaskTerminated {
+			if strings.TrimSpace(observation.ProviderIdentity) == "" || observation.ProviderIdentity != invocation.ProviderIdentity {
+				return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "runtime ended identity does not match persisted identity")
+			}
+			if observation.Artifact == nil {
+				return snapshot, nil
+			}
+			result, ingestErr := d.ingestBuilderArtifact(ctx, snapshot, taskID, observation.Artifact)
+			return result.Snapshot, ingestErr
+		}
 		if strings.TrimSpace(observation.ProviderIdentity) == "" || (invocation.ProviderIdentity != "" && invocation.ProviderIdentity != observation.ProviderIdentity) {
 			return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "runtime ended identity does not match persisted identity")
 		}

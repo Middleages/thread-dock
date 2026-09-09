@@ -31,25 +31,39 @@ func (d *publicationDispatcher) ingestBuilderArtifact(ctx context.Context, snaps
 		// must not turn a newer invocation into a false current success.
 		return CommandResult{Snapshot: snapshot, Err: errBuilderEvidenceMismatch}, errBuilderEvidenceMismatch
 	}
-	if task.Status == statev2.TaskCandidateReady && task.Candidate != nil {
-		return CommandResult{Snapshot: snapshot}, nil
+	if task.Status != statev2.TaskTerminated && task.Status != statev2.TaskCandidateReady {
+		return d.blockBuilderArtifact(ctx, snapshot, task, invocation, errBuilderEvidenceMismatch)
 	}
-	if task.Status != statev2.TaskTerminated || invocation.Role != "builder" || !invocation.TerminationConfirmed || invocation.EndedAt == nil || task.Worktree == nil {
+	if invocation.Role != "builder" || !invocation.TerminationConfirmed || invocation.EndedAt == nil || task.Worktree == nil {
 		return d.blockBuilderArtifact(ctx, snapshot, task, invocation, errBuilderEvidenceMismatch)
 	}
 	runtimeInvocation, buildErr := buildRuntimeInvocation(snapshot, taskID, *invocation, *task.Worktree)
 	if buildErr != nil {
 		return d.blockBuilderArtifact(ctx, snapshot, task, invocation, buildErr)
 	}
-	if err := runtimecontract.ValidateEnvelope(runtimeInvocation, *artifact); err != nil || artifact.Status != "success" {
-		if err == nil {
-			err = fmt.Errorf("builder artifact status is %q", artifact.Status)
+	envelopeErr := runtimecontract.ValidateEnvelope(runtimeInvocation, *artifact)
+	if envelopeErr != nil || artifact.Status != "success" {
+		if envelopeErr == nil {
+			envelopeErr = errors.New("builder artifact status is not success")
 		}
-		return d.blockBuilderArtifact(ctx, snapshot, task, invocation, fmt.Errorf("%w: %v", errMalformedBuilderArtifact, err))
+		cause := fmt.Errorf("%w: %v", errMalformedBuilderArtifact, envelopeErr)
+		if task.Status == statev2.TaskCandidateReady {
+			return CommandResult{Snapshot: snapshot, Err: errMalformedBuilderArtifact}, errMalformedBuilderArtifact
+		}
+		return d.blockBuilderArtifact(ctx, snapshot, task, invocation, cause)
 	}
 	result, err := runtimecontract.DecodeBuilderResult(artifact.Result)
 	if err != nil {
+		if task.Status == statev2.TaskCandidateReady {
+			return CommandResult{Snapshot: snapshot, Err: errMalformedBuilderArtifact}, errMalformedBuilderArtifact
+		}
 		return d.blockBuilderArtifact(ctx, snapshot, task, invocation, fmt.Errorf("%w: %v", errMalformedBuilderArtifact, err))
+	}
+	if task.Status == statev2.TaskCandidateReady && task.Candidate != nil {
+		if result.CommitSHA != task.Candidate.CandidateSHA {
+			return CommandResult{Snapshot: snapshot, Err: errBuilderEvidenceMismatch}, errBuilderEvidenceMismatch
+		}
+		return CommandResult{Snapshot: snapshot}, nil
 	}
 	if snapshot.Control.Blocker != nil || snapshot.Control.PauseRequested || strings.TrimSpace(snapshot.Control.ApprovedContractHash) == "" || snapshot.Control.ApprovedContractHash != snapshot.ContractHash || strings.TrimSpace(snapshot.Control.ApprovalRef) == "" {
 		return d.blockBuilderArtifact(ctx, snapshot, task, invocation, fmt.Errorf("%w: work approval or execution policy is not current", errBuilderEvidenceMismatch))
@@ -106,16 +120,19 @@ func contractTask(contract contractv2.WorkItemContract, taskID contractv2.TaskID
 }
 
 func (d *publicationDispatcher) blockBuilderArtifact(ctx context.Context, snapshot statev2.WorkSnapshot, task statev2.TaskExecutionState, invocation *statev2.InvocationState, cause error) (CommandResult, error) {
+	if cause == nil {
+		cause = errBuilderEvidenceMismatch
+	}
 	if invocation == nil {
 		return CommandResult{Snapshot: snapshot, Err: cause}, cause
 	}
-	diagnostic := cause.Error()
-	if len([]byte(diagnostic)) > statev2.MaxDiagnosticBytes {
-		diagnostic = string([]byte(diagnostic)[:statev2.MaxDiagnosticBytes])
-	}
 	kind := statev2.BlockerKindEvidenceMismatch
+	diagnostic := "builder evidence did not match the current invocation"
+	safeErr := errBuilderEvidenceMismatch
 	if errors.Is(cause, errMalformedBuilderArtifact) {
 		kind = statev2.BlockerKindMalformedArtifact
+		diagnostic = "builder artifact is malformed"
+		safeErr = errMalformedBuilderArtifact
 	}
 	transition := runtimeTransitionAt(task, invocation, statev2.TaskNeedsOperatorAction, diagnostic, nil)
 	transition.Blocker = &statev2.OperatorBlocker{Kind: kind, OperatorRef: string(d.ownerID), TaskID: task.TaskID, InvocationID: invocation.InvocationID, Diagnostic: diagnostic}
@@ -127,7 +144,7 @@ func (d *publicationDispatcher) blockBuilderArtifact(ctx context.Context, snapsh
 	if err != nil {
 		return CommandResult{Snapshot: snapshot, Err: err}, err
 	}
-	return CommandResult{Snapshot: updated, Err: cause}, cause
+	return CommandResult{Snapshot: updated, Err: safeErr}, safeErr
 }
 
 // Keep the worktree package in this file's dependency graph as part of the

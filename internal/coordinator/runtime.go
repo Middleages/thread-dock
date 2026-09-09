@@ -183,8 +183,18 @@ func (d *publicationDispatcher) handleRuntimeCommand(q *publicationQueue, comman
 	case statev2.TaskTerminationPending:
 		kind = runtimeTerminate
 	case statev2.TaskTerminated:
-		command.result <- CommandResult{Snapshot: snapshot}
-		return
+		if task.Candidate != nil || invocation.InvocationID == "" || d.inspector == nil {
+			command.result <- CommandResult{Snapshot: snapshot}
+			return
+		}
+		// A confirmed Builder may have been persisted immediately before the
+		// process crashed while ingesting its artifact. Re-observe only that
+		// narrow case; never relaunch or terminate it again.
+		if invocation.Role != "builder" || !invocation.TerminationConfirmed || invocation.EndedAt == nil {
+			command.result <- CommandResult{Snapshot: snapshot}
+			return
+		}
+		kind = runtimeObserve
 	case statev2.TaskNeedsOperator:
 		command.result <- CommandResult{Snapshot: snapshot, Err: ErrRuntimeStale}
 		return
@@ -343,7 +353,20 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 		return CommandResult{Snapshot: snapshot, Err: err}
 	}
 	if task.Status == statev2.TaskTerminated && invocation.TerminationConfirmed && invocation.EndedAt != nil {
-		return CommandResult{Snapshot: snapshot}
+		if invocation.Role != "builder" || task.Candidate != nil || event.operation != runtimeObserve {
+			return CommandResult{Snapshot: snapshot}
+		}
+		if event.observation.State != RuntimeObservationEnded {
+			return CommandResult{Snapshot: snapshot}
+		}
+		if strings.TrimSpace(event.observation.ProviderIdentity) == "" || event.observation.ProviderIdentity != invocation.ProviderIdentity {
+			return d.runtimeUnknown(q, snapshot, event.key, "runtime ended identity does not match persisted identity")
+		}
+		if event.observation.Artifact == nil {
+			return CommandResult{Snapshot: snapshot}
+		}
+		result, _ := d.ingestBuilderArtifact(q.ctx, snapshot, event.key.taskID, event.observation.Artifact)
+		return result
 	}
 	endedAt, endedAtErr := runtimeEndedAt(event.observation.EndedAt)
 	if endedAtErr != nil {
