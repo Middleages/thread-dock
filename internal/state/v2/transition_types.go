@@ -221,38 +221,48 @@ type ResolutionEvidence struct {
 type TaskAction string
 
 const (
-	TaskReserveInvocation   TaskAction = "reserve_invocation"
-	TaskBeginLaunch         TaskAction = "begin_launch"
-	TaskMarkRunning         TaskAction = "mark_running"
-	TaskRequestTermination  TaskAction = "request_termination"
-	TaskConfirmTermination  TaskAction = "confirm_termination"
-	TaskReconcileNotStarted TaskAction = "reconcile_not_started"
-	TaskRecordCandidate     TaskAction = "record_candidate"
-	TaskRecordGate          TaskAction = "record_gate"
-	TaskRecordReview        TaskAction = "record_review"
-	TaskRecordIntegration   TaskAction = "record_integration"
-	TaskNeedsOperatorAction TaskAction = "needs_operator"
+	TaskReserveInvocation            TaskAction = "reserve_invocation"
+	TaskBeginWorktreePreparation     TaskAction = "begin_worktree_preparation"
+	TaskReconcileWorktreePreparation TaskAction = "reconcile_worktree_preparation"
+	TaskBeginLaunch                  TaskAction = "begin_launch"
+	TaskMarkRunning                  TaskAction = "mark_running"
+	TaskRequestTermination           TaskAction = "request_termination"
+	TaskConfirmTermination           TaskAction = "confirm_termination"
+	TaskReconcileNotStarted          TaskAction = "reconcile_not_started"
+	TaskRecordCandidate              TaskAction = "record_candidate"
+	TaskRecordGate                   TaskAction = "record_gate"
+	TaskRecordReview                 TaskAction = "record_review"
+	TaskRecordIntegration            TaskAction = "record_integration"
+	TaskNeedsOperatorAction          TaskAction = "needs_operator"
 )
 
 type TaskTransition struct {
-	TaskID         contractv2.TaskID    `json:"taskId"`
-	Action         TaskAction           `json:"action"`
-	InvocationID   InvocationID         `json:"invocationId,omitempty"`
-	LogicalWorkID  LogicalWorkID        `json:"logicalWorkId,omitempty"`
-	Role           string               `json:"role,omitempty"`
-	ReturnStage    TaskStatus           `json:"returnStage,omitempty"`
-	BuilderAttempt uint32               `json:"builderAttempt,omitempty"`
-	At             time.Time            `json:"at"`
-	Worktree       *WorktreeIdentity    `json:"worktree,omitempty"`
-	Invocation     *InvocationState     `json:"invocation,omitempty"`
-	Candidate      *CandidateEvidence   `json:"candidate,omitempty"`
-	Gate           *GateEvidence        `json:"gate,omitempty"`
-	Review         *ReviewEvidence      `json:"review,omitempty"`
-	Integration    *IntegrationEvidence `json:"integration,omitempty"`
-	Blocker        *OperatorBlocker     `json:"blocker,omitempty"`
-	Reason         string               `json:"reason,omitempty"`
-	Resolution     *ResolutionEvidence  `json:"resolution,omitempty"`
-	Transient      bool                 `json:"transient"`
+	TaskID         contractv2.TaskID            `json:"taskId"`
+	Action         TaskAction                   `json:"action"`
+	InvocationID   InvocationID                 `json:"invocationId,omitempty"`
+	LogicalWorkID  LogicalWorkID                `json:"logicalWorkId,omitempty"`
+	Role           string                       `json:"role,omitempty"`
+	ReturnStage    TaskStatus                   `json:"returnStage,omitempty"`
+	BuilderAttempt uint32                       `json:"builderAttempt,omitempty"`
+	At             time.Time                    `json:"at"`
+	Worktree       *WorktreeIdentity            `json:"worktree,omitempty"`
+	Invocation     *InvocationState             `json:"invocation,omitempty"`
+	Candidate      *CandidateEvidence           `json:"candidate,omitempty"`
+	Gate           *GateEvidence                `json:"gate,omitempty"`
+	Review         *ReviewEvidence              `json:"review,omitempty"`
+	Integration    *IntegrationEvidence         `json:"integration,omitempty"`
+	Blocker        *OperatorBlocker             `json:"blocker,omitempty"`
+	Reason         string                       `json:"reason,omitempty"`
+	Resolution     *ResolutionEvidence          `json:"resolution,omitempty"`
+	Preparation    *WorktreePreparationEvidence `json:"preparation,omitempty"`
+	Transient      bool                         `json:"transient"`
+}
+
+type WorktreePreparationEvidence struct {
+	OperationTerminated bool   `json:"operationTerminated"`
+	WorktreeExists      bool   `json:"worktreeExists"`
+	IdentityMatches     bool   `json:"identityMatches"`
+	Diagnostic          string `json:"diagnostic,omitempty"`
 }
 
 type PublicationAction string

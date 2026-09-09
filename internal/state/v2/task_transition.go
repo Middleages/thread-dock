@@ -39,6 +39,12 @@ func applyTaskTransition(snapshot *WorkSnapshot, transition TaskTransition, requ
 		return invalidTransition("work has an operator blocker")
 	}
 	switch transition.Action {
+	case TaskBeginWorktreePreparation:
+		return beginWorktreePreparation(snapshot, &task, transition, requestID)
+	case TaskReconcileWorktreePreparation:
+		if err := reconcileWorktreePreparation(&task, transition); err != nil {
+			return err
+		}
 	case TaskReserveInvocation:
 		return reserveInvocation(snapshot, &task, transition, requestID)
 	case TaskRecordCandidate:
@@ -88,6 +94,97 @@ func applyTaskTransition(snapshot *WorkSnapshot, transition TaskTransition, requ
 	snapshot.TaskStates[task.TaskID] = task
 	reduce(snapshot)
 	return nil
+}
+
+func beginWorktreePreparation(snapshot *WorkSnapshot, task *TaskExecutionState, transition TaskTransition, requestID contractv2.RequestID) error {
+	if snapshot.State == StateAwaitingApproval || snapshot.State == StateDraft || snapshot.State == StatePaused || snapshot.State == StateNeedsOperator || snapshot.State == StateCompleted || snapshot.Control.PauseRequested {
+		return invalidTransition("work cannot prepare a worktree in state %q", snapshot.State)
+	}
+	if transition.Role != roleBuilder || transition.ReturnStage != TaskPending || transition.BuilderAttempt != 1 || transition.Transient || transition.Preparation != nil || transition.Candidate != nil || transition.Gate != nil || transition.Review != nil || transition.Integration != nil || transition.Blocker != nil || transition.Resolution != nil || transition.Reason != "" {
+		return invalidTransition("invalid initial worktree preparation")
+	}
+	if transition.InvocationID == "" || transition.LogicalWorkID == "" || transition.Invocation == nil || transition.Worktree == nil || strings.TrimSpace(string(transition.InvocationID)) == "" || strings.TrimSpace(string(transition.LogicalWorkID)) == "" {
+		return invalidTransition("worktree preparation identity and launch inputs are required")
+	}
+	for _, invocationID := range task.InvocationHistory {
+		if invocationID == transition.InvocationID {
+			return invalidTransition("invocation ID was already used")
+		}
+	}
+	if task.Status != TaskPending || task.Invocation != nil || task.Candidate != nil || task.Gate != nil || task.Review != nil || task.Integration != nil || task.BuilderAttempt > 1 {
+		return invalidTransition("task is not at the initial preparation stage")
+	}
+	if strings.TrimSpace(transition.Invocation.TerminationReason) != "" {
+		return invalidTransition("invalid initial invocation state")
+	}
+	if err := validateReservationInputs(transition); err != nil {
+		return err
+	}
+	if err := validateExecutionIdentity(snapshot, task, transition); err != nil {
+		return err
+	}
+	if task.LogicalWork == nil {
+		if task.BuilderAttempt != 0 || task.Worktree != nil {
+			return invalidTransition("invalid initial worktree preparation attempt")
+		}
+		for _, dep := range taskDependencies(snapshot, task.TaskID) {
+			if dep.Status != TaskIntegrated {
+				return invalidTransition("task dependencies are not integrated")
+			}
+		}
+		task.BuilderAttempt = 1
+		task.LogicalWork = newLogicalWorkState(transition, task.BuilderAttempt, task.RepairCount, task.RecoveryCount)
+	} else {
+		// A missing-path reconciliation deliberately retains the logical work and
+		// clears only the task's active worktree binding. A retry must reuse every
+		// logical execution dimension while consuming a fresh invocation ID.
+		if task.Worktree != nil || task.LogicalWork.Role != roleBuilder || task.LogicalWork.BuilderAttempt != 1 || task.LogicalWork.LogicalWorkID != transition.LogicalWorkID || task.LogicalWork.Worktree == nil {
+			return invalidTransition("retry preparation does not match retained logical work")
+		}
+		if err := matchLogicalWorkExecution(task.LogicalWork, transition); err != nil {
+			return err
+		}
+	}
+	invocation := *transition.Invocation
+	invocation.InvocationID = transition.InvocationID
+	invocation.LogicalWorkID = transition.LogicalWorkID
+	invocation.Role = roleBuilder
+	invocation.ReturnStage = TaskPending
+	invocation.TransitionRequestID = requestID
+	task.Worktree = cloneWorktree(transition.Worktree)
+	task.Invocation = &invocation
+	task.InvocationHistory = append(task.InvocationHistory, transition.InvocationID)
+	task.Status = TaskWorktreePreparing
+	snapshot.TaskStates[task.TaskID] = *task
+	reduce(snapshot)
+	return nil
+}
+
+func reconcileWorktreePreparation(task *TaskExecutionState, transition TaskTransition) error {
+	if transition.Role != roleBuilder || transition.ReturnStage != TaskPending || transition.BuilderAttempt != 1 || transition.Preparation == nil {
+		return invalidTransition("invalid worktree preparation reconciliation")
+	}
+	if err := matchInvocation(task, transition, TaskWorktreePreparing); err != nil {
+		return err
+	}
+	evidence := transition.Preparation
+	if !evidence.OperationTerminated || strings.TrimSpace(evidence.Diagnostic) == "" {
+		return invalidTransition("terminated preparation evidence with diagnostic is required")
+	}
+	if err := validateDiagnostic(evidence.Diagnostic); err != nil {
+		return invalidTransition("preparation diagnostic: %v", err)
+	}
+	if evidence.WorktreeExists && evidence.IdentityMatches {
+		task.Status = TaskInvocationReserved
+		return nil
+	}
+	if !evidence.WorktreeExists && !evidence.IdentityMatches {
+		task.Status = TaskPending
+		task.Invocation = nil
+		task.Worktree = nil
+		return nil
+	}
+	return invalidTransition("worktree preparation evidence is inconsistent")
 }
 
 func reserveInvocation(snapshot *WorkSnapshot, task *TaskExecutionState, transition TaskTransition, requestID contractv2.RequestID) error {
