@@ -309,8 +309,15 @@ func TestServiceInterruptedPendingRecoveryPersistsMatchOrConflictWithoutDispatch
 				t.Fatalf("got=%+v blocker=%+v err=%v", got.Publications[pending.IntentID], got.Control.Blocker, err)
 			}
 			if tc.name == "invalid receipt" {
-				publication := got.Publications[pending.IntentID]
-				blocker := got.Control.Blocker
+				persisted, loadErr := state.Load(context.Background(), seed.WorkID)
+				if loadErr != nil {
+					t.Fatal(loadErr)
+				}
+				publication := persisted.Publications[pending.IntentID]
+				if publication.Status != statev2.PublicationConflict {
+					t.Fatalf("persisted publication=%+v", publication)
+				}
+				blocker := persisted.Control.Blocker
 				if blocker == nil || blocker.Kind != statev2.BlockerKindPublicationConflict || blocker.IntentID != pending.IntentID || blocker.OperatorRef != "operator" {
 					t.Fatalf("blocker=%+v", blocker)
 				}
