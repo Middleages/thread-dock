@@ -380,7 +380,7 @@ func assertProductionHTTPRequests(t *testing.T, h *productionPublicationHTTP, wa
 	}
 	for i, request := range requests {
 		if request.method != wantMethods[i] || request.path != "/api/v3/repos/acme/app/issues" || !request.authorized {
-			t.Fatalf("request[%d]=%+v", i, request)
+			t.Fatalf("request metadata mismatch at index %d (method/path/auth)", i)
 		}
 	}
 }
@@ -392,14 +392,23 @@ func assertParentADraftPosted(t *testing.T, h *productionPublicationHTTP) {
 	title, body, labels := h.postedTitle, h.postedBody, append([]string(nil), h.postedLabels...)
 	h.mu.Unlock()
 	if title != "Parent A" || body != wantBody || len(labels) != 0 || strings.Contains(body, "Parent B") || strings.Contains(body, "Body B") || strings.Contains(body, "parent-b") || strings.Count(body, "<!--") != 1 {
-		t.Fatalf("posted title=%q body=%q labels=%v", title, body, labels)
+		t.Fatal("approved Parent A payload assertion failed")
 	}
 }
 
 func assertReceipt(t *testing.T, receipt *statev2.PublicationReceipt) {
 	t.Helper()
 	if receipt == nil || receipt.Number != 17 || receipt.NodeID != "node-17" || receipt.URL != "https://github.example.test/issues/17" || receipt.PublishedAt.IsZero() || receipt.PublishedAt.Location() != time.UTC {
-		t.Fatalf("receipt=%+v", receipt)
+		t.Fatal("exact publication receipt assertion failed")
+	}
+}
+
+func assertNoPublicationOutputSecrets(t *testing.T, stdout, stderr string) {
+	t.Helper()
+	for _, value := range []string{"publish-token", "provider-body-sentinel"} {
+		if strings.Contains(stdout, value) || strings.Contains(stderr, value) {
+			t.Fatal("publication secret appeared in CLI output")
+		}
 	}
 }
 
@@ -411,7 +420,7 @@ func assertNoPublicationSecrets(t *testing.T, snapshot statev2.WorkSnapshot, std
 	}
 	for _, value := range []string{"publish-token", "provider-body-sentinel"} {
 		if strings.Contains(string(serialized), value) || strings.Contains(stdout, value) || strings.Contains(stderr, value) {
-			t.Fatalf("secret %q leaked", value)
+			t.Fatal("publication secret appeared in serialized state or CLI output")
 		}
 	}
 }
@@ -436,19 +445,20 @@ func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
 	}
 	publication := pending.Publications["parent-issue:request-publish"]
 	if publication.Status != statev2.PublicationPending || pending.State != statev2.StatePublicationPending {
-		t.Fatalf("pending state=%q publication=%q", pending.State, publication.Status)
+		t.Fatal("durable pending publication assertion failed")
 	}
 	close(httpState.unblockPost)
 	if code := <-done; code != 0 || out.Len() == 0 || errOut.Len() != 0 {
-		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+		t.Fatalf("publication completion failed (code=%d stdoutBytes=%d stderrBytes=%d)", code, out.Len(), errOut.Len())
 	}
+	assertNoPublicationOutputSecrets(t, out.String(), errOut.String())
 	completed, err := works.Load(context.Background(), "work-publish")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, posts, _, _ := httpState.counts()
 	if completed.Publications["parent-issue:request-publish"].Status != statev2.PublicationCompleted || completed.Publications["parent-issue:request-publish"].Receipt == nil || posts != 1 {
-		t.Fatalf("completed publication=%+v posts=%d", completed.Publications["parent-issue:request-publish"], posts)
+		t.Fatalf("completed publication assertion failed (posts=%d)", posts)
 	}
 	assertReceipt(t, completed.Publications["parent-issue:request-publish"].Receipt)
 	assertNoPublicationSecrets(t, completed, out.String(), errOut.String())
@@ -471,14 +481,15 @@ func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
 	out.Reset()
 	errOut.Reset()
 	if code := cli.RunWithDependencies(context.Background(), args, &out, &errOut, deps); code != 0 || out.Len() == 0 || errOut.Len() != 0 {
-		t.Fatalf("replay code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+		t.Fatalf("replay failed (code=%d stdoutBytes=%d stderrBytes=%d)", code, out.Len(), errOut.Len())
 	}
+	assertNoPublicationOutputSecrets(t, out.String(), errOut.String())
 	var replaySnapshot statev2.WorkSnapshot
 	if err := json.Unmarshal(out.Bytes(), &replaySnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(replaySnapshot.Publications["parent-issue:request-publish"].Receipt, firstReceipt) {
-		t.Fatalf("replay receipt=%+v first=%+v", replaySnapshot.Publications["parent-issue:request-publish"].Receipt, firstReceipt)
+		t.Fatal("replay receipt differs from first receipt")
 	}
 	assertReceipt(t, replaySnapshot.Publications["parent-issue:request-publish"].Receipt)
 	assertNoPublicationSecrets(t, replaySnapshot, out.String(), errOut.String())
@@ -487,7 +498,7 @@ func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(replayedDurable.Publications["parent-issue:request-publish"].Receipt, firstReceipt) {
-		t.Fatalf("durable replay receipt=%+v first=%+v", replayedDurable.Publications["parent-issue:request-publish"].Receipt, firstReceipt)
+		t.Fatal("durable replay receipt differs from first receipt")
 	}
 	assertReceipt(t, replayedDurable.Publications["parent-issue:request-publish"].Receipt)
 	assertNoPublicationSecrets(t, replayedDurable, out.String(), errOut.String())
@@ -504,14 +515,15 @@ func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
 	errOut.Reset()
 	conflictArgs := []string{"work", "publish-issues", "work-publish", "parent-b", "--expected-revision", "3", "--request-id", "request-publish"}
 	if code := cli.RunWithDependencies(context.Background(), conflictArgs, &out, &errOut, deps); code != 1 || out.Len() != 0 || errOut.String() != "프로젝트·워크플로 명령을 처리하지 못했습니다.\n" {
-		t.Fatalf("conflict code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+		t.Fatalf("conflict assertion failed (code=%d stdoutBytes=%d stderrBytes=%d)", code, out.Len(), errOut.Len())
 	}
+	assertNoPublicationOutputSecrets(t, out.String(), errOut.String())
 	conflicted, err := works.Load(context.Background(), "work-publish")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(conflicted.Publications["parent-issue:request-publish"].Receipt, priorReceipt) || conflicted.Publications["parent-issue:request-publish"].Status != statev2.PublicationCompleted {
-		t.Fatalf("prior receipt changed: %+v", conflicted.Publications["parent-issue:request-publish"])
+		t.Fatal("prior completed receipt changed after conflict")
 	}
 	getAfterConflict, postAfterConflict, _, _ := httpState.counts()
 	if getAfterConflict != getAfterReplay || postAfterConflict != postAfterReplay {
@@ -533,8 +545,9 @@ func TestProductionPublishIssuesLostResponseAdoptsExactMarker(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 	if code := cli.RunWithDependencies(context.Background(), args, &out, &errOut, deps); code != 0 || out.Len() == 0 || errOut.Len() != 0 {
-		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+		t.Fatalf("lost-response adoption failed (code=%d stdoutBytes=%d stderrBytes=%d)", code, out.Len(), errOut.Len())
 	}
+	assertNoPublicationOutputSecrets(t, out.String(), errOut.String())
 	var cliSnapshot statev2.WorkSnapshot
 	if err := json.Unmarshal(out.Bytes(), &cliSnapshot); err != nil {
 		t.Fatal(err)
@@ -545,14 +558,14 @@ func TestProductionPublishIssuesLostResponseAdoptsExactMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	if snapshot.Publications["parent-issue:request-lost"].Status != statev2.PublicationCompleted || snapshot.Publications["parent-issue:request-lost"].Receipt == nil {
-		t.Fatalf("publication=%+v", snapshot.Publications["parent-issue:request-lost"])
+		t.Fatal("lost-response durable publication assertion failed")
 	}
 	assertReceipt(t, snapshot.Publications["parent-issue:request-lost"].Receipt)
 	assertNoPublicationSecrets(t, snapshot, out.String(), errOut.String())
 	assertParentADraftPosted(t, httpState)
 	gets, posts, auth, invalid := httpState.counts()
 	if posts != 1 || !auth || !invalid || strings.Contains(out.String(), "provider-body-sentinel") || strings.Contains(errOut.String(), "provider-body-sentinel") {
-		t.Fatalf("GET=%d POST=%d auth=%t invalid=%t stdout=%q stderr=%q", gets, posts, auth, invalid, out.String(), errOut.String())
+		t.Fatalf("lost-response HTTP/output assertion failed (GET=%d POST=%d auth=%t invalid=%t stdoutBytes=%d stderrBytes=%d)", gets, posts, auth, invalid, out.Len(), errOut.Len())
 	}
 	assertProductionHTTPRequests(t, httpState, []string{http.MethodGet, http.MethodGet, http.MethodPost, http.MethodGet})
 }
@@ -571,24 +584,25 @@ func TestProductionPublishIssuesAmbiguousOutcomeBlocksWithoutRepublish(t *testin
 			}
 			var out, errOut bytes.Buffer
 			if code := cli.RunWithDependencies(context.Background(), args, &out, &errOut, deps); code != 1 || out.Len() != 0 || errOut.String() != "프로젝트·워크플로 명령을 처리하지 못했습니다.\n" {
-				t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+				t.Fatalf("ambiguous publication assertion failed (code=%d stdoutBytes=%d stderrBytes=%d)", code, out.Len(), errOut.Len())
 			}
+			assertNoPublicationOutputSecrets(t, out.String(), errOut.String())
 			snapshot, err := works.Load(context.Background(), "work-publish")
 			if err != nil {
 				t.Fatal(err)
 			}
 			publication := snapshot.Publications["parent-issue:request-ambiguous"]
 			if publication.Status != statev2.PublicationConflict || snapshot.Control.Blocker == nil || snapshot.Control.Blocker.Kind != statev2.BlockerKindPublicationConflict || snapshot.Control.Blocker.IntentID != publication.IntentID || snapshot.Control.Blocker.Diagnostic == "" || strings.Contains(snapshot.Control.Blocker.Diagnostic, "provider-body-sentinel") {
-				t.Fatalf("snapshot publication=%+v blocker=%+v", publication, snapshot.Control.Blocker)
+				t.Fatal("ambiguous publication durable conflict assertion failed")
 			}
 			if strings.TrimSpace(publication.LastError) == "" || publication.LastError != strings.TrimSpace(publication.LastError) || len([]byte(publication.LastError)) > statev2.MaxDiagnosticBytes || strings.Contains(publication.LastError, "publish-token") || strings.Contains(publication.LastError, "provider-body-sentinel") || strings.TrimSpace(snapshot.Control.Blocker.Diagnostic) == "" || snapshot.Control.Blocker.Diagnostic != strings.TrimSpace(snapshot.Control.Blocker.Diagnostic) || len([]byte(snapshot.Control.Blocker.Diagnostic)) > statev2.MaxDiagnosticBytes || strings.Contains(snapshot.Control.Blocker.Diagnostic, "publish-token") || strings.Contains(snapshot.Control.Blocker.Diagnostic, "provider-body-sentinel") {
-				t.Fatalf("unsafe diagnostics lastError=%q blocker=%q", publication.LastError, snapshot.Control.Blocker.Diagnostic)
+				t.Fatal("publication diagnostics safety assertion failed")
 			}
 			assertNoPublicationSecrets(t, snapshot, out.String(), errOut.String())
 			assertParentADraftPosted(t, httpState)
 			gets, posts, auth, invalid := httpState.counts()
 			if posts != 1 || !auth || !invalid {
-				t.Fatalf("GET=%d POST=%d auth=%t invalid=%t", gets, posts, auth, invalid)
+				t.Fatalf("ambiguous HTTP assertion failed (GET=%d POST=%d auth=%t invalid=%t)", gets, posts, auth, invalid)
 			}
 			assertProductionHTTPRequests(t, httpState, []string{http.MethodGet, http.MethodGet, http.MethodPost, http.MethodGet})
 		})
