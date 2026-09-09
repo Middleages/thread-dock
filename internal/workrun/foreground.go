@@ -140,9 +140,10 @@ func (s *ForegroundService) RunWork(ctx context.Context, workID contractv2.WorkI
 			return statev2.WorkSnapshot{}, result.Err
 		}
 		latest, loadErr := s.state.Load(ctx, workID)
-		if loadErr == nil {
-			snapshot = latest
+		if loadErr != nil {
+			return statev2.WorkSnapshot{}, result.Err
 		}
+		snapshot = latest
 		if durableRuntimeBoundary(snapshot, task.TaskID, invocationID) {
 			return snapshot, nil
 		}
@@ -259,9 +260,6 @@ func outstandingLifecycle(snapshot statev2.WorkSnapshot) bool {
 	for _, task := range snapshot.TaskStates {
 		switch task.Status {
 		case statev2.TaskWorktreePreparing, statev2.TaskInvocationReserved, statev2.TaskRunning, statev2.TaskTerminationPending, statev2.TaskTerminated, statev2.TaskCandidateReady, statev2.TaskNeedsOperator:
-			return true
-		}
-		if task.Candidate != nil || task.Invocation != nil && task.Status != statev2.TaskPending {
 			return true
 		}
 	}

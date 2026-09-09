@@ -13,9 +13,18 @@ import (
 	statev2 "thread-dock/internal/state/v2"
 )
 
-type foregroundStateFake struct{ snapshot statev2.WorkSnapshot }
+type foregroundStateFake struct {
+	snapshot   statev2.WorkSnapshot
+	loads      int
+	failLoadAt int
+	loadErr    error
+}
 
 func (f *foregroundStateFake) Load(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error) {
+	f.loads++
+	if f.failLoadAt > 0 && f.loads == f.failLoadAt {
+		return statev2.WorkSnapshot{}, f.loadErr
+	}
 	return f.snapshot, nil
 }
 func (f *foregroundStateFake) Apply(context.Context, statev2.TransitionRequest) (statev2.WorkSnapshot, error) {
@@ -417,6 +426,53 @@ func TestForegroundRejectsPreparationIdentityMismatchAndInvalidSubmitChannels(t 
 				t.Fatalf("got=%#v err=%v submit=%d close=%d", got, err, runtime.submit, runtime.close)
 			}
 		})
+	}
+}
+
+func TestForegroundTreatsIntegratedTaskEvidenceAsSettledAndSelectsNextTask(t *testing.T) {
+	repo, root := t.TempDir(), t.TempDir()
+	state, preparer, runtime := foregroundSnapshot(t, repo, root)
+	state.snapshot.Contract.Tasks = []contractv2.Task{
+		{TaskID: "task-1", RepoKey: "repo", Branch: "agent/task-1", AllowedPaths: []string{"internal"}, AcceptanceCriteria: []string{"done"}},
+		{TaskID: "task-2", RepoKey: "repo", Branch: "agent/task-2", AllowedPaths: []string{"docs"}, AcceptanceCriteria: []string{"done"}, DependsOn: []contractv2.TaskID{"task-1"}},
+	}
+	state.snapshot.TaskStates["task-2"] = statev2.TaskExecutionState{TaskID: "task-2", Status: statev2.TaskPending, RepairLimit: 2, RecoveryLimit: 1, InvocationHistory: []statev2.InvocationID{}}
+	task1 := state.snapshot.TaskStates["task-1"]
+	task1.Status = statev2.TaskIntegrated
+	task1.BuilderAttempt = 1
+	task1.Candidate = &statev2.CandidateEvidence{BuilderAttempt: 1, CandidateSHA: strings.Repeat("a", 40), TreeSHA: strings.Repeat("b", 40), ChangedFiles: []string{"internal/settled.go"}}
+	task1.Invocation = &statev2.InvocationState{InvocationID: "settled-invocation", LogicalWorkID: "settled-logical", Role: "builder", ReturnStage: statev2.TaskPending, LogicalProfile: "builder", RuntimeFingerprint: "runtime-1"}
+	task1.InvocationHistory = []statev2.InvocationID{"settled-invocation"}
+	task1.Worktree = &statev2.WorktreeIdentity{CanonicalPath: filepath.Join(root, "settled"), GitCommonDir: filepath.Join(repo, ".git"), Branch: "agent/task-1", BaseSHA: strings.Repeat("a", 40)}
+	task1.LogicalWork = &statev2.LogicalWorkState{LogicalWorkID: "settled-logical", Role: "builder", BuilderAttempt: 1, LogicalProfile: "builder", RuntimeFingerprint: "runtime-1", Worktree: task1.Worktree}
+	task1.Gate = &statev2.GateEvidence{BuilderAttempt: 1, CandidateSHA: strings.Repeat("a", 40), Commands: []string{"check"}, Outcomes: []string{"passed"}, Passed: true}
+	task1.Review = &statev2.ReviewEvidence{ReviewerInvocationID: "review", BuilderAttempt: 1, CandidateSHA: strings.Repeat("a", 40), ReviewSHA: strings.Repeat("c", 40), Accepted: true, Findings: []statev2.ReviewFinding{}}
+	task1.Integration = &statev2.IntegrationEvidence{BuilderAttempt: 1, CandidateSHA: strings.Repeat("a", 40), IntegrationHEAD: strings.Repeat("d", 40), RelationVerified: true}
+	state.snapshot.TaskStates["task-1"] = task1
+	service := NewForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	if _, err := service.RunWork(context.Background(), "work-1", 3, "request-1"); err != nil {
+		t.Fatal(err)
+	}
+	if preparer.last.TaskID != "task-2" || preparer.calls != 1 || runtime.submit != 1 || runtime.close != 1 {
+		t.Fatalf("selected=%q prepare/submit/close=%d/%d/%d", preparer.last.TaskID, preparer.calls, runtime.submit, runtime.close)
+	}
+	settled := state.snapshot.TaskStates["task-1"]
+	if settled.Status != statev2.TaskIntegrated || settled.Candidate == nil || settled.Invocation == nil || settled.Worktree == nil || settled.Gate == nil || settled.Review == nil || settled.Integration == nil {
+		t.Fatalf("settled task evidence was changed: %#v", settled)
+	}
+}
+
+func TestForegroundSubmitErrorReloadFailureKeepsOriginalRuntimeError(t *testing.T) {
+	repo, root := t.TempDir(), t.TempDir()
+	state, preparer, runtime := foregroundSnapshot(t, repo, root)
+	canonical := matchingReservedSnapshot(state.snapshot, repo, root, statev2.TaskRunning, false)
+	runtime.submitResult = &coordinator.CommandResult{Snapshot: canonical, Err: errors.New("original runtime error")}
+	state.failLoadAt = 3
+	state.loadErr = errors.New("post-submit load failed")
+	service := NewForegroundService(state, preparer, &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	got, err := service.RunWork(context.Background(), "work-1", 3, "request-1")
+	if err == nil || !strings.Contains(err.Error(), "original runtime error") || strings.Contains(err.Error(), "post-submit load failed") || got.WorkID != "" || runtime.close != 1 {
+		t.Fatalf("reload failure result=%#v err=%v close=%d loads=%d", got, err, runtime.close, state.loads)
 	}
 }
 
