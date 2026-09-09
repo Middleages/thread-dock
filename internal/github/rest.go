@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"thread-dock/internal/contract"
+	contractv2 "thread-dock/internal/contract/v2"
 )
 
 const defaultAPIVersion = "2022-11-28"
@@ -201,6 +202,173 @@ func (c *RESTClient) findIssueBundle(ctx context.Context, repo Repository, marke
 		}
 	}
 	return IssueBundle{Parent: parent, Children: orderedChildren}, true, children, nil
+}
+
+// FindParentIssueMarkers finds every issue whose body contains the supplied
+// logical parent-issue marker prefix. It is intentionally an optional REST
+// port so the legacy Client interface remains unchanged.
+func (c *RESTClient) FindParentIssueMarkers(ctx context.Context, repo Repository, markerPrefix string) ([]Issue, error) {
+	if err := validateRepository(repo); err != nil {
+		return nil, err
+	}
+	if err := validateParentIssueMarkerPrefix(markerPrefix); err != nil {
+		return nil, err
+	}
+	issues, err := c.listParentIssueMarkerIssues(ctx, repo, markerPrefix)
+	if err != nil {
+		return nil, err
+	}
+	return issues, nil
+}
+
+// CreateParentIssue creates exactly one parent issue. The endpoint response is
+// accepted only when it identifies the requested issue and preserves the
+// exact title/body sent by this method.
+func (c *RESTClient) CreateParentIssue(ctx context.Context, repo Repository, draft contractv2.IssueDraft, marker string) (Issue, error) {
+	if err := validateRepository(repo); err != nil {
+		return Issue{}, err
+	}
+	if err := validateParentIssueDraft(draft); err != nil {
+		return Issue{}, err
+	}
+	if err := validateParentIssueMarker(marker); err != nil {
+		return Issue{}, err
+	}
+	body := draft.Body + "\n\n" + marker
+	path := fmt.Sprintf("%s/repos/%s/%s/issues", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	payload := struct {
+		Title  string   `json:"title"`
+		Body   string   `json:"body"`
+		Labels []string `json:"labels,omitempty"`
+	}{Title: draft.Title, Body: body, Labels: draft.Labels}
+	var issue Issue
+	if err := c.doSafeJSON(ctx, "create parent issue", http.MethodPost, path, payload, &issue); err != nil {
+		return Issue{}, err
+	}
+	if issue.Number <= 0 || strings.TrimSpace(issue.NodeID) == "" || issue.NodeID != strings.TrimSpace(issue.NodeID) || !safeUserText(issue.NodeID) || strings.TrimSpace(issue.HTMLURL) == "" || issue.HTMLURL != strings.TrimSpace(issue.HTMLURL) || !safeUserText(issue.HTMLURL) || issue.Title != draft.Title || issue.Body != body {
+		return Issue{}, errors.New("github parent issue response did not match the requested identity")
+	}
+	return issue, nil
+}
+
+func (c *RESTClient) listParentIssueMarkerIssues(ctx context.Context, repo Repository, markerPrefix string) ([]Issue, error) {
+	issuePath := fmt.Sprintf("%s/repos/%s/%s/issues", c.restBasePath, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	path := issuePath + "?state=all&per_page=100"
+	var matches []Issue
+	seenPages := make(map[string]struct{})
+	for page := 0; page < 1000; page++ {
+		if _, seen := seenPages[path]; seen {
+			return nil, errors.New("github parent issue pagination repeated a page")
+		}
+		seenPages[path] = struct{}{}
+		var pageIssues []Issue
+		link, err := c.doSafeJSONWithLink(ctx, "find parent issue", http.MethodGet, path, nil, &pageIssues)
+		if err != nil {
+			return nil, err
+		}
+		for _, issue := range pageIssues {
+			if strings.Contains(issue.Body, markerPrefix) {
+				matches = append(matches, issue)
+			}
+		}
+		if page == 999 {
+			return nil, errors.New("github parent issue pagination exceeded the safety limit")
+		}
+		next := nextIssueLink(link)
+		if next == "" && len(pageIssues) == 100 {
+			u, parseErr := url.Parse(path)
+			if parseErr != nil {
+				return nil, errors.New("github parent issue pagination is malformed")
+			}
+			query := u.Query()
+			pageNumber, parseErr := strconv.Atoi(query.Get("page"))
+			if parseErr != nil || pageNumber < 1 {
+				pageNumber = 1
+			}
+			query.Set("page", strconv.Itoa(pageNumber+1))
+			u.RawQuery = query.Encode()
+			next = u.RequestURI()
+		}
+		if next == "" {
+			break
+		}
+		path, err = c.validateIssuePageURL(next, issuePath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return matches, nil
+}
+
+const maxParentIssueMarkerBytes = 1024
+
+func validateParentIssueMarkerPrefix(value string) error {
+	if !validParentIssueLogicalPrefix(value) {
+		return errors.New("github parent issue marker prefix is invalid")
+	}
+	return nil
+}
+
+func validateParentIssueMarker(value string) error {
+	if strings.TrimSpace(value) != value || len(value) > maxParentIssueMarkerBytes || !safeUserText(value) {
+		return errors.New("github parent issue marker is invalid")
+	}
+	separator := strings.Index(value, ":sha256=")
+	if separator < 0 {
+		return errors.New("github parent issue marker is invalid")
+	}
+	prefixEnd := separator + len(":sha256=")
+	if !validParentIssueLogicalPrefix(value[:prefixEnd]) || len(value[prefixEnd:]) != 68 || value[len(value)-4:] != " -->" || !isLowerHex(value[prefixEnd:prefixEnd+64]) {
+		return errors.New("github parent issue marker is invalid")
+	}
+	return nil
+}
+
+func validParentIssueLogicalPrefix(value string) bool {
+	if len(value) > maxParentIssueMarkerBytes || !strings.HasPrefix(value, "<!-- threaddock:v2:parent_issue:work=") || !strings.HasSuffix(value, ":sha256=") {
+		return false
+	}
+	rest := strings.TrimPrefix(value, "<!-- threaddock:v2:parent_issue:work=")
+	rest = strings.TrimSuffix(rest, ":sha256=")
+	parts := strings.Split(rest, ":draft=")
+	return len(parts) == 2 && validParentIssueMarkerID(parts[0]) && validParentIssueMarkerID(parts[1])
+}
+
+func validParentIssueMarkerID(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for _, b := range []byte(value) {
+		if b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isLowerHex(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, b := range []byte(value) {
+		if !(b >= '0' && b <= '9' || b >= 'a' && b <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validateParentIssueDraft(draft contractv2.IssueDraft) error {
+	if strings.TrimSpace(draft.Key) == "" || draft.Key != strings.TrimSpace(draft.Key) || len(draft.Key) > 256 || !safeUserText(draft.Key) || strings.TrimSpace(draft.Title) == "" || draft.Title != strings.TrimSpace(draft.Title) || len(draft.Title) > MaxDraftPRTitleBytes || !safeUserText(draft.Title) || strings.TrimSpace(draft.Body) == "" || draft.Body != strings.TrimSpace(draft.Body) || len(draft.Body) > MaxDraftPRBodyBytes || !safeUserText(draft.Body) || strings.TrimSpace(string(draft.RepoKey)) == "" || string(draft.RepoKey) != strings.TrimSpace(string(draft.RepoKey)) || !safeUserText(string(draft.RepoKey)) {
+		return errors.New("github parent issue draft is invalid")
+	}
+	for _, label := range draft.Labels {
+		if strings.TrimSpace(label) == "" || label != strings.TrimSpace(label) || len(label) > 256 || !safeUserText(label) {
+			return errors.New("github parent issue draft labels are invalid")
+		}
+	}
+	return nil
 }
 
 func nextIssueLink(header string) string {
