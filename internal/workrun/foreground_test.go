@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,18 +23,22 @@ func (f *foregroundStateFake) Apply(context.Context, statev2.TransitionRequest) 
 }
 
 type foregroundPreparerFake struct {
-	calls int
-	last  PreparationRequest
-	state *foregroundStateFake
+	calls  int
+	last   PreparationRequest
+	state  *foregroundStateFake
+	events *[]string
 }
 
 func (f *foregroundPreparerFake) Prepare(_ context.Context, request PreparationRequest) (statev2.WorkSnapshot, error) {
 	f.calls++
+	if f.events != nil {
+		*f.events = append(*f.events, "prepare")
+	}
 	f.last = request
 	task := f.state.snapshot.TaskStates[request.TaskID]
 	task.Status = statev2.TaskInvocationReserved
 	task.BuilderAttempt = 1
-	task.LogicalWork = &statev2.LogicalWorkState{LogicalWorkID: request.LogicalWorkID, Role: "builder", BuilderAttempt: 1, LogicalProfile: "builder", RuntimeFingerprint: request.RuntimeFingerprint, Worktree: &statev2.WorktreeIdentity{CanonicalPath: request.WorktreePath, Branch: request.Branch, BaseSHA: request.BaseSHA}}
+	task.LogicalWork = &statev2.LogicalWorkState{LogicalWorkID: request.LogicalWorkID, Role: "builder", BuilderAttempt: 1, LogicalProfile: "builder", RuntimeFingerprint: request.RuntimeFingerprint, Worktree: &statev2.WorktreeIdentity{CanonicalPath: request.WorktreePath, GitCommonDir: filepath.Join(request.RepositoryPath, ".git"), Branch: request.Branch, BaseSHA: request.BaseSHA}}
 	task.Invocation = &statev2.InvocationState{InvocationID: request.InvocationID, LogicalWorkID: request.LogicalWorkID, Role: "builder", ReturnStage: statev2.TaskPending, LogicalProfile: "builder", RuntimeFingerprint: request.RuntimeFingerprint}
 	task.Worktree = task.LogicalWork.Worktree
 	task.InvocationHistory = []statev2.InvocationID{request.InvocationID}
@@ -46,14 +51,36 @@ type foregroundRuntimeFake struct {
 	submit   int
 	close    int
 	state    *foregroundStateFake
+	events   *[]string
+}
+
+type foregroundBindingInspectorFake struct {
+	calls  int
+	common string
+	err    error
+	events *[]string
+}
+
+func (f *foregroundBindingInspectorFake) InspectRepositoryBinding(context.Context, string) (string, error) {
+	f.calls++
+	if f.events != nil {
+		*f.events = append(*f.events, "inspect-binding")
+	}
+	return f.common, f.err
 }
 
 func (f *foregroundRuntimeFake) Activate(context.Context, contractv2.WorkID) (coordinator.ReconcileResult, error) {
 	f.activate++
+	if f.events != nil {
+		*f.events = append(*f.events, "activate")
+	}
 	return coordinator.ReconcileResult{}, nil
 }
 func (f *foregroundRuntimeFake) SubmitRuntime(_ context.Context, _ contractv2.WorkID, taskID contractv2.TaskID, invocationID statev2.InvocationID) <-chan coordinator.CommandResult {
 	f.submit++
+	if f.events != nil {
+		*f.events = append(*f.events, "submit")
+	}
 	task := f.state.snapshot.TaskStates[taskID]
 	task.Status = statev2.TaskRunning
 	task.Invocation.InvocationID = invocationID
@@ -62,7 +89,13 @@ func (f *foregroundRuntimeFake) SubmitRuntime(_ context.Context, _ contractv2.Wo
 	result <- coordinator.CommandResult{Snapshot: f.state.snapshot}
 	return result
 }
-func (f *foregroundRuntimeFake) Close(context.Context) error { f.close++; return nil }
+func (f *foregroundRuntimeFake) Close(context.Context) error {
+	f.close++
+	if f.events != nil {
+		*f.events = append(*f.events, "close")
+	}
+	return nil
+}
 
 func foregroundSnapshot(t *testing.T, repo, worktreeRoot string) (*foregroundStateFake, *foregroundPreparerFake, *foregroundRuntimeFake) {
 	t.Helper()
@@ -84,20 +117,26 @@ func TestForegroundRunActivatesPreparesSubmitsOnceClosesAndReplays(t *testing.T)
 	repo := t.TempDir()
 	root := t.TempDir()
 	state, preparer, runtime := foregroundSnapshot(t, repo, root)
-	service := NewForegroundService(state, preparer, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	events := []string{}
+	inspector := &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git"), events: &events}
+	preparer.events, runtime.events = &events, &events
+	service := NewForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 	first, err := service.RunWork(context.Background(), "work-1", 3, "request-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.TaskStates["task-1"].Status != statev2.TaskRunning || runtime.activate != 1 || preparer.calls != 1 || runtime.submit != 1 || runtime.close != 1 {
-		t.Fatalf("first snapshot/status calls=%#v/%d/%d/%d/%d", first.TaskStates["task-1"].Status, runtime.activate, preparer.calls, runtime.submit, runtime.close)
+	if first.TaskStates["task-1"].Status != statev2.TaskRunning || inspector.calls != 1 || runtime.activate != 1 || preparer.calls != 1 || runtime.submit != 1 || runtime.close != 1 {
+		t.Fatalf("first snapshot/status calls=%#v/%d/%d/%d/%d/%d", first.TaskStates["task-1"].Status, inspector.calls, runtime.activate, preparer.calls, runtime.submit, runtime.close)
+	}
+	if got, want := strings.Join(events, ","), "inspect-binding,activate,prepare,submit,close"; got != want {
+		t.Fatalf("fresh event order=%q want=%q", got, want)
 	}
 	second, err := service.RunWork(context.Background(), "work-1", 99, "request-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.TaskStates["task-1"].Status != statev2.TaskRunning || runtime.activate != 1 || preparer.calls != 1 || runtime.submit != 1 || runtime.close != 1 {
-		t.Fatalf("replay performed I/O: status=%q calls=%d/%d/%d/%d", second.TaskStates["task-1"].Status, runtime.activate, preparer.calls, runtime.submit, runtime.close)
+	if second.TaskStates["task-1"].Status != statev2.TaskRunning || inspector.calls != 2 || runtime.activate != 1 || preparer.calls != 1 || runtime.submit != 1 || runtime.close != 1 {
+		t.Fatalf("replay performed lifecycle I/O: status=%q inspect=%d activate=%d prepare=%d submit=%d close=%d", second.TaskStates["task-1"].Status, inspector.calls, runtime.activate, preparer.calls, runtime.submit, runtime.close)
 	}
 }
 
@@ -105,7 +144,8 @@ func TestForegroundRunRejectsNoncanonicalBindingBeforeActivation(t *testing.T) {
 	repo := t.TempDir()
 	root := t.TempDir()
 	state, preparer, runtime := foregroundSnapshot(t, repo, root)
-	service := NewForegroundService(state, preparer, runtime, ForegroundBinding{RepositoryPath: repo + string(os.PathSeparator) + ".", WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	inspector := &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}
+	service := NewForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo + string(os.PathSeparator) + ".", WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
 	if _, err := service.RunWork(context.Background(), "work-1", 3, "request-1"); err == nil {
 		t.Fatal("noncanonical repository path was accepted")
 	}
@@ -114,5 +154,25 @@ func TestForegroundRunRejectsNoncanonicalBindingBeforeActivation(t *testing.T) {
 	}
 	if _, err := os.Stat(repo); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestForegroundRunRejectsPersistedRepositoryBindingBeforeReplayAndCoordinator(t *testing.T) {
+	repo := t.TempDir()
+	root := t.TempDir()
+	state, preparer, runtime := foregroundSnapshot(t, repo, root)
+	task := state.snapshot.TaskStates["task-1"]
+	task.Status = statev2.TaskRunning
+	task.Invocation = &statev2.InvocationState{InvocationID: "old-invocation", LogicalWorkID: "old-logical", Role: "builder", ReturnStage: statev2.TaskPending, LogicalProfile: "builder", RuntimeFingerprint: "runtime-1"}
+	task.Worktree = &statev2.WorktreeIdentity{CanonicalPath: filepath.Join(root, "old"), GitCommonDir: filepath.Join(t.TempDir(), ".git"), Branch: "agent/task-1", BaseSHA: strings.Repeat("a", 40)}
+	task.InvocationHistory = []statev2.InvocationID{"old-invocation"}
+	state.snapshot.TaskStates["task-1"] = task
+	inspector := &foregroundBindingInspectorFake{common: filepath.Join(repo, ".git")}
+	service := NewForegroundService(state, preparer, inspector, runtime, ForegroundBinding{RepositoryPath: repo, WorktreeRoot: root, RuntimeFingerprint: "runtime-1"})
+	if _, err := service.RunWork(context.Background(), "work-1", 3, "request-1"); err == nil {
+		t.Fatal("mismatched persisted repository binding was accepted")
+	}
+	if inspector.calls != 1 || runtime.activate != 0 || preparer.calls != 0 || runtime.submit != 0 || runtime.close != 0 {
+		t.Fatalf("binding mismatch allowed side effects: inspect=%d activate=%d prepare=%d submit=%d close=%d", inspector.calls, runtime.activate, preparer.calls, runtime.submit, runtime.close)
 	}
 }

@@ -109,7 +109,7 @@ func productionWorkflowDependencies(args ...[]string) (cli.Dependencies, error) 
 	locker := coordinator.NewOwnerLocker(root)
 	coordinatorService := coordinator.NewCoordinator(works, builderRuntime, nil, git, locker, "agentctl", 0, time.Time{})
 	preparer := workrun.NewPreparationService(works, git, "agentctl", nil)
-	foreground := workrun.NewForegroundService(works, preparer, coordinatorService, workrun.ForegroundBinding{RepositoryPath: repositoryPath, WorktreeRoot: worktreeRoot, RuntimeFingerprint: cfg.BuilderRuntimeFingerprint})
+	foreground := workrun.NewForegroundService(works, preparer, git, coordinatorService, workrun.ForegroundBinding{RepositoryPath: repositoryPath, WorktreeRoot: worktreeRoot, RuntimeFingerprint: cfg.BuilderRuntimeFingerprint})
 	service := &productionWorkflowService{Service: workflow.NewWithCoordinator(projects, works, coordinatorService), foreground: foreground}
 	return cli.Dependencies{Workflow: service}, nil
 }

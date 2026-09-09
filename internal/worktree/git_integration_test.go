@@ -306,6 +306,57 @@ func TestInspectCommitReturnsActualTreeAndChangedFilesFromRepository(t *testing.
 	}
 }
 
+func TestInspectRepositoryBindingUsesCanonicalConfiguredRepository(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "repo")
+	runSetupGit(t, "", "init", repository)
+	managed := filepath.Join(root, "managed")
+	if err := os.Mkdir(managed, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := New(runner.OSRunner{}, "git", managed, repository)
+	common, err := git.InspectRepositoryBinding(context.Background(), repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.TrimSpace(runSetupGit(t, repository, "rev-parse", "--git-common-dir"))
+	if !filepath.IsAbs(want) {
+		want = filepath.Join(repository, want)
+	}
+	want, err = filepath.EvalSymlinks(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if common != filepath.Clean(want) {
+		t.Fatalf("common=%q want=%q", common, filepath.Clean(want))
+	}
+	other := filepath.Join(root, "other")
+	runSetupGit(t, "", "init", other)
+	if _, err := git.InspectRepositoryBinding(context.Background(), other); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("different repository err=%v", err)
+	}
+	link := filepath.Join(root, "repo-link")
+	if err := os.Symlink(repository, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git.InspectRepositoryBinding(context.Background(), link); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("symlink repository err=%v", err)
+	}
+	if _, err := git.InspectRepositoryBinding(context.Background(), repository+string(os.PathSeparator)+"."); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("noncanonical repository err=%v", err)
+	}
+	nonGit := filepath.Join(root, "not-git")
+	if err := os.Mkdir(nonGit, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git.InspectRepositoryBinding(context.Background(), nonGit); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("non-git repository err=%v", err)
+	}
+	if _, err := (&Git{RepositoryRoot: repository}).InspectRepositoryBinding(context.Background(), repository); !errors.Is(err, ErrUnsafeTarget) {
+		t.Fatalf("nil runner err=%v", err)
+	}
+}
+
 func TestRunChecksHonorsContextAndDistinguishesProcessExit(t *testing.T) {
 	git, _, target := configuredGit(t, &fakeRunner{})
 	ctx, cancel := context.WithCancel(context.Background())

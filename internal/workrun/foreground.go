@@ -15,6 +15,10 @@ import (
 	statev2 "thread-dock/internal/state/v2"
 )
 
+type BindingInspector interface {
+	InspectRepositoryBinding(context.Context, string) (string, error)
+}
+
 type Preparer interface {
 	Prepare(context.Context, PreparationRequest) (statev2.WorkSnapshot, error)
 }
@@ -32,14 +36,15 @@ type ForegroundBinding struct {
 }
 
 type ForegroundService struct {
-	state    State
-	preparer Preparer
-	runtime  RuntimeCoordinator
-	binding  ForegroundBinding
+	state     State
+	preparer  Preparer
+	inspector BindingInspector
+	runtime   RuntimeCoordinator
+	binding   ForegroundBinding
 }
 
-func NewForegroundService(state State, preparer Preparer, runtime RuntimeCoordinator, binding ForegroundBinding) *ForegroundService {
-	return &ForegroundService{state: state, preparer: preparer, runtime: runtime, binding: binding}
+func NewForegroundService(state State, preparer Preparer, inspector BindingInspector, runtime RuntimeCoordinator, binding ForegroundBinding) *ForegroundService {
+	return &ForegroundService{state: state, preparer: preparer, inspector: inspector, runtime: runtime, binding: binding}
 }
 
 func (s *ForegroundService) RunWork(ctx context.Context, workID contractv2.WorkID, expected contractv2.Revision, requestID contractv2.RequestID) (snapshot statev2.WorkSnapshot, err error) {
@@ -52,6 +57,10 @@ func (s *ForegroundService) RunWork(ctx context.Context, workID contractv2.WorkI
 	if err := validateForegroundInput(s.binding, workID, expected, requestID); err != nil {
 		return statev2.WorkSnapshot{}, err
 	}
+	commonDir, err := s.inspector.InspectRepositoryBinding(ctx, s.binding.RepositoryPath)
+	if err != nil || !canonicalForegroundPath(commonDir) {
+		return statev2.WorkSnapshot{}, errors.New("repository binding could not be verified")
+	}
 
 	invocationID, logicalWorkID := foregroundIDs(workID, requestID)
 	snapshot, err = s.state.Load(ctx, workID)
@@ -59,7 +68,13 @@ func (s *ForegroundService) RunWork(ctx context.Context, workID contractv2.WorkI
 		return statev2.WorkSnapshot{}, err
 	}
 	if replayInvocation(snapshot, invocationID) {
+		if err := validatePersistedWorktreeBindings(snapshot, commonDir); err != nil {
+			return statev2.WorkSnapshot{}, err
+		}
 		return snapshot, nil
+	}
+	if err := validatePersistedWorktreeBindings(snapshot, commonDir); err != nil {
+		return statev2.WorkSnapshot{}, err
 	}
 	if err := validateFreshSnapshot(snapshot, workID, expected); err != nil {
 		return statev2.WorkSnapshot{}, err
@@ -138,10 +153,30 @@ func (s *ForegroundService) RunWork(ctx context.Context, workID contractv2.WorkI
 }
 
 func validateForegroundDependencies(s *ForegroundService) error {
-	if s == nil || s.state == nil || s.preparer == nil || s.runtime == nil {
+	if s == nil || s.state == nil || s.preparer == nil || s.inspector == nil || s.runtime == nil {
 		return errors.New("foreground work dependencies are required")
 	}
 	return nil
+}
+
+func canonicalForegroundPath(path string) bool {
+	return strings.TrimSpace(path) != "" && strings.TrimSpace(path) == path && filepath.IsAbs(path) && filepath.Clean(path) == path
+}
+
+func validatePersistedWorktreeBindings(snapshot statev2.WorkSnapshot, commonDir string) error {
+	for _, task := range snapshot.TaskStates {
+		if task.Worktree == nil {
+			continue
+		}
+		if !canonicalForegroundPath(task.Worktree.GitCommonDir) || !sameForegroundPath(task.Worktree.GitCommonDir, commonDir) {
+			return errors.New("persisted worktree repository binding does not match")
+		}
+	}
+	return nil
+}
+
+func sameForegroundPath(left, right string) bool {
+	return filepath.Clean(left) == filepath.Clean(right)
 }
 
 func validateForegroundInput(binding ForegroundBinding, workID contractv2.WorkID, expected contractv2.Revision, requestID contractv2.RequestID) error {

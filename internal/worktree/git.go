@@ -339,6 +339,53 @@ func (g *Git) gitCommonDir(ctx context.Context, cwd string) (string, error) {
 	return resolved, nil
 }
 
+// InspectRepositoryBinding proves that repositoryPath is the configured
+// repository and returns Git's canonical common directory. It performs one
+// read-only Git query and deliberately discards command diagnostics.
+func (g *Git) InspectRepositoryBinding(ctx context.Context, repositoryPath string) (string, error) {
+	if g == nil || g.Runner == nil || !canonicalExistingPath(g.RepositoryRoot) || !canonicalExistingPath(repositoryPath) {
+		return "", ErrUnsafeTarget
+	}
+	configured, err := resolvePath(g.RepositoryRoot)
+	if err != nil {
+		return "", ErrUnsafeTarget
+	}
+	supplied, err := resolvePath(repositoryPath)
+	if err != nil || !samePath(configured, supplied) {
+		return "", ErrUnsafeTarget
+	}
+	result, err := g.command(ctx, supplied, "rev-parse", "--git-common-dir")
+	if err != nil || result.ExitCode != 0 {
+		return "", ErrUnsafeTarget
+	}
+	common := strings.TrimSpace(result.Stdout)
+	if common == "" || strings.ContainsAny(common, "\r\n") {
+		return "", ErrUnsafeTarget
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(supplied, common)
+	}
+	if !canonicalExistingPath(common) {
+		return "", ErrUnsafeTarget
+	}
+	canonical, err := resolvePath(common)
+	if err != nil || canonical != common {
+		return "", ErrUnsafeTarget
+	}
+	return common, nil
+}
+
+func canonicalExistingPath(path string) bool {
+	return strings.TrimSpace(path) != "" && strings.TrimSpace(path) == path && filepath.IsAbs(path) && filepath.Clean(path) == path && func() bool {
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return false
+		}
+		resolved, err := filepath.EvalSymlinks(path)
+		return err == nil && filepath.Clean(resolved) == path
+	}()
+}
+
 // InspectTaskWorktree establishes whether the exact managed target is an
 // owned, clean linked worktree at the requested branch and base. This method
 // is read-only: it never asks Git to mutate worktree or branch state.
