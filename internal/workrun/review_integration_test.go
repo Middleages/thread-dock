@@ -1,7 +1,11 @@
 package workrun
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +16,7 @@ import (
 	contractv2 "thread-dock/internal/contract/v2"
 	"thread-dock/internal/coordinator"
 	"thread-dock/internal/runner"
+	runtimecontract "thread-dock/internal/runtime"
 	statev2 "thread-dock/internal/state/v2"
 	"thread-dock/internal/worktree"
 )
@@ -22,6 +27,93 @@ func TestReviewIntegrationServiceRequiresDependencies(t *testing.T) {
 	if err == nil {
 		t.Fatal("missing integration dependencies unexpectedly accepted")
 	}
+}
+
+func TestReviewIntegrationRealStoreReviewerReplayAccept(t *testing.T) {
+	store, snapshot, candidate, repo, root := realReviewerEvidenceFixture(t)
+	git := worktree.New(runner.OSRunner{}, "git", root, repo)
+	runtime := &realReviewerRuntime{candidateSHA: candidate}
+	coordinatorRuntime := coordinator.NewCoordinator(store, runtime, nil, git, coordinator.NewOwnerLocker(root), "evidence-owner", 0, time.Now().UTC())
+	service := NewReviewIntegrationService(store, coordinatorRuntime, git, "operator", time.Now, ReviewIntegrationBinding{RepositoryPath: repo, IntegrationPath: filepath.Join(root, "integration"), IntegrationBranch: "integration", RuntimeFingerprint: "review-runtime"})
+	first, firstErr := service.Advance(context.Background(), snapshot, "task-1", "caller-1")
+	if firstErr != nil || first.TaskStates["task-1"].Status != statev2.TaskRunning || runtime.launches != 1 {
+		t.Fatalf("first advance status=%q err=%v launches=%d", first.TaskStates["task-1"].Status, firstErr, runtime.launches)
+	}
+	secondInput, err := store.Load(context.Background(), snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, secondErr := service.Advance(context.Background(), secondInput, "task-1", "caller-2")
+	if secondErr != nil || second.TaskStates["task-1"].Status != statev2.TaskAccepted || runtime.launches != 1 || runtime.observes != 1 {
+		t.Fatalf("second advance status=%q err=%v launches/observes=%d/%d", second.TaskStates["task-1"].Status, secondErr, runtime.launches, runtime.observes)
+	}
+	if second.TaskStates["task-1"].Review == nil || second.TaskStates["task-1"].Review.CandidateSHA != candidate {
+		t.Fatalf("review evidence=%#v", second.TaskStates["task-1"].Review)
+	}
+	_ = coordinatorRuntime.Close(context.Background())
+}
+
+type realReviewerRuntime struct {
+	candidateSHA       string
+	launches, observes int
+}
+
+func (r *realReviewerRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
+	r.launches++
+	return "review-provider", nil
+}
+func (r *realReviewerRuntime) Observe(_ context.Context, invocation statev2.InvocationState, _ runtimecontract.Invocation) (coordinator.RuntimeObservation, error) {
+	r.observes++
+	result, _ := json.Marshal(runtimecontract.ReviewerResult{ReviewedSHA: r.candidateSHA, Decision: "accept", BlockingFindings: []runtimecontract.ReviewerFinding{}})
+	at := time.Now().UTC()
+	return coordinator.RuntimeObservation{State: coordinator.RuntimeObservationEnded, ProviderIdentity: "review-provider", EndedAt: &at, Artifact: &runtimecontract.ArtifactEnvelope{RequestID: contractv2.RequestID(invocation.InvocationID), Role: runtimecontract.RoleReviewer, Status: "success", Result: result}}, nil
+}
+func (r *realReviewerRuntime) Terminate(context.Context, statev2.InvocationState) error { return nil }
+
+func realReviewerEvidenceFixture(t *testing.T) (statev2.Store, statev2.WorkSnapshot, string, string, string) {
+	t.Helper()
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	runGit(t, "", "init", repo)
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "ThreadDock Test")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "base")
+	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "checkout", "-b", "candidate")
+	if err := os.WriteFile(filepath.Join(repo, "change.txt"), []byte("candidate\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "change.txt")
+	runGit(t, repo, "commit", "-m", "candidate")
+	candidate := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	tree := strings.TrimSpace(runGit(t, repo, "rev-parse", candidate+"^{tree}"))
+	contract := contractv2.WorkItemContract{Version: 2, WorkID: "work-review-evidence", ProjectID: "project", Revision: 1, Request: "review", AcceptanceCriteria: []string{"work acceptance"}, RepositoryPlans: []contractv2.RepositoryPlan{{RepoKey: "repo", BaseSHA: base, TargetBranch: "main"}}, Tasks: []contractv2.Task{{TaskID: "task-1", RepoKey: "repo", Branch: "candidate", AllowedPaths: []string{"change.txt"}, AcceptanceCriteria: []string{"task acceptance"}}}, Documentation: contractv2.DocumentationPlan{Reason: "none"}, ExecutionProfiles: contractv2.ExecutionProfiles{Builder: "builder", Reviewer: "reviewer", Documenter: "documenter"}}
+	if violations := contractv2.Validate(contract); len(violations) != 0 {
+		t.Fatalf("contract violations: %#v", violations)
+	}
+	var encoded bytes.Buffer
+	if err := contractv2.Write(&encoded, contract); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(encoded.Bytes())
+	snapshot := statev2.WorkSnapshot{SchemaVersion: 2, ProjectID: contract.ProjectID, WorkID: contract.WorkID, Revision: 1, State: statev2.StateAwaitingApproval, ContractHash: hex.EncodeToString(sum[:]), Contract: contract, SyncStatus: "local", NextAction: "approve", EvidenceRefs: []string{}, Receipts: map[contractv2.RequestID]statev2.Receipt{}, TaskStates: map[contractv2.TaskID]statev2.TaskExecutionState{"task-1": {TaskID: "task-1", Status: statev2.TaskPending, RepairLimit: 2, RecoveryLimit: 1, PriorAttempts: []statev2.AttemptSummary{}, InvocationHistory: []statev2.InvocationID{}}}, Publications: map[statev2.PublicationIntentID]statev2.PublicationState{}}
+	store := statev2.NewStore(root)
+	if _, err := store.CreatePlan(context.Background(), snapshot, "plan", "plan-hash"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot = applyForegroundTransition(t, store, snapshot, "approve", &statev2.WorkTransition{Action: statev2.WorkApprove, ApprovalRef: "approval", ContractHash: snapshot.ContractHash})
+	wt := &statev2.WorktreeIdentity{CanonicalPath: repo, GitCommonDir: filepath.Join(repo, ".git"), Branch: "candidate", BaseSHA: base}
+	snapshot = applyForegroundTransition(t, store, snapshot, "reserve", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskReserveInvocation, InvocationID: "builder-inv", LogicalWorkID: "builder-logical", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: time.Now().UTC(), Worktree: wt, Invocation: &statev2.InvocationState{LogicalProfile: "builder", RuntimeFingerprint: "builder-runtime"}})
+	snapshot = applyForegroundTransition(t, store, snapshot, "begin", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskBeginLaunch, InvocationID: "builder-inv", LogicalWorkID: "builder-logical", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: time.Now().UTC()})
+	snapshot = applyForegroundTransition(t, store, snapshot, "running", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskMarkRunning, InvocationID: "builder-inv", LogicalWorkID: "builder-logical", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: time.Now().UTC(), Invocation: &statev2.InvocationState{ProviderIdentity: "builder-provider"}})
+	snapshot = applyForegroundTransition(t, store, snapshot, "terminated", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskConfirmTermination, InvocationID: "builder-inv", LogicalWorkID: "builder-logical", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: time.Now().UTC(), Reason: "finished"})
+	snapshot = applyForegroundTransition(t, store, snapshot, "candidate", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskRecordCandidate, InvocationID: "builder-inv", LogicalWorkID: "builder-logical", Role: "builder", ReturnStage: statev2.TaskPending, BuilderAttempt: 1, At: time.Now().UTC(), Candidate: &statev2.CandidateEvidence{BuilderAttempt: 1, CandidateSHA: candidate, TreeSHA: tree, ChangedFiles: []string{"change.txt"}}})
+	snapshot = applyForegroundTransition(t, store, snapshot, "gate", &statev2.TaskTransition{TaskID: "task-1", Action: statev2.TaskRecordGate, Role: "builder", BuilderAttempt: 1, At: time.Now().UTC(), Gate: &statev2.GateEvidence{BuilderAttempt: 1, CandidateSHA: candidate, Commands: []string{"check"}, Outcomes: []string{"passed"}, Passed: true, ObservedAt: time.Now().UTC()}})
+	return store, snapshot, candidate, repo, root
 }
 
 func TestReviewIntegrationLaunchesReviewerAndMergesExactCandidate(t *testing.T) {
