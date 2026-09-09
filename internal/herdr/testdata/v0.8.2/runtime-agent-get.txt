@@ -1,0 +1,1 @@
+{"id":"agent:get","result":{"agent":{"name":"td-builder-48984808701e72fe8a2e","pane_id":"pane-1","workspace_id":"ws-1","cwd":"/repo/worktree","agent_status":"working","agent_session":{"value":"session-1"}}}}
