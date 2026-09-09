@@ -67,3 +67,22 @@ Builder의 native agent는 기존 `build`를 명시적으로 바인딩한다. �
 Herdr 연결·agent 시작·권한 규칙 합성 확인까지 진행했다. 실제 파일 편집·결과 회수·candidate_ready·행동 수준 권한 적용은 검증하지 못했다. idle 상태만으로 invocation 종료 또는 prompt 미전달을 확정하지 않는다.
 
 현재 bridge/driver가 오류를 정적으로 축약하므로 최초 Prompt의 정확한 Herdr 오류 코드는 수집되지 않았다. `agent_prompt_stalled`나 인증 문제라고 단정할 근거가 없다. 다음 진단은 raw provider 본문·transcript 없이 오류 code만 수집하는 좁은 진단 경로를 준비하고, 보존된 invocation의 상태를 먼저 조정하는 것이다. 재시도 권한이나 종료 증거 없이 같은 packet을 다시 보내지 않는다.
+
+## 2026-09-09 Prompt 전달 비교 진단
+
+최초 pilot invocation은 재전송하지 않았다. Herdr server/client 로그에서 해당 target/request와 연결되는 오류 code를 찾지 못했다. OpenCode DB를 원래 시험 directory로 한정해 조회한 결과 session 0, user message 0, requestId를 포함한 part 0이었다. 이 조회는 본문을 출력하지 않고 개수만 반환했다.
+
+별도 `/tmp/threaddock-prompt-diag.5PLepy/worktree`에서 기존 build에 모든 도구 deny 정책을 적용했다. 파일 변경/commit 과제 없이 고정 문장 응답만 요청했다. 오류 수집기는 stdout/stderr JSON에서 알려진 code만 출력하고 provider message와 본문은 버렸다.
+
+| 비교 | 수행·관찰 | 결과 |
+|---|---|---|
+| 시작 후 별도 단계로 짧은 Prompt | StartAgent 성공 뒤 별도 CLI 호출로 전송 | exit 0, 약 9.97초. DB에서 user message 1건과 정확한 assistant 응답 1건 확인 |
+| 시작 직후 즉시 짧은 Prompt | 같은 스크립트에서 StartAgent → GetInfo → Prompt, 성공한 Start/Get 뒤 즉시 전송 | 약 6.40초 후 exit 1, `agent_prompt_stalled`. DB에 해당 진단 문장이 포함된 part 0건 |
+
+두 번째 agent는 실패 뒤에도 idle/interactive_ready로 표시됐다. 설치된 Herdr help는 `prompt --wait`가 turn 자체를 추적하지 않으며, non-working 상태에서 전송한 뒤 5초 안에 상태 변화를 관찰하지 못하면 `agent_prompt_stalled`를 반환한다고 설명한다.
+
+판정: 동일 build와 무도구 정책에서 전달 성공 사례가 있으므로 일반적인 인증/권한 부재만으로 설명되지 않는다. 시작 완료 직후의 입력 준비와 Herdr readiness 판정 사이의 경합이 의심된다. 이는 비교 관찰에 따른 추론이며 Herdr/OpenCode 내부 원인을 소스 수준에서 확정한 것은 아니다. 최초 pilot의 유실된 오류 코드도 소급 확정하지 않는다.
+
+다음 수정 검토 대상은 Herdr의 agent-start 준비 완료 판정과 실제 입력 전달 시점이다. ThreadDock의 기존 invocation 재전송이나 자동 재시도는 수행하지 않았다. 이번 비교는 Prompt 전달 진단이며 Builder candidate_ready나 exact 취소 기능의 성공 검증은 아니다.
+
+비교용 workspace는 경로를 대조한 뒤 닫았다. 이는 임시 진단 프로세스 정리이며 bridge의 Terminate 성공 근거로 사용하지 않는다. 원래 Builder pilot workspace/state와 두 진단용 Git 저장소는 보존했다.
