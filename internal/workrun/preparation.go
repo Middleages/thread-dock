@@ -84,6 +84,10 @@ func (s *PreparationService) Prepare(ctx context.Context, request PreparationReq
 		if task.Invocation == nil || task.Worktree == nil || task.Invocation.LogicalWorkID != request.LogicalWorkID || task.Invocation.RuntimeFingerprint != request.RuntimeFingerprint || task.Worktree.CanonicalPath != request.WorktreePath || task.Worktree.Branch != request.Branch || task.Worktree.BaseSHA != request.BaseSHA || !sameDependencies(task.Worktree.IntegratedDependencies, dependencies) {
 			return snapshot, errors.New("reserved task identity does not match preparation request")
 		}
+		observation, inspectErr := s.inspect(ctx, request.RepositoryPath, task.Worktree.CanonicalPath, task.Worktree.Branch, task.Worktree.BaseSHA)
+		if inspectErr != nil || !observation.Exists || !observation.IdentityMatches || observation.CanonicalPath != task.Worktree.CanonicalPath || observation.GitCommonDir != task.Worktree.GitCommonDir {
+			return snapshot, errors.New("reserved worktree identity could not be verified")
+		}
 		return snapshot, nil
 	}
 	if task.Status == statev2.TaskWorktreePreparing {
@@ -145,10 +149,10 @@ func (s *PreparationService) reconcilePreparing(ctx context.Context, snapshot st
 		return s.persistBlocker(ctx, snapshot, task, request, task.Invocation, "worktree preparation identity is incomplete")
 	}
 	observation, inspectErr := s.inspect(ctx, request.RepositoryPath, task.Worktree.CanonicalPath, task.Worktree.Branch, task.Worktree.BaseSHA)
-	if inspectErr == nil && observation.CanonicalPath == task.Worktree.CanonicalPath && observation.Exists && observation.IdentityMatches {
+	if inspectErr == nil && observation.CanonicalPath == task.Worktree.CanonicalPath && observation.GitCommonDir == task.Worktree.GitCommonDir && observation.Exists && observation.IdentityMatches {
 		return s.reconcile(ctx, snapshot, task, statev2.WorktreePreparationEvidence{OperationTerminated: true, WorktreeExists: true, IdentityMatches: true, Diagnostic: "worktree preparation inspection matched"})
 	}
-	if inspectErr == nil && observation.CanonicalPath == task.Worktree.CanonicalPath && !observation.Exists {
+	if inspectErr == nil && observation.CanonicalPath == task.Worktree.CanonicalPath && observation.GitCommonDir == task.Worktree.GitCommonDir && !observation.Exists {
 		return s.reconcile(ctx, snapshot, task, statev2.WorktreePreparationEvidence{OperationTerminated: true, Diagnostic: "worktree preparation target is missing"})
 	}
 	return s.persistBlocker(ctx, snapshot, task, request, task.Invocation, "worktree identity evidence mismatch")
@@ -164,6 +168,7 @@ func (s *PreparationService) persistBlocker(ctx context.Context, snapshot statev
 	if invocation != nil {
 		tr.InvocationID, tr.LogicalWorkID = invocation.InvocationID, invocation.LogicalWorkID
 		tr.ReturnStage, tr.BuilderAttempt = invocation.ReturnStage, task.BuilderAttempt
+		tr.Blocker.InvocationID = invocation.InvocationID
 	}
 	updated, err := s.apply(ctx, snapshot, tr)
 	if err != nil {
@@ -300,7 +305,7 @@ func isHex(value string) bool {
 }
 
 func validBranch(value string) bool {
-	return value != "" && !strings.HasPrefix(value, "-") && !strings.ContainsAny(value, " ~^:?*[\\\x00\r\n") && !strings.Contains(value, "..") && !strings.HasSuffix(value, "/")
+	return strings.TrimSpace(value) != "" && strings.TrimSpace(value) == value && !strings.HasPrefix(value, "-") && !strings.HasPrefix(value, ".") && !strings.ContainsAny(value, "\x00\r\n ~^:?*[\\") && !strings.Contains(value, "..") && !strings.Contains(value, "@{") && !strings.Contains(value, "//") && !strings.Contains(value, "/.") && !strings.HasSuffix(value, "/") && !strings.HasSuffix(value, ".") && !strings.HasSuffix(value, ".lock") && !strings.HasPrefix(value, "/")
 }
 
 func canonicalPreparationPath(path string, allowMissingLeaf bool) (string, error) {

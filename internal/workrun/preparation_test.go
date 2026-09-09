@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,9 +24,11 @@ type preparationStateFake struct {
 	applies  []statev2.TransitionRequest
 	next     []statev2.WorkSnapshot
 	err      error
+	loads    int
 }
 
 func (f *preparationStateFake) Load(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error) {
+	f.loads++
 	return f.snapshot, nil
 }
 func (f *preparationStateFake) Apply(_ context.Context, req statev2.TransitionRequest) (statev2.WorkSnapshot, error) {
@@ -47,6 +50,70 @@ type preparationGitFake struct {
 	createErr   error
 	calls       []string
 	inspectErr  error
+}
+
+type concurrentPreparationState struct {
+	mu       sync.Mutex
+	snapshot statev2.WorkSnapshot
+	beginWon bool
+	applies  int
+}
+
+func (s *concurrentPreparationState) Load(context.Context, contractv2.WorkID) (statev2.WorkSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snapshot, nil
+}
+
+func (s *concurrentPreparationState) Apply(_ context.Context, request statev2.TransitionRequest) (statev2.WorkSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.applies++
+	if request.Task.Action == statev2.TaskBeginWorktreePreparation {
+		if s.beginWon {
+			return statev2.WorkSnapshot{}, &statev2.StaleRevisionError{CurrentRevision: s.snapshot.Revision + 1, CurrentState: statev2.StateRunning}
+		}
+		s.beginWon = true
+		task := s.snapshot.TaskStates[request.Task.TaskID]
+		task.Status, task.BuilderAttempt = statev2.TaskWorktreePreparing, 1
+		task.Worktree = request.Task.Worktree
+		task.Invocation = request.Task.Invocation
+		task.Invocation.InvocationID, task.Invocation.LogicalWorkID, task.Invocation.Role, task.Invocation.ReturnStage = request.Task.InvocationID, request.Task.LogicalWorkID, "builder", statev2.TaskPending
+		task.LogicalWork = &statev2.LogicalWorkState{LogicalWorkID: request.Task.LogicalWorkID, Role: "builder", BuilderAttempt: 1, LogicalProfile: request.Task.Invocation.LogicalProfile, RuntimeFingerprint: request.Task.Invocation.RuntimeFingerprint, Worktree: request.Task.Worktree}
+		task.InvocationHistory = []statev2.InvocationID{request.Task.InvocationID}
+		s.snapshot.TaskStates[request.Task.TaskID], s.snapshot.Revision = task, s.snapshot.Revision+1
+		return s.snapshot, nil
+	}
+	if request.Task.Action == statev2.TaskReconcileWorktreePreparation {
+		task := s.snapshot.TaskStates[request.Task.TaskID]
+		task.Status = statev2.TaskInvocationReserved
+		s.snapshot.TaskStates[request.Task.TaskID], s.snapshot.Revision = task, s.snapshot.Revision+1
+		return s.snapshot, nil
+	}
+	return statev2.WorkSnapshot{}, errors.New("unexpected transition")
+}
+
+type concurrentPreparationGit struct {
+	mu           sync.Mutex
+	inspectCount int
+	createCalls  int
+}
+
+func (g *concurrentPreparationGit) InspectTaskWorktree(_ context.Context, _ string, path string, _ string, _ string) (worktree.TaskWorktreeInspection, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.inspectCount++
+	if g.inspectCount <= 2 {
+		return worktree.TaskWorktreeInspection{CanonicalPath: path, GitCommonDir: "/repo/.git"}, nil
+	}
+	return worktree.TaskWorktreeInspection{CanonicalPath: path, GitCommonDir: "/repo/.git", Exists: true, IdentityMatches: true}, nil
+}
+
+func (g *concurrentPreparationGit) CreateManagedWorktree(context.Context, string, string, string, string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.createCalls++
+	return nil
 }
 
 func (f *preparationGitFake) InspectTaskWorktree(context.Context, string, string, string, string) (worktree.TaskWorktreeInspection, error) {
@@ -236,6 +303,26 @@ func TestPreparePreInspectionMismatchPersistsBoundedBlockerWithoutCreate(t *test
 	}
 }
 
+func TestPrepareRejectsInvalidBranchesBeforeLoadingState(t *testing.T) {
+	root := t.TempDir()
+	repo, managed := filepath.Join(root, "repo"), filepath.Join(root, "managed")
+	if err := os.MkdirAll(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(managed, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, branch := range []string{"foo.lock", ".branch", "foo//bar", "foo@{bar}"} {
+		state := &preparationStateFake{}
+		git := &preparationGitFake{}
+		service := NewPreparationService(state, git, "operator", nil)
+		_, err := service.Prepare(context.Background(), PreparationRequest{WorkID: "work", TaskID: "task", InvocationID: "inv", LogicalWorkID: "logical", RepositoryPath: repo, WorktreePath: filepath.Join(managed, "task"), Branch: branch, BaseSHA: strings.Repeat("a", 40), RuntimeFingerprint: "runtime"})
+		if err == nil || state.loads != 0 || len(git.calls) != 0 {
+			t.Fatalf("branch=%q err=%v loads=%d calls=%v", branch, err, state.loads, git.calls)
+		}
+	}
+}
+
 func TestPrepareReservedReplayIsNoOp(t *testing.T) {
 	common := filepath.Join(t.TempDir(), ".git")
 	service, git, _, _, request := preparationFixture(t, nil, nil)
@@ -244,15 +331,31 @@ func TestPrepareReservedReplayIsNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if git.createCalls != 1 {
+		t.Fatalf("initial preparation creates=%d", git.createCalls)
+	}
 	before := prepared.Revision
 	git.calls = nil
+	git.inspect = []worktree.TaskWorktreeInspection{{CanonicalPath: request.WorktreePath, GitCommonDir: common, Exists: true, IdentityMatches: true}}
 	request.InvocationID = "replay-invocation"
 	got, err := service.Prepare(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Revision != before || len(git.calls) != 0 || !reflect.DeepEqual(got.TaskStates[request.TaskID], prepared.TaskStates[request.TaskID]) {
+	if got.Revision != before || !reflect.DeepEqual(got.TaskStates[request.TaskID], prepared.TaskStates[request.TaskID]) || !reflect.DeepEqual(git.calls, []string{"inspect"}) {
 		t.Fatalf("replay mutated state: before=%d after=%d calls=%v", before, got.Revision, git.calls)
+	}
+	otherRepo := filepath.Join(filepath.Dir(request.RepositoryPath), "repo-b")
+	if err := os.MkdirAll(otherRepo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	request.RepositoryPath = otherRepo
+	git.inspect = []worktree.TaskWorktreeInspection{{CanonicalPath: request.WorktreePath, GitCommonDir: filepath.Join(otherRepo, ".git"), Exists: true, IdentityMatches: true}}
+	if _, err := service.Prepare(context.Background(), request); err == nil {
+		t.Fatal("expected current repository binding mismatch")
+	}
+	if git.createCalls != 1 {
+		t.Fatalf("replay created worktree: %d", git.createCalls)
 	}
 }
 
@@ -284,6 +387,46 @@ func TestPrepareRestartFromPreparingOnlyInspectsAndReconciles(t *testing.T) {
 	state := got.TaskStates[request.TaskID]
 	if git.createCalls != 0 || state.Status != statev2.TaskInvocationReserved || state.Invocation.InvocationID != prepared.TaskStates[request.TaskID].Invocation.InvocationID || len(git.calls) != 1 || git.calls[0] != "inspect" {
 		t.Fatalf("calls=%v creates=%d state=%#v", git.calls, git.createCalls, state)
+	}
+}
+
+func TestPrepareRestartMismatchPersistsActiveInvocationBlocker(t *testing.T) {
+	service, git, store, snapshot, request := preparationFixture(t, nil, nil)
+	beginPreparingForTest(t, store, snapshot, request)
+	git.inspect = []worktree.TaskWorktreeInspection{{CanonicalPath: request.WorktreePath, GitCommonDir: filepath.Join(request.RepositoryPath, ".git"), Exists: true, IdentityMatches: false}}
+	_, err := service.Prepare(context.Background(), request)
+	if err == nil {
+		t.Fatal("expected blocker error")
+	}
+	got, loadErr := store.Load(context.Background(), request.WorkID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	state := got.TaskStates[request.TaskID]
+	if state.Status != statev2.TaskNeedsOperator || got.Control.Blocker == nil || got.Control.Blocker.InvocationID != "inv-1" {
+		t.Fatalf("state=%#v blocker=%#v", state, got.Control.Blocker)
+	}
+}
+
+func TestPreparePreparingRequiresPersistedRepositoryCommonDir(t *testing.T) {
+	service, git, store, snapshot, request := preparationFixture(t, nil, nil)
+	beginPreparingForTest(t, store, snapshot, request)
+	otherRepo := filepath.Join(filepath.Dir(request.RepositoryPath), "repo-b")
+	if err := os.MkdirAll(otherRepo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	request.RepositoryPath = otherRepo
+	git.inspect = []worktree.TaskWorktreeInspection{{CanonicalPath: request.WorktreePath, GitCommonDir: filepath.Join(otherRepo, ".git"), Exists: true, IdentityMatches: true}}
+	_, err := service.Prepare(context.Background(), request)
+	if err == nil {
+		t.Fatal("expected repository identity blocker")
+	}
+	got, loadErr := store.Load(context.Background(), request.WorkID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if got.TaskStates[request.TaskID].Status != statev2.TaskNeedsOperator || got.Control.Blocker == nil || got.Control.Blocker.InvocationID != "inv-1" {
+		t.Fatalf("snapshot=%#v", got)
 	}
 }
 
@@ -327,6 +470,29 @@ func TestPrepareStaleBeginDoesNotCreate(t *testing.T) {
 	_, err := service.Prepare(context.Background(), PreparationRequest{WorkID: "work-1", TaskID: "task-1", InvocationID: "inv", LogicalWorkID: "logical", RepositoryPath: repo, WorktreePath: target, Branch: "agent/task", BaseSHA: base, RuntimeFingerprint: "runtime"})
 	if err == nil || git.createCalls != 0 {
 		t.Fatalf("err=%v creates=%d", err, git.createCalls)
+	}
+}
+
+func TestPrepareConcurrentCallsOnlyOneBeginAndCreateWins(t *testing.T) {
+	service, _, _, snapshot, request := preparationFixture(t, nil, nil)
+	state := &concurrentPreparationState{snapshot: snapshot}
+	git := &concurrentPreparationGit{}
+	service.state, service.git = state, git
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, _ = service.Prepare(context.Background(), request) }()
+	}
+	wg.Wait()
+	git.mu.Lock()
+	creates, inspections := git.createCalls, git.inspectCount
+	git.mu.Unlock()
+	state.mu.Lock()
+	beginWon, applies := state.beginWon, state.applies
+	finalStatus := state.snapshot.TaskStates[request.TaskID].Status
+	state.mu.Unlock()
+	if !beginWon || creates != 1 || applies < 2 || inspections < 3 || finalStatus != statev2.TaskInvocationReserved {
+		t.Fatalf("begin=%v creates=%d applies=%d inspections=%d status=%s", beginWon, creates, applies, inspections, finalStatus)
 	}
 }
 
