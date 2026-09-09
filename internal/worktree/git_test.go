@@ -498,6 +498,131 @@ func TestInspectRetirementTargetRejectsDirtyWorktree(t *testing.T) {
 	}
 }
 
+func TestInspectTaskWorktreeMissingReturnsCanonicalNegative(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	managed := filepath.Join(root, "managed")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(managed, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{results: []runner.Result{{Stdout: filepath.Join(repo, ".git") + "\n"}, {Stdout: "worktree " + repo + "\nHEAD " + strings.Repeat("a", 40) + "\nbranch refs/heads/main\n"}}}
+	git := New(runner, managed, repo)
+	sha := strings.Repeat("a", 40)
+	target := filepath.Join(managed, "task-1")
+	got, err := git.InspectTaskWorktree(context.Background(), repo, target, "agent/task-1", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CanonicalPath != target || got.GitCommonDir == "" || got.Exists || got.IdentityMatches {
+		t.Fatalf("inspection=%+v", got)
+	}
+}
+
+func TestInspectTaskWorktreeAdoptsExactCleanLinkedWorktree(t *testing.T) {
+	git, repo, managed, target, sha := realRetirementRepo(t)
+	got, err := git.InspectTaskWorktree(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Exists || !got.IdentityMatches || got.CanonicalPath != target || got.GitCommonDir != filepath.Join(repo, ".git") {
+		t.Fatalf("inspection=%+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(managed, "does-not-exist")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unexpected managed root state: %v", err)
+	}
+}
+
+func TestInspectTaskWorktreeDirtyTargetIsSafeNegative(t *testing.T) {
+	git, repo, _, target, sha := realRetirementRepo(t)
+	writeTestFile(t, filepath.Join(target, "dirty.txt"), "dirty\n")
+	got, err := git.InspectTaskWorktree(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Exists || got.IdentityMatches {
+		t.Fatalf("inspection=%+v", got)
+	}
+}
+
+func TestInspectTaskWorktreeMissingCreateThenExactMatch(t *testing.T) {
+	git, repo, managed, _, sha := realRetirementRepo(t)
+	target := filepath.Join(managed, "fresh")
+	if got, err := git.InspectTaskWorktree(context.Background(), repo, target, "agent/fresh", sha); err != nil || got.Exists || got.IdentityMatches {
+		t.Fatalf("missing inspection=%+v err=%v", got, err)
+	}
+	if err := git.CreateManagedWorktree(context.Background(), repo, target, "agent/fresh", sha); err != nil {
+		t.Fatal(err)
+	}
+	got, err := git.InspectTaskWorktree(context.Background(), repo, target, "agent/fresh", sha)
+	if err != nil || !got.Exists || !got.IdentityMatches {
+		t.Fatalf("created inspection=%+v err=%v", got, err)
+	}
+}
+
+func TestInspectTaskWorktreeWrongIdentityDetachedAndForeignAreSafeNegatives(t *testing.T) {
+	t.Run("wrong branch and head", func(t *testing.T) {
+		git, repo, _, target, sha := realRetirementRepo(t)
+		for _, tc := range []struct{ name, branch, head string }{{"branch", "agent/other", sha}, {"head", "agent/task", strings.Repeat("b", 40)}} {
+			t.Run(tc.name, func(t *testing.T) {
+				got, err := git.InspectTaskWorktree(context.Background(), repo, target, tc.branch, tc.head)
+				if err != nil || !got.Exists || got.IdentityMatches {
+					t.Fatalf("inspection=%+v err=%v", got, err)
+				}
+			})
+		}
+	})
+	t.Run("detached", func(t *testing.T) {
+		git, repo, _, target, sha := realRetirementRepo(t)
+		runSetupGit(t, target, "checkout", "--detach", sha)
+		got, err := git.InspectTaskWorktree(context.Background(), repo, target, "agent/task", sha)
+		if err != nil || !got.Exists || got.IdentityMatches {
+			t.Fatalf("inspection=%+v err=%v", got, err)
+		}
+	})
+	t.Run("foreign", func(t *testing.T) {
+		git, repo, managed, _, _ := realRetirementRepo(t)
+		foreign := filepath.Join(filepath.Dir(repo), "foreign")
+		runSetupGit(t, "", "init", foreign)
+		runSetupGit(t, foreign, "config", "user.email", "test@example.com")
+		runSetupGit(t, foreign, "config", "user.name", "ThreadDock Test")
+		writeTestFile(t, filepath.Join(foreign, "README.md"), "foreign\n")
+		runSetupGit(t, foreign, "add", "README.md")
+		runSetupGit(t, foreign, "commit", "-m", "foreign")
+		sha := strings.TrimSpace(runSetupGit(t, foreign, "rev-parse", "HEAD"))
+		target := filepath.Join(managed, "foreign")
+		runSetupGit(t, foreign, "worktree", "add", "-b", "foreign/task", target, sha)
+		got, err := git.InspectTaskWorktree(context.Background(), repo, target, "foreign/task", sha)
+		if err != nil || !got.Exists || got.IdentityMatches {
+			t.Fatalf("inspection=%+v err=%v", got, err)
+		}
+	})
+}
+
+func TestInspectTaskWorktreeRejectsSymlinkEscapeAndStaleRegistration(t *testing.T) {
+	t.Run("symlink", func(t *testing.T) {
+		git, repo, managed, target, sha := realRetirementRepo(t)
+		alias := filepath.Join(managed, "alias")
+		if err := os.Symlink(target, alias); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := git.InspectTaskWorktree(context.Background(), repo, alias, "agent/task", sha); !errors.Is(err, ErrUnsafeTarget) {
+			t.Fatalf("err=%v", err)
+		}
+	})
+	t.Run("stale registration", func(t *testing.T) {
+		git, repo, _, target, sha := realRetirementRepo(t)
+		if err := os.RemoveAll(target); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := git.InspectTaskWorktree(context.Background(), repo, target, "agent/task", sha); !errors.Is(err, ErrUnsafeTarget) {
+			t.Fatalf("err=%v", err)
+		}
+	})
+}
+
 func TestRemoveRetiredRejectsMovedHeadBeforeMutation(t *testing.T) {
 	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
 	writeTestFile(t, filepath.Join(target, "new.txt"), "new\n")

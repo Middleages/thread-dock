@@ -76,6 +76,15 @@ type RevertWorktreeInspection struct {
 	ParentCommit string
 }
 
+// TaskWorktreeInspection is the bounded, provider-neutral observation used by
+// work preparation. It intentionally contains no Git command output.
+type TaskWorktreeInspection struct {
+	CanonicalPath   string
+	GitCommonDir    string
+	Exists          bool
+	IdentityMatches bool
+}
+
 // ValidateTrustedManagedRoot enforces the ownership and non-writable-mode
 // invariant used before creating managed worktrees.
 func ValidateTrustedManagedRoot(path string) error { return validateTrustedManagedRoot(path) }
@@ -328,6 +337,145 @@ func (g *Git) gitCommonDir(ctx context.Context, cwd string) (string, error) {
 		return "", ErrUnsafeTarget
 	}
 	return resolved, nil
+}
+
+// InspectTaskWorktree establishes whether the exact managed target is an
+// owned, clean linked worktree at the requested branch and base. This method
+// is read-only: it never asks Git to mutate worktree or branch state.
+func (g *Git) InspectTaskWorktree(ctx context.Context, repositoryPath, worktreePath, expectedBranch, expectedBaseSHA string) (TaskWorktreeInspection, error) {
+	if g == nil || g.Runner == nil || strings.TrimSpace(repositoryPath) == "" || strings.TrimSpace(repositoryPath) != repositoryPath || strings.TrimSpace(worktreePath) == "" || strings.TrimSpace(worktreePath) != worktreePath || !filepath.IsAbs(repositoryPath) || !filepath.IsAbs(worktreePath) || filepath.Clean(repositoryPath) != repositoryPath || filepath.Clean(worktreePath) != worktreePath || !validGitRef(expectedBranch) || !isCommitSHA(expectedBaseSHA) {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	managedRoot, err := resolvePath(g.ManagedRoot)
+	if err != nil || validateTrustedManagedRoot(managedRoot) != nil {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	configuredRepository, err := resolvePath(g.RepositoryRoot)
+	if err != nil {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	suppliedRepository, err := resolvePath(repositoryPath)
+	if err != nil || !samePath(configuredRepository, suppliedRepository) {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	if samePath(managedRoot, configuredRepository) || samePath(managedRoot, suppliedRepository) {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	homePath, err := os.UserHomeDir()
+	if err != nil {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	home, err := resolvePath(homePath)
+	if err != nil || samePath(managedRoot, home) || samePath(configuredRepository, home) {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	target, targetExists, err := resolveTaskWorktreePath(worktreePath)
+	if err != nil || !strictlyContained(managedRoot, target) || samePath(target, configuredRepository) || samePath(target, home) || samePath(target, managedRoot) || isFilesystemRoot(target) {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	commonDir, err := g.gitCommonDir(ctx, configuredRepository)
+	if err != nil {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	registrationsResult, err := g.command(ctx, configuredRepository, "worktree", "list", "--porcelain")
+	if err != nil {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	registrations, err := parseRetirementRegistrations(registrationsResult.Stdout)
+	if err != nil {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	type registrationWithPath struct {
+		registeredRetirementWorktree
+		canonical string
+	}
+	var matching []registrationWithPath
+	for _, registration := range registrations {
+		canonical, pathErr := canonicalRetirementRegistrationPath(configuredRepository, registration.path)
+		if pathErr != nil {
+			return TaskWorktreeInspection{}, ErrUnsafeTarget
+		}
+		if !strictlyContained(managedRoot, canonical) {
+			// Registrations outside the trusted managed root are unrelated to
+			// this target, but a malformed path must not be used as evidence.
+			continue
+		}
+		if canonical == target {
+			matching = append(matching, registrationWithPath{registeredRetirementWorktree: registration, canonical: canonical})
+		}
+	}
+	if !targetExists {
+		if len(matching) != 0 || retirementBranchMoved(registrations, expectedBranch) {
+			return TaskWorktreeInspection{}, ErrUnsafeTarget
+		}
+		return TaskWorktreeInspection{CanonicalPath: target, GitCommonDir: commonDir}, nil
+	}
+	inspection := TaskWorktreeInspection{CanonicalPath: target, GitCommonDir: commonDir, Exists: true}
+	if info, statErr := os.Stat(target); statErr != nil || !info.IsDir() {
+		return inspection, nil
+	}
+	if len(matching) != 1 {
+		return inspection, nil
+	}
+	registration := matching[0].registeredRetirementWorktree
+	if registration.branch != expectedBranch || registration.head != expectedBaseSHA {
+		return inspection, nil
+	}
+	targetCommonDir, commonErr := g.gitCommonDir(ctx, target)
+	if commonErr != nil || !samePath(targetCommonDir, commonDir) {
+		return inspection, nil
+	}
+	branchResult, commandErr := g.command(ctx, target, "rev-parse", "--abbrev-ref", "HEAD")
+	if commandErr != nil {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	if strings.TrimSpace(branchResult.Stdout) != expectedBranch {
+		return inspection, nil
+	}
+	headResult, commandErr := g.command(ctx, target, "rev-parse", "HEAD")
+	if commandErr != nil {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	if strings.TrimSpace(headResult.Stdout) != expectedBaseSHA {
+		return inspection, nil
+	}
+	statusResult, commandErr := g.command(ctx, target, "status", "--porcelain=v1")
+	if commandErr != nil {
+		return TaskWorktreeInspection{}, ErrUnsafeTarget
+	}
+	if strings.TrimSpace(statusResult.Stdout) != "" {
+		return inspection, nil
+	}
+	inspection.IdentityMatches = true
+	return inspection, nil
+}
+
+// resolveTaskWorktreePath rejects a symlink target while canonicalising every
+// existing parent. A missing leaf is retained for the subsequent Git check.
+func resolveTaskWorktreePath(path string) (string, bool, error) {
+	absPath := filepath.Clean(path)
+	info, err := os.Lstat(absPath)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", true, ErrUnsafeTarget
+		}
+		parent, parentErr := resolvePath(filepath.Dir(absPath))
+		if parentErr != nil {
+			return "", true, parentErr
+		}
+		return filepath.Clean(filepath.Join(parent, filepath.Base(absPath))), true, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", false, err
+	}
+	resolved, exists, resolveErr := resolveCreatePath(absPath)
+	if resolveErr != nil {
+		return "", false, resolveErr
+	}
+	if exists {
+		return resolveTaskWorktreePath(absPath)
+	}
+	return filepath.Clean(resolved), false, nil
 }
 
 // RevertMergeCommit reverts an ordinary merge commit using its first parent.
