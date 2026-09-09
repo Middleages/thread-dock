@@ -357,7 +357,7 @@ func (d *publicationDispatcher) settleRuntimeEvent(q *publicationQueue, snapshot
 			return CommandResult{Snapshot: snapshot}
 		}
 		if event.observation.State != RuntimeObservationEnded {
-			return CommandResult{Snapshot: snapshot}
+			return d.runtimeUnknown(q, snapshot, event.key, "confirmed terminated Builder was observed active")
 		}
 		if strings.TrimSpace(event.observation.ProviderIdentity) == "" || event.observation.ProviderIdentity != invocation.ProviderIdentity {
 			return d.runtimeUnknown(q, snapshot, event.key, "runtime ended identity does not match persisted identity")

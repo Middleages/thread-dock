@@ -361,7 +361,7 @@ func (c *Coordinator) reconcileInvocation(ctx context.Context, d *publicationDis
 	switch observation.State {
 	case RuntimeObservationActive:
 		if task.Status == statev2.TaskTerminated {
-			return snapshot, nil
+			return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "confirmed terminated Builder was observed active")
 		}
 		if strings.TrimSpace(observation.ProviderIdentity) == "" || (invocation.ProviderIdentity != "" && invocation.ProviderIdentity != observation.ProviderIdentity) {
 			return c.runtimeUnknown(ctx, d, snapshot, taskID, task.Invocation, "runtime active identity does not match persisted identity")

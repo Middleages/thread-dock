@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,14 +140,152 @@ func TestCoordinatorQueueSettlesEndedBuilderArtifactWithRealStoreAndGit(t *testi
 	_ = c.Close(context.Background())
 }
 
+func TestCoordinatorReconcileBuilderArtifactMatrix(t *testing.T) {
+	tests := []struct {
+		name       string
+		mutate     func(*recoveryArtifactRuntime, *worktree.Git, string) string
+		wantBlock  bool
+		wantStatus statev2.TaskStatus
+	}{
+		{name: "wrong request id", mutate: func(r *recoveryArtifactRuntime, _ *worktree.Git, candidate string) string {
+			r.artifact.RequestID = "old-invocation"
+			return candidate
+		}, wantStatus: statev2.TaskTerminated},
+		{name: "wrong role", mutate: func(r *recoveryArtifactRuntime, _ *worktree.Git, candidate string) string {
+			r.artifact.Role = runtimecontract.RoleReviewer
+			return candidate
+		}, wantBlock: true, wantStatus: statev2.TaskNeedsOperator},
+		{name: "unknown JSON field", mutate: func(r *recoveryArtifactRuntime, _ *worktree.Git, candidate string) string {
+			r.artifact.Result = []byte(`{"commitSha":"` + candidate + `","verification":[{"command":"go test","outcome":"passed","duration":"1s"}],"extra":true}`)
+			return candidate
+		}, wantBlock: true, wantStatus: statev2.TaskNeedsOperator},
+		{name: "trailing JSON", mutate: func(r *recoveryArtifactRuntime, _ *worktree.Git, candidate string) string {
+			r.artifact.Result = append(r.artifact.Result, []byte(` {}`)...)
+			return candidate
+		}, wantBlock: true, wantStatus: statev2.TaskNeedsOperator},
+		{name: ">64KiB", mutate: func(r *recoveryArtifactRuntime, _ *worktree.Git, candidate string) string {
+			r.artifact.Result = append(r.artifact.Result, []byte(strings.Repeat(" ", 64*1024))...)
+			return candidate
+		}, wantBlock: true, wantStatus: statev2.TaskNeedsOperator},
+		{name: "active with artifact", mutate: func(r *recoveryArtifactRuntime, _ *worktree.Git, candidate string) string {
+			r.state = RuntimeObservationActive
+			return candidate
+		}, wantBlock: true, wantStatus: statev2.TaskNeedsOperator},
+		{name: "commit outside allowed path", mutate: func(r *recoveryArtifactRuntime, _ *worktree.Git, repo string) string {
+			writeBuilderFile(t, filepath.Join(repo, "outside.txt"), "outside\n")
+			runBuilderGit(t, repo, "add", "outside.txt")
+			runBuilderGit(t, repo, "commit", "-m", "outside")
+			return strings.TrimSpace(runBuilderGit(t, repo, "rev-parse", "HEAD"))
+		}, wantBlock: true, wantStatus: statev2.TaskNeedsOperator},
+		{name: "off-branch commit", mutate: func(r *recoveryArtifactRuntime, _ *worktree.Git, repo string) string {
+			runBuilderGit(t, repo, "checkout", "-b", "agent/off-branch")
+			writeBuilderFile(t, filepath.Join(repo, "internal", "off.go"), "package internal\n")
+			runBuilderGit(t, repo, "add", "internal/off.go")
+			runBuilderGit(t, repo, "commit", "-m", "off branch")
+			sha := strings.TrimSpace(runBuilderGit(t, repo, "rev-parse", "HEAD"))
+			runBuilderGit(t, repo, "checkout", "agent/task-1")
+			return sha
+		}, wantBlock: true, wantStatus: statev2.TaskNeedsOperator},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, git, snapshot, candidate, root := newConfirmedBuilderFixture(t)
+			rt := &recoveryArtifactRuntime{artifact: &runtimecontract.ArtifactEnvelope{RequestID: "inv-1", Role: runtimecontract.RoleBuilder, Status: "success", Result: []byte(`{"commitSha":"` + candidate + `","verification":[{"command":"go test","outcome":"passed","duration":"1s"}]}`)}}
+			candidate = tc.mutate(rt, git, git.RepositoryRoot)
+			result := []byte(`{"commitSha":"` + candidate + `","verification":[{"command":"go test","outcome":"passed","duration":"1s"}]}`)
+			if tc.name == "unknown JSON field" || tc.name == "trailing JSON" || tc.name == ">64KiB" {
+				if tc.name == "unknown JSON field" {
+					rt.artifact.Result = []byte(`{"commitSha":"` + candidate + `","verification":[{"command":"go test","outcome":"passed","duration":"1s"}],"extra":true}`)
+				} else if tc.name == "trailing JSON" {
+					rt.artifact.Result = append(result, []byte(` {}`)...)
+				} else {
+					rt.artifact.Result = append(result, []byte(strings.Repeat(" ", 64*1024))...)
+				}
+			} else {
+				rt.artifact.Result = result
+			}
+			c := NewCoordinator(store, rt, nil, git, NewOwnerLocker(root), "owner-matrix", os.Getpid(), time.Now().UTC())
+			_, err := c.Reconcile(context.Background(), snapshot.WorkID)
+			if err == nil {
+				t.Fatal("invalid artifact unexpectedly reconciled")
+			}
+			after, loadErr := store.Load(context.Background(), snapshot.WorkID)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if after.TaskStates["task-1"].Candidate != nil || after.TaskStates["task-1"].Status != tc.wantStatus {
+				t.Fatalf("task=%#v err=%v", after.TaskStates["task-1"], err)
+			}
+			if tc.wantBlock && after.Control.Blocker == nil {
+				t.Fatalf("missing blocker for %s", tc.name)
+			}
+			if !tc.wantBlock && after.Control.Blocker != nil {
+				t.Fatalf("unexpected blocker=%#v", after.Control.Blocker)
+			}
+		})
+	}
+}
+
+func TestBuilderIngestionConflictingReplayPreservesCandidateAndRevision(t *testing.T) {
+	store, git, snapshot, candidate, _ := newConfirmedBuilderFixture(t)
+	artifact := &runtimecontract.ArtifactEnvelope{RequestID: "inv-1", Role: runtimecontract.RoleBuilder, Status: "success", Result: []byte(`{"commitSha":"` + candidate + `","verification":[{"command":"go test","outcome":"passed","duration":"1s"}]}`)}
+	d := &publicationDispatcher{state: store, inspector: git, ownerID: "owner", pid: os.Getpid(), startedAt: time.Now().UTC()}
+	result, err := d.ingestBuilderArtifact(context.Background(), snapshot, "task-1", artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := result.Snapshot
+	conflict := *artifact
+	conflict.Result = []byte(`{"commitSha":"ffffffffffffffffffffffffffffffffffffffff","verification":[{"command":"go test","outcome":"passed","duration":"1s"}]}`)
+	if _, err := d.ingestBuilderArtifact(context.Background(), before, "task-1", &conflict); err == nil {
+		t.Fatal("conflicting replay unexpectedly succeeded")
+	}
+	after, err := store.Load(context.Background(), snapshot.WorkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision || after.TaskStates["task-1"].Candidate == nil || after.TaskStates["task-1"].Candidate.CandidateSHA != candidate {
+		t.Fatalf("after=%#v before=%#v", after, before)
+	}
+}
+
+func TestBuilderIngestionDoesNotPersistInspectorDiagnostic(t *testing.T) {
+	store, _, snapshot, _, _ := newConfirmedBuilderFixture(t)
+	secret := "provider-secret-must-not-persist"
+	d := &publicationDispatcher{state: store, inspector: secretInspector{err: errors.New(secret)}, ownerID: "owner", pid: os.Getpid(), startedAt: time.Now().UTC()}
+	artifact := &runtimecontract.ArtifactEnvelope{RequestID: "inv-1", Role: runtimecontract.RoleBuilder, Status: "success", Result: []byte(`{"commitSha":"ffffffffffffffffffffffffffffffffffffffff","verification":[{"command":"go test","outcome":"passed","duration":"1s"}]}`)}
+	_, err := d.ingestBuilderArtifact(context.Background(), snapshot, "task-1", artifact)
+	if err == nil {
+		t.Fatal("inspector error unexpectedly succeeded")
+	}
+	after, loadErr := store.Load(context.Background(), snapshot.WorkID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if after.Control.Blocker == nil || strings.Contains(after.Control.Blocker.Diagnostic, secret) {
+		t.Fatalf("blocker=%#v", after.Control.Blocker)
+	}
+}
+
+type secretInspector struct{ err error }
+
+func (s secretInspector) InspectCommit(context.Context, string, string, string, string) (worktree.CommitInspection, error) {
+	return worktree.CommitInspection{}, s.err
+}
+
 type recoveryArtifactRuntime struct {
 	artifact *runtimecontract.ArtifactEnvelope
 	observes int
+	state    string
 }
 
 func (r *recoveryArtifactRuntime) Observe(context.Context, statev2.InvocationState, runtimecontract.Invocation) (RuntimeObservation, error) {
 	r.observes++
-	return RuntimeObservation{State: RuntimeObservationEnded, ProviderIdentity: "provider-1", EndedAt: ptrTime(time.Now().UTC()), Artifact: r.artifact}, nil
+	state := r.state
+	if state == "" {
+		state = RuntimeObservationEnded
+	}
+	return RuntimeObservation{State: state, ProviderIdentity: "provider-1", EndedAt: ptrTime(time.Now().UTC()), Artifact: r.artifact}, nil
 }
 func (r *recoveryArtifactRuntime) Launch(context.Context, statev2.InvocationState, statev2.WorktreeIdentity, runtimecontract.Invocation) (string, error) {
 	return "provider-1", nil
