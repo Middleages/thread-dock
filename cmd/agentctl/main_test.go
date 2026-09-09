@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"thread-dock/internal/cli"
 	"thread-dock/internal/config"
@@ -273,6 +274,9 @@ type productionPublicationHTTP struct {
 	token          string
 	issues         []github.Issue
 	postedBody     string
+	postedTitle    string
+	postedLabels   []string
+	requests       []productionHTTPRequest
 	getCalls       int
 	postCalls      int
 	authorization  bool
@@ -282,9 +286,17 @@ type productionPublicationHTTP struct {
 	postWasInvalid bool
 }
 
+type productionHTTPRequest struct {
+	method     string
+	path       string
+	authorized bool
+}
+
 func (h *productionPublicationHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
-	h.authorization = r.Header.Get("Authorization") == "Bearer "+h.token
+	authorized := r.Header.Get("Authorization") == "Bearer "+h.token
+	h.authorization = authorized
+	h.requests = append(h.requests, productionHTTPRequest{method: r.Method, path: r.URL.Path, authorized: authorized})
 	if r.URL.Path != "/api/v3/repos/acme/app/issues" {
 		h.mu.Unlock()
 		http.NotFound(w, r)
@@ -299,14 +311,17 @@ func (h *productionPublicationHTTP) ServeHTTP(w http.ResponseWriter, r *http.Req
 	case http.MethodPost:
 		h.postCalls++
 		var payload struct {
-			Title string `json:"title"`
-			Body  string `json:"body"`
+			Title  string   `json:"title"`
+			Body   string   `json:"body"`
+			Labels []string `json:"labels"`
 		}
 		data, err := io.ReadAll(r.Body)
 		if err == nil {
 			err = json.Unmarshal(data, &payload)
 		}
 		h.postedBody = payload.Body
+		h.postedTitle = payload.Title
+		h.postedLabels = append([]string(nil), payload.Labels...)
 		mode := h.responseMode
 		started, unblock := h.postStarted, h.unblockPost
 		if mode == "lost" {
@@ -351,6 +366,56 @@ func (h *productionPublicationHTTP) counts() (get, post int, auth bool, invalid 
 	return h.getCalls, h.postCalls, h.authorization, h.postWasInvalid
 }
 
+func (h *productionPublicationHTTP) requestSnapshot() []productionHTTPRequest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]productionHTTPRequest(nil), h.requests...)
+}
+
+func assertProductionHTTPRequests(t *testing.T, h *productionPublicationHTTP, wantMethods []string) {
+	t.Helper()
+	requests := h.requestSnapshot()
+	if len(requests) != len(wantMethods) {
+		t.Fatalf("request count=%d want=%d", len(requests), len(wantMethods))
+	}
+	for i, request := range requests {
+		if request.method != wantMethods[i] || request.path != "/api/v3/repos/acme/app/issues" || !request.authorized {
+			t.Fatalf("request[%d]=%+v", i, request)
+		}
+	}
+}
+
+func assertParentADraftPosted(t *testing.T, h *productionPublicationHTTP) {
+	t.Helper()
+	const wantBody = "Body A\n\n<!-- threaddock:v2:parent_issue:work=work-publish:draft=parent-a:sha256=d516d347c6b4ee20220b76059b258cb6b79be92d3be438722ddf41f839967018 -->"
+	h.mu.Lock()
+	title, body, labels := h.postedTitle, h.postedBody, append([]string(nil), h.postedLabels...)
+	h.mu.Unlock()
+	if title != "Parent A" || body != wantBody || len(labels) != 0 || strings.Contains(body, "Parent B") || strings.Contains(body, "Body B") || strings.Contains(body, "parent-b") || strings.Count(body, "<!--") != 1 {
+		t.Fatalf("posted title=%q body=%q labels=%v", title, body, labels)
+	}
+}
+
+func assertReceipt(t *testing.T, receipt *statev2.PublicationReceipt) {
+	t.Helper()
+	if receipt == nil || receipt.Number != 17 || receipt.NodeID != "node-17" || receipt.URL != "https://github.example.test/issues/17" || receipt.PublishedAt.IsZero() || receipt.PublishedAt.Location() != time.UTC {
+		t.Fatalf("receipt=%+v", receipt)
+	}
+}
+
+func assertNoPublicationSecrets(t *testing.T, snapshot statev2.WorkSnapshot, stdout, stderr string) {
+	t.Helper()
+	serialized, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"publish-token", "provider-body-sentinel"} {
+		if strings.Contains(string(serialized), value) || strings.Contains(stdout, value) || strings.Contains(stderr, value) {
+			t.Fatalf("secret %q leaked", value)
+		}
+	}
+}
+
 func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
 	httpState := &productionPublicationHTTP{token: "publish-token", postStarted: make(chan struct{}), unblockPost: make(chan struct{}), responseMode: "pending"}
 	server := httptest.NewServer(httpState)
@@ -385,6 +450,10 @@ func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
 	if completed.Publications["parent-issue:request-publish"].Status != statev2.PublicationCompleted || completed.Publications["parent-issue:request-publish"].Receipt == nil || posts != 1 {
 		t.Fatalf("completed publication=%+v posts=%d", completed.Publications["parent-issue:request-publish"], posts)
 	}
+	assertReceipt(t, completed.Publications["parent-issue:request-publish"].Receipt)
+	assertNoPublicationSecrets(t, completed, out.String(), errOut.String())
+	assertParentADraftPosted(t, httpState)
+	assertProductionHTTPRequests(t, httpState, []string{http.MethodGet, http.MethodGet, http.MethodPost})
 	var firstSnapshot statev2.WorkSnapshot
 	if err := json.Unmarshal(out.Bytes(), &firstSnapshot); err != nil {
 		t.Fatal(err)
@@ -410,6 +479,8 @@ func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
 	if !reflect.DeepEqual(replaySnapshot.Publications["parent-issue:request-publish"].Receipt, firstReceipt) {
 		t.Fatalf("replay receipt=%+v first=%+v", replaySnapshot.Publications["parent-issue:request-publish"].Receipt, firstReceipt)
 	}
+	assertReceipt(t, replaySnapshot.Publications["parent-issue:request-publish"].Receipt)
+	assertNoPublicationSecrets(t, replaySnapshot, out.String(), errOut.String())
 	getAfterReplay, postAfterReplay, _, _ := httpState.counts()
 	if getAfterReplay != getBeforeReplay || postAfterReplay != postBeforeReplay {
 		t.Fatalf("replay I/O changed GET %d->%d POST %d->%d", getBeforeReplay, getAfterReplay, postBeforeReplay, postAfterReplay)
@@ -436,6 +507,8 @@ func TestProductionPublishIssuesPendingReplayAndConflict(t *testing.T) {
 	if getAfterConflict != getAfterReplay || postAfterConflict != postAfterReplay {
 		t.Fatalf("conflict performed I/O GET=%d POST=%d", getAfterConflict, postAfterConflict)
 	}
+	assertNoPublicationSecrets(t, conflicted, out.String(), errOut.String())
+	assertProductionHTTPRequests(t, httpState, []string{http.MethodGet, http.MethodGet, http.MethodPost})
 }
 
 func TestProductionPublishIssuesLostResponseAdoptsExactMarker(t *testing.T) {
@@ -459,10 +532,14 @@ func TestProductionPublishIssuesLostResponseAdoptsExactMarker(t *testing.T) {
 	if snapshot.Publications["parent-issue:request-lost"].Status != statev2.PublicationCompleted || snapshot.Publications["parent-issue:request-lost"].Receipt == nil {
 		t.Fatalf("publication=%+v", snapshot.Publications["parent-issue:request-lost"])
 	}
+	assertReceipt(t, snapshot.Publications["parent-issue:request-lost"].Receipt)
+	assertNoPublicationSecrets(t, snapshot, out.String(), errOut.String())
+	assertParentADraftPosted(t, httpState)
 	gets, posts, auth, invalid := httpState.counts()
 	if posts != 1 || !auth || !invalid || strings.Contains(out.String(), "provider-body-sentinel") || strings.Contains(errOut.String(), "provider-body-sentinel") {
 		t.Fatalf("GET=%d POST=%d auth=%t invalid=%t stdout=%q stderr=%q", gets, posts, auth, invalid, out.String(), errOut.String())
 	}
+	assertProductionHTTPRequests(t, httpState, []string{http.MethodGet, http.MethodGet, http.MethodPost, http.MethodGet})
 }
 
 func TestProductionPublishIssuesAmbiguousOutcomeBlocksWithoutRepublish(t *testing.T) {
@@ -489,10 +566,16 @@ func TestProductionPublishIssuesAmbiguousOutcomeBlocksWithoutRepublish(t *testin
 			if publication.Status != statev2.PublicationConflict || snapshot.Control.Blocker == nil || snapshot.Control.Blocker.Kind != statev2.BlockerKindPublicationConflict || snapshot.Control.Blocker.IntentID != publication.IntentID || snapshot.Control.Blocker.Diagnostic == "" || strings.Contains(snapshot.Control.Blocker.Diagnostic, "provider-body-sentinel") {
 				t.Fatalf("snapshot publication=%+v blocker=%+v", publication, snapshot.Control.Blocker)
 			}
+			if strings.TrimSpace(publication.LastError) == "" || len([]byte(publication.LastError)) > statev2.MaxDiagnosticBytes || strings.Contains(publication.LastError, "publish-token") || strings.Contains(publication.LastError, "provider-body-sentinel") || strings.Contains(snapshot.Control.Blocker.Diagnostic, "publish-token") {
+				t.Fatalf("unsafe diagnostics lastError=%q blocker=%q", publication.LastError, snapshot.Control.Blocker.Diagnostic)
+			}
+			assertNoPublicationSecrets(t, snapshot, out.String(), errOut.String())
+			assertParentADraftPosted(t, httpState)
 			gets, posts, auth, invalid := httpState.counts()
 			if posts != 1 || !auth || !invalid {
 				t.Fatalf("GET=%d POST=%d auth=%t invalid=%t", gets, posts, auth, invalid)
 			}
+			assertProductionHTTPRequests(t, httpState, []string{http.MethodGet, http.MethodGet, http.MethodPost, http.MethodGet})
 		})
 	}
 }
