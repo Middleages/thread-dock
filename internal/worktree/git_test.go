@@ -498,6 +498,55 @@ func TestInspectRetirementTargetRejectsDirtyWorktree(t *testing.T) {
 	}
 }
 
+func TestInspectTaskWorktreeMissingReturnsCanonicalNegative(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	managed := filepath.Join(root, "managed")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(managed, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{results: []runner.Result{{Stdout: filepath.Join(repo, ".git") + "\n"}, {Stdout: "worktree " + repo + "\nHEAD " + strings.Repeat("a", 40) + "\nbranch refs/heads/main\n"}}}
+	git := New(runner, managed, repo)
+	sha := strings.Repeat("a", 40)
+	target := filepath.Join(managed, "task-1")
+	got, err := git.InspectTaskWorktree(context.Background(), repo, target, "agent/task-1", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CanonicalPath != target || got.GitCommonDir == "" || got.Exists || got.IdentityMatches {
+		t.Fatalf("inspection=%+v", got)
+	}
+}
+
+func TestInspectTaskWorktreeAdoptsExactCleanLinkedWorktree(t *testing.T) {
+	git, repo, managed, target, sha := realRetirementRepo(t)
+	got, err := git.InspectTaskWorktree(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Exists || !got.IdentityMatches || got.CanonicalPath != target || got.GitCommonDir != filepath.Join(repo, ".git") {
+		t.Fatalf("inspection=%+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(managed, "does-not-exist")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unexpected managed root state: %v", err)
+	}
+}
+
+func TestInspectTaskWorktreeDirtyTargetIsSafeNegative(t *testing.T) {
+	git, repo, _, target, sha := realRetirementRepo(t)
+	writeTestFile(t, filepath.Join(target, "dirty.txt"), "dirty\n")
+	got, err := git.InspectTaskWorktree(context.Background(), repo, target, "agent/task", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Exists || got.IdentityMatches {
+		t.Fatalf("inspection=%+v", got)
+	}
+}
+
 func TestRemoveRetiredRejectsMovedHeadBeforeMutation(t *testing.T) {
 	git, repo, herdrRoot, target, sha := realRetirementRepo(t)
 	writeTestFile(t, filepath.Join(target, "new.txt"), "new\n")
