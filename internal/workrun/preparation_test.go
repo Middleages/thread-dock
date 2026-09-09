@@ -189,6 +189,18 @@ func TestPrepareLostSuccessErrorAdoptsMatchingWorktree(t *testing.T) {
 	}
 }
 
+func TestPrepareExistingExactWorktreeAdoptsWithoutCreate(t *testing.T) {
+	service, git, _, _, request := preparationFixture(t, nil, nil)
+	git.inspect = []worktree.TaskWorktreeInspection{{CanonicalPath: request.WorktreePath, GitCommonDir: filepath.Join(request.RepositoryPath, ".git"), Exists: true, IdentityMatches: true}}
+	got, err := service.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if git.createCalls != 0 || got.TaskStates[request.TaskID].Status != statev2.TaskInvocationReserved || len(git.calls) != 1 {
+		t.Fatalf("creates=%d calls=%v state=%#v", git.createCalls, git.calls, got.TaskStates[request.TaskID])
+	}
+}
+
 func TestPrepareCreateFailureMissingReturnsRetryablePending(t *testing.T) {
 	// Covered by the same state-first contract as lost-success; the table below
 	// uses a scripted inspector to keep the failure surface deterministic.
