@@ -135,6 +135,12 @@ func TestImplementTaskSkillUsesInvocationArtifactBoundary(t *testing.T) {
 		"staging",
 		"commit",
 		"authoritative verification",
+		"production behavior changes",
+		"docs/config-only",
+		"test-inapplicable",
+		"packet-approved",
+		"document/config validation",
+		"without inventing a failing test",
 	)
 	requireNotContains(t, content,
 		"task_id:",
