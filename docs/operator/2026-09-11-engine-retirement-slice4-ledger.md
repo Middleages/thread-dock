@@ -53,3 +53,20 @@ native 실행·Herdr/Projects E2E·Wiki 페이지 발행·runtime identity는 �
 - 최초 bare gofmt는 PATH에 없어 실패했으며 절대 toolchain 경로의 gofmt로 완료했다. 실패 호출을 성공 근거로 사용하지 않는다.
 - 전용 API/테스트를 제거하고 결합 테스트를 PushBranch-only로 좁혔다. fresh Sol은 위 head에서 spec/quality 모두 ACCEPT했다. blocking/non-blocking finding과 수정 요구 없음.
 - Task 리뷰는 여섯 symbol과 전용 테스트 삭제, active helpers/tests 및 정확한 PushBranch/no-force 검증 보존을 독립 확인했다. 통합 gate와 전체 리뷰는 별도 단계다.
+
+## 통합 gate
+
+고정 SHA `7a620c4523ac6fe8a65a0e0de4e64c56497a565a`에서 다음 명령을 한 번 실행해 exit 0을 확인했다.
+
+```sh
+TMPDIR=/dev/shm/threaddock-slice4-gate.e9jTIw PATH=/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin:$PATH make check
+```
+
+gofmt·shell syntax·전체 Go vet/test·UI 2 files/26 tests·frontend build가 통과했다.
+worktree package 1.709초, orchestrator 1.330초, pilot 10.343초, Monitor 0.026초다.
+로그는 통합 worktree의 `.superpowers/sdd/2026-09-11-engine-retirement-worktree-revert/make-check-7a620c4.log`에
+있는 비추적 로컬 증거다. frontend build가 제거한 tracked `.placeholder`는 원본 내용으로 복원했고
+`git diff --exit-code`로 검사한 tree와 같음을 확인했다.
+
+변경 Markdown 4파일의 상대 링크 17개 검사도 통과했다. 이후 gate 기록은 docs-only이며
+제품 검사를 반복하지 않는다. 전체 branch 리뷰는 아직 pending이다.
