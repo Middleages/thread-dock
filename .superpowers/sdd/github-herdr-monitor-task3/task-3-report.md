@@ -55,3 +55,9 @@ Deletion/config changes were additionally validated by the empty server director
 ## blockers
 
 None for the assigned Task. Windows verification remains a concern for the coordinator's integrated acceptance gate.
+
+## Round 1 reviewer fix
+
+- Updated `README.md`, `HANDOFF.md`, and `docs/operator/github-first-quickstart.md` with the inherited managed-pane evidence: `gh auth status` succeeded on the actual Windows→WSL workstation; bare `wsl.exe --exec herdr` failed PATH lookup; absolute `/home/appuser/.local/bin/herdr` status and agent list succeeded. The documents explicitly identify this as externally provided evidence without the original transcript and state that it is not Windows→WSL Monitor read-path verification.
+- Recorded root-owned Windows toolchain facts: Go `go1.27.0 windows/amd64` and Wails `v2.10.2`; build/app execution remains unverified.
+- Round 1 docs commit SHA: pending until commit; validation is docs parse/link/diff only.

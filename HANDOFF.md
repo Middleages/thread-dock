@@ -13,7 +13,8 @@
 - Task 1·2가 Go/Wails `GetMonitorSnapshot` 경로에 GitHub와 Herdr 관찰을 연결했다. 공유 Go/TS wire는 유지한다.
 - Task 3가 `monitor/frontend/server/`의 Node adapter·전용 테스트, Vite middleware와 HTTP monitor endpoint를 제거했다. Vite는 React 화면 개발·빌드만 담당한다.
 - 화면에는 GitHub 업무·근거, 단일 선택 업무 Herdr 연결, 관찰 세션·미연결 Agent, degraded/notices, 안전한 외부 링크와 handoff 복사만 남겼다. 비기능 상단 메뉴, 자동화 작업, 옛 Work/발행 표시는 제거했다.
-- Linux fixture/UI/build 근거와 managed-pane live gh/Herdr 근거는 서로 구분한다. 이 작업에서 GitHub Issue/PR/Projects/Wiki 쓰기는 수행하지 않았다.
+- Linux fixture/UI/build 근거와 managed-pane live gh/Herdr 근거는 서로 구분한다. 상위에서 전달된 외부 관찰(원본 transcript 없음)으로 실제 Windows→WSL workstation의 `gh auth status`는 성공했고, bare `wsl.exe --exec herdr`는 PATH lookup에 실패했으며, absolute `/home/appuser/.local/bin/herdr`의 status와 agent list는 성공했다. 이는 Windows→WSL Monitor 읽기 검증이 아니며, 이 작업에서 GitHub Issue/PR/Projects/Wiki 쓰기는 수행하지 않았다.
+- Windows toolchain은 user-local Go `go1.27.0 windows/amd64`와 Wails `v2.10.2`가 확인됐지만, build/app 실행은 아직 검증하지 않았다.
 - 미검증: Windows Wails build/app 실행, 실제 Windows→WSL gh/Herdr 접근. 이를 통합 완료로 보고하지 않는다.
 - 기존 Wiki 링크는 문서 참고이며 Wiki 실제 반영과 구분한다.
 
