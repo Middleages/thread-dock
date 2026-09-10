@@ -39,3 +39,9 @@ root/Sol이 먼저 고정했다. Luna가 worktree 두 파일을 단독 소유하
 동일 tuple 재실행은 금지하며 root의 마지막 `make check`만 한 번 수행한다. docs-only 후속은 링크/diff만 검사한다.
 기존 Windows healthy-path를 이번 SHA의 native 실행으로 확대하지 않는다. native 오류·현재 보드의
 native 실행·Herdr/Projects E2E·Wiki 페이지 발행·runtime identity는 여전히 미검증이다.
+
+## 착수 기록
+
+- [Issue #75](https://github.com/Middleages/thread-dock/issues/75)를 생성하고 Project #1에서 In Progress·정리 방향 유지로 추적한다.
+- root 통합 TMPDIR은 `/dev/shm/threaddock-slice4-gate.e9jTIw`다. npm ci는 exit 0이며 package lock 변경은 없다.
+- 구현자가 수정할 제품 경로는 worktree 두 파일뿐이며 운영 문서 범위 확장은 없다.
