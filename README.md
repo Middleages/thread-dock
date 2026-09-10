@@ -22,7 +22,7 @@ degraded/notices 상태, 외부 링크와 handoff 복사를 제공합니다. 비
 - Linux build 근거: `npm run build` — TypeScript와 Vite production build 통과.
 - managed-pane live 근거(상위에서 전달된 외부 관찰, 원본 transcript 없음): 실제 Windows→WSL workstation에서 `gh auth status`가 성공했고, bare `wsl.exe --exec herdr`는 PATH lookup에 실패했으며, absolute `/home/appuser/.local/bin/herdr`의 status와 agent list는 성공했습니다. 이는 Wails Monitor의 Windows→WSL 읽기 경로를 검증한 증거가 아니며, 이 Task에서 GitHub/Wiki 쓰기를 수행했다는 뜻도 아닙니다.
 - Windows toolchain 사실: user-local Go는 `go1.27.0 windows/amd64`, Wails는 `v2.10.2`를 보고합니다. 설치·버전 확인은 Windows Wails build/app 실행 성공을 뜻하지 않습니다.
-- 미검증: Windows Wails build/app 실행과 실제 Windows→WSL gh/Herdr 접근. 따라서 live 데스크톱 통합 완료로 표시하지 않습니다.
+- 미검증: Windows Wails build/app 실행과 Wails Monitor 프로세스의 Windows→WSL 읽기 경로 및 live 데스크톱 통합. component-level CLI 관찰 자체를 미검증으로 표시하지 않습니다.
 
 ## 사용·개발 지침
 

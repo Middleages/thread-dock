@@ -148,7 +148,7 @@ Herdr 실행은 설치된 `$HOME/.local/bin/herdr`를 고정된 `/bin/sh -c` 스
 - Linux Go fixture: `go test ./monitor -run 'Test(GitHub|Commands|App|Herdr|Snapshot)'` 통과 기록.
 - Linux UI/build: `npm exec vitest run src/bindings.test.ts src/monitor.test.tsx --reporter=verbose` (2 files, 20 tests)와 `npm run build` 통과.
 - managed-pane live(상위에서 전달된 외부 관찰, 원본 transcript 없음): 실제 Windows→WSL workstation에서 `gh auth status` 성공, bare `wsl.exe --exec herdr` PATH lookup 실패, absolute `/home/appuser/.local/bin/herdr` status와 agent list 성공. 이는 fixture/UI와 별도이며 Windows→WSL Monitor 읽기 경로 검증이 아니다.
-- 미검증: Windows Wails build/app 실행 및 실제 Windows→WSL gh/Herdr 접근. 이 문서는 이를 통합 완료로 표시하지 않는다.
+- 미검증: Windows Wails build/app 실행 및 Wails Monitor 프로세스의 Windows→WSL 읽기 경로와 live 데스크톱 통합. component-level CLI 관찰 자체는 외부 관찰 근거로 기록하며, 이 문서는 Monitor 통합 완료로 표시하지 않는다.
 
 ## 실제 사용 확인
 

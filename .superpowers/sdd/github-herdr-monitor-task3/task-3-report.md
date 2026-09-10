@@ -49,8 +49,7 @@ Deletion/config changes were additionally validated by the empty server director
 ## unverified
 
 - Windows Wails build and desktop app execution.
-- Actual Windows-to-WSL `gh`/Herdr read access and live desktop behavior.
-- First-spawn runtime model/effort identity remains unverified as recorded in `progress.md`.
+- Wails Monitor process's Windows-to-WSL read path and live desktop integration.
 
 ## blockers
 
@@ -61,3 +60,9 @@ None for the assigned Task. Windows verification remains a concern for the coord
 - Updated `README.md`, `HANDOFF.md`, and `docs/operator/github-first-quickstart.md` with the inherited managed-pane evidence: `gh auth status` succeeded on the actual Windows→WSL workstation; bare `wsl.exe --exec herdr` failed PATH lookup; absolute `/home/appuser/.local/bin/herdr` status and agent list succeeded. The documents explicitly identify this as externally provided evidence without the original transcript and state that it is not Windows→WSL Monitor read-path verification.
 - Recorded root-owned Windows toolchain facts: Go `go1.27.0 windows/amd64` and Wails `v2.10.2`; build/app execution remains unverified.
 - Round 1 docs commit SHA: `c0d3ffb`; validation was docs parse/link/diff only. The report wording is finalized in the follow-up report commit.
+
+## Round 2 reviewer fix
+
+- Narrowed the README, HANDOFF, quickstart, and `unverified` report wording so the inherited transcript-free component observations remain evidence: `gh auth status` success, bare `wsl.exe --exec herdr` PATH failure, and absolute Herdr status/agent-list success.
+- The remaining unverified scope is exactly Windows Wails build/app execution plus the Wails Monitor process's Windows→WSL read path/live desktop integration.
+- Docs-only validation: relative-link parse and `git diff --check` passed; no product code or tests were changed or rerun.
