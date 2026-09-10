@@ -19,7 +19,6 @@ import (
 	"thread-dock/internal/herdr"
 	"thread-dock/internal/orchestrator"
 	"thread-dock/internal/registry"
-	"thread-dock/internal/revert"
 	"thread-dock/internal/runner"
 	"thread-dock/internal/state"
 	statev2 "thread-dock/internal/state/v2"
@@ -233,7 +232,7 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 		worktreeRoot,
 		cfg.HerdrWorktreeRoot,
 	)
-	return cli.Dependencies{Runs: service, Retirement: service, Confirmer: orch, Reverter: cli.NewRevertRunService(store, revert.New(git, ghes), worktreeRoot)}, nil
+	return cli.Dependencies{Runs: service, Retirement: service, Confirmer: orch}, nil
 }
 
 func roleAgentRouting(cfg config.Config) (builder, reviewer string) {
@@ -268,7 +267,7 @@ func repositoryPathForPersistedCommand(ctx context.Context, args []string, store
 type repositoryDiscoverer func(context.Context, runner.Runner, string) (string, error)
 
 func repositoryPathForCommand(ctx context.Context, args []string, process runner.Runner, binary string, discover repositoryDiscoverer) (string, error) {
-	if len(args) == 0 || (args[0] != "start" && args[0] != "resume" && args[0] != "confirm" && args[0] != "create-revert") {
+	if len(args) == 0 || (args[0] != "start" && args[0] != "resume" && args[0] != "confirm") {
 		return "", nil
 	}
 	if discover == nil {
@@ -281,5 +280,5 @@ func requiresGHESCredential(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	return args[0] == "start" || args[0] == "resume" || args[0] == "confirm" || args[0] == "create-revert"
+	return args[0] == "start" || args[0] == "resume" || args[0] == "confirm"
 }

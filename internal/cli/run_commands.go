@@ -60,7 +60,6 @@ type Dependencies struct {
 	Workflow   WorkflowService
 	Retirement RetirementService
 	Confirmer  ProtectedChangeConfirmer
-	Reverter   RevertRunService
 }
 
 // NeedsWorkflowDependencies is true only for the accepted v2 command
@@ -127,8 +126,6 @@ func NeedsProductionDependencies(args []string) bool {
 		return validRetireArgs(args[1:])
 	case "confirm":
 		return len(args) == 3 && strings.TrimSpace(args[1]) != "" && args[2] == "protected-change"
-	case "create-revert":
-		return len(args) == 4 && strings.TrimSpace(args[1]) != "" && args[2] == "--reason" && args[3] != ""
 	case "status":
 		_, _, ok := parseStatusArgs(args[1:])
 		return ok
