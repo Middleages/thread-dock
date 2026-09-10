@@ -19,7 +19,7 @@ status: DONE_WITH_CONCERNS
 
 ## commitSHA
 
-548f8d185b406355169f080f5f4d6f7b859def81 (latest product implementation commit, including the Makefile UI gate fix; subsequent report-only commits are follow-ups).
+66158d9c8f6883434f7271e5c5f64e31ba0221b (last reviewed product/dependency implementation SHA; this Windows evidence update is a docs-only follow-up).
 
 ## executedCommands
 
@@ -48,17 +48,17 @@ Deletion/config changes were additionally validated by the empty server director
 
 ## unverified
 
-- Windows Wails build and desktop app execution.
-- Wails Monitor process's Windows-to-WSL read path and live desktop integration.
+- Packaged live GitHub/Herdr UI after the successful standard Wails build.
+- Completion of the requested Windows scheduled-task/process cleanup.
 
 ## blockers
 
-None for the assigned Task. Windows verification remains a concern for the coordinator's integrated acceptance gate.
+Standard Wails packaging is verified, but the repeated Windows→WSL interop `UtilAcceptVsock:281: accept4 failed 110` leaves packaged live acceptance and requested cleanup confirmation pending.
 
 ## Round 1 reviewer fix
 
 - Updated `README.md`, `HANDOFF.md`, and `docs/operator/github-first-quickstart.md` with the inherited managed-pane evidence: `gh auth status` succeeded on the actual Windows→WSL workstation; bare `wsl.exe --exec herdr` failed PATH lookup; absolute `/home/appuser/.local/bin/herdr` status and agent list succeeded. The documents explicitly identify this as externally provided evidence without the original transcript and state that it is not Windows→WSL Monitor read-path verification.
-- Recorded root-owned Windows toolchain facts: Go `go1.27.0 windows/amd64` and Wails `v2.10.2`; build/app execution remains unverified.
+- Historical Round 1 wording recorded the then-observed root-owned Windows toolchain as Go `go1.27.0 windows/amd64` and Wails `v2.10.2`; the later reviewed `v2.15.0` toolchain/build evidence is recorded in the Windows evidence docs follow-up below.
 - Round 1 docs commit SHA: `c0d3ffb`; validation was docs parse/link/diff only. The report wording is finalized in the follow-up report commit.
 
 ## Round 2 reviewer fix
@@ -69,7 +69,7 @@ None for the assigned Task. Windows verification remains a concern for the coord
 
 ## Integration gate fix
 
-- Added the minimal README link `[OpenCode role-agent 운영 참고 (레거시 v1)](docs/operator/opencode-role-agents.md)` required by `internal/pilot.TestReadmeLinksOpenCodeRoleAgentRunbook`; this preserves the current Go/Wails product state and does not revive legacy runtime or UI claims.
+- Added the minimal README link `docs/operator/opencode-role-agents.md` required by `internal/pilot.TestReadmeLinksOpenCodeRoleAgentRunbook`; this preserves the current Go/Wails product state and does not revive legacy runtime or UI claims.
 - Focused command `go test ./internal/pilot -run TestReadmeLinksOpenCodeRoleAgentRunbook` — exit 127: `go: command not found`. No supported Go executable was present at the checked local candidates, so this test result is unverified in the current environment and must not be reported as passing.
 - Docs relative-link parse and `git diff --check` — exit 0.
 - Self-review: only `README.md` and this report changed; the requested runbook link resolves, and no product code, tests, UI, or shared interface was modified.
@@ -87,6 +87,35 @@ None for the assigned Task. Windows verification remains a concern for the coord
 
 ## Final whole-branch review fix wave
 
-- Updated `HANDOFF.md` so the Linux integration `make check` pass at `97d5e71` is recorded and no fresh task review or full gate is requested. The only remaining next action is root-owned Windows Wails build/app plus the Wails Monitor process's Windows→WSL live read-path verification.
+- Historical final whole-branch review fix wave at `aeca770` updated `HANDOFF.md` so the then-current Linux integration gate was recorded and no fresh task review or full gate was requested. The later dependency alignment at `66158d9` supersedes that code/config evidence; the remaining acceptance is packaged live behavior and cleanup confirmation.
 - Restored the tracked `monitor/frontend/dist/.placeholder` without adding generated build assets.
 - Docs relative-link parse — exit 0; `git diff --check` — exit 0; `git status --short` — exit 0 with only the intended HANDOFF/report edits before commit. No product tests or `make check` were rerun.
+
+## Windows evidence docs follow-up
+
+This docs-only follow-up is based on the reviewed dependency SHA `66158d9`; it does not change
+product code, tests, Makefile, Wails config, or the Go/TS wire.
+
+### Evidence recorded consistently
+
+- Windows user-local toolchain: Go `1.27.0 windows/amd64`, Node `26.8.1`, and matching Wails CLI/runtime `v2.15.0`; official Go/Node checksums matched where available.
+- Exact commit `66158d9` was exported to NTFS staging because Windows Go UNC `RLock` failed. The matching `wails build` exited 0 in 27.436s and produced `monitor\build\bin\ThreadDockMonitor.exe`; bindings/frontend/assets/app stages were `Done`.
+- Packaged live acceptance remains incomplete: scheduled-task/WSL interop repeatedly emitted `UtilAcceptVsock:281: accept4 failed 110`, and no valid packaged GitHub/Herdr screenshot exists.
+- Earlier plain `go build` at `aeca770` rendered GitHub 69 items and the Herdr default session/4 agents, but it is not final standard-package evidence.
+- Cleanup of scheduled task `ThreadDockValidation66158d9` and its related process was requested through user Windows computer-use and remains pending unless separately confirmed.
+
+### Self-review
+
+All four documents use the same distinction between standard package-build success and packaged live
+acceptance. The plain-binary observation, component-level CLI observations, interop blocker, and
+pending cleanup are not presented as packaged live success. No transient staging randomness or
+unsupported Windows screenshot claim was added.
+
+### Follow-up result
+
+- changedFiles: `README.md`, `HANDOFF.md`, `docs/operator/github-first-quickstart.md`, `.superpowers/sdd/github-herdr-monitor-task3/task-3-report.md`
+- commitSHA: docs-only follow-up to `66158d9` (the top-level `commitSHA` remains the last product/dependency implementation SHA and is intentionally not self-referential)
+- executedCommands: `python3` relative-Markdown-link parser — exit 0, 4 files/10 relative links; `python3` evidence-consistency scan — exit 0, 4 files × 9 required terms; `git diff --check` — exit 0; owned-path diff scan — exit 0, exactly the four assigned documents changed
+- outcomes: all docs-only validation passed; no Go/UI/product tests, Windows commands, `make check`, push, PR, or merge was run
+- unverified: packaged live GitHub/Herdr UI and completion of `ThreadDockValidation66158d9` cleanup; worker/reviewer runtime model/effort
+- blockers: repeated `UtilAcceptVsock:281: accept4 failed 110` during scheduled-task/WSL interop launch; cleanup confirmation pending

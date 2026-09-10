@@ -126,9 +126,14 @@ Go 백엔드는 선택한 WSL 배포판의 gh 인증과 Herdr 읽기 접근을 �
 ChatGPT GitHub 연결과 사용자 WSL의 gh 인증은 별개다.
 
 개발·배포는 설치된 Wails의 `wails dev`, `wails build` 경로를 사용한다. Windows build/app 실행과
-Windows→WSL 접근은 Linux 검증과 별도의 증거로 기록한다.
-현재 root-owned Windows toolchain은 Go `go1.27.0 windows/amd64`와 Wails `v2.10.2`다. 버전 확인만으로
-Wails build/app 실행 성공을 주장하지 않는다.
+Windows→WSL 접근은 Linux 검증과 별도의 증거로 기록한다. 현재 root-owned Windows toolchain은
+user-local Go `go1.27.0 windows/amd64`, Node `26.8.1`, Wails CLI/runtime `v2.15.0`이며,
+공식 Go/Node checksum은 제공된 범위에서 일치했다.
+
+정확한 commit `66158d9`는 Windows Go의 UNC `RLock` 실패 때문에 NTFS staging 위치로 export했다.
+matching CLI/runtime의 `wails build`는 27.436초 만에 exit 0으로 완료됐고
+`monitor\build\bin\ThreadDockMonitor.exe`를 생성했으며 bindings/frontend/assets/app stages가
+모두 `Done`이었다. 이는 표준 package build 증거다.
 
 Windows→WSL 명령이 기존 Herdr pane 환경을 상속한다고 가정하지 않는다.
 설치된 CLI의 읽기 접근 조건을 확인하고 HERDR_ENV를 임의로 설정하지 않는다.
@@ -147,8 +152,10 @@ Herdr 실행은 설치된 `$HOME/.local/bin/herdr`를 고정된 `/bin/sh -c` 스
 
 - Linux Go fixture: `go test ./monitor -run 'Test(GitHub|Commands|App|Herdr|Snapshot)'` 통과 기록.
 - Linux UI/build: `npm exec vitest run src/bindings.test.ts src/monitor.test.tsx --reporter=verbose` (2 files, 20 tests)와 `npm run build` 통과.
+- Linux 통합: reviewed dependency SHA `66158d9`에서 `make check`가 shell syntax, `go vet ./...`, 전체 Go 테스트, UI 2 files/20 tests, frontend build까지 통과.
 - managed-pane live(상위에서 전달된 외부 관찰, 원본 transcript 없음): 실제 Windows→WSL workstation에서 `gh auth status` 성공, bare `wsl.exe --exec herdr` PATH lookup 실패, absolute `/home/appuser/.local/bin/herdr` status와 agent list 성공. 이는 fixture/UI와 별도이며 Windows→WSL Monitor 읽기 경로 검증이 아니다.
-- 미검증: Windows Wails build/app 실행 및 Wails Monitor 프로세스의 Windows→WSL 읽기 경로와 live 데스크톱 통합. component-level CLI 관찰 자체는 외부 관찰 근거로 기록하며, 이 문서는 Monitor 통합 완료로 표시하지 않는다.
+- Windows packaged live: scheduled-task/WSL interop launch에서 `UtilAcceptVsock:281: accept4 failed 110`이 반복됐고 유효한 packaged GitHub/Herdr screenshot이 없어 live acceptance는 미완료다. 이전 `aeca770`의 plain `go build` binary가 GitHub 69개 항목과 Herdr 기본 session/4 agents를 렌더링한 관찰은 최종 표준 package 증거가 아니다.
+- Cleanup: `ThreadDockValidation66158d9` scheduled task와 관련 process cleanup은 사용자 Windows computer-use에 요청했으며 별도 확인 전까지 pending이다. component-level CLI 관찰 자체는 외부 관찰 근거로 기록하되 packaged live 성공이나 cleanup 완료로 표시하지 않는다.
 
 ## 실제 사용 확인
 

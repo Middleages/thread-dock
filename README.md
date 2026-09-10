@@ -20,9 +20,12 @@ degraded/notices 상태, 외부 링크와 handoff 복사를 제공합니다. 비
 - Linux Go fixture 근거: Task 1·2에서 `go test ./monitor -run 'Test(GitHub|Commands|App|Herdr|Snapshot)'`가 통과했습니다. 이 Task는 Go 소스를 변경하지 않았습니다.
 - Linux UI 근거: `npm exec vitest run src/bindings.test.ts src/monitor.test.tsx --reporter=verbose` — 2 files, 20 tests 통과.
 - Linux build 근거: `npm run build` — TypeScript와 Vite production build 통과.
+- Linux 통합 gate: reviewed dependency SHA `66158d9`에서 `make check`가 shell syntax, `go vet ./...`, 전체 Go 테스트, Vitest 2 files/20 tests, frontend production build까지 통과했습니다.
 - managed-pane live 근거(상위에서 전달된 외부 관찰, 원본 transcript 없음): 실제 Windows→WSL workstation에서 `gh auth status`가 성공했고, bare `wsl.exe --exec herdr`는 PATH lookup에 실패했으며, absolute `/home/appuser/.local/bin/herdr`의 status와 agent list는 성공했습니다. 이는 Wails Monitor의 Windows→WSL 읽기 경로를 검증한 증거가 아니며, 이 Task에서 GitHub/Wiki 쓰기를 수행했다는 뜻도 아닙니다.
-- Windows toolchain 사실: user-local Go는 `go1.27.0 windows/amd64`, Wails는 `v2.10.2`를 보고합니다. 설치·버전 확인은 Windows Wails build/app 실행 성공을 뜻하지 않습니다.
-- 미검증: Windows Wails build/app 실행과 Wails Monitor 프로세스의 Windows→WSL 읽기 경로 및 live 데스크톱 통합. component-level CLI 관찰 자체를 미검증으로 표시하지 않습니다.
+- Windows toolchain/build 근거: user-local Go `go1.27.0 windows/amd64`, Node `26.8.1`, Wails CLI/runtime `v2.15.0`이 확인됐고, 공식 Go/Node checksum은 제공된 범위에서 일치했습니다. Windows Go의 UNC `RLock` 실패 때문에 정확한 commit `66158d9`를 NTFS staging 위치로 export한 뒤, matching CLI/runtime `wails build`가 27.436초 만에 exit 0으로 완료됐습니다. `monitor\build\bin\ThreadDockMonitor.exe`가 생성됐고 bindings/frontend/assets/app stages가 모두 `Done`이었습니다.
+- Windows packaged live 제한: scheduled-task/WSL interop launch에서 `UtilAcceptVsock:281: accept4 failed 110`이 반복되어 최종 packaged GitHub/Herdr 화면을 확인할 수 없었습니다. 유효한 packaged screenshot도 없으므로 packaged live acceptance는 미완료입니다.
+- 참고 관찰: 이전 `aeca770`의 plain `go build` binary는 GitHub 69개 항목과 Herdr 기본 session/4 agents를 렌더링했지만, 이는 최종 표준 Wails package 증거가 아닙니다. `ThreadDockValidation66158d9` scheduled task와 관련 process cleanup은 사용자 Windows computer-use에 요청했으며 별도 확인 전까지 pending입니다.
+- 미완료: packaged live GitHub/Herdr UI와 cleanup 완료 여부. component-level CLI 관찰 자체는 상위 전달 근거로 기록하며 packaged live 성공으로 확대하지 않습니다.
 
 ## 사용·개발 지침
 
