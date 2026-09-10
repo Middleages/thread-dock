@@ -166,6 +166,7 @@ func TestNeedsProductionDependenciesOnlyForValidRunInvocations(t *testing.T) {
 		{name: "malformed status", args: []string{"status", "--unknown"}, want: false},
 		{name: "valid start", args: []string{"start", "contract.json"}, want: true},
 		{name: "valid status", args: []string{"status", "run-184", "--json"}, want: true},
+		{name: "removed create-revert", args: []string{"create-revert", "run-184", "--reason", "pilot regression"}, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -173,6 +174,16 @@ func TestNeedsProductionDependenciesOnlyForValidRunInvocations(t *testing.T) {
 				t.Fatalf("NeedsProductionDependencies(%v)=%v, want %v", tt.args, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRemovedCreateRevertRejectsWithUsageAndNoStdout(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if got := RunWithDependencies(context.Background(), []string{"create-revert", "run-184", "--reason", "pilot regression"}, &out, &errOut, Dependencies{}); got != 2 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", got, out.String(), errOut.String())
+	}
+	if out.Len() != 0 || !strings.Contains(errOut.String(), "사용법:") {
+		t.Fatalf("stdout=%q stderr=%q", out.String(), errOut.String())
 	}
 }
 

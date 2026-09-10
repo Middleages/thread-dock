@@ -88,14 +88,12 @@ snapshot and append-only event log, then record:
    unchanged evaluation blocks. Live stale/blocked/unknown and absent
    terminal-only identities are operator-owned, and terminal fallback never
    enables native resume.
-6. **Revert the ordinary merge.** On the completed ordinary run, execute
-   `agentctl create-revert RUN --reason "pilot regression"`. Verify the command
-   uses the immutable owner/name/default branch and exact persisted merge SHA
-   captured in the run snapshot (not a reread contract). It fetches the exact
-   default-branch head, verifies the merge SHA is its ancestor, creates a
-   deterministic managed revert branch and Draft Revert PR, and leaves main
-   unchanged. Record the Revert PR link/number, branch, merge SHA, reason, and
-   secret-scan result.
+6. **Historical revert story.** The former pilot included
+   `agentctl create-revert RUN --reason "pilot regression"` to exercise the
+   immutable merge state and draft Revert PR path. The command and surrounding
+   revert procedure are retained here only as historical context; `create-revert`
+   is removed from the current CLI and must not be executed as a current pilot
+   step.
 
 ## Acceptance and cleanup
 

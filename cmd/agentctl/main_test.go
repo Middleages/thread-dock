@@ -81,14 +81,37 @@ func TestRepositoryDiscoveryOnlyRunsForStart(t *testing.T) {
 			t.Fatalf("%s path=%q err=%v calls=%d", command, path, err, calls)
 		}
 	}
-	for _, command := range []string{"resume", "confirm", "create-revert"} {
+	for _, command := range []string{"resume", "confirm"} {
 		path, err = repositoryPathForCommand(context.Background(), []string{command, "run-184"}, nil, "git", discover)
 		if err != nil || path != "/workspace/repo" {
 			t.Fatalf("%s path=%q err=%v", command, path, err)
 		}
 	}
-	if calls != 4 {
-		t.Fatalf("discovery calls=%d, want four", calls)
+	for _, command := range []string{"create-revert", "status", "stop", "cleanup", "retire"} {
+		path, err = repositoryPathForCommand(context.Background(), []string{command, "run-184"}, nil, "git", discover)
+		if err != nil || path != "" {
+			t.Fatalf("%s path=%q err=%v", command, path, err)
+		}
+	}
+	if calls != 3 {
+		t.Fatalf("discovery calls=%d, want three", calls)
+	}
+}
+
+func TestRemovedCreateRevertDoesNotRequireProductionSetup(t *testing.T) {
+	args := []string{"create-revert", "run-184", "--reason", "pilot regression"}
+	if cli.NeedsProductionDependencies(args) {
+		t.Fatal("removed create-revert must be rejected before production setup")
+	}
+	if requiresGHESCredential(args) {
+		t.Fatal("removed create-revert must not require GHES credentials")
+	}
+	path, err := repositoryPathForCommand(context.Background(), args, nil, "git", func(context.Context, runner.Runner, string) (string, error) {
+		t.Fatal("removed create-revert unexpectedly performed repository discovery")
+		return "", nil
+	})
+	if err != nil || path != "" {
+		t.Fatalf("path=%q err=%v", path, err)
 	}
 }
 
@@ -184,7 +207,7 @@ func TestProductionWorkflowDependenciesUseStateDirWithoutLegacySetup(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deps.Workflow == nil || deps.Runs != nil || deps.Confirmer != nil || deps.Reverter != nil {
+	if deps.Workflow == nil || deps.Runs != nil || deps.Confirmer != nil {
 		t.Fatalf("workflow deps=%#v", deps)
 	}
 	project := registry.Project{ProjectID: "project-1", Name: "Project", PrimaryRepoKey: "app", Repositories: map[contractv2.RepoKey]contractv2.RepositoryIdentity{"app": {Host: "github.com", Owner: "acme", Name: "app", DefaultBranch: "main"}}}
@@ -241,7 +264,7 @@ func TestProductionWorkflowDependenciesPublishIssuesComposesPrivatePublisher(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deps.Runs != nil || deps.Confirmer != nil || deps.Reverter != nil {
+	if deps.Runs != nil || deps.Confirmer != nil {
 		t.Fatalf("publish deps unexpectedly include legacy/runtime services: %#v", deps)
 	}
 	publisher, ok := deps.Workflow.(interface {

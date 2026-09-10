@@ -44,6 +44,25 @@ main 병합은 내가 할게.
 Projects 접근이 안 되면 문제를 보고하고 Issue·PR 작업은 계속할 수 있다.
 이 fallback을 Projects 연동 완료로 표시하지 않는다.
 
+현재 ThreadDock 보드를 Monitor에 포함하려면 Projects 루트 URL을 설정한다. `/views/2`가 붙은
+화면 URL이 아니라 아래 값을 사용한다.
+
+~~~text
+THREADDOCK_REPOS=Middleages/thread-dock
+THREADDOCK_PROJECTS=https://github.com/users/Middleages/projects/1
+THREADDOCK_WSL_DISTRIBUTION=Ubuntu
+~~~
+
+현재 비공개 [ThreadDock 운영 보드](https://github.com/users/Middleages/projects/1)는 저장소와 연결돼
+있고 [Board view](https://github.com/users/Middleages/projects/1/views/2)에 9개 항목이 있다.
+Issue #42~48의 업무 상태는 `Todo`, PR #69·#70은 `Done`이다. 이 상태와 `정리 방향` 같은 field는
+GitHub Projects가 원본이다. Herdr의 session·Agent 상태와 관찰 시각은 실행 관찰이며, `idle`이나
+`done`을 GitHub 업무 완료로 바꾸거나 GitHub `Done`을 Agent 종료로 해석하지 않는다.
+
+저장소는 public이고 Wiki가 활성화됐으며 사용자 접근도 확인됐다. 다만 Wiki Git remote 조회는
+`Repository not found`여서 페이지 발행은 아직 수행하거나 검증하지 않았다. 활성화·접근 확인과
+실제 페이지 게시를 구분해 handoff에 남긴다.
+
 ## 3. 기능 세션으로 전달할 최소 내용
 
 ~~~text
