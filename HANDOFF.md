@@ -34,7 +34,8 @@
 코드·테스트·Makefile·dependency를 바꾸지 않고 `TMPDIR`만 `/dev/shm`으로 옮긴 같은 SHA의 새 tuple은
 shell·gofmt·vet·전체 Go·UI 26 tests·frontend build까지 통과했다. 전체 branch 리뷰의 기존 BLOCK은
 gate 미완료와 ledger 근거 누락 두 건이었으며, 이 문서 wave가 근거를 채운 뒤 scoped 재리뷰를 받는다.
-재리뷰 판단은 아직 pending이다. 나머지 engine은 v1/v2 호출 군집으로 남는다.
+build가 제거한 tracked `dist/.placeholder`는 원본 바이트로 복원했고 `git diff --exit-code`로
+`ff977a2` 코드 트리와 동일함을 확인했다. 재리뷰 판단은 아직 pending이다. 나머지 engine은 v1/v2 호출 군집으로 남는다.
 Issue #42·44·45·46·47은 superseded 종료 후보, #43·48은 새 방향 재작성 후보로 한국어 댓글을 게시했다.
 기존 본문·열린 상태는 보존했다. Projects는 조회 성공/0개로 갱신 대상이 없고 Wiki는 비활성화돼 실제 쓰기가 없다.
 

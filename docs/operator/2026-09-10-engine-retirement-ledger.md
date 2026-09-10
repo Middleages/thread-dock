@@ -126,6 +126,8 @@ Sol 조사는 `internal/orchestrator`의 123개 테스트가 `t.TempDir` fixture
 모두 통과했다. 주요 package 시간은 `internal/orchestrator` 0.993초,
 `internal/coordinator` 1.771초, `internal/state/v2` 0.750초다. 이는 검증 환경 변경의 근거이며
 제품 코드의 fsync 내구성 변경이나 ext4 성능 개선 근거가 아니다.
+frontend build가 제거한 tracked `monitor/frontend/dist/.placeholder`는 root가 원본 바이트로 복원했고,
+별도 제품 검사를 재실행하지 않은 채 `git diff --exit-code`가 통과해 `ff977a2` 코드 트리와 같음을 확인했다.
 
 원본 로그는 통합 worktree의
 `.superpowers/sdd/2026-09-10-engine-retirement/make-check-ff977a2.log`와
