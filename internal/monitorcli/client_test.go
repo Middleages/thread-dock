@@ -3,10 +3,12 @@ package monitorcli
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"thread-dock/internal/monitor"
 	"thread-dock/internal/runner"
 )
 
@@ -175,6 +177,39 @@ func TestFetchAllTimeoutBeforeSuccessErrorsAndAfterSuccessReturnsStaleOfflineWit
 	}
 	if degraded.State != "stale" || degraded.SyncStatus != "offline" || degraded.Freshness.State != "stale" || degraded.Freshness.SyncStatus != "offline" {
 		t.Fatalf("degraded snapshot=%#v", degraded)
+	}
+}
+
+type firstTimeoutRunner struct {
+	executable string
+	args       []string
+}
+
+func (r *firstTimeoutRunner) Run(ctx context.Context, _ string, executable string, args ...string) (runner.Result, error) {
+	r.executable = executable
+	r.args = append([]string(nil), args...)
+	<-ctx.Done()
+	return runner.Result{}, ctx.Err()
+}
+
+func TestFetchAllFirstCallTimeoutReturnsEmptySnapshotAndError(t *testing.T) {
+	r := &firstTimeoutRunner{}
+	client := New(r, 15*time.Millisecond)
+	started := time.Now()
+	snapshot, err := client.FetchAll(context.Background())
+	elapsed := time.Since(started)
+
+	if elapsed >= 500*time.Millisecond {
+		t.Fatalf("timeout call took %s, appears to hang", elapsed)
+	}
+	if !reflect.DeepEqual(snapshot, monitor.Snapshot{}) {
+		t.Fatalf("snapshot=%#v, want zero snapshot", snapshot)
+	}
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err=%v, want context deadline error", err)
+	}
+	if r.executable != "wsl.exe" || strings.Join(r.args, " ") != "--exec agentctl project status --all --json" {
+		t.Fatalf("command=%q %#v", r.executable, r.args)
 	}
 }
 

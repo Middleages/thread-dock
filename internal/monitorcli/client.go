@@ -42,9 +42,9 @@ func New(runner Runner, timeout time.Duration) *Client {
 	return &Client{runner: runner, timeout: timeout}
 }
 
-// FetchAll executes the one aggregate command. A failed first fetch returns
-// an empty snapshot and an error. Once a good snapshot exists, later failures
-// return a copied stale/offline snapshot together with the underlying error.
+// FetchAll executes the one aggregate command. Before any successful fetch,
+// failures return an error. Once a good snapshot exists, later failures return
+// a copied stale/offline snapshot with a nil error.
 func (c *Client) FetchAll(ctx context.Context) (monitor.Snapshot, error) {
 	if c.runner == nil {
 		return monitor.Snapshot{}, errors.New("monitor command runner is nil")
