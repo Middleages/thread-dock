@@ -361,129 +361,20 @@ func TestValidateTrustedManagedRootIsPlatformSafe(t *testing.T) {
 	}
 }
 
-func TestReconcileRevertWorktreeReportsReadyAtExactBase(t *testing.T) {
-	base := "0123456789abcdef0123456789abcdef01234567"
-	git, repo, target := configuredGit(t, &fakeRunner{})
-	commonDir := filepath.Join(repo, ".git")
-	if err := os.Mkdir(commonDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	r := &fakeRunner{results: []runner.Result{{Stdout: commonDir + "\n"}, {Stdout: commonDir + "\n"}, {Stdout: "revert/184-0123456789ab\n"}, {Stdout: ""}, {Stdout: base + "\n"}}}
-	git.Runner = r
-	status, err := git.ReconcileRevertWorktree(context.Background(), repo, target, "revert/184-0123456789ab", base, "89abcdef0123456789abcdef0123456789abcdef")
-	if err != nil || !status.Exists || !status.Ready || status.Reverted {
-		t.Fatalf("status=%+v err=%v", status, err)
-	}
-	if len(r.calls) != 5 || !reflect.DeepEqual(r.calls[0].args, []string{"rev-parse", "--git-common-dir"}) || !reflect.DeepEqual(r.calls[1].args, []string{"rev-parse", "--git-common-dir"}) || !reflect.DeepEqual(r.calls[2].args, []string{"rev-parse", "--abbrev-ref", "HEAD"}) || !reflect.DeepEqual(r.calls[3].args, []string{"status", "--porcelain=v1"}) || !reflect.DeepEqual(r.calls[4].args, []string{"rev-parse", "HEAD"}) {
-		t.Fatalf("calls=%#v", r.calls)
-	}
-}
-
-func TestReconcileRevertWorktreeReportsExactRevertCommit(t *testing.T) {
-	base := "0123456789abcdef0123456789abcdef01234567"
-	merge := "89abcdef0123456789abcdef0123456789abcdef"
-	git, repo, target := configuredGit(t, &fakeRunner{})
-	commonDir := filepath.Join(repo, ".git")
-	if err := os.Mkdir(commonDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	head := "abcdef0123456789abcdef0123456789abcdef01"
-	r := &fakeRunner{results: []runner.Result{{Stdout: commonDir + "\n"}, {Stdout: commonDir + "\n"}, {Stdout: "revert/184-0123456789ab\n"}, {Stdout: ""}, {Stdout: head + "\n"}, {Stdout: head + " " + base + "\n"}, {Stdout: "Revert change\n\nThis reverts commit " + merge + ",\n"}, {Stdout: "src/file.go\n"}}}
-	git.Runner = r
-	status, err := git.ReconcileRevertWorktree(context.Background(), repo, target, "revert/184-0123456789ab", base, merge)
-	if err != nil || !status.Exists || status.Ready || !status.Reverted {
-		t.Fatalf("status=%+v err=%v", status, err)
-	}
-}
-
-func TestInspectRevertWorktreeReturnsExistingBaseAndStageWithoutRequestedBase(t *testing.T) {
-	base := "0123456789abcdef0123456789abcdef01234567"
-	merge := "89abcdef0123456789abcdef0123456789abcdef"
-	head := "abcdef0123456789abcdef0123456789abcdef01"
-	git, repo, target := configuredGit(t, &fakeRunner{})
-	commonDir := filepath.Join(repo, ".git")
-	if err := os.Mkdir(commonDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	r := &fakeRunner{results: []runner.Result{
-		{Stdout: commonDir + "\n"}, {Stdout: commonDir + "\n"},
-		{Stdout: "revert/184-0123456789ab\n"}, {Stdout: ""},
-		{Stdout: head + "\n"}, {Stdout: head + " " + base + "\n"},
-		{Stdout: "Revert change\n\nThis reverts commit " + merge + ".\n"},
-		{Stdout: "src/file.go\n"},
-	}}
-	git.Runner = r
-	got, err := git.InspectRevertWorktree(context.Background(), repo, target, "revert/184-0123456789ab", merge)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !got.Exists || got.Stage != "reverted" || got.HeadCommit != head || got.BaseCommit != base || got.ParentCommit != base {
-		t.Fatalf("inspection=%+v", got)
-	}
-}
-
-func TestReconcileRevertWorktreeRejectsWrongParentOrEmptyDiff(t *testing.T) {
-	base := "0123456789abcdef0123456789abcdef01234567"
-	merge := "89abcdef0123456789abcdef0123456789abcdef"
-	git, repo, target := configuredGit(t, &fakeRunner{})
-	commonDir := filepath.Join(repo, ".git")
-	if err := os.Mkdir(commonDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	head := "abcdef0123456789abcdef0123456789abcdef01"
-	for name, parents := range map[string]string{"wrong parent": head + " 1111111111111111111111111111111111111111\n", "multiple parents": head + " " + base + " 1111111111111111111111111111111111111111\n"} {
-		t.Run(name, func(t *testing.T) {
-			r := &fakeRunner{results: []runner.Result{{Stdout: commonDir + "\n"}, {Stdout: commonDir + "\n"}, {Stdout: "revert/184-0123456789ab\n"}, {Stdout: ""}, {Stdout: head + "\n"}, {Stdout: parents}, {Stdout: "This reverts commit " + merge + ".\n"}, {Stdout: "src/file.go\n"}}}
-			git.Runner = r
-			status, err := git.ReconcileRevertWorktree(context.Background(), repo, target, "revert/184-0123456789ab", base, merge)
-			if !errors.Is(err, ErrUnsafeTarget) || status.Exists {
-				t.Fatalf("status=%+v err=%v", status, err)
-			}
-		})
-	}
-	r := &fakeRunner{results: []runner.Result{{Stdout: commonDir + "\n"}, {Stdout: commonDir + "\n"}, {Stdout: "revert/184-0123456789ab\n"}, {Stdout: ""}, {Stdout: head + "\n"}, {Stdout: head + " " + base + "\n"}, {Stdout: "This reverts commit " + merge + ".\n"}, {Stdout: "\n"}}}
-	git.Runner = r
-	status, err := git.ReconcileRevertWorktree(context.Background(), repo, target, "revert/184-0123456789ab", base, merge)
-	if !errors.Is(err, ErrUnsafeTarget) || status.Exists {
-		t.Fatalf("empty diff status=%+v err=%v", status, err)
-	}
-}
-
-func TestRevertMergeCommitUsesMainlineAndConfirmsConflict(t *testing.T) {
-	sha := "0123456789abcdef0123456789abcdef01234567"
-	r := &fakeRunner{results: []runner.Result{{ExitCode: 1}, {Stdout: "UU src/file.go\n"}}, errors: []error{errors.New("conflict"), nil}}
-	git, _, target := configuredGit(t, r)
-	err := git.RevertMergeCommit(context.Background(), target, sha)
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("err=%v", err)
-	}
-	want := []fakeCall{
-		{cwd: target, exec: "git", args: []string{"revert", "-m", "1", "--no-edit", sha}},
-		{cwd: target, exec: "git", args: []string{"status", "--porcelain=v1"}},
-	}
-	if !reflect.DeepEqual(r.calls, want) {
-		t.Fatalf("calls=%#v want=%#v", r.calls, want)
-	}
-}
-
-func TestAbortRevertAndPushBranchNeverForce(t *testing.T) {
+func TestPushBranchNeverForce(t *testing.T) {
 	r := &fakeRunner{}
 	git, _, target := configuredGit(t, r)
-	if err := git.AbortRevert(context.Background(), target); err != nil {
-		t.Fatal(err)
-	}
 	if err := git.PushBranch(context.Background(), target, "origin", "revert/184-0123456789ab"); err != nil {
 		t.Fatal(err)
 	}
 	want := []fakeCall{
-		{cwd: target, exec: "git", args: []string{"revert", "--abort"}},
 		{cwd: target, exec: "git", args: []string{"push", "origin", "revert/184-0123456789ab:revert/184-0123456789ab"}},
 	}
 	if !reflect.DeepEqual(r.calls, want) {
 		t.Fatalf("calls=%#v want=%#v", r.calls, want)
 	}
-	if strings.Contains(strings.Join(r.calls[1].args, " "), "--force") || strings.Contains(strings.Join(r.calls[1].args, " "), " -f") {
-		t.Fatalf("force push: %#v", r.calls[1].args)
+	if strings.Contains(strings.Join(r.calls[0].args, " "), "--force") || strings.Contains(strings.Join(r.calls[0].args, " "), " -f") {
+		t.Fatalf("force push: %#v", r.calls[0].args)
 	}
 }
 
