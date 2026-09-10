@@ -5,7 +5,7 @@
 - baseSHA: `3f4bebf08bb099637d1b2bfff44a9ba56e91a5df` (fetch한 origin/main과 로컬 main 일치).
 - 통합: `/home/appuser/dev_system/.worktrees/engine-retirement`, `agent/engine-retirement`.
 - 중단된 `.worktrees/codex-runtime`의 `cmd/agentctl/main.go`, `cmd/agentctl/main_test.go`, `internal/config/config.go`, `internal/config/config_test.go`는 착수 시 modified였다. 수정·stage·commit·재개 금지.
-- 구현 worker 전체 상한 3, slice1 Luna 1개 예약. 문서 Sol 1, 읽기 전용 조사 Sol 1. reviewer 여유 유지.
+- 구현 worker 전체 상한 3. slice1 Luna 1개 예약을 구현·Task 리뷰 완료 후 해제했다. 문서·조사도 완료했다. reviewer 여유 유지.
 - 요청 역할: td_coordinator Sol medium, td_implementer Luna high, td_reviewer Sol medium. 실제 runtime model/effort를 검증하는 메타데이터는 노출되지 않아 unverified. 자동 대체·승격하지 않는다.
 - `brainstorming`의 bounded 정리 절차, `writing-plans`, `using-git-worktrees`, `subagent-driven-development`, `requesting-code-review`, `verification-before-completion`을 적용한다. 사용자의 작은 첫 slice 구현·push·기록 승인에 따라 반복 확인하지 않는다. 사용자 지침에 따라 기존 worktree와 ledger를 보존하며 모델 승격·worker full suite를 하지 않는다.
 
@@ -85,5 +85,5 @@ HERDR_ENV 설정, 실패 invocation 재사용, Herdr #3813 해결 가정은 하�
 - 조사 Task: 쓰기 없음. Linux·Windows Go 그래프에서 monitorcli importer 0개 확인. [inventory](2026-09-10-engine-dependency-inventory.md)에 호출·config·fixture·문서 경계 기록.
 - slice1 Luna: 코드 `3656616c91be6366f9753423d85e50a73eeaec63`, report 후속 포함 head `3d89c93cef34c2b4c4aa35ae794afd39c7f6dff6`. 두 bridge 파일 제거, public/shared 변화 없음.
 - slice1 focused: Go 1.27.0 `go test ./monitor`, `go vet ./monitor`, diff 검사 및 package 경로 부재 확인 통과. 첫 chained 실행은 약 90초 무출력 후 중단했으며 성공 근거로 쓰지 않았다. 상세 [Luna report](../../.superpowers/sdd/engine-retirement-slice1/task-report.md)는 통합 시 포함한다.
-- slice1 검토: fresh Sol이 고정 head `3d89c93`의 Task diff와 report 검토 중. 최종 verdict 전 완료로 처리하지 않는다.
+- slice1 검토: fresh Sol이 고정 head `3d89c93cef34c2b4c4aa35ae794afd39c7f6dff6`에서 spec compliance ACCEPT, code quality ACCEPT를 반환했다. blocking/non-blocking findings 없음. read-only diff/import/ls-tree/현재 runner 주입을 독립 확인하고 기존 focused 검사는 반복하지 않았다. Task 완료.
 - root 문서 검증: inventory/분류/ledger/새 계획 4파일의 상대 링크 6개 검사와 `git diff --check` 통과. 통합 `npm ci --no-audit --no-fund`는 107 packages 설치/exit 0이며 제품 테스트 근거와 구분한다.

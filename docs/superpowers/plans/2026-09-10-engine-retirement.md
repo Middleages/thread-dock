@@ -30,10 +30,10 @@
 - tests: 삭제 전 import/reference 증거를 report에 남기고 삭제 후 `go test ./monitor`, `go vet ./monitor`, `git diff --check`, `test ! -e internal/monitorcli` 수행. Go 경로는 `/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin/go` 사용 가능.
 - result: `changedFiles`, `commitSHA`, `executedCommands`, `outcomes`, `unverified`, `blockers`를 report에 기록한다. self-review 후 commit하고 fresh Sol review로 전달한다.
 
-- [ ] base 파일과 import/test/config/docs 참조 확인. 조사 근거와 달라지면 삭제 전 root에 보고한다.
-- [ ] `apply_patch`로 `internal/monitorcli/client.go`, `internal/monitorcli/client_test.go` 삭제.
-- [ ] 영향받는 기존 Monitor 테스트와 vet만 실행하고 self-review/commit한다.
-- [ ] fresh Sol이 고정 SHA와 전체 Task diff를 검토한다. 수정 필요 시 Luna에 돌린다.
+- [x] base 파일과 import/test/config/docs 참조 확인. Linux·Windows 그래프의 importer 0개 확인.
+- [x] `apply_patch`로 `internal/monitorcli/client.go`, `internal/monitorcli/client_test.go` 삭제.
+- [x] 영향받는 기존 Monitor 테스트와 vet 통과, self-review/commit 완료.
+- [x] fresh Sol이 고정 SHA `3d89c93`에서 spec/code quality 모두 ACCEPT. 수정 요구 없음.
 
 ## 문서·통합
 

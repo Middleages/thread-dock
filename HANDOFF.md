@@ -29,7 +29,8 @@
 [첫 삭제 계획](docs/superpowers/plans/2026-09-10-engine-retirement.md),
 [검증·GitHub ledger](docs/operator/2026-09-10-engine-retirement-ledger.md)에서 추적한다.
 현재 Monitor의 `internal/runner` 직접 사용을 보존하고 Linux/Windows 그래프에서 importer가 없는
-옛 `internal/monitorcli` 두 파일만 첫 삭제 대상으로 정했다. 나머지 engine은 v1/v2 호출 군집으로 남는다.
+옛 `internal/monitorcli` 두 파일을 제거했다. Luna focused 검사와 fresh Sol Task 리뷰를 통과했으며,
+통합 gate와 전체 branch 리뷰의 고정 SHA는 ledger에서 확인한다. 나머지 engine은 v1/v2 호출 군집으로 남는다.
 Issue #42·44·45·46·47은 superseded 종료 후보, #43·48은 새 방향 재작성 후보로 한국어 댓글을 게시했다.
 기존 본문·열린 상태는 보존했다. Projects는 조회 성공/0개로 갱신 대상이 없고 Wiki는 비활성화돼 실제 쓰기가 없다.
 

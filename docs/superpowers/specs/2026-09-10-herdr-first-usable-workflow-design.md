@@ -29,7 +29,7 @@ Go는 메모리 캐시와 마지막 성공 조회 시각을 관리한다. 영구
 
 기존 Windows/WSL 경계는 유지한다. Windows Go 백엔드에서 명시적으로 설정한 WSL 배포판의
 `gh`·`herdr` 읽기 명령을 인자 배열로 실행하고 결과를 Go에서 해석한다.
-현재 Monitor는 `internal/runner`를 직접 사용한다. 옛 `internal/monitorcli` bridge는 Monitor가 참조하지 않는 후속 정리 대상이다.
+현재 Monitor는 `internal/runner`를 직접 사용한다. 옛 `internal/monitorcli` bridge는 importer가 없어 [첫 엔진 정리](../plans/2026-09-10-engine-retirement.md)에서 제거했다.
 기존 `agentctl project status`와 로컬 Work store를 새 데이터 공급자로 사용하지 않는다.
 별도 Node 서버, HTTP bridge, 상주 daemon, 새 작업 실행 CLI를 만들지 않는다.
 

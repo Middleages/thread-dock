@@ -24,7 +24,7 @@
 **Files:** `monitor/main.go`, `monitor/app.go`, `monitor/app_test.go`, 새 `monitor/github.go`, `monitor/github_test.go`,
 새 `monitor/snapshot.go`, `monitor/commands.go`, `monitor/commands_test.go`,
 `monitor/frontend/src/{bindings.ts,bindings.test.ts,types.ts,App.tsx,monitor.test.tsx}`.
-현재 Monitor는 `internal/runner`를 직접 사용한다. 옛 `internal/monitorcli/client.go` bridge는 후속 정리 대상이다.
+현재 Monitor는 `internal/runner`를 직접 사용한다. 옛 `internal/monitorcli` bridge는 importer가 없어 [첫 엔진 정리](2026-09-10-engine-retirement.md)에서 제거했다.
 
 **공유 계약:** 화면 진입점 `GetMonitorSnapshot`은 유지한다. Go의 새 화면용 snapshot은
 현재 TS의 GitHub 프로젝트·업무·링크·검증·관찰 시각에 대응하며 Contract v2 타입을 import하지 않는다.
