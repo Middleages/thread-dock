@@ -73,4 +73,6 @@ None for the assigned Task. Windows verification remains a concern for the coord
 - Focused command `go test ./internal/pilot -run TestReadmeLinksOpenCodeRoleAgentRunbook` — exit 127: `go: command not found`. No supported Go executable was present at the checked local candidates, so this test result is unverified in the current environment and must not be reported as passing.
 - Docs relative-link parse and `git diff --check` — exit 0.
 - Self-review: only `README.md` and this report changed; the requested runbook link resolves, and no product code, tests, UI, or shared interface was modified.
-- Blocker/concern: the coordinator should rerun the single focused Go test in an environment with Go available before relying on the integration gate.
+- Initial blocker/concern: the focused Go test required an environment with Go available; resolved by the validation follow-up below.
+- Validation follow-up at current SHA `613fcb5`: `/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin/go test ./internal/pilot -run TestReadmeLinksOpenCodeRoleAgentRunbook` — exit 0, `ok thread-dock/internal/pilot 0.003s`.
+- Follow-up `git diff --check` — exit 0. The prior missing-Go concern is resolved for this focused test; no product code or tests changed.
