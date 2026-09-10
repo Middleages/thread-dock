@@ -191,10 +191,14 @@ func TestReviewChangeSkillUsesFreshReadOnlyReviewerArtifact(t *testing.T) {
 		"repair_round:",
 		"`profile`",
 		"`criteria`",
+		"report the remaining count or exhaustion",
 	)
 	for _, line := range strings.Split(content, "\n") {
 		if strings.Contains(line, "Invocation") && strings.Contains(line, "`candidateSha`") && !strings.Contains(line, "Inside `packet`") {
 			t.Errorf("Invocation top-level guidance must not place packet field candidateSha on the envelope: %s", line)
+		}
+		if strings.Contains(line, "Artifact") && (strings.Contains(line, "repairBudget") || strings.Contains(line, "repair budget")) && !strings.Contains(line, "omit it from") && !strings.Contains(line, "Never increment or reset it in") {
+			t.Errorf("Reviewer Artifact must not carry repair-budget state: %s", line)
 		}
 	}
 }
