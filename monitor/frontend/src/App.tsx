@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { HerdrConnection, HerdrSnapshot, Project, Snapshot, SnapshotSource, WorkItem } from './types'
+import type { HerdrConnection, HerdrSnapshot, Link, Project, Snapshot, SnapshotSource, WorkItem } from './types'
 import { getMonitorSnapshot } from './bindings'
 import { isSafeExternalURL, openExternalURL } from './safe-url'
 import './styles.css'
@@ -97,11 +97,20 @@ function primaryWorkURL(work: WorkItem) {
   return work.github?.url ?? work.links?.find((link) => ['github', 'issue', 'pull_request', 'project_item'].includes(link.kind))?.url
 }
 
+function isTrustedProjectLink(link: Link) {
+  if (link.kind !== 'github' || link.label !== 'Project') return false
+  try {
+    const parsed = new URL(link.url)
+    const parts = parsed.pathname.split('/').filter(Boolean)
+    return parsed.protocol === 'https:' && parsed.hostname === 'github.com' && parts.length === 4 && ['users', 'orgs'].includes(parts[0]) && parts[2] === 'projects' && /^\d+$/.test(parts[3])
+  } catch { return false }
+}
+
 function connectionsForWork(work: WorkItem | undefined, project: Project | undefined, herdr: HerdrSnapshot | undefined) {
   if (!work || !herdr) return []
   const primaryURL = primaryWorkURL(work)
   const repository = repositoryFor(primaryURL)
-  const projectURLs = new Set((project?.links ?? []).map((link) => link.url))
+  const projectURLs = new Set((project?.links ?? []).filter(isTrustedProjectLink).map((link) => link.url))
   const issueConnections = herdr.connections.filter((connection) => connection.issueUrl && connection.issueUrl === primaryURL)
   if (issueConnections.length > 0) return issueConnections
   const projectConnections = herdr.connections.filter((connection) => connection.projectUrl && projectURLs.has(connection.projectUrl))

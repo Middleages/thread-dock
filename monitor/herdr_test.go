@@ -154,7 +154,7 @@ func TestHerdrMonitorDistinguishesEmptyCacheFromMissingAfterFailure(t *testing.T
 	fail := false
 	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
 		if args[4] == "/bin/cat" {
-			return runner.Result{Stdout: herdrConfigJSON(map[string]any{"repository": "github.com/acme/app", "session": "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna"})}, nil
+			return runner.Result{Stdout: herdrConfigJSON(map[string]any{"repository": "github.com/acme/app", "session": "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna", "worktree": "/repo"})}, nil
 		}
 		if fail {
 			return runner.Result{}, errors.New("secret stderr")
@@ -163,6 +163,7 @@ func TestHerdrMonitorDistinguishesEmptyCacheFromMissingAfterFailure(t *testing.T
 	}}
 	monitor := NewHerdrMonitor(map[string]string{"THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, process, time.Second)
 	monitor.now = func() time.Time { return now }
+	monitor.realpath = func(path string) (string, error) { return path, nil }
 	first, _ := monitor.FetchHerdr(context.Background())
 	if first.Connections[0].Status != "missing" {
 		t.Fatalf("first=%#v", first.Connections)
@@ -172,6 +173,65 @@ func TestHerdrMonitorDistinguishesEmptyCacheFromMissingAfterFailure(t *testing.T
 	second, _ := monitor.FetchHerdr(context.Background())
 	if second.Status != "cached" || second.Connections[0].Status != "cached" || strings.Contains(strings.Join(second.Notices, " "), "secret") {
 		t.Fatalf("second=%#v notices=%#v", second.Connections, second.Notices)
+	}
+}
+
+func TestHerdrMonitorTreatsMalformedAgentRowsAsFailedRefresh(t *testing.T) {
+	now := time.Unix(1000, 0)
+	malformed := false
+	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
+		if args[4] == "/bin/cat" {
+			return runner.Result{Stdout: herdrConfigJSON(map[string]any{"repository": "github.com/acme/app", "session": "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna", "worktree": "/repo"})}, nil
+		}
+		if malformed {
+			return runner.Result{Stdout: `{"result":{"type":"agent_list","agents":[null]}}`}, nil
+		}
+		return runner.Result{Stdout: herdrList(herdrAgent("Luna", "working", "w1", "t1", "p1", "/repo"))}, nil
+	}}
+	monitor := NewHerdrMonitor(map[string]string{"THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, process, time.Second)
+	monitor.now = func() time.Time { return now }
+	monitor.realpath = func(path string) (string, error) { return path, nil }
+	first, _ := monitor.FetchHerdr(context.Background())
+	if first.Status != "fresh" || first.Connections[0].Status != "connected" {
+		t.Fatalf("first=%#v", first)
+	}
+	now = now.Add(6 * time.Second)
+	malformed = true
+	second, _ := monitor.FetchHerdr(context.Background())
+	if second.Status != "cached" || second.Connections[0].Status != "cached" || len(second.Sessions[0].Agents) != 1 {
+		t.Fatalf("malformed refresh erased cache: %#v", second)
+	}
+}
+
+func TestHerdrMonitorRejectsMalformedAgentRowsWithoutCache(t *testing.T) {
+	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
+		if args[4] == "/bin/cat" {
+			return runner.Result{Stdout: herdrConfigJSON(map[string]any{"repository": "github.com/acme/app", "session": "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna"})}, nil
+		}
+		return runner.Result{Stdout: `{"result":{"type":"agent_list","agents":[{"name":42}]}}`}, nil
+	}}
+	monitor := NewHerdrMonitor(map[string]string{"THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, process, time.Second)
+	snapshot, _ := monitor.FetchHerdr(context.Background())
+	if snapshot.Status != "offline" || snapshot.Connections[0].Status != "offline" {
+		t.Fatalf("malformed first observation was treated as current: %#v", snapshot)
+	}
+}
+
+func TestHerdrMonitorTracksUnconnectedIdentityBeyondPaneID(t *testing.T) {
+	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
+		if args[4] == "/bin/cat" {
+			return runner.Result{Stdout: herdrConfigJSON(map[string]any{"repository": "github.com/acme/app", "session": "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "same", "agentName": "A", "worktree": "/repo"})}, nil
+		}
+		return runner.Result{Stdout: herdrList(
+			herdrAgent("A", "working", "w1", "t1", "same", "/repo"),
+			herdrAgent("B", "idle", "w2", "t2", "same", "/repo"),
+		)}, nil
+	}}
+	monitor := NewHerdrMonitor(map[string]string{"THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, process, time.Second)
+	monitor.realpath = func(path string) (string, error) { return path, nil }
+	snapshot, _ := monitor.FetchHerdr(context.Background())
+	if snapshot.Connections[0].Status != "connected" || len(snapshot.UnconnectedAgents) != 1 || snapshot.UnconnectedAgents[0].Name != "B" {
+		t.Fatalf("identity tracking=%#v connections=%#v", snapshot.UnconnectedAgents, snapshot.Connections)
 	}
 }
 

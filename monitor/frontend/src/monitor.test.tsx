@@ -183,6 +183,19 @@ describe('monitor list and detail', () => {
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('세션 issue'))
   })
 
+  it('does not treat an evidence-only project link as a Project binding', async () => {
+    const issue = 'https://github.com/acme/app/issues/1'
+    const evidenceProject = 'https://github.com/orgs/acme/projects/99'
+    const work = { ...project().workItems[0], github: { kind: 'issue', url: issue, state: 'OPEN' }, links: [{ kind: 'issue', label: 'Issue', url: issue }] }
+    const selected = project({ links: [{ kind: 'evidence', label: 'Mentioned Project', url: evidenceProject }], workItems: [work] })
+    const makeConnection = (session: string, extra: Record<string, string>) => ({ session, repository: 'github.com/acme/app', role: extra.projectUrl ? 'feature' : 'coordinator', status: 'connected', nextAction: 'check_github', handoff: `세션 ${session}`, ...extra })
+    const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'fresh', syncStatus: 'synced', freshness: { state: 'fresh', syncStatus: 'synced' }, notices: [], sessions: [], connections: [makeConnection('evidence-project', { projectUrl: evidenceProject }), makeConnection('central', {})], unconnectedAgents: [] }
+    render(<App snapshotSource={vi.fn(async () => snapshot([selected], { herdr }))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByText('evidence-project')).not.toBeInTheDocument()
+    expect(screen.getAllByText('central').length).toBeGreaterThan(0)
+  })
+
   it('translates raw aggregate wire status tokens into Korean labels', async () => {
     const raw = project({
       workItems: [{ ...project().workItems[0], nextAction: 'approve', tasks: [{ ...project().workItems[0].tasks![0], state: 'verify', verification: 'verify', review: 'accepted' }, { ...project().workItems[0].tasks![0], taskId: 'task-2', state: 'verified', verification: 'verify', review: 'accepted' }], publications: [{ ...project().workItems[0].publications![0], status: 'published' }], decisions: [{ ...project().workItems[0].decisions![0], status: 'accepted' }], handoffs: [{ ...project().workItems[0].handoffs![0], nextAction: 'approve' }] }],

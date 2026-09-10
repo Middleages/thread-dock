@@ -227,8 +227,9 @@ func (m *HerdrMonitor) load(ctx context.Context) (HerdrSnapshot, error) {
 	var lastSynced *time.Time
 	hasFailure, hasCache := false, false
 	for _, entry := range observed {
-		observedAt := timePtr(entry.observedAt)
-		if observedAt != nil {
+		var observedAt *time.Time
+		if !entry.observedAt.IsZero() {
+			observedAt = timePtr(entry.observedAt)
 			lastSynced = laterTime(lastSynced, observedAt)
 		}
 		sessions = append(sessions, HerdrSession{Session: entry.session, Status: entry.status, ObservedAt: observedAt, Agents: entry.agents, Links: []Link{{Kind: "herdr", Label: "Herdr " + entry.session, URL: "herdr://session/" + entry.session}}})
@@ -506,18 +507,62 @@ func parseHerdrBinding(value map[string]any) (herdrBinding, error) {
 func normalizeHerdrAgents(raw string) ([]HerdrAgent, error) {
 	var payload struct {
 		Result struct {
-			Type   string           `json:"type"`
-			Agents []map[string]any `json:"agents"`
+			Type   string            `json:"type"`
+			Agents []json.RawMessage `json:"agents"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload.Result.Type != "agent_list" || payload.Result.Agents == nil {
 		return nil, errors.New("Unexpected Herdr agent response")
 	}
 	agents := make([]HerdrAgent, 0, len(payload.Result.Agents))
-	for _, row := range payload.Result.Agents {
-		agents = append(agents, HerdrAgent{Name: optionalString(row["name"]), AgentStatus: optionalString(row["agent_status"]), WorkspaceID: optionalString(row["workspace_id"]), TabID: optionalString(row["tab_id"]), PaneID: optionalString(row["pane_id"]), CWD: optionalString(row["cwd"]), ForegroundCWD: optionalString(row["foreground_cwd"])})
+	for _, rawAgent := range payload.Result.Agents {
+		var row map[string]any
+		if len(rawAgent) == 0 || string(rawAgent) == "null" || json.Unmarshal(rawAgent, &row) != nil || row == nil {
+			return nil, errors.New("Unexpected Herdr agent response")
+		}
+		name, err := requiredHerdrAgentField(row, "name")
+		if err != nil {
+			return nil, err
+		}
+		status, err := requiredHerdrAgentField(row, "agent_status")
+		if err != nil {
+			return nil, err
+		}
+		workspace, err := requiredHerdrAgentField(row, "workspace_id")
+		if err != nil {
+			return nil, err
+		}
+		tab, err := requiredHerdrAgentField(row, "tab_id")
+		if err != nil {
+			return nil, err
+		}
+		pane, err := requiredHerdrAgentField(row, "pane_id")
+		if err != nil {
+			return nil, err
+		}
+		cwd, err := requiredHerdrAgentField(row, "cwd")
+		if err != nil {
+			return nil, err
+		}
+		foregroundCWD, err := requiredHerdrAgentField(row, "foreground_cwd")
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, HerdrAgent{Name: name, AgentStatus: status, WorkspaceID: workspace, TabID: tab, PaneID: pane, CWD: cwd, ForegroundCWD: foregroundCWD})
 	}
 	return agents, nil
+}
+
+func requiredHerdrAgentField(row map[string]any, name string) (string, error) {
+	value, present := row[name]
+	if !present || value == nil {
+		return "", nil
+	}
+	textValue, ok := value.(string)
+	if !ok {
+		return "", errors.New("Unexpected Herdr agent response")
+	}
+	return strings.TrimSpace(textValue), nil
 }
 
 func (m *HerdrMonitor) runHerdr(ctx context.Context, args ...string) ([]byte, error) {
@@ -588,7 +633,7 @@ func pathWithin(parent, child string) bool {
 	return child == parent || strings.HasPrefix(child, parent+"/")
 }
 func agentKey(session string, agent HerdrAgent) string {
-	return session + ":" + firstNonEmpty(agent.PaneID, agent.Name, fmt.Sprintf("%s/%s/%s", agent.WorkspaceID, agent.TabID, agent.CWD))
+	return strings.Join([]string{session, agent.WorkspaceID, agent.TabID, agent.PaneID, agent.Name}, "\x00")
 }
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
