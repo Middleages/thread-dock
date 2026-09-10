@@ -19,7 +19,7 @@ status: DONE_WITH_CONCERNS
 
 ## commitSHA
 
-pending until this report is committed with the implementation.
+5477b1a (implementation commit; this report is committed immediately after it because the report records the implementation SHA).
 
 ## executedCommands
 
