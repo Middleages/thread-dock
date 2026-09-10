@@ -149,19 +149,38 @@ describe('monitor list and detail', () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     render(<App snapshotSource={vi.fn(async () => snapshot([projectA, projectB], { herdr }))} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    expect(screen.getAllByText('central').length).toBeGreaterThan(0)
+    expect(screen.queryByText('central')).not.toBeInTheDocument()
     expect(screen.getAllByText('issue-a').length).toBeGreaterThan(0)
     expect(screen.queryByText('issue-b')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('세션 issue-a'))
     fireEvent.click(screen.getByRole('button', { name: /App B/ }))
-    expect(screen.getAllByText('central').length).toBeGreaterThan(0)
+    expect(screen.queryByText('central')).not.toBeInTheDocument()
     expect(screen.getAllByText('issue-b').length).toBeGreaterThan(0)
     expect(screen.queryByText('issue-a')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining('세션 issue-b'))
+  })
+
+  it('uses exclusive issue then project then repository binding precedence', async () => {
+    const issue = 'https://github.com/acme/app/issues/1'
+    const board = 'https://github.com/orgs/acme/projects/7'
+    const work = { ...project().workItems[0], github: { kind: 'issue', url: issue, state: 'OPEN' }, links: [{ kind: 'github', label: 'Issue', url: issue }] }
+    const selected = project({ links: [{ kind: 'github', label: 'Project', url: board }], workItems: [work] })
+    const connection = (session: string, extra: Record<string, string>) => ({ session, repository: 'github.com/acme/app', role: extra.projectUrl || extra.issueUrl ? 'feature' : 'coordinator', status: 'connected', nextAction: 'check_github', handoff: `세션 ${session}`, ...extra })
+    const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'fresh', syncStatus: 'synced', freshness: { state: 'fresh', syncStatus: 'synced' }, notices: [], sessions: [], connections: [connection('issue', { issueUrl: issue }), connection('project', { projectUrl: board }), connection('central', {})], unconnectedAgents: [] }
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    render(<App snapshotSource={vi.fn(async () => snapshot([selected], { herdr }))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getAllByText('issue').length).toBeGreaterThan(0)
+    expect(screen.queryByText('project')).not.toBeInTheDocument()
+    expect(screen.queryByText('central')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('세션 issue'))
   })
 
   it('translates raw aggregate wire status tokens into Korean labels', async () => {

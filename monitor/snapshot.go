@@ -26,17 +26,18 @@ type Freshness struct {
 }
 
 type Snapshot struct {
-	SchemaVersion int       `json:"schemaVersion"`
-	Revision      uint64    `json:"revision"`
-	ObservedAt    time.Time `json:"observedAt"`
-	Freshness     Freshness `json:"freshness"`
-	State         string    `json:"state"`
-	SyncStatus    string    `json:"syncStatus"`
-	NextAction    string    `json:"nextAction"`
-	EvidenceRefs  []string  `json:"evidenceRefs"`
-	Projects      []Project `json:"projects"`
-	Source        string    `json:"source,omitempty"`
-	Notices       []string  `json:"notices"`
+	SchemaVersion int            `json:"schemaVersion"`
+	Revision      uint64         `json:"revision"`
+	ObservedAt    time.Time      `json:"observedAt"`
+	Freshness     Freshness      `json:"freshness"`
+	State         string         `json:"state"`
+	SyncStatus    string         `json:"syncStatus"`
+	NextAction    string         `json:"nextAction"`
+	EvidenceRefs  []string       `json:"evidenceRefs"`
+	Projects      []Project      `json:"projects"`
+	Source        string         `json:"source,omitempty"`
+	Notices       []string       `json:"notices"`
+	Herdr         *HerdrSnapshot `json:"herdr,omitempty"`
 }
 
 type Project struct {

@@ -134,6 +134,19 @@ Windows→WSL 명령이 기존 Herdr pane 환경을 상속한다고 가정하지
 접근이 안 되면 Herdr 조회 불가 이유를 표시하고 GitHub 관찰은 유지한다.
 실제 앱과 정상 세션에서 확인하기 전에는 live 통합 완료로 표시하지 않는다.
 
+Go/Wails Monitor의 Herdr 관찰은 `THREADDOCK_SESSIONS_FILE`에 지정한 WSL 내부 절대 경로의
+version 1 연결 파일과 `THREADDOCK_WSL_DISTRIBUTION`을 읽기 전용으로 사용한다. 연결 파일은
+WSL의 `cat`으로 읽고, worktree와 Agent cwd는 같은 배포판의 `realpath` 결과로 대조한다.
+Herdr 실행은 설치된 `$HOME/.local/bin/herdr`를 고정된 `/bin/sh -c` 스크립트와 positional
+인자로 호출하며, 세션·workspace·tab·pane·Agent 이름이 모두 맞아야 연결됨으로 표시한다.
+기능 worktree는 canonical cwd가 그 아래일 때만 연결하고, `role=coordinator`는 worktree를
+생략할 수 있다. 캐시된 빈 목록은 조회 실패 뒤 `cached`로 남기며 현재 `missing`으로 단정하지 않는다.
+
+검증 근거의 범위를 구분한다. Go fixture와 화면 테스트는 Herdr 응답 매핑·연결 우선순위·재개
+안내를 검증한 근거이며, 관리되는 Herdr pane에서 확인한 0.8.2 CLI/agent list와 설치 경로는
+로컬 managed-pane live 근거다. Windows 데스크톱 Wails 실행과 실제 Windows→WSL Herdr 접근은
+아직 검증되지 않았으므로 이 문서나 Monitor에서 통합 완료로 표시하지 않는다.
+
 ## 실제 사용 확인
 
 작은 독립 기능 두 개로 시작한다.

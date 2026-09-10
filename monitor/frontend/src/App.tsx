@@ -102,11 +102,11 @@ function connectionsForWork(work: WorkItem | undefined, project: Project | undef
   const primaryURL = primaryWorkURL(work)
   const repository = repositoryFor(primaryURL)
   const projectURLs = new Set((project?.links ?? []).map((link) => link.url))
-  return herdr.connections.filter((connection) => {
-    if (connection.issueUrl) return connection.issueUrl === primaryURL
-    if (connection.projectUrl) return projectURLs.has(connection.projectUrl)
-    return connection.role === 'coordinator' && Boolean(repository) && connection.repository === repository
-  })
+  const issueConnections = herdr.connections.filter((connection) => connection.issueUrl && connection.issueUrl === primaryURL)
+  if (issueConnections.length > 0) return issueConnections
+  const projectConnections = herdr.connections.filter((connection) => connection.projectUrl && projectURLs.has(connection.projectUrl))
+  if (projectConnections.length > 0) return projectConnections
+  return herdr.connections.filter((connection) => !connection.issueUrl && !connection.projectUrl && connection.role === 'coordinator' && Boolean(repository) && connection.repository === repository)
 }
 
 function herdrGuidance(connection: HerdrConnection) {
