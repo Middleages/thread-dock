@@ -217,6 +217,42 @@ func TestHerdrMonitorRejectsMalformedAgentRowsWithoutCache(t *testing.T) {
 	}
 }
 
+func TestHerdrMonitorRejectsMalformedLocationRowsOnColdCache(t *testing.T) {
+	for _, row := range []string{
+		`{}`,
+		`{"workspace_id":"w1","tab_id":"t1"}`,
+		`{"workspace_id":"w1","tab_id":"t1","pane_id":"p1","name":null}`,
+	} {
+		t.Run(row, func(t *testing.T) {
+			process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
+				if args[4] == "/bin/cat" {
+					return runner.Result{Stdout: herdrConfigJSON(map[string]any{"repository": "github.com/acme/app", "session": "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna"})}, nil
+				}
+				return runner.Result{Stdout: `{"result":{"type":"agent_list","agents":[` + row + `]}}`}, nil
+			}}
+			monitor := NewHerdrMonitor(map[string]string{"THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, process, time.Second)
+			snapshot, _ := monitor.FetchHerdr(context.Background())
+			if snapshot.Status != "offline" || snapshot.Connections[0].Status != "offline" {
+				t.Fatalf("malformed row became current: row=%s snapshot=%#v", row, snapshot)
+			}
+		})
+	}
+}
+
+func TestHerdrMonitorAcceptsUnnamedAgentWithCompleteLocationAsUnconnected(t *testing.T) {
+	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
+		if args[4] == "/bin/cat" {
+			return runner.Result{Stdout: herdrConfigJSON(map[string]any{"repository": "github.com/acme/app", "session": "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p2", "agentName": "Luna"})}, nil
+		}
+		return runner.Result{Stdout: `{"result":{"type":"agent_list","agents":[{"agent_status":"working","workspace_id":"w1","tab_id":"t1","pane_id":"p1","cwd":"/repo"}]}}`}, nil
+	}}
+	monitor := NewHerdrMonitor(map[string]string{"THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, process, time.Second)
+	snapshot, _ := monitor.FetchHerdr(context.Background())
+	if snapshot.Status != "fresh" || snapshot.Connections[0].Status != "missing" || len(snapshot.UnconnectedAgents) != 1 || snapshot.UnconnectedAgents[0].Name != "" {
+		t.Fatalf("unnamed location agent=%#v connections=%#v", snapshot.UnconnectedAgents, snapshot.Connections)
+	}
+}
+
 func TestHerdrMonitorTracksUnconnectedIdentityBeyondPaneID(t *testing.T) {
 	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
 		if args[4] == "/bin/cat" {

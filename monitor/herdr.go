@@ -520,31 +520,31 @@ func normalizeHerdrAgents(raw string) ([]HerdrAgent, error) {
 		if len(rawAgent) == 0 || string(rawAgent) == "null" || json.Unmarshal(rawAgent, &row) != nil || row == nil {
 			return nil, errors.New("Unexpected Herdr agent response")
 		}
-		name, err := requiredHerdrAgentField(row, "name")
+		name, err := herdrAgentField(row, "name", false)
 		if err != nil {
 			return nil, err
 		}
-		status, err := requiredHerdrAgentField(row, "agent_status")
+		status, err := herdrAgentField(row, "agent_status", false)
 		if err != nil {
 			return nil, err
 		}
-		workspace, err := requiredHerdrAgentField(row, "workspace_id")
+		workspace, err := herdrAgentField(row, "workspace_id", true)
 		if err != nil {
 			return nil, err
 		}
-		tab, err := requiredHerdrAgentField(row, "tab_id")
+		tab, err := herdrAgentField(row, "tab_id", true)
 		if err != nil {
 			return nil, err
 		}
-		pane, err := requiredHerdrAgentField(row, "pane_id")
+		pane, err := herdrAgentField(row, "pane_id", true)
 		if err != nil {
 			return nil, err
 		}
-		cwd, err := requiredHerdrAgentField(row, "cwd")
+		cwd, err := herdrAgentField(row, "cwd", false)
 		if err != nil {
 			return nil, err
 		}
-		foregroundCWD, err := requiredHerdrAgentField(row, "foreground_cwd")
+		foregroundCWD, err := herdrAgentField(row, "foreground_cwd", false)
 		if err != nil {
 			return nil, err
 		}
@@ -553,16 +553,26 @@ func normalizeHerdrAgents(raw string) ([]HerdrAgent, error) {
 	return agents, nil
 }
 
-func requiredHerdrAgentField(row map[string]any, name string) (string, error) {
+func herdrAgentField(row map[string]any, name string, required bool) (string, error) {
 	value, present := row[name]
-	if !present || value == nil {
+	if !present {
+		if required {
+			return "", errors.New("Unexpected Herdr agent response")
+		}
 		return "", nil
+	}
+	if value == nil {
+		return "", errors.New("Unexpected Herdr agent response")
 	}
 	textValue, ok := value.(string)
 	if !ok {
 		return "", errors.New("Unexpected Herdr agent response")
 	}
-	return strings.TrimSpace(textValue), nil
+	textValue = strings.TrimSpace(textValue)
+	if required && textValue == "" {
+		return "", errors.New("Unexpected Herdr agent response")
+	}
+	return textValue, nil
 }
 
 func (m *HerdrMonitor) runHerdr(ctx context.Context, args ...string) ([]byte, error) {
