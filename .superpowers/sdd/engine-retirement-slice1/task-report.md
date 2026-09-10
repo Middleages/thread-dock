@@ -72,7 +72,7 @@ PASS after removing the now-empty package directory with `rmdir internal/monitor
 ## Result
 
 - changedFiles: `internal/monitorcli/client.go` (deleted), `internal/monitorcli/client_test.go` (deleted), `.superpowers/sdd/engine-retirement-slice1/task-report.md` (added)
-- commitSHA: `6d4e2be735e1f9295c85c62aff5d8323ebe307a0` (updated after the final amend below)
+- commitSHA: `3656616c91be6366f9753423d85e50a73eeaec63` (code deletion commit; this metadata correction is a follow-up commit because changing the report changes the containing commit SHA)
 - executedCommands: baseline import/reference `rg`; baseline `go list`; post-delete `go test ./monitor`; `go vet ./monitor`; `git diff --check`; `test ! -e internal/monitorcli`; `git diff --stat`; `git status --short`
 - outcomes: deletion and focused checks passed
 - unverified: runtime model/effort identity; Windows native Wails execution; full integration `make check` (root-owned final gate)
