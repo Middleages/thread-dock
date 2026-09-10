@@ -89,6 +89,9 @@ describe('monitor list and detail', () => {
     expect(screen.getByText('Use bounded retries')).toBeInTheDocument()
     expect(screen.getByText('Review the change')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Parent Issue' })).toHaveAttribute('href', 'https://github.com/acme/app/issues/1')
+    expect(screen.queryByRole('heading', { name: '저장소별 작업' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '발행 상태' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '자동화 작업' })).not.toBeInTheDocument()
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => undefined } })
     fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
     await act(async () => { await Promise.resolve() })
@@ -119,7 +122,7 @@ describe('monitor list and detail', () => {
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(screen.getByRole('heading', { name: 'Herdr 연결', level: 2 })).toBeInTheDocument()
     expect(screen.getAllByText('feature-a').length).toBeGreaterThan(0)
-    expect(document.body.textContent).toContain('/repo/src')
+    expect((document.body.textContent?.match(/\/repo\/src/g) ?? [])).toHaveLength(1)
     expect(screen.getByText('연결되지 않은 Agent')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
     await act(async () => { await Promise.resolve() })
@@ -196,19 +199,18 @@ describe('monitor list and detail', () => {
     expect(screen.getAllByText('central').length).toBeGreaterThan(0)
   })
 
-  it('translates raw aggregate wire status tokens into Korean labels', async () => {
+  it('removes legacy task and publication presentation while retaining decisions and handoff records', async () => {
     const raw = project({
       workItems: [{ ...project().workItems[0], nextAction: 'approve', tasks: [{ ...project().workItems[0].tasks![0], state: 'verify', verification: 'verify', review: 'accepted' }, { ...project().workItems[0].tasks![0], taskId: 'task-2', state: 'verified', verification: 'verify', review: 'accepted' }], publications: [{ ...project().workItems[0].publications![0], status: 'published' }], decisions: [{ ...project().workItems[0].decisions![0], status: 'accepted' }], handoffs: [{ ...project().workItems[0].handoffs![0], nextAction: 'approve' }] }],
     })
     const source = vi.fn(async () => snapshot([raw]))
     render(<App snapshotSource={source} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    expect(screen.getAllByText('검증 · 검증', { exact: true })).toHaveLength(1)
-    expect(screen.getAllByText('검증 완료 · 검증', { exact: true })).toHaveLength(1)
-    expect(screen.getAllByText('발행 완료', { exact: true })).toHaveLength(1)
+    expect(screen.queryByRole('heading', { name: '저장소별 작업' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '발행 상태' })).not.toBeInTheDocument()
     expect(screen.getAllByText('승인됨', { exact: true })).toHaveLength(1)
     expect(screen.getAllByText('승인', { exact: true })).toHaveLength(2)
-    expect(document.body.textContent).not.toMatch(/\bverify\b|\bpublished\b|\baccepted\b|\bapprove\b/)
+    expect(document.body.textContent).not.toMatch(/\bverify\b|\bpublished\b|\baccepted\b/)
   })
 
   it('uses the selected work identity for detail and action links after a project shrinks', async () => {
@@ -258,12 +260,14 @@ describe('monitor list and detail', () => {
     expect(screen.getByRole('status')).toHaveTextContent('handoff를 복사하지 못했습니다.')
   })
 
-  it('uses native keyboard buttons and omits forbidden runtime identifiers', async () => {
+  it('keeps only the product identity in the top navigation and omits forbidden runtime identifiers', async () => {
     const source = vi.fn(async () => snapshot([project()]))
     render(<App snapshotSource={source} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     const nav = screen.getByRole('navigation', { name: '주요 메뉴' })
-    expect(within(nav).getByRole('button', { name: '작업 현황' })).toBeEnabled()
+    expect(within(nav).getByLabelText('ThreadDock Monitor')).toBeInTheDocument()
+    for (const label of ['작업 현황', '저장소', '자동화 작업', '완료 기록', '설정']) expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '자동화 작업' })).not.toBeInTheDocument()
     expect(screen.queryByText(/providerSession|processId|sessionId|requestId|rawTranscript/i)).not.toBeInTheDocument()
     expect(document.body.textContent).not.toMatch(/providerSession|processId|sessionId|requestId|rawTranscript/i)
   })

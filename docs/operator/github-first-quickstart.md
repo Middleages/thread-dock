@@ -1,7 +1,7 @@
 # GitHub와 Herdr로 바로 시작하기
 
-기능 개발은 기존 Agent의 Skill로 시작하고, 업무 현황은 Go/Wails 데스크톱 Monitor에서 확인하는 것이 목표다.
-현재 PR #69는 Node 조회를 Go로 옮기기 전이다. 이 문서의 Skill 운영 흐름은 사용할 수 있지만 새 Go 조회의 설치·실행 완료를 뜻하지 않는다.
+기능 개발은 기존 Agent의 Skill로 시작하고, 업무 현황은 Go/Wails 데스크톱 Monitor에서 확인한다.
+현재 PR #69의 화면 조회는 `GetMonitorSnapshot` Wails binding을 사용하며 Node HTTP 서버를 실행하지 않는다.
 필요한 것은 대상 Git 저장소, GitHub에 접근 가능한 gh 또는 MCP, 설치된 Herdr, Codex/OpenCode다.
 새 agentctl 계약이나 Work 등록은 필요하지 않다.
 
@@ -94,7 +94,7 @@ Go 설정의 실제 전달 방식과 사용 명령은 구현 후 실행 검증 �
 로컬 경로·세션 ID를 공개 Issue에 복사할 필요는 없다.
 
 연결 값을 얻을 때는 실제 Herdr pane 안에서 설치된 도움말을 읽고 대상 세션을 조회한다.
-기존 Node adapter가 참고한 형식은 Herdr 0.8.2의 `herdr --session NAME agent list` 응답 형식을 기준으로 한다.
+Herdr 관찰 형식은 설치된 Herdr 0.8.2의 `herdr --session NAME agent list` 응답을 기준으로 한다.
 여기서 확인한 name, workspace_id, tab_id, pane_id와 실제 worktree를 기록한다.
 UI 표시명이나 탭 순서로 ID를 추측하지 않는다.
 
@@ -125,9 +125,8 @@ Wiki 갱신 권한이나 초기화가 막혔으면 문서 초안을 PR에 포함
 Go 백엔드는 선택한 WSL 배포판의 gh 인증과 Herdr 읽기 접근을 사용한다.
 ChatGPT GitHub 연결과 사용자 WSL의 gh 인증은 별개다.
 
-설치된 Wails에서 개발은 `wails dev`, 배포 앱 빌드는 `wails build` 경로를 사용하되,
-현재 기존 앱은 옛 로컬 Work 데이터를 사용하므로 위 명령만으로 새 조회가 완성됐다고 설명하지 않는다.
-[현재 구현 계획](../superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)의 Go 이식·연결 후 실행 방법을 검증한다.
+개발·배포는 설치된 Wails의 `wails dev`, `wails build` 경로를 사용한다. Windows build/app 실행과
+Windows→WSL 접근은 Linux 검증과 별도의 증거로 기록한다.
 
 Windows→WSL 명령이 기존 Herdr pane 환경을 상속한다고 가정하지 않는다.
 설치된 CLI의 읽기 접근 조건을 확인하고 HERDR_ENV를 임의로 설정하지 않는다.
@@ -142,10 +141,12 @@ Herdr 실행은 설치된 `$HOME/.local/bin/herdr`를 고정된 `/bin/sh -c` 스
 기능 worktree는 canonical cwd가 그 아래일 때만 연결하고, `role=coordinator`는 worktree를
 생략할 수 있다. 캐시된 빈 목록은 조회 실패 뒤 `cached`로 남기며 현재 `missing`으로 단정하지 않는다.
 
-검증 근거의 범위를 구분한다. Go fixture와 화면 테스트는 Herdr 응답 매핑·연결 우선순위·재개
-안내를 검증한 근거이며, 관리되는 Herdr pane에서 확인한 0.8.2 CLI/agent list와 설치 경로는
-로컬 managed-pane live 근거다. Windows 데스크톱 Wails 실행과 실제 Windows→WSL Herdr 접근은
-아직 검증되지 않았으므로 이 문서나 Monitor에서 통합 완료로 표시하지 않는다.
+검증 근거의 범위를 구분한다.
+
+- Linux Go fixture: `go test ./monitor -run 'Test(GitHub|Commands|App|Herdr|Snapshot)'` 통과 기록.
+- Linux UI/build: `npm exec vitest run src/bindings.test.ts src/monitor.test.tsx --reporter=verbose` (2 files, 20 tests)와 `npm run build` 통과.
+- managed-pane live: 작업 문맥에 기록된 Herdr 0.8.2 CLI/agent list와 설치 경로 관찰. 이는 fixture/UI와 별도다.
+- 미검증: Windows Wails build/app 실행 및 실제 Windows→WSL gh/Herdr 접근. 이 문서는 이를 통합 완료로 표시하지 않는다.
 
 ## 실제 사용 확인
 

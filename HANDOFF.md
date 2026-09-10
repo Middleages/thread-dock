@@ -8,21 +8,19 @@
 [설계](docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md),
 [계획](docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md).
 
-## 현재 사실
+## 현재 상태 (Task 3 이후)
 
-- 문서 정정 전 PR #69 head: 3d832bc9ca6d72365d40e8e2318bae5ea6ded894. 당시 main: 7f5fa0e4edf4269f09a12d9181e15f03e015478c. 착수 시 최신 상태를 다시 조회한다.
-- 이 PR에는 다섯 프로젝트 Skill과 React 화면, 별도 Node/Vite GitHub·Herdr 조회 구현이 있다.
-- 기존 Go/Wails 앱은 아직 옛 agentctl/local Work 경로다. 새로운 GitHub·Herdr Go 조회는 미구현이다.
-- 이번 커밋은 설계·계획·ADR·제품/착수/운영 문서와 coordinator 지침만 정정한다. 제품 코드를 이식하거나 삭제하지 않는다.
-- 과거 Node/UI 테스트·fixture·빌드·리뷰는 해당 구현의 증거다. Go/Wails 통합·Windows/WSL 실제 동작 증거로 사용하지 않는다.
-- 작성 환경에는 Go·사용자 Windows/WSL·live Herdr가 없어 이를 실행 검증하지 않았다.
-- 이전 조회 시 ThreadDock Wiki는 비활성화였다. Wiki 링크와 Wiki 실제 반영을 구분한다.
+- Task 1·2가 Go/Wails `GetMonitorSnapshot` 경로에 GitHub와 Herdr 관찰을 연결했다. 공유 Go/TS wire는 유지한다.
+- Task 3가 `monitor/frontend/server/`의 Node adapter·전용 테스트, Vite middleware와 HTTP monitor endpoint를 제거했다. Vite는 React 화면 개발·빌드만 담당한다.
+- 화면에는 GitHub 업무·근거, 단일 선택 업무 Herdr 연결, 관찰 세션·미연결 Agent, degraded/notices, 안전한 외부 링크와 handoff 복사만 남겼다. 비기능 상단 메뉴, 자동화 작업, 옛 Work/발행 표시는 제거했다.
+- Linux fixture/UI/build 근거와 managed-pane live gh/Herdr 근거는 서로 구분한다. 이 작업에서 GitHub Issue/PR/Projects/Wiki 쓰기는 수행하지 않았다.
+- 미검증: Windows Wails build/app 실행, 실제 Windows→WSL gh/Herdr 접근. 이를 통합 완료로 보고하지 않는다.
+- 기존 Wiki 링크는 문서 참고이며 Wiki 실제 반영과 구분한다.
 
 ## 다음 구현
 
-현재 계획 Task 1: Go/Wails에서 실제 GitHub 업무를 읽고 표시한다.
-Task 2: 같은 Go 경로에 Herdr 읽기 관찰·정확한 연결·handoff 안내를 붙인다.
-Task 3: 이식된 Node 서버·fetch fallback과 중복/미완성 화면을 제거하고 실제 앱을 검증한다.
+현재 계획 Task 1·2 구현과 Task 3 정리를 반영했다. 다음은 fresh task review 후 통합 `make check`를
+한 번 실행하고, Windows에서 설치된 Wails build/app과 Windows→WSL 읽기 접근을 별도로 확인하는 일이다.
 Vite는 화면 개발·빌드에 남긴다. Go를 없애거나 브라우저 제품으로 다시 전환하지 않는다.
 옛 엔진 대량 삭제는 필요한 모니터 의존성을 확인한 뒤 후속 정리한다.
 
@@ -47,8 +45,8 @@ AGENTS.md, HANDOFF.md, PRODUCT.md, CONTEXT.md, ADR 0008,
 
 제품은 Go/Wails 데스크톱 모니터와 기존 React 화면이다. 브라우저 전용으로 바꾸지 마.
 Go가 GitHub·Herdr 조회·결합을 담당하고, Herdr가 세션 실행을, Agent와 Skills가 개발·기록을 맡아.
-계획 Task 1부터 기존 Node 조회 동작을 Go/Wails로 옮겨.
-Task 2에서 Herdr 연결, Task 3에서 Node 서버 제거와 실제 Windows 앱 검증을 진행해.
+Task 1·2의 Go/Wails GitHub·Herdr 경로와 Task 3의 Node 경로 제거가 반영되어 있다.
+다음은 fresh review 후 통합 gate와 실제 Windows 앱 검증이다.
 Windows→WSL Herdr 읽기 접근은 실제 설치 조건으로 확인하고 HERDR_ENV를 임의 설정하지 마.
 새 scheduler/runtime/Publisher나 로컬 Work 계약을 만들지 마.
 
