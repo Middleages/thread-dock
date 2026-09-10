@@ -19,8 +19,8 @@ export function parseMonitorConfig(env = process.env) {
     if (!match) throw new MonitorConfigError('THREADDOCK_PROJECTS must contain URLs such as https://github.com/users/OWNER/projects/N or https://github.com/orgs/OWNER/projects/N')
     return { owner: match[2], number: Number(match[3]), url: value }
   })
-  const unknown = Object.keys(env).filter((key) => key.startsWith('THREADDOCK_') && !['THREADDOCK_REPOS', 'THREADDOCK_PROJECTS'].includes(key))
-  if (unknown.length > 0) throw new MonitorConfigError(`Unknown ThreadDock monitor configuration: ${unknown.join(', ')}. Use THREADDOCK_REPOS and THREADDOCK_PROJECTS.`)
+  const unknown = Object.keys(env).filter((key) => key.startsWith('THREADDOCK_') && !['THREADDOCK_REPOS', 'THREADDOCK_PROJECTS', 'THREADDOCK_SESSIONS_FILE'].includes(key))
+  if (unknown.length > 0) throw new MonitorConfigError(`Unknown ThreadDock monitor configuration: ${unknown.join(', ')}. Use THREADDOCK_REPOS, THREADDOCK_PROJECTS, and optional THREADDOCK_SESSIONS_FILE.`)
   return { repos, projects }
 }
 

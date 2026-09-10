@@ -24,7 +24,8 @@ THREADDOCK_REPOS=Middleages/thread-dock npm run dev
 ```
 
 Node.js 22.12 이상과 같은 환경의 gh 인증이 필요합니다. 여러 저장소·Projects 설정은 [빠른 시작](docs/operator/github-first-quickstart.md#브라우저-monitor-실행)을 참고하세요.
-기존 Wails 앱은 이전 로컬 Work 경로를 유지합니다. Herdr live 상태 통합은 후속 범위이며, 현재 세션 재개는 Skill로 진행합니다.
+Herdr pane 안에서 `THREADDOCK_SESSIONS_FILE`에 연결 파일을 지정하면 해당 세션의 상태·위치·재개 안내도 표시합니다. 설정 방법은 빠른 시작을 참고하세요. 실제 설치 버전과 사용자 환경의 동작 확인은 남아 있습니다.
+기존 Wails 앱은 이전 로컬 Work 경로를 유지합니다.
 
 ## 기준 문서
 

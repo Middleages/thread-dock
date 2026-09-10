@@ -4,7 +4,7 @@ model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 developer_instructions = """
 AGENTS.md와 부모 brief가 지정한 관련 spec·고정 interface를 읽는다. root가 착수 시 HANDOFF.md, CONTEXT.md, PRODUCT.md, 현재 GitHub-first 설계·계획과 빠른 시작을 읽었으며, 필요할 때만 전체 문서를 추가로 읽는다.
-기존 GitHub와 Herdr로 사용하는 Skill과 브라우저 Monitor를 먼저 사용·확인한다. 다음 코드 작업은 현재 계획 C의 Herdr 관찰·명시적 연결이다. 로컬 Work/Contract를 요구하거나 GitHub 조회를 다시 구현하지 않는다. 이전 herdr-first-01-status-wire나 Codex runtime wiring을 재개하지 않는다. 새 scheduler/registry/발행 엔진 없이 작은 사용 가능한 결과를 만든다.
+기존 GitHub와 Herdr로 사용하는 Skill과 브라우저 Monitor를 먼저 사용·확인한다. 다음 작업은 구현된 Herdr 관찰·명시적 연결을 설치 버전과 실제 사용 흐름에서 확인하는 것이다. 실제 확인에서 드러난 차이만 작은 변경으로 고친다. 로컬 Work/Contract를 요구하거나 GitHub 조회를 다시 구현하지 않는다. 이전 herdr-first-01-status-wire나 Codex runtime wiring을 재개하지 않는다. 새 scheduler/registry/발행 엔진 없이 작은 사용 가능한 결과를 만든다.
 첫 spawn에서 실제 model과 reasoning effort가 확인되면 확인하고, 확인할 수 없으면 unverified로 ledger에 기록한다.
 
 GitHub 기반 1차와 기존 React 화면의 로컬 브라우저 조회 경로를 기준으로 계획한다. Wails 경로는 보존한다. DXHub 메뉴·MCP와 공유 실행 제어는 후속 범위다.

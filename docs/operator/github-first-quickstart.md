@@ -63,9 +63,10 @@ Herdr 생성·입력은 open-agent-session Skill과 설치된 herdr --skill/도�
 ## 4. 세션 위치를 선택적으로 보관하기
 
 .threaddock/sessions.json은 로컬 연결 메모이며 Git에 커밋하지 않는다.
-필요하면 대상 저장소의 .git/info/exclude에 /.threaddock/을 추가한다.
+필요하면 `git rev-parse --git-path info/exclude`로 확인한 파일에 /.threaddock/을 추가한다.
 기능 리더가 동시 갱신하지 않고 중앙 관제 한 곳에서 연결 메모를 관리한다.
-현재 배포된 Wails UI가 이 파일을 이미 읽는다고 가정하지 않는다.
+브라우저 Monitor에 THREADDOCK_SESSIONS_FILE로 이 파일의 절대 경로를 지정한다.
+기존 Wails 앱에는 이 연결 파일을 적용하지 않는다.
 
 ~~~json
 {
@@ -90,6 +91,17 @@ Herdr 생성·입력은 open-agent-session Skill과 설치된 herdr --skill/도�
 중앙 관제 연결은 role=coordinator와 repository 또는 projectUrl을 사용하고 issueUrl을 생략할 수 있다.
 하나의 Issue에 구현/검토 등 여러 연결을 남길 수 있다. 여러 Agent가 있다는 이유로 충돌 처리하지 않는다.
 로컬 경로·세션 ID를 공개 Issue에 복사할 필요는 없다.
+
+연결 값을 얻을 때는 실제 Herdr pane 안에서 설치된 도움말을 읽고 대상 세션을 조회한다.
+현재 adapter는 Herdr 0.8.2의 `herdr --session NAME agent list` 응답 형식을 기준으로 한다.
+여기서 확인한 name, workspace_id, tab_id, pane_id와 실제 worktree를 기록한다.
+UI 표시명이나 탭 순서로 ID를 추측하지 않는다.
+
+파일에 적힌 세션만 조회하므로 여러 세션을 보려면 각 세션의 연결을 함께 적는다.
+각 지정 세션에서 연결되지 않은 Agent도 목록으로 볼 수 있다.
+파일을 수정하면 다음 갱신에 반영된다. 파일 자체는 Monitor가 수정하지 않는다.
+정확한 pane과 이름이 있어도 cwd를 확인할 수 없거나 worktree 밖이면 기능 연결을 확정하지 않는다.
+Git remote를 자동 검증한 결과가 아니라, 사용자가 지정한 연결과 관찰한 위치를 대조한 결과다.
 
 ## 5. 재개와 기록
 
@@ -137,7 +149,22 @@ Wiki의 실제 존재·내용과 Issue 댓글 전체를 자동 동기화하는 �
 
 이 브라우저 모드는 npm run dev로 제공된다. 정적 build 파일만 열면 gh 조회 서버가 없으므로 동작하지 않는다.
 기존 Wails 데스크톱 앱은 이전 로컬 Work 경로를 유지한다.
-Herdr live 상태와 로컬 연결 파일의 화면 반영은 후속 작업이며, 현재 세션 재개는 위 Skill로 수행한다.
+Herdr 상태도 함께 보려면 실제 Herdr pane의 터미널에서 다음처럼 실행한다.
+
+~~~bash
+THREADDOCK_REPOS=Middleages/thread-dock \
+THREADDOCK_SESSIONS_FILE=/absolute/path/to/.threaddock/sessions.json \
+npm run dev
+~~~
+
+HERDR_ENV는 Herdr가 설정하는 값이다. 이 값을 직접 설정해 실행 조건을 우회하지 않는다.
+파일 경로를 설정하지 않았거나 Herdr 밖에서 실행했다면 이유와 설정 안내를 표시하고 GitHub 조회는 계속한다.
+Herdr 조회는 세션별 5초 캐시를 사용한다. 실패 시 마지막 성공 시각을 보존하며 GitHub 시각과 따로 표시한다.
+대상이 없어진 상태, 위치 불일치, 조회 실패, 입력 대기와 실행 중을 구분한다.
+선택한 업무의 handoff를 복사하면 연결 위치와 확인 시각·다음 행동도 포함된다.
+화면에서는 시작·입력·종료 명령을 실행하지 않는다. 재개는 위 Skill이 최신 기록과 실제 화면을 확인한 뒤 수행한다.
+
+구현·fixture 검증과 사용자 PC의 live 성공은 별개다. 실제 설치 버전의 도움말/응답과 정상 세션을 확인하고 사용한다.
 
 ## 실제 사용 확인
 
@@ -150,3 +177,5 @@ Herdr 오류가 있다면 정상 세션 수동 연결로 진행 가능한 부분
 CLI 읽기 참고: [Issue 조회](https://cli.github.com/manual/gh_issue_view),
 [PR 목록](https://cli.github.com/manual/gh_pr_list),
 [Projects 항목 조회](https://cli.github.com/manual/gh_project_item-list).
+Herdr 응답 기준: [0.8.2 Agent 정보](https://github.com/herdrdev/herdr/blob/v0.8.2/src/api/schema/agents.rs),
+[세션 선택](https://github.com/herdrdev/herdr/blob/v0.8.2/src/session.rs).

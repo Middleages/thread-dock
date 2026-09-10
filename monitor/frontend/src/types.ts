@@ -71,6 +71,56 @@ export type Project = {
   notices?: string[]
   links?: Link[]
 }
+export type HerdrAgent = {
+  name?: string
+  agent_status?: string
+  workspace_id?: string
+  tab_id?: string
+  pane_id?: string
+  cwd?: string
+  foreground_cwd?: string
+}
+export type HerdrSession = {
+  session: string
+  status: string
+  observedAt?: string
+  agents: HerdrAgent[]
+  links?: Link[]
+}
+export type HerdrConnection = {
+  issueUrl?: string
+  projectUrl?: string
+  repository?: string
+  worktree?: string
+  session: string
+  workspaceId?: string
+  tabId?: string
+  paneId?: string
+  agentName?: string
+  role?: string
+  status: string
+  agentStatus?: string
+  observedAt?: string
+  nextAction: string
+  handoff: string
+  location?: { session?: string; workspaceId?: string; tabId?: string; paneId?: string; agentName?: string; cwd?: string }
+}
+export type HerdrSnapshot = {
+  source: 'herdr' | string
+  schemaVersion: number
+  revision: number
+  observedAt: string
+  status: string
+  state?: string
+  syncStatus: string
+  nextAction?: string
+  freshness: Freshness
+  notices: string[]
+  sessions: HerdrSession[]
+  connections: HerdrConnection[]
+  unconnectedAgents: Array<HerdrAgent & { session: string }>
+  links?: Link[]
+}
 export type Snapshot = {
   schemaVersion: number
   revision: number
@@ -83,6 +133,7 @@ export type Snapshot = {
   projects: Project[]
   source?: 'github' | string
   notices?: string[]
+  herdr?: HerdrSnapshot
 }
 
 export type SnapshotSource = () => Promise<Snapshot>

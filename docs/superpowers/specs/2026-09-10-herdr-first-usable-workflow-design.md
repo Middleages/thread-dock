@@ -48,10 +48,17 @@ Projects를 사용할 수 없는 호스트/권한이면 설정 문제를 표시�
 이 파일은 연결 메모다. lease, PID, 실행 명령, 자동 재시도, 실행 상태의 원본을 담지 않는다.
 첫 Skill 사용은 파일 없이도 가능하며 확인한 위치를 로컬 메모로 남길 수 있다.
 
+브라우저 조회는 THREADDOCK_SESSIONS_FILE의 절대 경로로 연결 파일을 선택한다.
+Herdr가 설정한 HERDR_ENV=1 환경에서만, 파일에 명시된 세션의 agent list를 읽는다.
+설정이 없거나 실행 환경이 맞지 않으면 이유를 표시하고 GitHub-only 흐름을 유지한다.
+파일은 매 갱신에 읽고 세션 관찰은 5초 캐시를 사용한다. 표시 대상에서 빠진 세션은 더 조회하지 않는다.
+식별자/상태/cwd만 선택해 사용하고 provider session, terminal ID, tokens, transcript는 전달하지 않는다.
+
 기능은 Issue URL과 정확한 host/repository, worktree, session/workspace/tab/pane/Agent 이름으로 연결한다.
 중앙 관제는 프로젝트 또는 저장소에 연결하며 가짜 Issue·Task를 만들지 않는다.
 하나의 Issue가 구현/검토 등 여러 명시적 연결을 가질 수 있고, 같은 workspace에 여러 Agent가 있어도 정상이다.
 경로는 연결의 일치 확인에 사용하며 경로나 이름만으로 업무를 자동 배정하지 않는다.
+기능 연결은 worktree와 실제 cwd의 canonical 경로를 확인한다. cwd가 worktree 하위 폴더인 경우 포함 관계로 확인하며 Git remote의 신원을 검증했다고 표현하지 않는다.
 현재 연결이 더 이상 존재하지 않으면 위치 재선택을 안내한다. 미연결과 관찰 실패를 대상 종료로 단정하지 않는다.
 
 ## 재개

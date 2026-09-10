@@ -3,8 +3,8 @@
 ## 착수와 범위
 
 - 먼저 HANDOFF.md, PRODUCT.md, CONTEXT.md, docs/operator/github-first-quickstart.md와 현재 2026-09-10 설계·계획을 읽는다.
-- 중앙 관제·기능별 Herdr 세션·native subagent·GitHub 기록이 기본 사용 흐름이다. 먼저 Skill로 사용하고 Monitor에 GitHub 조회, 이후 Herdr 연결을 추가한다.
-- 과거 2026-09-07 spec/준비 계획과 초기 herdr-first-01-status-wire는 신규 구현의 지침이 아니다. GitHub-only 브라우저 Monitor를 사용·확인한 뒤 현재 계획 C의 Herdr 연결을 추가한다.
+- 중앙 관제·기능별 Herdr 세션·native subagent·GitHub 기록이 기본 사용 흐름이다. Skill과 브라우저 Monitor의 GitHub 조회·명시적 Herdr 연결을 실제 환경에서 사용·확인한다.
+- 과거 2026-09-07 spec/준비 계획과 초기 herdr-first-01-status-wire는 신규 구현의 지침이 아니다. 현재 계획 C의 조회 코드를 다시 만들지 말고 설치된 Herdr 응답과 실제 사용 흐름을 확인한다.
 - 기존 Work/Contract v2, Invocation/Artifact, Go Task Gate/Publisher를 필수 입력으로 요구하지 않는다.
 - 개발 판단·기능 분배는 Agent, 세션 관리는 Herdr, 업무/문서 원본은 GitHub가 맡는다. 작은 관찰·연결 기능만 코드로 만든다.
 - 사용자가 승인한 범위의 통상 작업은 진행한다. 명시적 중단은 새 실행 지시가 있을 때까지 유지하며 반복 중단 알림을 보내지 않는다.

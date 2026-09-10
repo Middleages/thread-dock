@@ -111,6 +111,59 @@ describe('monitor list and detail', () => {
     expect(screen.getByRole('link', { name: 'Wiki' })).toHaveAttribute('href', 'https://github.com/acme/app/wiki')
   })
 
+  it('shows the selected work Herdr connection with location guidance and includes it in handoff', async () => {
+    const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'fresh', syncStatus: 'synced', freshness: { state: 'fresh', syncStatus: 'synced' }, notices: [], sessions: [{ session: 'feature-a', status: 'fresh', observedAt: '2026-09-10T01:00:00Z', agents: [{ name: 'Luna', agent_status: 'working', workspace_id: 'w1', tab_id: 't1', pane_id: 'p1', cwd: '/repo/src' }] }], connections: [{ issueUrl: 'https://github.com/acme/app/issues/1', repository: 'github.com/acme/app', session: 'feature-a', workspaceId: 'w1', tabId: 't1', paneId: 'p1', agentName: 'Luna', status: 'connected', agentStatus: 'working', observedAt: '2026-09-10T01:00:00Z', nextAction: 'observe', handoff: '세션 feature-a · workspace w1 · pane p1 · cwd /repo/src · 관찰 상태 working · 다음 행동: observe', location: { session: 'feature-a', workspaceId: 'w1', tabId: 't1', paneId: 'p1', agentName: 'Luna', cwd: '/repo/src' } }], unconnectedAgents: [{ session: 'feature-a', name: 'Reviewer', agent_status: 'idle', pane_id: 'p2' }] }
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    render(<App snapshotSource={vi.fn(async () => snapshot([project()], { herdr }))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByRole('heading', { name: 'Herdr 연결', level: 2 })).toBeInTheDocument()
+    expect(screen.getAllByText('feature-a').length).toBeGreaterThan(0)
+    expect(document.body.textContent).toContain('/repo/src')
+    expect(screen.getByText('연결되지 않은 Agent')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('feature-a'))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('다음 행동: observe'))
+  })
+
+  it('keeps a local Herdr panel visible when GitHub has no projects', async () => {
+    const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'fresh', syncStatus: 'synced', freshness: { state: 'fresh', syncStatus: 'synced' }, notices: [], sessions: [{ session: 'coordinator', status: 'fresh', agents: [{ name: 'Sol', agent_status: 'idle', pane_id: 'p1' }] }], connections: [], unconnectedAgents: [{ session: 'coordinator', name: 'Sol', agent_status: 'idle', pane_id: 'p1' }] }
+    render(<App snapshotSource={vi.fn(async () => snapshot([], { herdr, source: 'github', syncStatus: 'offline' }))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByRole('heading', { name: 'Herdr 연결' })).toBeInTheDocument()
+    expect(screen.getByText('coordinator')).toBeInTheDocument()
+    expect(screen.getByText('Sol')).toBeInTheDocument()
+  })
+
+  it('scopes coordinator and issue connections to the selected primary project and issue', async () => {
+    const issueA = 'https://github.com/acme/app/issues/1'
+    const issueB = 'https://github.com/acme/app/issues/2'
+    const makeHerdrConnection = (session: string, issueUrl?: string) => ({ issueUrl, repository: 'github.com/acme/app', session, role: issueUrl ? 'feature' : 'coordinator', workspaceId: `workspace-${session}`, tabId: `tab-${session}`, paneId: `pane-${session}`, agentName: session, status: 'connected', agentStatus: 'idle', nextAction: 'check_github', handoff: `세션 ${session}` })
+    const workA = { ...project().workItems[0], github: { kind: 'issue', url: issueA, state: 'OPEN' }, links: [{ kind: 'issue', label: 'Issue A', url: issueA }, { kind: 'evidence', label: 'Mentioned B', url: issueB }] }
+    const workB = { ...project().workItems[0], workId: 'work-b', title: 'Issue B', github: { kind: 'issue', url: issueB, state: 'OPEN' }, links: [{ kind: 'issue', label: 'Issue B', url: issueB }] }
+    const projectA = project({ projectId: 'a', name: 'App A', source: 'github', links: [{ kind: 'github', label: 'Issues', url: 'https://github.com/acme/app/issues' }], workItems: [workA] })
+    const projectB = project({ projectId: 'b', name: 'App B', source: 'github', links: [{ kind: 'github', label: 'Issues', url: 'https://github.com/acme/app/issues' }], workItems: [workB] })
+    const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'fresh', syncStatus: 'synced', freshness: { state: 'fresh', syncStatus: 'synced' }, notices: [], sessions: [], connections: [makeHerdrConnection('central'), makeHerdrConnection('issue-a', issueA), makeHerdrConnection('issue-b', issueB)], unconnectedAgents: [] }
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    render(<App snapshotSource={vi.fn(async () => snapshot([projectA, projectB], { herdr }))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getAllByText('central').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('issue-a').length).toBeGreaterThan(0)
+    expect(screen.queryByText('issue-b')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('세션 issue-a'))
+    fireEvent.click(screen.getByRole('button', { name: /App B/ }))
+    expect(screen.getAllByText('central').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('issue-b').length).toBeGreaterThan(0)
+    expect(screen.queryByText('issue-a')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining('세션 issue-b'))
+  })
+
   it('translates raw aggregate wire status tokens into Korean labels', async () => {
     const raw = project({
       workItems: [{ ...project().workItems[0], nextAction: 'approve', tasks: [{ ...project().workItems[0].tasks[0], state: 'verify', verification: 'verify', review: 'accepted' }, { ...project().workItems[0].tasks[0], taskId: 'task-2', state: 'verified', verification: 'verify', review: 'accepted' }], publications: [{ ...project().workItems[0].publications[0], status: 'published' }], decisions: [{ ...project().workItems[0].decisions![0], status: 'accepted' }], handoffs: [{ ...project().workItems[0].handoffs![0], nextAction: 'approve' }] }],
