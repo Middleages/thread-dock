@@ -1,11 +1,14 @@
 ---
 name: implement-task
-description: Use when a Builder must implement one approved Contract v2 Task in a bounded Worktree with workspace-write access.
+description: Use when a feature leader or coding subagent is implementing an approved GitHub Issue feature in a bounded worktree.
 ---
 
 # Implement task
 
-1. Accept only the exact Builder `Invocation` packet. Confirm `requestId`, `role: builder`, `profileId` (the fixed logical profile), canonical Worktree (`worktree`) path, bounded `packet` (`taskId`, `allowedPaths`, acceptance criteria, dependencies, verification), output schema (`outputSchema`), `readOnly: false`, and `workspace-write` intent. Reject a missing, stale, or mismatched identity.
-2. Inspect the assigned Worktree for unrelated or dirty changes and preserve them. Write only paths in the Task's `allowedPaths`; never widen scope or touch protected/unassigned paths. For production behavior changes where an in-scope test applies, use TDD: add a focused failing test, observe the expected RED failure, make the smallest change, then run focused self-checks. For docs/config-only or test-inapplicable Tasks, use the exact packet-approved focused document/config validation or existing verification as self-check claims, without inventing a failing test or widening `allowedPaths`.
-3. Return one strict `Artifact` envelope containing `requestId`, `role`, `status` (`success` or `failure`), and `result` as a bounded typed Builder result. Report only focused TDD/self-check claims (the result's `verification` entries and any `commitSha` are claims). Go owns path checks, staging, commit, Git integrity, and authoritative verification; the Builder does not stage or commit and does not promote its checks to a Task Gate.
-4. Emit no prose or legacy fields (`task_id`, `changed_paths`, `checks`, `commit_sha`). On an implementation blocker, return the same envelope with a failure status and bounded diagnostic; preserve edits and the exact blocker for Go to reconcile.
+Start from the linked Issue and its acceptance criteria. Inspect the repository guidance and current worktree before editing. Work only in the feature worktree and keep unrelated dirty changes intact. Do not require a Go contract, Invocation envelope, Artifact schema, publisher, or repair engine.
+
+Implement the smallest coherent slice. Use a focused failing test first for production behavior when the repository has an applicable test seam; for docs/config-only work, run the appropriate parser, link check, or existing validation without inventing a test. Keep implementation, checks, and review evidence in the PR description or Issue handoff. Use the repository's normal native tools and preserve the existing authorization model.
+
+Before committing, inspect the diff for accidental paths, run focused checks, and state any unavailable or unrun checks honestly. Commit on the feature branch with a useful message, push when authorized, and open or update the feature PR. A PR should identify the Issue, behavior changed, checks and outcomes, review status, and any follow-up. Never claim a check passed from a plan, transcript, or stale result.
+
+If blocked, leave the worktree recoverable and record the exact blocker, attempted commands, and next decision in the Issue handoff. Discover every relevant Project membership and update each board's status, priority, and waiting fields using its actual options. Keep per-board failures distinct; continue the Issue and PR flow when one or all boards are unavailable. A coordinator session reports feature progress; it does not impersonate implementation or create a fake task record.

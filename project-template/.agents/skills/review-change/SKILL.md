@@ -1,11 +1,12 @@
 ---
 name: review-change
-description: Use when a candidate Task change needs a fresh read-only Reviewer decision before the merge gate.
+description: Use when a feature PR or candidate change needs an independent review before a human merge.
 ---
 
 # Review change
 
-1. Obtain a fresh read-only capability, separate from the Builder. The `Invocation` envelope top level is exactly `requestId`, `role: reviewer`, `profileId`, canonical `worktree`, `outputSchema: thread-dock.reviewer-result.v1`, `readOnly: true`, and `packet`; reject stale or mismatched identity.
-2. Inside `packet`, require `taskId`, `candidateSha`, `treeSha`, `changedFiles`, `patch`, `workAcceptanceCriteria`, `taskAcceptanceCriteria`, and `gate` containing `commands` and `outcomes`. If an orchestrator supplies `repairBudget` context, consume it only to assess exhaustion; omit it from the Invocation top level, the fixed typed ReviewPacket, and the Artifact. Review the fixed candidate against Task ownership, allowed paths, acceptance criteria, regressions, protected changes, and gate evidence; every blocking finding names path or command evidence.
-3. Return one strict `Artifact` envelope with `requestId`, `role`, `status`, and a bounded typed Reviewer result: exact JSON `reviewedSha` (the reviewedSHA), `decision: accept|block`, and `blockingFindings` entries with `code` and `diagnostic`. An `accept` has no blocking findings; a `block` has at least one concrete finding.
-4. Perform no mutation or GitHub write. Treat repair budget as consume-only context; Go owns repair budget reporting and state transitions, including exhaustion handling. Never increment or reset it in the Reviewer Artifact; at exhaustion, preserve the block for operator review.
+Review the exact PR head from a fresh checkout or a read-only view. The reviewer is independent of the implementer and does not edit the candidate. Use GitHub's PR diff, changed files, checks, and review history plus focused local inspection when useful.
+
+Check the Issue acceptance criteria, repository guidance, allowed feature scope, regressions, error handling, tests, documentation, and security or compatibility implications relevant to the change. Treat CI and local commands as evidence only for the exact commit they ran against. Every blocking finding names a file, symbol, behavior, or command and explains the consequence. Ask for a focused fix when the evidence is insufficient.
+
+Submit the review through the normal GitHub review mechanism when authorized, or report a concise decision in the PR and Issue handoff. State `accept` only when acceptance criteria and required checks are satisfied; otherwise state `block` with concrete findings and the next check or fix. Do not merge, force-push, reset another agent's worktree, or update Project status as if review were complete. Humans perform the final merge.

@@ -1,180 +1,68 @@
-# ThreadDock 새 세션 Handoff
+# ThreadDock 진행 설계 정정과 다음 작업
 
-## 이번 세션의 종료점
+## 최상위 기준
 
-2026-09-10 기준 제품 방향을 **Herdr-first, GitHub 중심 Monitor**로 전환한 문서 slice다.
+사용자 요구는 **Go 모니터 도구**다. Windows Go/Wails 앱과 기존 React 화면을 유지한다.
+“심플하게”는 ThreadDock 자체 실행 엔진을 줄이라는 의미이며 브라우저 전용 전환은 승인되지 않았다.
+현재 기준: [ADR 0008](docs/adr/0008-github-first-skills-before-engine.md),
+[설계](docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md),
+[계획](docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md).
 
-> 멀티 세션과 서브 에이전트가 잘 잡힌 구조에서 GitHub 중심 모니터링을 제공한다.
+## 현재 상태 (Task 3 이후)
 
-GitHub는 Work Item의 목적·결정·Issue·PR·검증·문서를 영속 보존한다. Herdr는 persistent Session·Workspace·Tab·Pane과 Top-level Codex/OpenCode를 소유한다. 각 Top-level Agent가 native Internal Subagent를 조정한다. ThreadDock은 exact Work/repository/canonical Worktree binding으로 GitHub Work Evidence와 live Herdr 상태를 결합하고 작업 재개를 돕는 얇은 Wails Monitor, project skill과 선택적 Go evidence module이며 별도 lifecycle orchestrator가 아니다.
+- Task 1·2가 Go/Wails `GetMonitorSnapshot` 경로에 GitHub와 Herdr 관찰을 연결했다. 공유 Go/TS wire는 유지한다.
+- Task 3가 `monitor/frontend/server/`의 Node adapter·전용 테스트, Vite middleware와 HTTP monitor endpoint를 제거했다. Vite는 React 화면 개발·빌드만 담당한다.
+- 화면에는 GitHub 업무·근거, 단일 선택 업무 Herdr 연결, 관찰 세션·미연결 Agent, degraded/notices, 안전한 외부 링크와 handoff 복사만 남겼다. 비기능 상단 메뉴, 자동화 작업, 옛 Work/발행 표시는 제거했다.
+- Linux fixture/UI/build 근거와 managed-pane live gh/Herdr 근거는 서로 구분한다. 상위에서 전달된 외부 관찰(원본 transcript 없음)으로 실제 Windows→WSL workstation의 `gh auth status`는 성공했고, bare `wsl.exe --exec herdr`는 PATH lookup에 실패했으며, absolute `/home/appuser/.local/bin/herdr`의 status와 agent list는 성공했다. 이는 Windows→WSL Monitor 읽기 검증이 아니며, 이 작업에서 GitHub Issue/PR/Projects/Wiki 쓰기는 수행하지 않았다.
+- Final reviewed product/config/dependency SHA는 `325db89`다. Windows native 값은 `THREADDOCK_REPOS=Middleages/thread-dock`, `THREADDOCK_PROJECTS` unset, `THREADDOCK_WSL_DISTRIBUTION=Ubuntu`, `THREADDOCK_SESSIONS_FILE=/tmp/threaddock-aeca770-sessions.json`이다.
+- Windows user-local toolchain은 Go `1.27.0 windows/amd64`, Node `26.8.1`, Wails CLI/runtime `v2.15.0`이며, 공식 Go/Node checksum은 제공된 범위에서 일치했다. final SHA의 matching `wails build`는 exit 0, `1m9.285s`에 완료됐고 `monitor\build\bin\ThreadDockMonitor.exe`와 bindings/frontend/assets/app stages `Done`을 확인했다. native child console은 표시되지 않았다.
+- Healthy packaged live acceptance는 GitHub 69개 work item의 약 14초 동기화, Herdr 기본 session과 3개 Agent의 약 30초 관찰, handoff 성공 toast와 실제 clipboard 길이 `188`(repository name 포함), 초록 점과 `로컬 연결 정상` 문구의 일치를 확인했다. 앱 종료 후 Monitor process 수는 `0`, `ThreadDockValidation66158d9` scheduled task는 없음, 관련 process도 `0`이었다. WSL interop은 복구됐고 computer-use는 파일이나 worktree를 수정하지 않았다.
+- Native run에서 오류가 발생하지 않아 native error/degraded 상태는 검증하지 않았다. 결합 degradation은 fixture/UI 테스트 근거만 있다. `UtilAcceptVsock:281: accept4 failed 110`은 superseded historical diagnostic이고, 이전 `aeca770` plain `go build` 관찰과 `66158d9` staging build는 최종 표준 package evidence가 아니다.
+- 기존 Wiki 링크는 문서 참고이며 Wiki 실제 반영과 구분한다.
 
-[Herdr-first 설계](docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md),
-[구현 계획](docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md),
-[ADR 0007](docs/adr/0007-herdr-owns-interactive-execution-topology.md)이 새 기준이다.
-기존 [Project Workflow MVP 설계](docs/superpowers/specs/2026-09-07-project-workflow-mvp-design.md)의 GitHub evidence·검증·발행 원칙은 유지하지만 Go coordinator를 대화형 Session/Agent owner로 해석하지 않는다.
+## 다음 구현
 
-이 세션에서는 제품 코드·테스트를 변경하지 않았고 Herdr topology를 생성·종료하거나 Agent에 prompt하지 않았다. main 병합은 사람의 GitHub 작업이다.
+현재 계획 Task 1·2 구현, Task 3 정리와 Wails runtime `v2.15.0` alignment를 반영했다. Linux 통합
+`make check`는 final reviewed SHA `325db89`에서 통과했다. 표준 Windows Wails build와 healthy
+packaged live 화면, Windows→WSL read path, clipboard/status 및 process/task cleanup도 확인됐다.
+남은 범위는 native 오류 상태를 실제로 재현하지 않았다는 점뿐이며, fixture/UI degradation 근거를
+native live 성공으로 확대하지 않는다. Linux gate를 다시 실행하지 않는다.
+Vite는 화면 개발·빌드에 남긴다. Go를 없애거나 브라우저 제품으로 다시 전환하지 않는다.
+옛 엔진 대량 삭제는 필요한 모니터 의존성을 확인한 뒤 후속 정리한다.
 
-## 새 세션에서 먼저 할 일
+Windows의 Go→WSL 호출은 기존 Herdr pane 환경을 자동 상속하지 않는다.
+실제 읽기 접근을 검증하고 환경값을 위조하지 않는다. 접근 실패는 명시적 blocker이며 새 실행 엔진을 만들 이유가 아니다.
 
-1. [AGENTS.md](AGENTS.md), 이 문서, [CONTEXT.md](CONTEXT.md), [PRODUCT.md](PRODUCT.md), 새 설계와 새 구현 계획을 읽는다.
-2. checkout의 `git status`, HEAD, `origin/main`과 열린 PR을 확인한다. 아래 `f12bf77…`보다 main이 앞서면 새 변경을 먼저 읽는다.
-3. 새 계획의 **Task 1 `herdr-first-01-status-wire`만** 최신 main에서 독립 worktree/branch로 구체화한다. shared monitor types와 CLI wire는 이 Task가 단독 소유한다.
-4. Luna high 구현·focused test·self-review 뒤 fixed SHA를 fresh Sol medium이 task-review한다. Task 1 review 전 Task 2를 시작하지 않는다.
-5. Herdr #3813은 새 정보가 필요할 때만 read-only 확인한다. 해결됐다고 가정하거나 보존된 invocation을 조회·prompt·종료하지 않는다.
+## 보존
 
-| 항목 | 현재 기준선 |
-|---|---|
-| 저장소 | `Middleages/thread-dock` |
-| main / origin/main | `f12bf77c5755ef16c3d93ffcb4403f710a374cda` — PR #67 병합 |
-| 최근 병합 | [#62](https://github.com/Middleages/thread-dock/pull/62)~[#67](https://github.com/Middleages/thread-dock/pull/67) |
-| Herdr | 로컬 `0.8.2`; persistent session/status CLI 확인 |
-| 실행 도구 | native Go 없음으로 알려짐; code Task는 Docker `golang:1.27` 경로를 실제 환경에서 재확인 |
-| 다음 Task | `herdr-first-01-status-wire` |
+사용자 호스트 /home/appuser/dev_system/.worktrees/codex-runtime의 중단된 실험과 미커밋 파일은 보존한다.
+사용자 기록의 cmd/agentctl/main.go, cmd/agentctl/main_test.go, internal/config/config.go,
+internal/config/config_test.go를 reset·삭제·commit하거나 실험을 재개하지 않는다.
+Herdr #3813 해결을 가정하지 않고 /tmp/threaddock-herdr-live.7YEhfV의 실패 invocation을 재사용하지 않는다.
+PR #69는 Go 경로가 준비되기 전 그대로 병합할 완성품이 아니다. main 병합은 사용자에게 남긴다.
 
-## main #62~#67의 현재 근거
+## Codex 다음 세션 프롬프트
 
-| PR | merge SHA | 결과 |
-|---|---|---|
-| [#62](https://github.com/Middleages/thread-dock/pull/62) | `f66695d` | 첫 실제 사용 handoff 기준선 |
-| [#63](https://github.com/Middleages/thread-dock/pull/63) | `52ed0a8` | fresh Reviewer 결과와 integration gate 연결 |
-| [#64](https://github.com/Middleages/thread-dock/pull/64) | `fd10b7a` | Parent Issue Publisher 경계와 conflict evidence |
-| [#65](https://github.com/Middleages/thread-dock/pull/65) | `390fde0` | `work publish-issues` production CLI 경로 |
-| [#66](https://github.com/Middleages/thread-dock/pull/66) | `44abbed` | Wails Monitor, WSL aggregate client와 frontend |
-| [#67](https://github.com/Middleages/thread-dock/pull/67) | `f12bf77` | project template의 plan/implement/review skills와 contract 검사 |
+~~~text
+/home/appuser/dev_system의 ThreadDock 작업을 이어가.
+실제 Git 상태와 PR #69의 최신 head를 확인하고 미커밋 실험을 보존한 독립 worktree에서 작업해.
+AGENTS.md, HANDOFF.md, PRODUCT.md, CONTEXT.md, ADR 0008,
+현재 2026-09-10 Go/Wails 설계·구현 계획과 운영 문서를 읽어.
 
-현재 Wails Monitor는 `internal/monitor.Snapshot`, `internal/monitorcli`의 WSL 호출, `monitor/App.GetMonitorSnapshot`과 React 작업 현황 화면까지 main에 있다. GitHub 링크·결정·handoff를 표시하지만 Herdr Session topology는 아직 wire/UI에 없다.
+제품은 Go/Wails 데스크톱 모니터와 기존 React 화면이다. 브라우저 전용으로 바꾸지 마.
+Go가 GitHub·Herdr 조회·결합을 담당하고, Herdr가 세션 실행을, Agent와 Skills가 개발·기록을 맡아.
+Task 1·2의 Go/Wails GitHub·Herdr 경로와 Task 3의 Node 경로 제거가 반영되어 있다.
+Linux 통합 gate와 표준 Windows package/live acceptance는 reviewed SHA `325db89`에서 완료됐다.
+healthy native run은 GitHub 69개 work item, Herdr 기본 session/3 agents, clipboard 188, `로컬 연결 정상`,
+process/task cleanup을 확인했으며 native error-state만 unverified다.
+Windows→WSL Herdr 읽기 접근은 실제 설치 조건으로 확인하고 HERDR_ENV를 임의 설정하지 마.
+새 scheduler/runtime/Publisher나 로컬 Work 계약을 만들지 마.
 
-Parent Issue publication은 멱등 request와 ambiguous outcome 보존까지 구현됐다. 이는 GitHub Work Evidence module 근거이며 Session owner가 아니다. PR/Wiki 전체 publication과 실제 first-use evidence는 아직 남아 있다.
-
-## 실제 Herdr 확인과 미해결 문제
-
-이 문서 작업 환경에서 `HERDR_ENV=1`, `herdr 0.8.2`와 다음 read-only command surface를 확인했다.
-
-- `herdr session list --json`
-- `herdr workspace list`
-- `herdr tab list --workspace <id>`
-- `herdr pane list --workspace <id>`
-- `herdr agent list`
-- `herdr worktree create|open`, `tab create`, `pane split`, `agent start|attach|focus`
-
-현재 Session에서 여러 Workspace와 Top-level Codex/OpenCode가 관찰됐지만 opaque ID, socket path와 native session ID는 문서 근거에 복사하지 않았다. 이 조회는 Monitor adapter나 Windows Wails 동작 검증이 아니다.
-
-[실행/권한 점검 기록](docs/operator/herdr-builder-capability-preflight.md)과
-[Herdr 시작 readiness 보고서](docs/operator/herdr-opencode-startup-readiness.md)의 기존 근거는 보존한다.
-
-- Herdr 0.8.2와 임시 0.9.0의 시작 직후 Start→Get→Prompt에서 `agent_prompt_stalled`가 관찰됐다.
-- [Herdr #3813](https://github.com/herdrdev/herdr/issues/3813)은 해결됐다고 확인하지 않았다.
-- stalled/blocked/unknown은 Monitor와 skill에서 fail-visible로 남기며 blind retry하지 않는다.
-- attach 또는 수동 prompt fallback은 Operator가 실제로 선택한 뒤에만 수행한다.
-- 기존 `/tmp/threaddock-herdr-live.7YEhfV`의 보존 invocation/worktree는 조회·재승인·재예약·prompt·종료·재사용하지 않는다.
-- 새 session/process registry나 readiness detector를 ThreadDock에 추가하지 않는다.
-
-## Superseded Codex runtime 실험
-
-`agent/codex-runtime`은 main `f12bf77…`에서 갈라져 다음 accepted-but-unmerged 실험 commit을 보존한다.
-
-- `d848f94` atomic runtime dispatch seam
-- `1e460a3` ephemeral Codex runtime adapter
-- `3b9db40` independent Codex adapter evidence까지의 reviewed 결과
-
-worktree `/home/appuser/dev_system/.worktrees/codex-runtime`에는 2026-09-10 확인 시 다음 **uncommitted production wiring**이 있다.
-
-- `cmd/agentctl/main.go`
-- `cmd/agentctl/main_test.go`
-- `internal/config/config.go`
-- `internal/config/config_test.go`
-
-이 branch와 dirty 변경은 Herdr-first workflow에 의해 **superseded experiment / paused wiring**으로 분류한다. 삭제, reset, commit, merge하지 않았다. atomic/adapter 코드는 나중에 optional evidence module로 재평가할 수 있지만 새 Monitor의 선행 조건이 아니며 새 Codex runtime wiring을 계속하지 않는다.
-
-## 새 구현 순서
-
-새 [구현 계획](docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)의 Task를 직렬로 실행한다.
-
-1. **Herdr status adapter + aggregate wire**: `agentctl monitor snapshot --json`, partial failure와 secret-free public types.
-2. **Monitor Session/Agent view**: GitHub Work 상세를 기본으로 유지하고 record/local state와 각 observedAt, stale/offline/missing/conflict를 분리해 표시.
-3. **project skill**: explicit user action으로 existing Agent focus/attach/handoff prompt, blocked inspect-first, missing/ended의 승인된 Worktree/Tab/Pane과 새 Agent start를 수행. completed Task는 prompt에서 제외하고 Internal Subagent는 top-level native 기능에 맡김.
-4. **controlled actual pilot**: 새 이름과 새 topology만 사용하고 stalled 상태를 숨기거나 재전송하지 않음.
-5. **GitHub evidence continuation**: Parent Issue, 한국어 PR, docs/handoff, human merge receipt를 한 Work Item으로 연결.
-
-기존 Go `state/v2`, verification, Git inspection과 Publisher는 GitHub/검증 receipt에 직접 가치가 있을 때만 선택적으로 쓴다. 대화형 Session·Pane·Agent lifecycle을 소유하게 확장하지 않는다.
-
-## 문서 Task ledger
-
-```yaml
-taskId: herdr-first-design
-baseSHA: f12bf77c5755ef16c3d93ffcb4403f710a374cda
-deps: []
-ownedPaths:
-  - CONTEXT.md
-  - PRODUCT.md
-  - HANDOFF.md
-  - docs/adr/0007-herdr-owns-interactive-execution-topology.md
-  - docs/superpowers/specs/2026-09-07-project-workflow-mvp-design.md
-  - docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md
-  - docs/superpowers/plans/2026-09-07-implementation-readiness.md
-  - docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md
-worktree: /home/appuser/dev_system/.worktrees/herdr-first-design
-branch: agent/herdr-first-design
-forbiddenPaths:
-  - go.mod
-  - go.sum
-  - cmd/**
-  - internal/**
-  - monitor/**
-  - project-template/**
-interface: Herdr/GitHub/ThreadDock ownership terms and serial implementation plan
-acceptance:
-  - canonical terms distinguish Herdr Session/Workspace/Tab/Pane, Top-level Agent, Internal Subagent and ThreadDock Work Evidence
-  - PRODUCT and ADR assign live topology to Herdr and durable evidence to GitHub
-  - Monitor binds exact Work/repository/canonical Worktree and keeps record/local state separate
-  - resume rules cover existing, blocked, missing, ended and exclude completed Tasks
-  - focused approved design and no-placeholder five-Task plan exist
-  - superseded Codex experiment and dirty wiring are preserved without mutation
-tests:
-  - repository-relative Markdown link existence
-  - plan header and required packet field scan
-  - placeholder scan
-  - git diff --check
-result:
-  status: validated_awaiting_fresh_review
-  changedFiles:
-    - CONTEXT.md
-    - HANDOFF.md
-    - PRODUCT.md
-    - docs/adr/0007-herdr-owns-interactive-execution-topology.md
-    - docs/superpowers/plans/2026-09-07-implementation-readiness.md
-    - docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md
-    - docs/superpowers/specs/2026-09-07-project-workflow-mvp-design.md
-    - docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md
-  commitSHA: null
-  executedCommands:
-    - herdr --version; herdr --help; herdr --skill; read-only session/workspace/tab/pane/agent lists
-    - repository-relative Markdown link existence check
-    - plan header, five packet and required field count scan
-    - placeholder scan
-    - git diff --cached --check
-  outcomes:
-    - Herdr 0.8.2 read-only command surface confirmed; no control command or prompt executed
-    - relative links PASS for eight changed Markdown files
-    - plan header, five complete Task packets and placeholder scan PASS
-    - staged diff check PASS
-    - Go tests and make check intentionally not run for docs-only change
-  unverified:
-    - actual resolved Sol model and medium reasoning telemetry
-    - Windows Wails and live pilot behavior
-  blockers: []
-```
-
-최초 spawn은 `td_coordinator` 역할상 Sol medium으로 배정됐지만 실제 resolved model/effort telemetry를 확인할 interface가 없어 `unverified`다. 이 역할 설정은 제품 Execution Profile이 아니다.
-
-## 검증·리뷰 규칙
-
-- 이 branch는 docs-only이므로 repository-relative link 검사, plan/packet/placeholder scan과 `git diff --check`만 실행한다. Go test와 `make check`는 실행하지 않는다.
-- fresh `td_reviewer`는 fixed commit SHA에서 새 설계, ADR, CONTEXT/PRODUCT/HANDOFF 일치와 plan 실행 가능성을 검토한다.
-- code Task는 focused test만 수행하고 동일 SHA·command·환경 증거를 반복하지 않는다. 마지막 integration code PR에서만 `make check`를 한 번 실행한다.
-- blocking 사항은 완료로 표시하지 않는다. main merge는 사람에게 남긴다.
-
-## 다음 세션 시작 prompt
-
-> 최신 main에서 AGENTS.md, HANDOFF.md, CONTEXT.md, PRODUCT.md, `docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md`, `docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md`를 읽어라. Herdr가 Session/Workspace/Tab/Pane과 Top-level Agent를 소유하고, 각 Top-level Agent가 native Internal Subagent를 소유하며, ThreadDock은 GitHub Work Evidence와 live Herdr 상태를 결합하는 얇은 Monitor라는 경계를 유지하라. 계획의 Task 1 `herdr-first-01-status-wire`만 최신 main에서 독립 worktree로 구체화하고 Luna high에 구현·focused test·self-review를 배정한 뒤 fixed SHA를 fresh Sol medium이 review하게 하라. 새 Codex runtime wiring, blind prompt retry, Internal Subagent registry를 추가하지 말고 Herdr #3813이 해결됐다고 주장하지 마라. 제품 code PR의 main merge는 사람에게 남겨라.
+Sol medium이 작은 Task를 계획·분배하고 Luna high가 구현해.
+독립 작업만 worktree로 병렬화하고 고정 변경은 fresh Sol medium이 검토해.
+수정 범위 focused 테스트를 사용해. Linux 통합 `make check`는 `325db89`에서 이미 통과했으므로
+재실행하지 마. root-owned Windows Wails build/live evidence와 component CLI 관찰 및 fixture 결과를
+구분해. native error-state는 아직 unverified이며, 과거 `UtilAcceptVsock:281: accept4 failed 110`은
+superseded diagnostic으로만 기록한다.
+PR·Issue는 한국어로 작성하고 main 병합은 나에게 남겨.
+~~~

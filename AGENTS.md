@@ -1,12 +1,16 @@
 # ThreadDock 작업 정책
 
-## 착수
+## 착수와 범위
 
-- root는 착수 시 `HANDOFF.md`, `CONTEXT.md`, `PRODUCT.md`, `docs/superpowers/specs/2026-09-07-project-workflow-mvp-design.md`, `docs/superpowers/plans/2026-09-07-implementation-readiness.md`를 읽는다. 각 역할은 AGENTS.md와 부모 brief가 지정한 관련 spec·고정 interface만 읽고, 필요할 때만 전체 문서를 읽는다.
-- 마지막 계획은 준비 단계다. 실제 workstation을 확인한 뒤 Sol이 작은 첫 slice 구현 계획을 작성하고 Luna에 배정한다.
-- 첫 spawn에서 실제 model과 reasoning effort가 확인 가능하면 확인하고, 불가능하면 `unverified`로 기록한다.
-- 1차 범위는 GitHub Projects·Issue·PR·Wiki와 기존 Wails Monitor다. DXHub 메뉴·MCP와 공유 실행 제어는 후속이다.
-- 이 설정은 Codex 작업 역할용이다. 제품의 `Execution Profile` 또는 Agent Runtime 설정을 대신하거나 런타임 보장을 주장하지 않는다.
+- 먼저 HANDOFF.md, PRODUCT.md, CONTEXT.md, docs/operator/github-first-quickstart.md와 현재 2026-09-10 설계·계획을 읽는다.
+- 중앙 관제·기능별 Herdr 세션·native subagent·GitHub 기록이 기본 사용 흐름이다. 제품은 Go/Wails 모니터와 기존 React 화면이다. Go 백엔드에서 GitHub·Herdr를 조회·결합한다.
+- 과거 2026-09-07 spec/준비 계획과 초기 herdr-first-01-status-wire는 신규 구현의 지침이 아니다. 현재 계획의 Task 1부터 PR #69의 Node 조회를 Go/Wails로 옮긴다. 브라우저 전용 실행 지침은 폐기한다.
+- Vite는 화면 개발·빌드만 담당한다. 별도 Node 조회 서버·HTTP bridge·새 실행 엔진을 추가하지 않는다.
+- 기존 Work/Contract v2, Invocation/Artifact, Go Task Gate/Publisher를 필수 입력으로 요구하지 않는다.
+- 개발 판단·기능 분배는 Agent, 세션 관리는 Herdr, 업무/문서 원본은 GitHub가 맡는다. 작은 관찰·연결 기능만 코드로 만든다.
+- 사용자가 승인한 범위의 통상 작업은 진행한다. 명시적 중단은 새 실행 지시가 있을 때까지 유지하며 반복 중단 알림을 보내지 않는다.
+- 사용자 호스트의 Codex 실험/dirty 파일은 별도 지시 없이 reset·삭제·재개하지 않는다.
+- 이 저장소의 Sol/Luna 역할은 ThreadDock 개발용이며 대상 프로젝트에 모델 설정을 자동 복사하지 않는다.
 
 ## 역할과 모델
 
