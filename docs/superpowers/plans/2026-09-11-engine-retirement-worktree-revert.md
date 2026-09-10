@@ -48,8 +48,8 @@ Abort 호출과 그 첫 expected call만 제거한다. active PushBranch의 정�
 
 ## 단계
 
-- [ ] 참조와 보존 경계를 확인하고 여섯 symbol·전용 테스트만 제거한다.
-- [ ] 결합 테스트를 PushBranch-only로 좁히고 기존 package focused 검사·self-review 후 commit한다.
+- [x] 참조와 보존 경계를 확인하고 여섯 symbol·전용 테스트만 제거했다.
+- [x] 결합 테스트를 PushBranch-only로 좁히고 기존 package focused 검사·self-review 후 commit했다.
 - [ ] fresh Sol Task 리뷰를 통과한다.
 - [ ] root가 문서와 결합해 단일 통합 gate·전체 리뷰 후 PR을 준비한다.
 

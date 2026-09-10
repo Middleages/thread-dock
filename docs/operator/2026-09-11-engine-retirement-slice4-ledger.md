@@ -45,3 +45,10 @@ native 실행·Herdr/Projects E2E·Wiki 페이지 발행·runtime identity는 �
 - [Issue #75](https://github.com/Middleages/thread-dock/issues/75)를 생성하고 Project #1에서 In Progress·정리 방향 유지로 추적한다.
 - root 통합 TMPDIR은 `/dev/shm/threaddock-slice4-gate.e9jTIw`다. npm ci는 exit 0이며 package lock 변경은 없다.
 - 구현자가 수정할 제품 경로는 worktree 두 파일뿐이며 운영 문서 범위 확장은 없다.
+
+## 구현 후보
+
+- code commit `e3af253f9abd3eb5a802b41c3b5f043821d37380`, report 포함 head `537bda266b4f20f2ab81bb051f2b30e55f0acb13`.
+- `/dev/shm/engine-retirement-worktree-revert.7mkvdP` TMPDIR과 명시한 Go 1.27.0에서 기존 worktree 테스트(3.109초), vet/list/ref/diff 검사를 통과했다.
+- 최초 bare gofmt는 PATH에 없어 실패했으며 절대 toolchain 경로의 gofmt로 완료했다. 실패 호출을 성공 근거로 사용하지 않는다.
+- 전용 API/테스트를 제거하고 결합 테스트를 PushBranch-only로 좁혔다. fresh Sol은 위 고정 head를 리뷰 중이다.
