@@ -99,3 +99,38 @@ that chain had already succeeded, and each verification was rerun independently 
 - outcomes: route and dedicated engine removed; negative tests RED then GREEN; focused CLI tests/vet/list/diff checks passed
 - unverified: fresh Sol reviewer decision; root integration `make check`; Windows native Wails execution; runtime model/effort identity
 - blockers: none
+
+## Review fix wave
+
+- fresh Sol review BLOCK 원인: `parallel-pilot.md`를 15줄로 축약하면서 기존
+  `internal/pilot/retirement_docs_test.go`가 요구하는 accepted/diagnostic evidence,
+  retirement/cleanup guard, Workspace/Worktree/run.json, secret-scan 문구를 제거했다.
+- base SHA의 원문을 복원하고 story 6만 `create-revert` 제거의 역사 설명 및 현재 실행
+  금지로 바꿨다. 나머지 preconditions, stories 1–5, acceptance/cleanup,
+  retirement boundary는 보존했다.
+
+```text
+tmpdir=$(mktemp -d /dev/shm/threaddock-create-revert-doc-red.XXXXXX) && TMPDIR="$tmpdir" /home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin/go test ./internal/pilot -run '^TestParallelPilotRunbookProtectsUnacceptedEvidenceFromRetirement$'
+```
+
+RED: 축약 문서에서 retirement/accepted/diagnostic 및 evidence guard 문구가 누락되어
+필수 phrase 검사가 실패했다.
+
+```text
+tmpdir=$(mktemp -d /dev/shm/threaddock-create-revert-doc-green.XXXXXX) && TMPDIR="$tmpdir" /home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin/go test ./internal/pilot -run '^TestParallelPilotRunbookProtectsUnacceptedEvidenceFromRetirement$'
+```
+
+PASS: `thread-dock/internal/pilot`의 지정 테스트.
+
+```text
+diff -u <(git show 22dcc6610b34582d9a3a4ee375e7661fde499e5e:docs/operator/parallel-pilot.md) docs/operator/parallel-pilot.md
+git diff --check
+```
+
+PASS: base 문서와의 차이는 story 6뿐이며 whitespace 오류가 없다.
+
+- review-fix changedFiles: `docs/operator/parallel-pilot.md`, `.superpowers/sdd/engine-retirement-slice2/task-report.md`
+- review-fix executedCommands: 지정 `internal/pilot` RED/GREEN 테스트, base 문서 diff, `git diff --check`
+- review-fix outcomes: 기존 runbook guards/evidence 문구 복원, story 6 현재 실행 금지 명시, 지정 테스트 GREEN
+- review-fix unverified: 제품/CLI 테스트 재실행 없음(이 wave의 문서-only 범위), root 통합 gate 및 Windows native
+- review-fix blockers: none
