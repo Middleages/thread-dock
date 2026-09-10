@@ -5,9 +5,9 @@
 - taskId: `engine-retirement-create-revert`
 - baseSHA: `22dcc6610b34582d9a3a4ee375e7661fde499e5e`
 - branch/worktree: `agent/engine-retirement-create-revert` / `/home/appuser/dev_system/.worktrees/engine-retirement-create-revert`
-- deps: PR #70 merge, slice2 inventory, and the fixed no-interface-change decision
+- deps: PR #70 merge, slice2 inventory, and the root/Sol serial decision to remove `create-revert` CLI support and `Dependencies.Reverter`
 - owned code paths: the `internal/revert` service/tests, CLI revert adapter/tests, listed CLI/cmd files, `parallel-pilot.md`, and this report
-- forbidden paths were not changed; no public/shared interface, config/state, Monitor, runner, module, or Git/worktree package was changed.
+- forbidden paths were not changed; the approved CLI/dependency interface removal is recorded below, while Monitor, runner, shared wire/Git/worktree contracts, config/state, and module files remain unchanged.
 
 ## Deletion evidence
 
