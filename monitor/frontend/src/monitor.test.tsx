@@ -97,15 +97,16 @@ describe('monitor list and detail', () => {
 
   it('translates raw aggregate wire status tokens into Korean labels', async () => {
     const raw = project({
-      workItems: [{ ...project().workItems[0], nextAction: 'approve', tasks: [{ ...project().workItems[0].tasks[0], state: 'verify', verification: 'verify', review: 'accepted' }], publications: [{ ...project().workItems[0].publications[0], status: 'published' }], decisions: [{ ...project().workItems[0].decisions![0], status: 'accepted' }], handoffs: [{ ...project().workItems[0].handoffs![0], nextAction: 'approve' }] }],
+      workItems: [{ ...project().workItems[0], nextAction: 'approve', tasks: [{ ...project().workItems[0].tasks[0], state: 'verify', verification: 'verify', review: 'accepted' }, { ...project().workItems[0].tasks[0], taskId: 'task-2', state: 'verified', verification: 'verify', review: 'accepted' }], publications: [{ ...project().workItems[0].publications[0], status: 'published' }], decisions: [{ ...project().workItems[0].decisions![0], status: 'accepted' }], handoffs: [{ ...project().workItems[0].handoffs![0], nextAction: 'approve' }] }],
     })
     const source = vi.fn(async () => snapshot([raw]))
     render(<App snapshotSource={source} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    expect(screen.getByText('검증 · 검증')).toBeInTheDocument()
-    expect(screen.getAllByText('발행 완료').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('승인됨').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('승인').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('검증 · 검증', { exact: true })).toHaveLength(1)
+    expect(screen.getAllByText('검증 완료 · 검증', { exact: true })).toHaveLength(1)
+    expect(screen.getAllByText('발행 완료', { exact: true })).toHaveLength(1)
+    expect(screen.getAllByText('승인됨', { exact: true })).toHaveLength(1)
+    expect(screen.getAllByText('승인', { exact: true })).toHaveLength(2)
     expect(document.body.textContent).not.toMatch(/\bverify\b|\bpublished\b|\baccepted\b|\bapprove\b/)
   })
 
