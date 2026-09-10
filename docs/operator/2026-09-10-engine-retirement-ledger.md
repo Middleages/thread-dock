@@ -78,3 +78,12 @@ Task reviewer가 삭제 전 참조와 focused 근거를 독립 검토한다.
 `make check` 한 번을 수행하고 실패 시 원인과 수정 소유자를 기록한다. docs-only 후속은 링크/diff 검사만 한다.
 이번 세션의 Linux gh 조회와 Linux fixture/build를 Windows Wails build/app 및 live Herdr와 구분한다.
 HERDR_ENV 설정, 실패 invocation 재사용, Herdr #3813 해결 가정은 하지 않는다.
+
+## 구현 및 통합 결과
+
+- 문서 Task: 원본 `cdf89774afc715f74617ba92bf652063c2bf203f`, report `476bb28`, 통합 `3aae2fc`/`6db85d0`. 상대 링크 8파일/6링크, diff/stale 검사 통과. 기존 Task 3 report 보존.
+- 조사 Task: 쓰기 없음. Linux·Windows Go 그래프에서 monitorcli importer 0개 확인. [inventory](2026-09-10-engine-dependency-inventory.md)에 호출·config·fixture·문서 경계 기록.
+- slice1 Luna: 코드 `3656616c91be6366f9753423d85e50a73eeaec63`, report 후속 포함 head `3d89c93cef34c2b4c4aa35ae794afd39c7f6dff6`. 두 bridge 파일 제거, public/shared 변화 없음.
+- slice1 focused: Go 1.27.0 `go test ./monitor`, `go vet ./monitor`, diff 검사 및 package 경로 부재 확인 통과. 첫 chained 실행은 약 90초 무출력 후 중단했으며 성공 근거로 쓰지 않았다. 상세 [Luna report](../../.superpowers/sdd/engine-retirement-slice1/task-report.md)는 통합 시 포함한다.
+- slice1 검토: fresh Sol이 고정 head `3d89c93`의 Task diff와 report 검토 중. 최종 verdict 전 완료로 처리하지 않는다.
+- root 문서 검증: inventory/분류/ledger/새 계획 4파일의 상대 링크 6개 검사와 `git diff --check` 통과. 통합 `npm ci --no-audit --no-fund`는 107 packages 설치/exit 0이며 제품 테스트 근거와 구분한다.
