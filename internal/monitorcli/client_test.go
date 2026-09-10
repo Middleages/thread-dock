@@ -128,8 +128,8 @@ func TestFetchAllReturnsCopiedLastGoodSnapshotAsStaleOfflineAfterFailure(t *test
 	good.Projects[0].Name = "mutated caller copy"
 
 	degraded, err := client.FetchAll(context.Background())
-	if err == nil {
-		t.Fatal("expected degraded fetch to preserve runner error")
+	if err != nil {
+		t.Fatalf("degraded fetch err = %v, want nil", err)
 	}
 	if degraded.Projects[0].Name != "Payments" {
 		t.Fatalf("degraded project = %#v, want retained last-good copy", degraded.Projects[0])
@@ -146,6 +146,35 @@ func TestFetchAllReturnsCopiedLastGoodSnapshotAsStaleOfflineAfterFailure(t *test
 	}
 	if latest.Projects[0].EvidenceRefs[0] != "state://project-1" {
 		t.Fatalf("retained snapshot was mutated = %#v", latest.Projects[0].EvidenceRefs)
+	}
+}
+
+type blockingRunner struct {
+	calls int
+}
+
+func (r *blockingRunner) Run(ctx context.Context, _ string, _ string, _ ...string) (runner.Result, error) {
+	r.calls++
+	if r.calls == 1 {
+		return runner.Result{Stdout: validJSON()}, nil
+	}
+	<-ctx.Done()
+	return runner.Result{}, ctx.Err()
+}
+
+func TestFetchAllTimeoutBeforeSuccessErrorsAndAfterSuccessReturnsStaleOfflineWithoutError(t *testing.T) {
+	client := New(&blockingRunner{}, 10*time.Millisecond)
+	first, err := client.FetchAll(context.Background())
+	if err != nil || first.State != "running" {
+		t.Fatalf("first snapshot=%#v err=%v", first, err)
+	}
+
+	degraded, err := client.FetchAll(context.Background())
+	if err != nil {
+		t.Fatalf("degraded timeout err = %v, want nil", err)
+	}
+	if degraded.State != "stale" || degraded.SyncStatus != "offline" || degraded.Freshness.State != "stale" || degraded.Freshness.SyncStatus != "offline" {
+		t.Fatalf("degraded snapshot=%#v", degraded)
 	}
 }
 

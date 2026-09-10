@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App, sortProjects } from './App'
 import type { Project, Snapshot } from './types'
+import { isSafeExternalURL } from './safe-url'
 
 const project = (overrides: Partial<Project> = {}): Project => ({
   projectId: 'project-1', name: 'Payments', state: 'running', syncStatus: 'synced', nextAction: 'review',
@@ -88,8 +89,57 @@ describe('monitor list and detail', () => {
     expect(screen.getByText('Use bounded retries')).toBeInTheDocument()
     expect(screen.getByText('Review the change')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Parent Issue' })).toHaveAttribute('href', 'https://github.com/acme/app/issues/1')
-    fireEvent.click(screen.getByRole('button', { name: '실행 중단' }))
-    expect(screen.getByRole('status')).toHaveTextContent('실행 중단 요청을 Main Agent에 전달할 준비가 되었습니다.')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => undefined } })
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByRole('status')).toHaveTextContent('선택한 업무의 handoff를 클립보드에 복사했습니다.')
+  })
+
+  it('uses the selected work identity for detail and action links after a project shrinks', async () => {
+    const first = project({ projectId: 'first', name: 'First', workItems: [project().workItems[0], { ...project().workItems[0], workId: 'work-2', title: 'Second work', links: [{ kind: 'github', label: 'Second Issue', url: 'https://github.com/acme/app/issues/2' }] }] })
+    const second = project({ projectId: 'second', name: 'Second', workItems: [{ ...project().workItems[0], workId: 'work-3', title: 'Only work', links: [{ kind: 'github', label: 'Only Issue', url: 'https://github.com/acme/app/issues/3' }] }] })
+    const source = vi.fn(async () => snapshot([first, second]))
+    render(<App snapshotSource={source} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('tab', { name: 'Second work' }))
+    fireEvent.click(screen.getByRole('button', { name: /Second 1개 업무/ }))
+    expect(screen.getByRole('heading', { name: 'Only work' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Only Issue' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'GitHub에서 보기' })).toBeInTheDocument()
+  })
+
+  it('accepts only absolute http(s) external URLs', () => {
+    expect(isSafeExternalURL('https://github.com/acme/app')).toBe(true)
+    expect(isSafeExternalURL('http://ghe.local/acme/app')).toBe(true)
+    for (const value of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,hi', '/relative', 'custom://host', 'not a url']) expect(isSafeExternalURL(value)).toBe(false)
+  })
+
+  it('does not assign href for a rejected external link', async () => {
+    const unsafe = project({ workItems: [{ ...project().workItems[0], links: [{ kind: 'unsafe', label: 'Unsafe link', url: 'javascript:alert(1)' }] }] })
+    const source = vi.fn(async () => snapshot([unsafe]))
+    render(<App snapshotSource={source} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByRole('link', { name: 'Unsafe link' })).not.toBeInTheDocument()
+    expect(screen.getByText('Unsafe link')).toBeInTheDocument()
+  })
+
+  it('shows bounded recovery copy when handoff clipboard is unavailable', async () => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    const source = vi.fn(async () => snapshot([project()]))
+    render(<App snapshotSource={source} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    expect(screen.getByRole('status')).toHaveTextContent('클립보드를 사용할 수 없습니다.')
+  })
+
+  it('shows bounded recovery copy when handoff clipboard write fails', async () => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('denied') } } })
+    const source = vi.fn(async () => snapshot([project()]))
+    render(<App snapshotSource={source} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByRole('status')).toHaveTextContent('handoff를 복사하지 못했습니다.')
   })
 
   it('uses native keyboard buttons and omits forbidden runtime identifiers', async () => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Project, Snapshot, SnapshotSource, WorkItem } from './types'
 import { getMonitorSnapshot } from './bindings'
+import { isSafeExternalURL, openExternalURL } from './safe-url'
 import './styles.css'
 
 export const sortProjects = (projects: Project[]): Project[] => [...projects].sort((a, b) => {
@@ -25,11 +26,9 @@ declare global {
 }
 
 function ExternalLink({ url, label }: { url: string; label: string }) {
+  if (!isSafeExternalURL(url)) return <span className="blocked-link">{label}</span>
   const onClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
-    if (window.runtime?.BrowserOpenURL) {
-      event.preventDefault()
-      window.runtime.BrowserOpenURL(url)
-    }
+    if (window.runtime?.BrowserOpenURL) { event.preventDefault(); openExternalURL(url) }
   }
   return <a href={url} target="_blank" rel="noreferrer" onClick={onClick}>{label}</a>
 }
@@ -68,25 +67,31 @@ function EvidenceList({ work }: { work: WorkItem }) {
   </div>
 }
 
-function WorkDetail({ project }: { project: Project }) {
-  const [workIndex, setWorkIndex] = useState(0)
-  const work = project.workItems[workIndex]
+function WorkDetail({ project, selectedWorkId, onSelectWork }: { project: Project; selectedWorkId: string | null; onSelectWork: (id: string) => void }) {
+  const work = project.workItems.find((item) => item.workId === selectedWorkId) ?? project.workItems[0]
   if (!work) return <section className="detail empty-detail"><h2>{project.name}</h2><p>아직 표시할 업무가 없습니다.</p></section>
   return <section className="detail" aria-labelledby="detail-title">
     <div className="detail-heading"><div><h2 id="detail-title">{project.name}</h2><p>최근 동기화 {dateFor(project.updatedAt)} · {labelFor(project.syncStatus)}</p></div><span className="state-badge"><StatusMark value={work.state} />{labelFor(work.state)}</span></div>
-    {project.workItems.length > 1 && <div className="work-tabs" role="tablist" aria-label="업무 선택">{project.workItems.map((item, index) => <button type="button" role="tab" aria-selected={index === workIndex} key={item.workId} onClick={() => setWorkIndex(index)}>{item.title}</button>)}</div>}
+    {project.workItems.length > 1 && <div className="work-tabs" role="tablist" aria-label="업무 선택">{project.workItems.map((item) => <button type="button" role="tab" aria-selected={item.workId === work.workId} key={item.workId} onClick={() => onSelectWork(item.workId)}>{item.title}</button>)}</div>}
     <article className="work-summary"><h3>{work.title}</h3>{work.request && <p>{work.request}</p>}<div className="next-step"><span>다음 행동</span><strong>{labelFor(work.nextAction)}</strong></div>{work.blocker && <p className="blocker"><strong>보존된 변경</strong> {work.blocker}</p>}</article>
     <EvidenceList work={work} />
   </section>
 }
 
-function ActionRail({ snapshot, project, onAction }: { snapshot: Snapshot; project?: Project; onAction: (message: string) => void }) {
+function buildHandoffText(work?: WorkItem): string {
+  if (!work) return ''
+  const handoff = work.handoffs?.[0]
+  const links = work.links?.filter((link) => isSafeExternalURL(link.url)).map((link) => `${link.label}: ${link.url}`) ?? []
+  return [`업무: ${work.title}`, `다음 행동: ${labelFor(work.nextAction)}`, handoff ? `handoff: ${handoff.summary}` : '', ...work.evidenceRefs.map((ref) => `근거: ${ref}`), ...links].filter(Boolean).join('\n')
+}
+
+function ActionRail({ snapshot, project, work, onAction }: { snapshot: Snapshot; project?: Project; work?: WorkItem; onAction: (message: string) => void }) {
   const state = snapshot.freshness.state === 'stale' || snapshot.syncStatus === 'offline'
   return <aside className="action-rail" aria-labelledby="action-title">
     <h2 id="action-title">지금 필요한 행동</h2><p className="rail-intro">중요한 요청만 여기에 표시합니다.</p>
-    <div className="attention-block"><strong>{state ? '연결을 확인하세요' : project?.nextAction ? `다음 행동 · ${labelFor(project.nextAction)}` : '현재는 기다리세요'}</strong><p>{state ? '마지막으로 확인한 상태를 보존했습니다. WSL 연결을 확인한 뒤 새로고침하세요.' : project ? `${project.name}의 실행 상태와 근거를 검토하세요.` : '프로젝트를 선택하면 필요한 행동을 보여드립니다.'}</p></div>
-    <button type="button" className="primary-action" onClick={() => onAction('실행 중단 요청을 Main Agent에 전달할 준비가 되었습니다.')}>실행 중단</button>
-    {project?.workItems[0]?.links?.[0] && <button type="button" className="secondary-action" onClick={() => { const link = project.workItems[0].links?.[0]; if (link) { if (window.runtime?.BrowserOpenURL) window.runtime.BrowserOpenURL(link.url); else window.open(link.url, '_blank', 'noopener,noreferrer') } }}>GitHub에서 보기</button>}
+    <div className="attention-block"><strong>{state ? '연결을 확인하세요' : work?.nextAction ? `다음 행동 · ${labelFor(work.nextAction)}` : '현재는 기다리세요'}</strong><p>{state ? '마지막으로 확인한 상태를 보존했습니다. WSL 연결을 확인한 뒤 새로고침하세요.' : project ? `${project.name}의 실행 상태와 근거를 검토하세요.` : '프로젝트를 선택하면 필요한 행동을 보여드립니다.'}</p></div>
+    <button type="button" className="primary-action" onClick={async () => { if (!navigator.clipboard?.writeText) { onAction('클립보드를 사용할 수 없습니다. handoff 내용을 선택해 복사하세요.'); return } try { await navigator.clipboard.writeText(buildHandoffText(work)); onAction('선택한 업무의 handoff를 클립보드에 복사했습니다.') } catch { onAction('handoff를 복사하지 못했습니다. 근거 링크를 열어 내용을 전달하세요.') } }}>handoff 복사</button>
+    {work?.links?.find((link) => isSafeExternalURL(link.url)) && <button type="button" className="secondary-action" onClick={() => { const link = work.links?.find((item) => isSafeExternalURL(item.url)); if (link) openExternalURL(link.url) }}>GitHub에서 보기</button>}
     <section className="rail-workflows" aria-labelledby="workflow-title"><h3 id="workflow-title">자동화 작업</h3><div className="workflow-row"><strong>상태 집계</strong><span className="success-text">정상</span><small>4초마다 자동 · GitHub API 호출 없음</small></div><div className="workflow-row"><strong>동기화</strong><span className={state ? 'attention-text' : 'success-text'}>{state ? '오프라인' : '정상'}</span><small>{state ? '마지막 상태 보존' : '마지막 확인 완료'}</small></div></section>
   </aside>
 }
@@ -96,6 +101,7 @@ export function App({ snapshotSource = getMonitorSnapshot, pollIntervalMs = 4000
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState('')
   const inFlight = useRef(false)
   const refresh = useCallback(async () => {
@@ -105,7 +111,11 @@ export function App({ snapshotSource = getMonitorSnapshot, pollIntervalMs = 4000
       const next = await snapshotSource()
       setSnapshot(next)
       setError(null)
-      setSelectedProjectId((current) => next.projects.some((project) => project.projectId === current) ? current : sortProjects(next.projects)[0]?.projectId ?? null)
+      setSelectedProjectId((current) => {
+        const selectedProject = next.projects.find((project) => project.projectId === current) ?? sortProjects(next.projects)[0]
+        setSelectedWorkId((workId) => selectedProject?.workItems.some((work) => work.workId === workId) ? workId : selectedProject?.workItems[0]?.workId ?? null)
+        return selectedProject?.projectId ?? null
+      })
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error('unknown monitor error'))
     } finally {
@@ -123,10 +133,10 @@ export function App({ snapshotSource = getMonitorSnapshot, pollIntervalMs = 4000
     <main className="main-content">
       {loading && !snapshot ? <LoadingState /> : error && (!snapshot || snapshot.projects.length === 0) ? <section className="state-panel error-state" role="alert"><h1>상태를 불러오지 못했습니다.</h1><p>agentctl 연결을 확인하고 잠시 후 다시 시도하세요.</p><button type="button" className="secondary-action" onClick={() => void refresh()}>다시 시도</button></section> : snapshot && <>
         {isDegraded && <div className="degraded-banner" role="status"><strong>오래된 상태를 표시하고 있습니다.</strong><span><strong>WSL 연결 오프라인</strong> · 마지막으로 확인한 시각 {dateFor(snapshot.observedAt)}</span></div>}
-        {projects.length === 0 ? <section className="state-panel empty-state"><h1>표시할 프로젝트가 없습니다.</h1><p>agentctl project status 결과가 도착하면 이곳에 프로젝트와 다음 행동이 표시됩니다.</p></section> : <><ProjectList projects={projects} selected={selectedProjectId} onSelect={setSelectedProjectId} />{selected && <WorkDetail project={selected} />}</>}
+        {projects.length === 0 ? <section className="state-panel empty-state"><h1>표시할 프로젝트가 없습니다.</h1><p>agentctl project status 결과가 도착하면 이곳에 프로젝트와 다음 행동이 표시됩니다.</p></section> : <><ProjectList projects={projects} selected={selectedProjectId} onSelect={(id) => { setSelectedProjectId(id); setSelectedWorkId(projects.find((project) => project.projectId === id)?.workItems[0]?.workId ?? null) }} />{selected && <WorkDetail project={selected} selectedWorkId={selectedWorkId} onSelectWork={setSelectedWorkId} />}</>}
       </>}
     </main>
-    {snapshot && <ActionRail snapshot={snapshot} project={selected} onAction={setStatusMessage} />}
+    {snapshot && <ActionRail snapshot={snapshot} project={selected} work={selected?.workItems.find((item) => item.workId === selectedWorkId) ?? selected?.workItems[0]} onAction={setStatusMessage} />}
     <div className="live-status" role="status" aria-live="polite">{statusMessage}</div>
   </div>
 }

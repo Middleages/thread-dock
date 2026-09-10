@@ -3,7 +3,7 @@
   "name": "ThreadDock Monitor",
   "outputfilename": "ThreadDockMonitor",
   "frontend:dir": "frontend",
-  "frontend:install": "npm install",
+  "frontend:install": "npm ci",
   "frontend:build": "npm run build",
   "frontend:dev": "npm run dev"
 }

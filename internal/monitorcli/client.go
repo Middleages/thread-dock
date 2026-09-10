@@ -98,7 +98,7 @@ func (c *Client) degraded(cause error) (monitor.Snapshot, error) {
 	snapshot.SyncStatus = "offline"
 	snapshot.Freshness.State = "stale"
 	snapshot.Freshness.SyncStatus = "offline"
-	return snapshot, cause
+	return snapshot, nil
 }
 
 func decodeSnapshot(data []byte) (monitor.Snapshot, error) {
