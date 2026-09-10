@@ -1,5 +1,7 @@
 # Implementation Readiness Plan
 
+> 2026-09-10 이후 실행 순서는 [Herdr-first 첫 사용 구현 계획](2026-09-10-herdr-first-usable-workflow.md)이 대체한다. 이 문서는 당시 환경·GitHub evidence readiness 근거로만 보존한다.
+
 > **For agentic workers:** 준비는 Sol medium이 수행하고, 코드 구현 계획 작성 후 superpowers:subagent-driven-development를 사용한다. 구현·수정은 Luna high에 배정한다. 사용자 지정 모델과 독립 Task 병렬 실행은 skill의 기본 모델 선택·순차 실행 지침보다 우선한다. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** GitHub 기반 1차 MVP의 실제 개발 환경을 확인하고, 단일 저장소 업무 하나를 끝까지 구현할 수 있는 착수 자료를 만든다.
