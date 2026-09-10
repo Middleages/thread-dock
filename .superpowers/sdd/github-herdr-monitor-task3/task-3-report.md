@@ -182,9 +182,9 @@ above is historical and superseded, not current state.
 ### Final evidence
 
 - Native environment: `THREADDOCK_REPOS=Middleages/thread-dock`, `THREADDOCK_PROJECTS` unset,
-  `THREADDOCK_WSL_DISTRIBUTION=Ubuntu`, and `THREADDOCK_SESSIONS_FILE` set to the locally supplied
-  WSL-internal absolute version 1 connection-file path. The local path and secrets are intentionally
-  not reproduced.
+  `THREADDOCK_WSL_DISTRIBUTION=Ubuntu`, and
+  `THREADDOCK_SESSIONS_FILE=/tmp/threaddock-aeca770-sessions.json` (the WSL-internal absolute
+  version 1 connection-file path).
 - User-local Windows toolchain: Go `1.27.0 windows/amd64`, Node `26.8.1`, and matching Wails
   CLI/runtime `v2.15.0`; official Go/Node checksums matched where available.
 - Matching standard `wails build` at `325db89` exited 0 in `1m9.285s` and produced
@@ -209,7 +209,7 @@ marked historical and superseded. No product/config/dependency file or shared in
 ### Final result
 
 - changedFiles: `README.md`, `HANDOFF.md`, `docs/operator/github-first-quickstart.md`, `.superpowers/sdd/github-herdr-monitor-task3/task-3-report.md`
-- commitSHA: `325db89ad81d53c9f1a33ba0454287e98b22c0eb` is the product/config/dependency SHA; the docs-only follow-up commit is the new HEAD after this report is committed.
+- commitSHA: `325db89ad81d53c9f1a33ba0454287e98b22c0eb` is the product/config/dependency SHA. Previous docs candidate `d34ce3a` is superseded by this fix; the final fix SHA is coordinator-ledgered after commit.
 - executedCommands: exact docs-only commands and outputs are recorded below; no product tests, Windows commands, `make check`, push, PR, or merge were run.
 - outcomes: docs consistently describe healthy packaged acceptance and the native error-state limitation.
 - unverified: native Windows error/degraded-state rendering; worker/reviewer runtime model and effort identity.
@@ -242,13 +242,13 @@ The following commands are reproducible from this worktree and touch only the fo
    exit "$status"
    ```
 
-2. Evidence consistency scan — exit 0; output `OK evidence consistency scan: 4 files x 14 required terms`.
+2. Evidence consistency scan — exit 0; output `OK evidence consistency scan: 4 files x 15 required terms`.
 
    ```sh
    python3 - <<'PY'
    from pathlib import Path
    files = [Path('README.md'), Path('HANDOFF.md'), Path('docs/operator/github-first-quickstart.md'), Path('.superpowers/sdd/github-herdr-monitor-task3/task-3-report.md')]
-   terms = ['325db89', 'v2.15.0', '26.8.1', '1m9.285', r'monitor\build\bin\ThreadDockMonitor.exe', 'Middleages/thread-dock', 'THREADDOCK_WSL_DISTRIBUTION=Ubuntu', '69개 work item', 'clipboard', '로컬 연결 정상', 'UtilAcceptVsock:281: accept4 failed 110', 'aeca770', 'ThreadDockValidation66158d9', 'packaged live']
+   terms = ['325db89', 'v2.15.0', '26.8.1', '1m9.285', r'monitor\build\bin\ThreadDockMonitor.exe', 'Middleages/thread-dock', 'THREADDOCK_WSL_DISTRIBUTION=Ubuntu', 'THREADDOCK_SESSIONS_FILE=/tmp/threaddock-aeca770-sessions.json', '69개 work item', 'clipboard', '로컬 연결 정상', 'UtilAcceptVsock:281: accept4 failed 110', 'aeca770', 'ThreadDockValidation66158d9', 'packaged live']
    for term in terms:
        missing = [str(path) for path in files if term not in path.read_text()]
        if missing:

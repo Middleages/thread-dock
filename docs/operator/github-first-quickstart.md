@@ -132,8 +132,8 @@ user-local Go `go1.27.0 windows/amd64`, Node `26.8.1`, Wails CLI/runtime `v2.15.
 
 최종 reviewed commit `325db89`의 native 환경은 `THREADDOCK_REPOS=Middleages/thread-dock`,
 `THREADDOCK_PROJECTS` unset, `THREADDOCK_WSL_DISTRIBUTION=Ubuntu`,
-`THREADDOCK_SESSIONS_FILE`의 WSL 내부 절대 경로 version 1 연결 파일이었다. 비밀과 재현 불가능한
-사용자 로컬 경로는 복사하지 않는다. user-local Go `1.27.0 windows/amd64`, Node `26.8.1`, Wails
+`THREADDOCK_SESSIONS_FILE=/tmp/threaddock-aeca770-sessions.json`인 WSL 내부 version 1 연결 파일이었다.
+user-local Go `1.27.0 windows/amd64`, Node `26.8.1`, Wails
 CLI/runtime `v2.15.0`에서 matching `wails build`는 exit 0, `1m9.285s`에 완료됐고
 `monitor\build\bin\ThreadDockMonitor.exe`를 생성했으며 bindings/frontend/assets/app stages가
 모두 `Done`이었다. native child console은 표시되지 않았다.
