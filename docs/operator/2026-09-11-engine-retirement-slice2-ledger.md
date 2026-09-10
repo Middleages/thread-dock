@@ -96,3 +96,15 @@ focused vet·go list·diff 검사도 통과했다. `internal/revert` 빈 디렉�
 빈 디렉터리를 제거한 뒤 통과했으며 코드 실패나 전체 gate 성공으로 해석하지 않는다.
 report의 'interface 변경 없음' 문구는 승인된 CLI/Dependencies.Reverter 제거를 정확히 구분하도록
 worker에게 문서 정정을 요청했다. 제품 코드 재검사 이유가 없는 report-only 수정이다.
+
+## Task 리뷰와 수정 귀속
+
+report 정정 후 head `a84616748e69ba096230638c70c5792f7eac7a67`를 fresh Sol이 리뷰했다.
+spec compliance/code quality는 BLOCK이며, 두 finding의 공통 원인은 `parallel-pilot.md`의 과도한 축약이다.
+기존 119줄을 15줄로 줄이면서 남은 v1 CLI 안내와 retirement/evidence 보호 조건을 삭제했고,
+기존 `TestParallelPilotRunbookProtectsUnacceptedEvidenceFromRetirement`의 필수 문구도 없어졌다.
+해당 문서 검사는 초기 worker focused 범위에 빠졌다. code route/dependency 제거에는 추가 blocking finding이 없다.
+
+수정 소유자는 원래 Luna이며, base의 나머지 문서를 복원하고 story 6만 역사 설명으로 바꾼다.
+직접 영향 테스트 위 한 개를 tmpfs에서 RED→GREEN으로 확인하고 report/diff를 갱신한다.
+CLI/cmd 코드가 불변이므로 그 검증 tuple은 반복하지 않는다. 새 고정 SHA의 scoped 리뷰 전까지 Task는 진행 중이다.
