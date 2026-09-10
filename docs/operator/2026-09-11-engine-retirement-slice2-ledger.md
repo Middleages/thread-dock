@@ -108,3 +108,9 @@ spec compliance/code quality는 BLOCK이며, 두 finding의 공통 원인은 `pa
 수정 소유자는 원래 Luna이며, base의 나머지 문서를 복원하고 story 6만 역사 설명으로 바꾼다.
 직접 영향 테스트 위 한 개를 tmpfs에서 RED→GREEN으로 확인하고 report/diff를 갱신한다.
 CLI/cmd 코드가 불변이므로 그 검증 tuple은 반복하지 않는다. 새 고정 SHA의 scoped 리뷰 전까지 Task는 진행 중이다.
+
+수정 head `2f5c841e86c4759dde21351ffc1d91c379bee332`에서 base runbook을 복원하고 story 6만
+역사 설명으로 정정했다. 지정 pilot 문서 테스트의 RED→GREEN과 diff 검사를 통과했다.
+code commit 이후 보고서/문서만 바뀌어 CLI/cmd 테스트는 반복하지 않았다.
+root 통합 commit은 `88ecd02` → `acb45ef` → `c5158e3` → `efa0db2`이며,
+수정 head의 scoped Task 리뷰를 기다리고 있다. 이전 BLOCK을 성공으로 소급 기록하지 않는다.
