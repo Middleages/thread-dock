@@ -4,6 +4,7 @@ package main
 
 import (
 	"embed"
+	"os"
 	"time"
 
 	"github.com/wailsapp/wails/v2"
@@ -11,7 +12,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 
-	"thread-dock/internal/monitorcli"
 	"thread-dock/internal/runner"
 )
 
@@ -22,7 +22,7 @@ import (
 var assets embed.FS
 
 func main() {
-	app := NewApp(monitorcli.New(runner.OSRunner{}, 5*time.Second))
+	app := NewApp(NewGitHubMonitor(environmentMap(os.Environ()), runner.OSRunner{}, 15*time.Second))
 	if err := wails.Run(&options.App{
 		Title: "ThreadDock Monitor",
 		Width: 1280, Height: 800,
@@ -33,4 +33,17 @@ func main() {
 	}); err != nil {
 		panic(err)
 	}
+}
+
+func environmentMap(values []string) map[string]string {
+	env := make(map[string]string, len(values))
+	for _, value := range values {
+		for index := 0; index < len(value); index++ {
+			if value[index] == '=' {
+				env[value[:index]] = value[index+1:]
+				break
+			}
+		}
+	}
+	return env
 }

@@ -73,7 +73,7 @@ describe('monitor list and detail', () => {
     source.mockRejectedValueOnce(new Error('WSL offline'))
     await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
     expect(screen.getByText('상태를 불러오지 못했습니다.')).toBeInTheDocument()
-    expect(screen.getByText(/agentctl 연결을 확인/)).toBeInTheDocument()
+    expect(screen.getByText(/Windows Wails Monitor 설정과 연결을 확인/)).toBeInTheDocument()
     const stale = snapshot([project()], { freshness: { state: 'stale', syncStatus: 'offline' }, syncStatus: 'offline', state: 'stale' })
     source.mockResolvedValueOnce(stale)
     await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
@@ -166,7 +166,7 @@ describe('monitor list and detail', () => {
 
   it('translates raw aggregate wire status tokens into Korean labels', async () => {
     const raw = project({
-      workItems: [{ ...project().workItems[0], nextAction: 'approve', tasks: [{ ...project().workItems[0].tasks[0], state: 'verify', verification: 'verify', review: 'accepted' }, { ...project().workItems[0].tasks[0], taskId: 'task-2', state: 'verified', verification: 'verify', review: 'accepted' }], publications: [{ ...project().workItems[0].publications[0], status: 'published' }], decisions: [{ ...project().workItems[0].decisions![0], status: 'accepted' }], handoffs: [{ ...project().workItems[0].handoffs![0], nextAction: 'approve' }] }],
+      workItems: [{ ...project().workItems[0], nextAction: 'approve', tasks: [{ ...project().workItems[0].tasks![0], state: 'verify', verification: 'verify', review: 'accepted' }, { ...project().workItems[0].tasks![0], taskId: 'task-2', state: 'verified', verification: 'verify', review: 'accepted' }], publications: [{ ...project().workItems[0].publications![0], status: 'published' }], decisions: [{ ...project().workItems[0].decisions![0], status: 'accepted' }], handoffs: [{ ...project().workItems[0].handoffs![0], nextAction: 'approve' }] }],
     })
     const source = vi.fn(async () => snapshot([raw]))
     render(<App snapshotSource={source} />)

@@ -18,6 +18,7 @@ export type GithubWork = {
   relatedPullRequestUrls?: string[]
   fields?: Record<string, string>
   contentAvailable?: boolean
+  author?: string
   observedAt?: string
   stale?: boolean
 }
@@ -49,9 +50,9 @@ export type WorkItem = {
   nextAction: string
   evidenceRefs: string[]
   updatedAt?: string
-  tasks: TaskDetail[]
+  tasks?: TaskDetail[]
   blocker?: string
-  publications: PublicationDetail[]
+  publications?: PublicationDetail[]
   decisions?: DecisionDetail[]
   handoffs?: HandoffDetail[]
   links?: Link[]
