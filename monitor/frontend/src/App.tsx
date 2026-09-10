@@ -14,7 +14,8 @@ export const sortProjects = (projects: Project[]): Project[] => [...projects].so
 const stateLabel: Record<string, string> = {
   needs_operator: '판단 필요', running: '진행 중', completed: '완료', verified: '검증 완료',
   review: '독립 확인', synced: '동기화됨', stale: '오래된 상태', offline: '오프라인',
-  failed: '확인 필요', blocked: '판단 필요', ready: '준비됨', passed: '통과', approved: '승인됨',
+  failed: '확인 필요', blocked: '판단 필요', ready: '준비됨', passed: '통과', approved: '승인됨', verify: '검증',
+  published: '발행 완료', accepted: '승인됨', approve: '승인',
 }
 
 const labelFor = (value: string) => stateLabel[value] ?? value.replaceAll('_', ' ')

@@ -95,6 +95,20 @@ describe('monitor list and detail', () => {
     expect(screen.getByRole('status')).toHaveTextContent('선택한 업무의 handoff를 클립보드에 복사했습니다.')
   })
 
+  it('translates raw aggregate wire status tokens into Korean labels', async () => {
+    const raw = project({
+      workItems: [{ ...project().workItems[0], nextAction: 'approve', tasks: [{ ...project().workItems[0].tasks[0], state: 'verify', verification: 'verify', review: 'accepted' }], publications: [{ ...project().workItems[0].publications[0], status: 'published' }], decisions: [{ ...project().workItems[0].decisions![0], status: 'accepted' }], handoffs: [{ ...project().workItems[0].handoffs![0], nextAction: 'approve' }] }],
+    })
+    const source = vi.fn(async () => snapshot([raw]))
+    render(<App snapshotSource={source} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByText('검증 · 검증')).toBeInTheDocument()
+    expect(screen.getAllByText('발행 완료').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('승인됨').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('승인').length).toBeGreaterThan(0)
+    expect(document.body.textContent).not.toMatch(/\bverify\b|\bpublished\b|\baccepted\b|\bapprove\b/)
+  })
+
   it('uses the selected work identity for detail and action links after a project shrinks', async () => {
     const first = project({ projectId: 'first', name: 'First', workItems: [project().workItems[0], { ...project().workItems[0], workId: 'work-2', title: 'Second work', links: [{ kind: 'github', label: 'Second Issue', url: 'https://github.com/acme/app/issues/2' }] }] })
     const second = project({ projectId: 'second', name: 'Second', workItems: [{ ...project().workItems[0], workId: 'work-3', title: 'Only work', links: [{ kind: 'github', label: 'Only Issue', url: 'https://github.com/acme/app/issues/3' }] }] })
