@@ -44,6 +44,106 @@ func TestGitHubMonitorValidatesSetupAndStoresOptionalSessionsPath(t *testing.T) 
 	if snapshot.SyncStatus != "setup_required" || !strings.Contains(strings.Join(snapshot.Notices, " "), "THREADDOCK_OTHER") {
 		t.Fatalf("unknown config snapshot=%#v", snapshot)
 	}
+	for name, env := range map[string]map[string]string{
+		"no targets": {"THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"},
+		"missing distribution": {"THREADDOCK_REPOS": "acme/app"},
+		"malformed project": {"THREADDOCK_PROJECTS": "https://github.com/acme/projects/2", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"},
+	} {
+		snapshot, _ = NewGitHubMonitor(env, &ghFakeRunner{}, time.Second).FetchAll(context.Background())
+		if snapshot.SyncStatus != "setup_required" {
+			t.Fatalf("%s snapshot=%#v", name, snapshot)
+		}
+	}
+}
+
+func TestGitHubMonitorRejectsMalformedRowsAndRetainsIssueCache(t *testing.T) {
+	now := time.Unix(1000, 0)
+	malformed := false
+	fake := &ghFakeRunner{fn: func(args []string) (runner.Result, error) {
+		if strings.Contains(strings.Join(args, " "), "issue list") {
+			if malformed { return runner.Result{Stdout: `[{}]`}, nil }
+			return runner.Result{Stdout: jsonOutput([]any{issueFixture})}, nil
+		}
+		if strings.Contains(strings.Join(args, " "), "pr list") {
+			if malformed { return runner.Result{Stdout: `[{}]`}, nil }
+			return runner.Result{Stdout: jsonOutput([]any{map[string]any{"number": 2, "title": "PR", "url": "https://github.com/acme/app/pull/2", "state": "OPEN", "closingIssuesReferences": []any{}, "statusCheckRollup": []any{}})}, nil
+		}
+		return runner.Result{Stdout: `[]`}, nil
+	}}
+	monitor := NewGitHubMonitor(map[string]string{"THREADDOCK_REPOS": "acme/app", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, fake, time.Second)
+	monitor.now = func() time.Time { return now }
+	first, _ := monitor.FetchAll(context.Background())
+	if len(first.Projects[0].WorkItems) != 2 { t.Fatalf("first=%#v", first) }
+	now = now.Add(61 * time.Second)
+	malformed = true
+	second, _ := monitor.FetchAll(context.Background())
+	if len(second.Projects[0].WorkItems) != 2 || second.Freshness.State != "stale" { t.Fatalf("retained=%#v", second) }
+}
+
+func TestGitHubMonitorRejectsMalformedProjectFieldsAndRetainsBoardCache(t *testing.T) {
+	now := time.Unix(1000, 0)
+	malformed := false
+	valid := map[string]any{"totalCount": 1, "items": []any{map[string]any{"id": "item-1", "content": nil, "fieldValues": []any{map[string]any{"field": map[string]any{"name": "Status"}, "name": "Waiting"}}}}}
+	fake := &ghFakeRunner{fn: func(args []string) (runner.Result, error) {
+		if malformed { return runner.Result{Stdout: jsonOutput(map[string]any{"totalCount": 1, "items": []any{map[string]any{"id": "item-1", "content": nil, "fieldValues": []any{map[string]any{"field": nil, "name": "Status", "value": "Waiting"}}}}})}, nil }
+		return runner.Result{Stdout: jsonOutput(valid)}, nil
+	}}
+	monitor := NewGitHubMonitor(map[string]string{"THREADDOCK_PROJECTS": "https://github.com/orgs/acme/projects/7", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, fake, time.Second)
+	monitor.now = func() time.Time { return now }
+	first, _ := monitor.FetchAll(context.Background())
+	if first.Projects[0].WorkItems[0].GitHub.Fields["Status"] != "Waiting" { t.Fatalf("first=%#v", first) }
+	now = now.Add(61 * time.Second)
+	malformed = true
+	second, _ := monitor.FetchAll(context.Background())
+	if len(second.Projects[0].WorkItems) != 1 || second.Freshness.State != "stale" || second.Projects[0].WorkItems[0].GitHub.Fields["Status"] != "Waiting" { t.Fatalf("retained=%#v", second) }
+}
+
+func TestGitHubMonitorUsesExactGhArgumentArrays(t *testing.T) {
+	fake := &ghFakeRunner{fn: func(args []string) (runner.Result, error) {
+		if strings.Contains(strings.Join(args, " "), "project item-list") { return runner.Result{Stdout: `{"totalCount":0,"items":[]}`}, nil }
+		return runner.Result{Stdout: `[]`}, nil
+	}}
+	monitor := NewGitHubMonitor(map[string]string{"THREADDOCK_REPOS": "acme/app", "THREADDOCK_PROJECTS": "https://github.com/users/acme/projects/2", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu 24.04"}, fake, time.Second)
+	if _, err := monitor.FetchAll(context.Background()); err != nil { t.Fatal(err) }
+	want := [][]string{
+		{"--distribution", "Ubuntu 24.04", "--exec", "gh", "issue", "list", "--repo", "acme/app", "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,author"},
+		{"--distribution", "Ubuntu 24.04", "--exec", "gh", "pr", "list", "--repo", "acme/app", "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,reviewDecision,statusCheckRollup,closingIssuesReferences"},
+		{"--distribution", "Ubuntu 24.04", "--exec", "gh", "project", "item-list", "2", "--owner", "acme", "--format", "json", "--limit", "100"},
+	}
+	if len(fake.calls) != len(want) { t.Fatalf("calls=%d want=%d", len(fake.calls), len(want)) }
+	for index := range want {
+		if strings.Join(fake.calls[index], "|") != strings.Join(want[index], "|") { t.Fatalf("call %d=%q want=%q", index, fake.calls[index], want[index]) }
+	}
+}
+
+func TestGitHubMonitorDoesNotInferClosingRelationFromBodyURL(t *testing.T) {
+	issue := map[string]any{"number": 1, "title": "Issue", "url": "https://github.com/acme/app/issues/1", "state": "OPEN", "body": "See https://github.com/acme/app/pull/99"}
+	fake := &ghFakeRunner{fn: func(args []string) (runner.Result, error) {
+		if strings.Contains(strings.Join(args, " "), "issue list") { return runner.Result{Stdout: jsonOutput([]any{issue})}, nil }
+		return runner.Result{Stdout: jsonOutput([]any{map[string]any{"number": 99, "title": "PR", "url": "https://github.com/acme/app/pull/99", "state": "OPEN", "closingIssuesReferences": []any{}}})}, nil
+	}}
+	snapshot, _ := NewGitHubMonitor(map[string]string{"THREADDOCK_REPOS": "acme/app", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, fake, time.Second).FetchAll(context.Background())
+	work := snapshot.Projects[0].WorkItems[0]
+	if len(work.GitHub.RelatedPullRequestURLs) != 0 || len(work.Links) != 2 { t.Fatalf("work=%#v", work) }
+}
+
+func TestGitHubMonitorBoardFailurePreservesRepositoryWithDeterministicBarrier(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	fake := &ghFakeRunner{fn: func(args []string) (runner.Result, error) {
+		if strings.Contains(strings.Join(args, " "), "project item-list") { return runner.Result{ExitCode: 7}, errors.New("board down") }
+		if strings.Contains(strings.Join(args, " "), "issue list") { close(started); <-release; return runner.Result{Stdout: jsonOutput([]any{issueFixture})}, nil }
+		return runner.Result{Stdout: `[]`}, nil
+	}}
+	monitor := NewGitHubMonitor(map[string]string{"THREADDOCK_REPOS": "acme/app", "THREADDOCK_PROJECTS": "https://github.com/users/acme/projects/2", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, fake, time.Second)
+	first := make(chan Snapshot, 1)
+	go func() { snapshot, _ := monitor.FetchAll(context.Background()); first <- snapshot }()
+	select { case <-started: case <-time.After(time.Second): t.Fatal("aggregate did not reach repository read") }
+	second := make(chan Snapshot, 1)
+	go func() { snapshot, _ := monitor.FetchAll(context.Background()); second <- snapshot }()
+	close(release)
+	a, b := <-first, <-second
+	if a.Revision != b.Revision || len(a.Projects[0].WorkItems) != 1 || a.Projects[1].SyncStatus != "degraded" { t.Fatalf("a=%#v b=%#v", a, b) }
 }
 
 func TestGitHubMonitorMapsRepositoryAndProjectItemsWithoutIssueNumberCollisions(t *testing.T) {

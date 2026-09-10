@@ -190,8 +190,8 @@ func (m *GitHubMonitor) fetchRepository(repo repositoryTarget, notices *[]string
 	key := repo.owner + "/" + repo.repo
 	issueArgs := []string{"gh", "issue", "list", "--repo", key, "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,author"}
 	prArgs := []string{"gh", "pr", "list", "--repo", key, "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,reviewDecision,statusCheckRollup,closingIssuesReferences"}
-	issues := m.readSource(key+" issues", issueArgs, func(data []byte) (any, error) { var value []rawIssue; err := json.Unmarshal(data, &value); return value, err }, notices)
-	prs := m.readSource(key+" prs", prArgs, func(data []byte) (any, error) { var value []rawPullRequest; err := json.Unmarshal(data, &value); return value, err }, notices)
+	issues := m.readSource(key+" issues", issueArgs, decodeIssueRows, notices)
+	prs := m.readSource(key+" prs", prArgs, decodePullRequestRows, notices)
 	issueRows, _ := issues.data.([]rawIssue); prRows, _ := prs.data.([]rawPullRequest)
 	prsByIssue := map[string][]string{}
 	for _, pr := range prRows {
@@ -219,6 +219,7 @@ func (m *GitHubMonitor) fetchProject(board projectTarget, notices *[]string) Pro
 		var value map[string]any
 		if err := json.Unmarshal(data, &value); err != nil { return nil, err }
 		items, ok := value["items"].([]any); if !ok { return nil, errors.New("invalid project items") }
+		if err := validateProjectItems(items); err != nil { return nil, err }
 		return projectPayload{totalCount: numberValue(value["totalCount"]), items: items}, nil
 	}, notices)
 	payload, _ := result.data.(projectPayload)
@@ -260,6 +261,88 @@ type rawAuthor struct { Login string `json:"login"` }
 type rawPullRequest struct { Number *int `json:"number"`; Title, URL, State, Body, UpdatedAt, ReviewDecision string; StatusCheckRollup []map[string]any `json:"statusCheckRollup"`; ClosingIssuesReferences []rawURL `json:"closingIssuesReferences"` }
 type rawURL struct { URL string `json:"url"` }
 type projectPayload struct { totalCount int; items []any }
+
+func decodeIssueRows(data []byte) (any, error) {
+	var rows []rawIssue
+	if err := json.Unmarshal(data, &rows); err != nil { return nil, err }
+	var shapes []map[string]json.RawMessage
+	if err := json.Unmarshal(data, &shapes); err != nil { return nil, err }
+	if len(rows) != len(shapes) { return nil, errors.New("invalid issue shape") }
+	for _, shape := range shapes {
+		if !requiredJSONNumber(shape, "number") || !requiredJSONString(shape, "title") || !requiredJSONString(shape, "url") || !requiredJSONString(shape, "state") { return nil, errors.New("invalid issue shape") }
+		if err := optionalJSONText(shape, "body"); err != nil { return nil, err }
+		if err := optionalJSONObject(shape, "author"); err != nil { return nil, err }
+	}
+	return rows, nil
+}
+
+func decodePullRequestRows(data []byte) (any, error) {
+	var rows []rawPullRequest
+	if err := json.Unmarshal(data, &rows); err != nil { return nil, err }
+	var shapes []map[string]json.RawMessage
+	if err := json.Unmarshal(data, &shapes); err != nil { return nil, err }
+	if len(rows) != len(shapes) { return nil, errors.New("invalid pull request shape") }
+	for _, shape := range shapes {
+		if !requiredJSONNumber(shape, "number") || !requiredJSONString(shape, "title") || !requiredJSONString(shape, "url") || !requiredJSONString(shape, "state") { return nil, errors.New("invalid pull request shape") }
+		if err := optionalJSONText(shape, "body"); err != nil { return nil, err }
+		if err := optionalJSONArrayObjects(shape, "statusCheckRollup"); err != nil { return nil, err }
+		if err := optionalJSONArrayObjects(shape, "closingIssuesReferences"); err != nil { return nil, err }
+		if raw, ok := shape["closingIssuesReferences"]; ok && string(raw) != "null" {
+			var references []map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &references); err != nil { return nil, err }
+			for _, reference := range references { if !requiredJSONString(reference, "url") { return nil, errors.New("invalid closing issue shape") } }
+		}
+	}
+	return rows, nil
+}
+
+func requiredJSONNumber(object map[string]json.RawMessage, key string) bool {
+	raw, ok := object[key]; if !ok || string(raw) == "null" { return false }
+	var number int
+	return json.Unmarshal(raw, &number) == nil
+}
+
+func requiredJSONString(object map[string]json.RawMessage, key string) bool {
+	raw, ok := object[key]; if !ok || string(raw) == "null" { return false }
+	var value string
+	return json.Unmarshal(raw, &value) == nil && strings.TrimSpace(value) != ""
+}
+
+func optionalJSONText(object map[string]json.RawMessage, key string) error {
+	raw, ok := object[key]; if !ok || string(raw) == "null" { return nil }
+	var value string
+	if json.Unmarshal(raw, &value) != nil { return errors.New("invalid text field shape") }
+	return nil
+}
+
+func optionalJSONObject(object map[string]json.RawMessage, key string) error {
+	raw, ok := object[key]; if !ok || string(raw) == "null" { return nil }
+	var value map[string]json.RawMessage
+	if json.Unmarshal(raw, &value) != nil { return errors.New("invalid object field shape") }
+	return nil
+}
+
+func optionalJSONArrayObjects(object map[string]json.RawMessage, key string) error {
+	raw, ok := object[key]; if !ok || string(raw) == "null" { return nil }
+	var values []map[string]json.RawMessage
+	if json.Unmarshal(raw, &values) != nil { return errors.New("invalid array field shape") }
+	for _, value := range values { if value == nil { return errors.New("invalid array item shape") } }
+	return nil
+}
+
+func validateProjectItems(items []any) error {
+	for _, raw := range items {
+		item, ok := raw.(map[string]any); if !ok { return errors.New("invalid project item shape") }
+		if content, exists := item["content"]; exists && content != nil { if _, ok := content.(map[string]any); !ok { return errors.New("invalid project content shape") } }
+		values, exists := item["fieldValues"]; if !exists || values == nil { continue }
+		rows, ok := values.([]any); if !ok { return errors.New("invalid project field values shape") }
+		for _, value := range rows {
+			field, ok := value.(map[string]any); if !ok { return errors.New("invalid project field shape") }
+			if nested, exists := field["field"]; exists { if nested == nil { return errors.New("invalid project field definition") }; if _, ok := nested.(map[string]any); !ok { return errors.New("invalid project field definition") } }
+		}
+	}
+	return nil
+}
 
 func mapIssue(repo string, issue rawIssue, source sourceRead, related []string) WorkItem {
 	url := safeGitHubURL(issue.URL); github := &GitHubWork{Kind: "issue", Number: issue.Number, URL: url, State: issue.State, RelatedIssueURLs: []string{}, RelatedPullRequestURLs: uniqueStrings(related), Checks: []GitHubCheck{}, Fields: map[string]string{}, ContentAvailable: true, Author: issue.Author.Login, ObservedAt: source.observedAtPtr(), Stale: source.stale}
@@ -312,7 +395,17 @@ func projectFieldValue(value any) string {
 }
 
 func joinObjectValues(values []any, keys ...string) string { parts := []string{}; for _, value := range values { object, _ := value.(map[string]any); for _, key := range keys { if text := textValue(object[key]); text != "" { parts = append(parts, text); break } } }; return strings.Join(parts, ", ") }
-func fieldPath(object map[string]any, path ...string) any { var value any = object; for _, key := range path { next, ok := value.(map[string]any)[key]; if !ok { return nil }; value = next }; return value }
+func fieldPath(object map[string]any, path ...string) any {
+	var value any = object
+	for _, key := range path {
+		current, ok := value.(map[string]any)
+		if !ok || current == nil { return nil }
+		next, ok := current[key]
+		if !ok { return nil }
+		value = next
+	}
+	return value
+}
 func mapChecks(values []map[string]any) []GitHubCheck { result := []GitHubCheck{}; for _, value := range values { name := firstText(value, "name", "context", "workflowName"); if name == "" { name = "check" }; result = append(result, GitHubCheck{Name: name, Status: firstText(value, "status", "state"), Conclusion: firstText(value, "conclusion", "state"), URL: safeGitHubURL(firstText(value, "detailsUrl", "targetUrl"))}) }; return result }
 func repositoryLinks(owner, repo string) []Link { base := "https://github.com/"+owner+"/"+repo; return []Link{{Kind: "github", Label: "Issues", URL: base+"/issues"}, {Kind: "github", Label: "PRs", URL: base+"/pulls"}, {Kind: "github", Label: "Wiki", URL: base+"/wiki"}} }
 func bodyURLs(value string) []string { result := []string{}; seen := map[string]bool{}; for _, match := range bodyURLPattern.FindAllString(value, -1) { match = strings.TrimRight(match, ".,;:!?" ); if safe := safeGitHubURL(match); safe != "" && !seen[safe] { seen[safe] = true; result = append(result, safe) } }; return result }
