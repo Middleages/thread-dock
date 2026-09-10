@@ -1,23 +1,11 @@
 ---
 name: implement-task
-description: Use when implementing one approved Task within its assigned repository paths.
+description: Use when a Builder must implement one approved Contract v2 Task in a bounded Worktree with workspace-write access.
 ---
 
 # Implement task
 
-1. Load the approved contract and select one Task. Confirm its allowed paths, protected paths, acceptance criteria, dependencies, and verification. Completion: every intended edit belongs to that Task.
-2. Inspect the assigned Worktree for unrelated or dirty changes and preserve them. Implement the smallest in-scope solution, with a failing focused test before production behavior changes. Completion: no edit crosses the Task boundary.
-3. Run the Task verification and required repository checks. Commit the verified change with Korean context. Completion: the commit SHA is available.
-4. Return this result schema:
-
-   ```text
-   task_id: <Task ID>
-   status: complete | blocked
-   changed_paths: <paths or none>
-   checks: <command: result>
-   commit_sha: <SHA or none>
-   remaining_risk: <risk or none>
-   blocker: <reason or none>
-   ```
-
-   If no in-scope solution exists, stop without widening scope and return `status: blocked` with the reason and `commit_sha: none`. Completion: all seven fields are present.
+1. Accept only the exact Builder `Invocation` packet. Confirm `requestId`, `role: builder`, `profileId` (the fixed logical profile), canonical Worktree (`worktree`) path, bounded `packet` (`taskId`, `allowedPaths`, acceptance criteria, dependencies, verification), output schema (`outputSchema`), `readOnly: false`, and `workspace-write` intent. Reject a missing, stale, or mismatched identity.
+2. Inspect the assigned Worktree for unrelated or dirty changes and preserve them. Write only paths in the Task's `allowedPaths`; never widen scope or touch protected/unassigned paths. For production behavior changes where an in-scope test applies, use TDD: add a focused failing test, observe the expected RED failure, make the smallest change, then run focused self-checks. For docs/config-only or test-inapplicable Tasks, use the exact packet-approved focused document/config validation or existing verification as self-check claims, without inventing a failing test or widening `allowedPaths`.
+3. Return one strict `Artifact` envelope containing `requestId`, `role`, `status` (`success` or `failure`), and `result` as a bounded typed Builder result. Report only focused TDD/self-check claims (the result's `verification` entries and any `commitSha` are claims). Go owns path checks, staging, commit, Git integrity, and authoritative verification; the Builder does not stage or commit and does not promote its checks to a Task Gate.
+4. Emit no prose or legacy fields (`task_id`, `changed_paths`, `checks`, `commit_sha`). On an implementation blocker, return the same envelope with a failure status and bounded diagnostic; preserve edits and the exact blocker for Go to reconcile.
