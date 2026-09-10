@@ -7,7 +7,7 @@
 - 통합 worktree `/home/appuser/dev_system/.worktrees/engine-retirement-slice3`, branch `agent/engine-retirement-slice3`.
 - 중단된 `.worktrees/codex-runtime`의 cmd/agentctl main.go/main_test.go 및 internal/config config.go/config_test.go는 기존 modified 상태로 보존한다. 기존 worktree·Windows staging도 삭제하지 않는다.
 - root는 계약·문서·GitHub·통합, Sol medium은 조사, Luna high는 코드/테스트, fresh Sol medium은 독립 리뷰를 맡는다. 실제 runtime identity는 unverified, 자동 승격 없음.
-- 구현 상한 3개 중 이번 Luna 1개만 예약한다. reviewer 슬롯은 확보한다.
+- 구현 상한 3개 중 예약한 Luna 1개는 Task 리뷰 완료 후 해제했다. reviewer 슬롯은 확보한다.
 
 ## 조사 Task packet
 
@@ -53,4 +53,5 @@ worker full suite는 금지하며 root의 마지막 `make check`만 한 번 수�
 - GitHub 세 파일에서 승인된 API/테스트/assertion/import 110줄만 제거했다. 새 테스트나 동작 이동은 없다.
 - `/dev/shm/thread-dock-engine-retirement-safe-draft.mHjhhh` TMPDIR과 명시한 Go 1.27.0 경로에서 `go test ./internal/github`(0.151초), focused vet, go list, 참조/whitespace 검사를 통과했다.
 - 최초 bare `go` 명령은 PATH에 없어 exit 127이었다. 이 실행은 성공 근거가 아니며 명시한 toolchain으로 수행한 결과를 채택한다.
-- fresh Sol Task 리뷰는 위 고정 head에서 진행 중이며 아직 통합 gate/전체 리뷰 완료를 주장하지 않는다.
+- fresh Sol은 `fea410c6c2e7b6a57b7ff8b119690a5ab677efcd`에서 spec/quality 모두 ACCEPT했다. blocking finding과 수정 요구 없음. 정의·전용 테스트·assertion/import 제거와 사용 중인 shared 기능 보존을 독립 확인했다.
+- Task는 완료했으며 아래 통합 gate·전체 리뷰는 별도 단계다. 제품 테스트를 옛 SHA에서 다시 실행하지 않는다.
