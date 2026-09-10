@@ -2,7 +2,7 @@
 
 여러 프로젝트의 요청, 결정, 구현, 검증과 문서를 Git/GitHub에 연결하고,
 어느 프로젝트로 돌아와도 현재 상태와 다음 행동을 회수하는 개발 운영 문맥이다.
-현재 제품 정책은 [Project Workflow MVP 설계](docs/superpowers/specs/2026-09-07-project-workflow-mvp-design.md)를 따른다.
+현재 제품 정책은 [Herdr-first 첫 사용 설계](docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md)를 따른다.
 이 용어 모델은 새 MVP의 기준이며 기존 Go 코드의 v1 타입과 일대일 대응하지 않는다.
 
 ## 사람과 업무
@@ -89,13 +89,53 @@ _Avoid_: transcript, token·secret, polling마다 생성하는 comment
 
 ## 실행과 역할
 
+**Herdr Session**:
+재접속해도 유지되는 하나의 대화형 terminal 환경이며 Herdr Workspace·Tab·Pane의 최상위 묶음이다.
+_Avoid_: ThreadDock Project, Work Item, Agent 대화 하나
+
+**Herdr Workspace**:
+하나의 작업 directory 또는 Git Worktree를 중심으로 Tab과 Pane을 묶는 Herdr의 공간이다.
+_Avoid_: ThreadDock Project, Repository, 운영자 전체 작업 공간
+
+**Herdr Tab**:
+한 Herdr Workspace 안에서 관련 Pane을 시각적으로 묶는 전환 단위다.
+_Avoid_: 브라우저 탭, Work Item, Agent Session
+
+**Herdr Pane**:
+shell이나 하나의 Top-level Agent가 점유하는 Herdr의 terminal 자리다.
+_Avoid_: Task, Internal Subagent, transcript
+
+**Top-level Agent**:
+Operator가 Herdr Pane에서 직접 시작하거나 다시 연결해 대화하는 Codex/OpenCode 세션이다.
+자기 작업을 위한 Internal Subagent의 생성·조정·종료를 소유한다.
+_Avoid_: Main Agent, Builder 호출, Herdr Pane 자체
+
+**Internal Subagent**:
+Top-level Agent가 자신의 native agent 기능으로 제한된 하위 작업에 배정하는 내부 실행자다.
+ThreadDock은 개별 생명주기를 소유하거나 모두 표시하지 않고 요약 근거만 연결한다.
+_Avoid_: 별도 Herdr Session, ThreadDock Task와의 필수 일대일 대응
+
+**Live Session Observation**:
+Herdr에서 읽은 Session·Workspace·Tab·Pane과 Top-level Agent의 시점성 상태다.
+GitHub 업무 상태를 대체하지 않으며 읽지 못하면 마지막 관찰 시각과 오류 상태를 유지한다.
+_Avoid_: 업무 완료 근거, 영속 실행 원장
+
+**ThreadDock Work Evidence**:
+Work Item의 목적·결정·Issue·PR·검증·문서·handoff를 GitHub 링크와 로컬 receipt로 연결한 영속 근거다.
+_Avoid_: terminal transcript, Herdr topology, Agent의 진행률 추정
+
+**Work Session Binding**:
+Work Item의 Repository와 승인된 canonical Git Worktree를 live Herdr Workspace·Pane에 정확히 연결한 관계다.
+label이나 최근 focus로 추정하지 않는다. exact Workspace 0개는 missing, 유일한 Workspace에 Top-level Agent가 없으면 ended, Workspace나 Agent 후보가 둘 이상이면 conflict다.
+_Avoid_: Herdr Workspace 이름, 현재 선택된 Pane, fuzzy path match
+
 **Repository Run**:
-한 Work Item이 한 Repository에서 진행하는 변경 실행. Task Worktree와 Integration Branch를 소유한다.
+한 Work Item이 한 Repository에서 진행한 변경·검증·PR 근거의 묶음이다.
 _Avoid_: Work Item 전체, 영속 모델 대화
 
 **Agent Invocation**:
-한 역할 packet을 한 번 실행해 구조화된 Artifact를 반환하는 호출.
-재시도는 새 requestId를 가진다. Codex 호출은 ephemeral이다.
+선택적인 ThreadDock 실행 adapter가 한 역할 packet을 한 번 실행해 구조화된 Artifact를 반환한 기록이다.
+Herdr Session이나 Top-level Agent의 기본 생명주기를 뜻하지 않는다.
 _Avoid_: Task, Work Item, 영구 대화 세션
 
 **Execution Profile**:
@@ -103,17 +143,13 @@ _Avoid_: Task, Work Item, 영구 대화 세션
 _Avoid_: 모델 이름, agent identity
 
 **Agent Runtime**:
-Invocation을 실행하고 결과·취소·종료를 처리하는 adapter. Codex와 OpenCode가 같은 역할 계약을 구현한다.
-_Avoid_: Orchestrator, 모델
-
-**Main Agent**:
-사용자와 인터뷰하고 결정·handoff를 기록하며 Planner와 Go 명령을 호출하는 대화 역할.
-승인된 범위에서 publication 명령을 호출할 수 있는 유일한 Agent 역할이다.
-대화가 닫혀도 Go Publisher는 승인된 단계 전환과 발행 재시도를 계속할 수 있다.
+선택적인 Agent Invocation을 실행하고 구조화 결과를 evidence module에 돌려주는 adapter.
+Herdr Session이나 Top-level Agent의 지속성과 native Internal Subagent를 관리하지 않는다.
+_Avoid_: Herdr, Orchestrator, 모델
 
 **Go Publisher**:
 승인된 계약·대상·검토 결과를 확인하고 GitHub/Wiki 쓰기 및 receipt를 소유하는 Go 구성 요소.
-Main Agent 요청과 background coordinator 요청에 같은 검증·멱등성 규칙을 적용한다.
+Top-level Agent나 Operator의 명시적 요청에 같은 검증·멱등성 규칙을 적용하는 선택적 evidence module이다.
 _Avoid_: 별도 의사결정 Agent, 무제한 GitHub 쓰기 권한
 _Avoid_: 상태 JSON 직접 편집자, GitHub 자동 병합 Agent
 
@@ -130,12 +166,12 @@ Scout의 질문 범위에 해당하는 탐색 Artifact.
 _Avoid_: 전체 코드베이스 요약, 승인된 실행 계획
 
 **Builder**:
-할당 Worktree의 허용 경로를 수정하는 역할. 변경의 commit·통합과 authoritative 검증은 Go가 소유한다.
+Top-level Agent가 native subagent로 할당할 수 있는 구현 역할이다. 허용 경로와 검증 근거를 지킨다.
 _Avoid_: GitHub writer, default branch merger
 
 **Reviewer**:
-Builder 대화 없이 고정된 SHA·diff·조건·검증 근거를 읽고 accept/block을 반환하는 fresh 읽기 전용 역할.
-Task 리뷰와 최종 전체 업무 리뷰에 사용한다.
+Builder 대화 없이 고정된 SHA·diff·조건·검증 근거를 읽고 accept/block을 반환하는 fresh 역할이다.
+Top-level Agent의 native subagent 또는 선택적 adapter가 수행할 수 있다.
 _Avoid_: Builder 자기평가, 사용자 승인자
 
 **Documenter**:
@@ -143,16 +179,18 @@ _Avoid_: Builder 자기평가, 사용자 승인자
 _Avoid_: Publisher, 전체 대화 요약기
 
 **Orchestrator / Local Orchestrator**:
-WSL에서 계약, DAG, Git, 실제 검증, 실행 한도와 상태 전이를 결정적으로 관리하는 Go 모듈.
-_Avoid_: Planner, Main Agent, Monitor
+기존 Go 코드에서 계약, DAG, Git, 검증과 상태 전이를 관리하는 선택적 evidence module.
+Herdr Session·Pane·Top-level Agent·Internal Subagent의 생명주기 소유자가 아니다.
+_Avoid_: Herdr, Top-level Agent, Monitor
 
 **Conversation Interface**:
-기존 Codex/OpenCode 등 Main Agent 대화에서 요청·승인·범위 변경을 처리하는 interface.
+Herdr Pane의 Top-level Agent 대화에서 요청·승인·범위 변경을 처리하는 interface.
 _Avoid_: Monitor의 새 채팅 제품
 
 **Orchestrator CLI**:
-Main Agent, Monitor와 사람이 동일한 구조화된 명령으로 상태를 읽고 작업을 제어하는 interface.
-_Avoid_: 상태 파일 직접 수정, raw terminal protocol
+Top-level Agent, Monitor와 사람이 ThreadDock Work Evidence를 읽거나 명시적으로 발행하는 interface.
+Herdr topology 제어는 Herdr CLI와 project skill에 맡긴다.
+_Avoid_: Herdr 대체 제어면, 상태 파일 직접 수정, raw terminal protocol
 
 ## 검증·병합·완료
 
@@ -220,8 +258,9 @@ _Avoid_: 최초 구현, Recovery Attempt
 _Avoid_: 코드 결함 수정, 무제한 continuation
 
 **Work Resume**:
-저장된 계약·Git·검증·handoff를 확인해 완료 Task를 반복하지 않고 미완료 작업을 이어가는 행위.
-_Avoid_: 항상 같은 모델 세션 복원, 처음부터 재실행
+Work Evidence, Work Session Binding과 최신 handoff를 확인해 완료 Task를 반복하지 않고 Herdr에서 미완료 작업을 이어가는 행위.
+기존 Top-level Agent는 focus/attach하거나 명시적으로 handoff를 전달하고, 없거나 끝났으면 승인된 Worktree에서 새 Top-level Agent를 연다.
+_Avoid_: 항상 같은 모델 세션 복원, 처음부터 재실행, blind prompt retry
 
 **Needs Operator**:
 반복 실패, 범위 변경, 충돌 또는 불명확한 실행 정체성으로 사람의 조치가 필요한 상태.
@@ -229,8 +268,9 @@ _Avoid_: 항상 같은 모델 세션 복원, 처음부터 재실행
 _Avoid_: 모든 일시적 실패, 전체 업무 삭제
 
 **ThreadDock Monitor**:
-여러 Project의 목적·최근 완료·현재 상태·결정·다음 행동·freshness와 GitHub 링크를 보여주는 Windows 화면.
-pause/resume/retry는 같은 Go 명령을 사용하고 PR 병합은 GitHub에서 수행한다.
+여러 Project의 GitHub 중심 Work Evidence와 Herdr Live Session Observation을 함께 보여주는 Windows 화면.
+업무 기록 상태와 로컬 실행 상태를 분리하고 exact Work Session Binding으로 연결한다.
+Session·Pane 열기/초점·attach·handoff 전달 같은 승인된 얇은 행동만 Herdr skill에 위임하고 PR 병합은 GitHub에서 수행한다.
 _Avoid_: 원본 상태 저장소, 새 채팅 제품, production 배포 콘솔
 
 **Trusted Workstation**:

@@ -1,5 +1,7 @@
 # Project Workflow MVP Design
 
+> 2026-09-10 실행 topology 소유권은 [Herdr-first 첫 사용 설계](2026-09-10-herdr-first-usable-workflow-design.md)와 [ADR 0007](../../adr/0007-herdr-owns-interactive-execution-topology.md)이 대체한다. 이 문서의 GitHub 중심 Work Evidence, 검증·발행 원칙은 유지하되 ThreadDock Go coordinator를 Session·Agent lifecycle owner로 해석하지 않는다.
+
 ## 상태와 기준선
 
 2026-09-07 대화에서 사용자가 승인한 프로젝트 중심 방향을 정리한 설계다.
