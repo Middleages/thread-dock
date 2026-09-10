@@ -66,7 +66,9 @@ func TestGitHubMonitorRejectsMalformedRowsAndRetainsIssueCache(t *testing.T) {
 		}
 		if strings.Contains(strings.Join(args, " "), "pr list") {
 			if malformed { return runner.Result{Stdout: `[{}]`}, nil }
-			return runner.Result{Stdout: jsonOutput([]any{map[string]any{"number": 2, "title": "PR", "url": "https://github.com/acme/app/pull/2", "state": "OPEN", "closingIssuesReferences": []any{}, "statusCheckRollup": []any{}})}, nil
+			return runner.Result{Stdout: jsonOutput([]any{
+				map[string]any{"number": 2, "title": "PR", "url": "https://github.com/acme/app/pull/2", "state": "OPEN", "closingIssuesReferences": []any{}, "statusCheckRollup": []any{}},
+			}), nil
 		}
 		return runner.Result{Stdout: `[]`}, nil
 	}}
