@@ -115,3 +115,21 @@ code commit 이후 보고서/문서만 바뀌어 CLI/cmd 테스트는 반복하�
 root 통합 commit은 `88ecd02` → `acb45ef` → `c5158e3` → `efa0db2`이며,
 fresh Sol이 수정 head에서 spec/quality 모두 ACCEPT했다. 이전 BLOCK 두 건은 해소됐고 새 finding은 없다.
 이전 BLOCK을 성공으로 소급 기록하지 않는다. Task 완료이며 최종 통합 gate와 전체 리뷰는 다음 단계다.
+
+## 통합 검증
+
+고정 통합 SHA `be4b44b550cb40ad611959b0536f6a9700d62343`에서 다음 명령을 한 번 실행했다.
+
+```sh
+TMPDIR=/dev/shm/threaddock-slice2-gate.6A3az3 PATH=/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin:$PATH make check
+```
+
+exit 0. gofmt 검사·pilot shell syntax·전체 Go vet/test·UI 2 files/26 tests·frontend build가 통과했다.
+대표 package 시간은 cli 0.028초, cmd/agentctl 0.088초, orchestrator 1.500초, pilot 6.648초,
+Monitor 0.021초다. 이전 tmpfs 근거에 따라 처음부터 임시 fixture를 분리했으며 이번 full gate 재실행은 없다.
+로그는 통합 worktree의 `.superpowers/sdd/2026-09-11-engine-retirement-create-revert/make-check-be4b44b.log`에
+있는 비추적 로컬 증거다. frontend build가 제거한 tracked `.placeholder`는 원본 바이트로 복원했고
+`git diff --exit-code`로 검사한 tree와 일치함을 확인했다.
+
+변경된 Markdown 7파일의 상대 링크 17개 검사도 통과했다. 이후 gate 결과 기록은 docs-only이므로
+제품 테스트를 반복하지 않는다. 전체 branch의 fresh Sol 리뷰는 아직 pending이며 완료로 표시하지 않는다.
