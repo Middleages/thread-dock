@@ -28,5 +28,8 @@ GitHub 중심 업무 기록과 Herdr 실행 소유권은 유지한다.
 ADR 0007의 Herdr 소유권과 Go/Wails 제품 형태는 유지한다.
 ADR 0002의 Windows/WSL 경계는 유지하고 agentctl aggregate/coordinator 의존 부분은 대체한다.
 PR #69의 브라우저 전용 실행 결정과 그 착수 프롬프트는 폐기한다.
-실제 코드 이식·삭제는 [현재 계획](../superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)에서 수행한다.
-이번 정정은 문서만 변경하며 사용자 호스트의 미커밋 실험은 보존한다.
+후속 구현은 [현재 계획](../superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)에 따라
+GitHub·Herdr 조회를 Go/Wails로 이식하고 별도 Node/Vite 조회 경로를 제거했다. PR #69의 최종 head
+`f35e248`은 main의 merge commit `3f4bebf`로 병합됐다. 옛 Go 실행 엔진은 새 Monitor가 실제로
+사용하는 runner·경로·링크 기능을 먼저 식별한 뒤 작은 slice로 정리한다.
+사용자 호스트의 미커밋 실험은 계속 보존한다.

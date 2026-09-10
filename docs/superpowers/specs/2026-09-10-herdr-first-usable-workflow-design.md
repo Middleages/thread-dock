@@ -29,7 +29,7 @@ Go는 메모리 캐시와 마지막 성공 조회 시각을 관리한다. 영구
 
 기존 Windows/WSL 경계는 유지한다. Windows Go 백엔드에서 명시적으로 설정한 WSL 배포판의
 `gh`·`herdr` 읽기 명령을 인자 배열로 실행하고 결과를 Go에서 해석한다.
-기존 `internal/runner`와 `internal/monitorcli`의 프로세스 호출·timeout 패턴 중 필요한 부분만 재사용한다.
+현재 Monitor는 `internal/runner`를 직접 사용한다. 옛 `internal/monitorcli` bridge는 Monitor가 참조하지 않는 후속 정리 대상이다.
 기존 `agentctl project status`와 로컬 Work store를 새 데이터 공급자로 사용하지 않는다.
 별도 Node 서버, HTTP bridge, 상주 daemon, 새 작업 실행 CLI를 만들지 않는다.
 
@@ -100,8 +100,13 @@ Node 구현의 유효한 데이터 매핑·연결 회귀 사례는 Go 테스트�
 
 ## 현재 상태와 완료 조건
 
-PR #69의 기존 Node/Vite 경로는 방향이 잘못된 구현이며 아직 Go/Wails 경로로 교체되지 않았다.
-이번 변경은 설계·계획·지침 정정뿐이다. 제품 코드 제거·이식 완료를 주장하지 않는다.
-Go/Wails 앱에서 실제 GitHub 업무와 Herdr 세션을 함께 보고 handoff로 돌아가는 동작을 확인해야 한다.
-중앙이 독립 기능 둘을 나누고 각 세션이 구현·리뷰·PR·GitHub 기록까지 이어가는 사용 검증도 남아 있다.
-Go focused 테스트, UI 테스트, Windows Wails 빌드·실행, live gh/Herdr 결과를 구분해 기록한다.
+PR #69의 최종 head `f35e248`에서 GitHub·Herdr 조회를 Go/Wails 경로로 옮기고 기존 Node/Vite
+조회 경로를 제거했으며, main의 merge commit `3f4bebf`로 병합됐다. reviewed SHA `325db89`에서
+Linux `make check`, 표준 Windows Wails build와 healthy native 실행을 확인했다. healthy 실행은
+GitHub 69개 업무, Herdr 기본 session과 Agent 3개, handoff clipboard 188자, 초록 점과
+`로컬 연결 정상`의 일치를 확인한 범위다.
+
+native 오류/degraded 상태는 fixture/UI 테스트만 있고 실제 Windows 오류 재현 근거는 없다.
+중앙이 독립 기능 둘을 나누고 각 세션이 구현·리뷰·PR·Issue·Projects 기록까지 이어가는 사용 검증도
+남아 있다. Go focused 테스트, UI 테스트, Windows Wails 빌드·실행, live gh/Herdr 결과를 계속
+구분해 기록한다.
