@@ -84,3 +84,9 @@ None for the assigned Task. Windows verification remains a concern for the coord
 - GREEN affected command: `npm --prefix monitor/frontend test -- src/bindings.test.ts src/monitor.test.tsx` — exit 0, 2 files and 20 tests passed.
 - `make -n check` — exit 0 and shows the corrected UI command plus frontend build; `git diff --check` — exit 0. `make check`, full Go suite, and unrelated UI commands were not rerun.
 - Self-review: only the two Makefile UI command lines changed; Go checks, formatting scope, frontend build command, and deleted-server exclusions remain unchanged.
+
+## Final whole-branch review fix wave
+
+- Updated `HANDOFF.md` so the Linux integration `make check` pass at `97d5e71` is recorded and no fresh task review or full gate is requested. The only remaining next action is root-owned Windows Wails build/app plus the Wails Monitor process's Windows→WSL live read-path verification.
+- Restored the tracked `monitor/frontend/dist/.placeholder` without adding generated build assets.
+- Docs relative-link parse — exit 0; `git diff --check` — exit 0; `git status --short` — exit 0 with only the intended HANDOFF/report edits before commit. No product tests or `make check` were rerun.

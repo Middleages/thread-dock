@@ -20,8 +20,9 @@
 
 ## 다음 구현
 
-현재 계획 Task 1·2 구현과 Task 3 정리를 반영했다. 다음은 fresh task review 후 통합 `make check`를
-한 번 실행하고, Windows에서 설치된 Wails build/app과 Windows→WSL 읽기 접근을 별도로 확인하는 일이다.
+현재 계획 Task 1·2 구현과 Task 3 정리를 반영했다. Linux 통합 `make check`는 `97d5e71`에서 통과했다.
+다음이자 남은 검증은 root-owned Windows Wails build/app과 Wails Monitor 프로세스의 Windows→WSL
+live read path 확인뿐이다. Linux gate를 다시 실행하지 않는다.
 Vite는 화면 개발·빌드에 남긴다. Go를 없애거나 브라우저 제품으로 다시 전환하지 않는다.
 옛 엔진 대량 삭제는 필요한 모니터 의존성을 확인한 뒤 후속 정리한다.
 
@@ -47,13 +48,14 @@ AGENTS.md, HANDOFF.md, PRODUCT.md, CONTEXT.md, ADR 0008,
 제품은 Go/Wails 데스크톱 모니터와 기존 React 화면이다. 브라우저 전용으로 바꾸지 마.
 Go가 GitHub·Herdr 조회·결합을 담당하고, Herdr가 세션 실행을, Agent와 Skills가 개발·기록을 맡아.
 Task 1·2의 Go/Wails GitHub·Herdr 경로와 Task 3의 Node 경로 제거가 반영되어 있다.
-다음은 fresh review 후 통합 gate와 실제 Windows 앱 검증이다.
+Linux 통합 gate는 `97d5e71`에서 통과했으며, 다음은 실제 Windows 앱 검증이다.
 Windows→WSL Herdr 읽기 접근은 실제 설치 조건으로 확인하고 HERDR_ENV를 임의 설정하지 마.
 새 scheduler/runtime/Publisher나 로컬 Work 계약을 만들지 마.
 
 Sol medium이 작은 Task를 계획·분배하고 Luna high가 구현해.
 독립 작업만 worktree로 병렬화하고 고정 변경은 fresh Sol medium이 검토해.
-수정 범위 focused 테스트를 사용하고 마지막 통합 make check만 한 번 수행해.
-Windows Wails 빌드·앱 실행·실제 gh/Herdr와 fixture 결과를 구분해.
+수정 범위 focused 테스트를 사용해. Linux 통합 `make check`는 `97d5e71`에서 이미 통과했으므로
+재실행하지 마. root-owned Windows Wails 빌드·앱 실행과 Wails Monitor Windows→WSL live read path를
+component CLI 관찰 및 fixture 결과와 구분해.
 PR·Issue는 한국어로 작성하고 main 병합은 나에게 남겨.
 ~~~
