@@ -18,7 +18,7 @@
 ## Result
 
 - changedFiles: `HANDOFF.md`, `docs/operator/2026-09-10-engine-retirement-ledger.md`, 이 보고서
-- commitSHA: 근거 문서 `abfffd66005574826b76e485f7f1910aa250f48a`; 이 보고서는 다음 ledger
+- commitSHA: 근거 문서 `abfffd6663c35e9c5bceeab2b07b793a33614517`; 이 보고서는 다음 ledger
   commit에 포함한다.
 - executedCommands:
   - 통합 worktree의 두 비추적 gate log `ls`, `tail`, `rg`: 원본 실패·성공 출력 확인
