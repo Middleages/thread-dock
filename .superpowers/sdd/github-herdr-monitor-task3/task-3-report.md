@@ -66,3 +66,11 @@ None for the assigned Task. Windows verification remains a concern for the coord
 - Narrowed the README, HANDOFF, quickstart, and `unverified` report wording so the inherited transcript-free component observations remain evidence: `gh auth status` success, bare `wsl.exe --exec herdr` PATH failure, and absolute Herdr status/agent-list success.
 - The remaining unverified scope is exactly Windows Wails build/app execution plus the Wails Monitor process's Windows→WSL read path/live desktop integration.
 - Docs-only validation: relative-link parse and `git diff --check` passed; no product code or tests were changed or rerun.
+
+## Integration gate fix
+
+- Added the minimal README link `[OpenCode role-agent 운영 참고 (레거시 v1)](docs/operator/opencode-role-agents.md)` required by `internal/pilot.TestReadmeLinksOpenCodeRoleAgentRunbook`; this preserves the current Go/Wails product state and does not revive legacy runtime or UI claims.
+- Focused command `go test ./internal/pilot -run TestReadmeLinksOpenCodeRoleAgentRunbook` — exit 127: `go: command not found`. No supported Go executable was present at the checked local candidates, so this test result is unverified in the current environment and must not be reported as passing.
+- Docs relative-link parse and `git diff --check` — exit 0.
+- Self-review: only `README.md` and this report changed; the requested runbook link resolves, and no product code, tests, UI, or shared interface was modified.
+- Blocker/concern: the coordinator should rerun the single focused Go test in an environment with Go available before relying on the integration gate.

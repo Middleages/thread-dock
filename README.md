@@ -34,4 +34,5 @@ project-template/.agents/skills의 plan-work, open-agent-session, implement-task
 - [용어와 책임](CONTEXT.md)
 - [Go/Wails 진행 설계](docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md)
 - [구현 계획](docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)
+- [OpenCode role-agent 운영 참고 (레거시 v1)](docs/operator/opencode-role-agents.md)
 - [현재 상태와 Codex 착수 프롬프트](HANDOFF.md)
