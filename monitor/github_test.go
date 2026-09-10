@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +29,17 @@ func (f *ghFakeRunner) Run(_ context.Context, _ string, _ string, args ...string
 }
 
 func jsonOutput(value any) string { data, _ := json.Marshal(value); return string(data) }
+
+type enteredContext struct {
+	context.Context
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (c *enteredContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.entered) })
+	return c.Context.Done()
+}
 
 func TestGitHubMonitorValidatesSetupAndStoresOptionalSessionsPath(t *testing.T) {
 	monitor := NewGitHubMonitor(map[string]string{"THREADDOCK_REPOS": "acme/app", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu", "THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json"}, &ghFakeRunner{}, time.Second)
@@ -177,8 +189,14 @@ func TestGitHubMonitorBoardFailurePreservesRepositoryWithDeterministicBarrier(t 
 	case <-time.After(time.Second):
 		t.Fatal("aggregate did not reach repository read")
 	}
+	secondContext := &enteredContext{Context: context.Background(), entered: make(chan struct{})}
 	second := make(chan Snapshot, 1)
-	go func() { snapshot, _ := monitor.FetchAll(context.Background()); second <- snapshot }()
+	go func() { snapshot, _ := monitor.FetchAll(secondContext); second <- snapshot }()
+	select {
+	case <-secondContext.entered:
+	case <-time.After(time.Second):
+		t.Fatal("second FetchAll did not attach to the in-flight aggregate")
+	}
 	close(release)
 	a, b := <-first, <-second
 	if a.Revision != b.Revision || len(a.Projects[0].WorkItems) != 1 || a.Projects[1].SyncStatus != "degraded" {
@@ -228,12 +246,10 @@ func TestGitHubMonitorMapsRepositoryAndProjectItemsWithoutIssueNumberCollisions(
 	}
 }
 
-func TestGitHubMonitorRetainsSuccessfulSourcesAndCoalescesConcurrentFetches(t *testing.T) {
+func TestGitHubMonitorRetainsSuccessfulSourcesAfterFailure(t *testing.T) {
 	var now = time.Unix(1000, 0)
 	var failing bool
-	var calls int
 	fake := &ghFakeRunner{fn: func(args []string) (runner.Result, error) {
-		calls++
 		if failing {
 			return runner.Result{ExitCode: 7, Stderr: "private"}, errors.New("failed")
 		}
@@ -244,12 +260,9 @@ func TestGitHubMonitorRetainsSuccessfulSourcesAndCoalescesConcurrentFetches(t *t
 	}}
 	monitor := NewGitHubMonitor(map[string]string{"THREADDOCK_REPOS": "acme/app", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, fake, time.Second)
 	monitor.now = func() time.Time { return now }
-	first, second := make(chan Snapshot, 1), make(chan Snapshot, 1)
-	go func() { s, _ := monitor.FetchAll(context.Background()); first <- s }()
-	go func() { s, _ := monitor.FetchAll(context.Background()); second <- s }()
-	a, b := <-first, <-second
-	if calls != 2 || a.Revision != b.Revision {
-		t.Fatalf("calls=%d revisions=%d,%d", calls, a.Revision, b.Revision)
+	first, _ := monitor.FetchAll(context.Background())
+	if len(first.Projects[0].WorkItems) != 1 {
+		t.Fatalf("first=%#v", first)
 	}
 	now = now.Add(61 * time.Second)
 	failing = true
@@ -265,12 +278,21 @@ func TestGitHubMonitorRetainsSuccessfulSourcesAndCoalescesConcurrentFetches(t *t
 func TestGitHubMonitorEmitsLimitNoticeAndRejectsMalformedResponsesWithoutReplacingCache(t *testing.T) {
 	now := time.Unix(1000, 0)
 	malformed := false
+	issues := make([]any, 0, 100)
+	for number := 1; number <= 100; number++ {
+		issues = append(issues, map[string]any{
+			"number": number,
+			"title":  fmt.Sprintf("Issue %d", number),
+			"url":    fmt.Sprintf("https://github.com/acme/app/issues/%d", number),
+			"state":  "OPEN",
+		})
+	}
 	fake := &ghFakeRunner{fn: func(args []string) (runner.Result, error) {
 		if malformed {
 			return runner.Result{Stdout: `{`}, nil
 		}
 		if strings.Contains(strings.Join(args, " "), "issue list") {
-			return runner.Result{Stdout: jsonOutput(make([]any, 100))}, nil
+			return runner.Result{Stdout: jsonOutput(issues)}, nil
 		}
 		return runner.Result{Stdout: "[]"}, nil
 	}}
