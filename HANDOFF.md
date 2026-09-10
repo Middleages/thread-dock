@@ -42,7 +42,9 @@ GitHub safe-draft API 세 개와 전용 테스트를 정리한다. [계획](docs
 [ledger](docs/operator/2026-09-11-engine-retirement-slice3-ledger.md)에 정확한 경계와 검증 상태를 기록한다.
 사용 중인 DraftPR 요청 타입·크기 제한·PR 생성/조회 기능은 유지하고 worktree helper 정리는 후속으로 남긴다.
 Task는 `fea410c`에서 독립 리뷰 ACCEPT를 받았고 통합 `0325d41`의 단일 tmpfs `make check`는
-전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰와 PR 전달은 진행 중이다.
+전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰는
+`bc1959226b3abd88f21d9ba92863fcf5e7be937d`에서 ACCEPT했으며 남은 finding은 없다.
+PR은 `agent/engine-retirement-slice3`에서 전달하고 이번 main 병합은 사용자에게 남긴다.
 
 ## PR #72의 두 번째 정리 결과
 

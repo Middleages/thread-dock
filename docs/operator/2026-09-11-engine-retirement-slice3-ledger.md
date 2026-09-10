@@ -71,4 +71,19 @@ GitHub package 1.450초, orchestrator 1.219초, pilot 6.360초, Monitor 0.030초
 `git diff --exit-code`로 검사한 tree와 동일함을 확인했다.
 
 변경 Markdown 4파일의 상대 링크 15개도 통과했다. 이후 gate 결과 기록은 docs-only이며
-제품 검사를 반복하지 않는다. 전체 branch 리뷰는 아직 pending이다.
+제품 검사를 반복하지 않는다. 전체 branch 리뷰 결과는 아래와 같다.
+
+## 최종 리뷰·결과
+
+fresh Sol은 `bc1959226b3abd88f21d9ba92863fcf5e7be937d`에서 전체 통합 ACCEPT를 반환했다.
+blocking/non-blocking finding 없음. 코드 3파일/110줄 삭제, 승인된 API 경계와 남은 소비자,
+원본과 통합 patch 일치, 단일 gate 로그와 이후 docs-only 변경을 독립 확인했다.
+이 승인 결과의 후속 기록도 문서뿐이며 제품 tree는 gate SHA와 동일하다.
+
+- changedFiles: GitHub 코드 3파일, HANDOFF·plan·ledger·Task report 4파일, 총 7경로.
+- commitSHA: code `ea04779`, Task 리뷰 `fea410c`, 통합 gate `0325d41`, 전체 리뷰 `bc19592`.
+- executedCommands: Task report의 focused test/vet/list/ref/diff, root의 단일 tmpfs make check 및 링크/diff, GitHub 조회·Issue/Projects 기록.
+- outcomes: Task/전체 리뷰 ACCEPT, full gate PASS, PR #72 병합 및 Issue #71 완료, Issue #73에서 다음 작업 추적.
+- unverified: 기존 native Windows 오류·현재 보드의 native 실행·Herdr/Projects E2E·Wiki 페이지 발행·실제 runtime model/effort.
+- blockers: 없음. 이번 PR의 main 병합은 사용자에게 남긴다.
+- 다음 경계: worktree revert helper와 결합된 테스트를 별도 호출 inventory로 분리한다. 사용 중인 `CreateManagedWorktree`·`PushBranch`는 유지한다.

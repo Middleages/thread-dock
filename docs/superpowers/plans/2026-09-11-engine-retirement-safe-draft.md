@@ -52,6 +52,6 @@ worktree의 revert helper도 후속 후보지만 `AbortRevert` 테스트가 사�
 - [x] 삭제 전 참조를 확인하고 세 symbol 및 전용 테스트만 `apply_patch`로 제거했다.
 - [x] 기존 GitHub 테스트/vet와 참조·package·diff 검사를 통과하고 self-review 후 commit했다.
 - [x] fresh Sol이 `fea410c`에서 spec/quality 모두 ACCEPT했다. 수정 요구 없음.
-- [ ] root가 문서와 결합해 마지막 통합 gate 및 전체 리뷰 후 PR을 준비한다.
+- [x] root가 문서와 결합해 `0325d41`의 통합 gate와 `bc19592`의 전체 리뷰를 통과하고 PR을 준비했다.
 
 [진행 ledger](../../operator/2026-09-11-engine-retirement-slice3-ledger.md)에 검증 SHA·결과·GitHub 기록을 남긴다.
