@@ -1,7 +1,7 @@
 # GitHub와 Herdr로 바로 시작하기
 
 기능 개발은 기존 Agent의 Skill로 시작하고, 업무 현황은 Go/Wails 데스크톱 Monitor에서 확인한다.
-현재 PR #69의 화면 조회는 `GetMonitorSnapshot` Wails binding을 사용하며 Node HTTP 서버를 실행하지 않는다.
+main에 병합된 PR #69의 화면 조회는 `GetMonitorSnapshot` Wails binding을 사용하며 Node HTTP 서버를 실행하지 않는다.
 필요한 것은 대상 Git 저장소, GitHub에 접근 가능한 gh 또는 MCP, 설치된 Herdr, Codex/OpenCode다.
 새 agentctl 계약이나 Work 등록은 필요하지 않다.
 
@@ -66,8 +66,8 @@ Herdr 생성·입력은 open-agent-session Skill과 설치된 herdr --skill/도�
 .threaddock/sessions.json은 로컬 연결 메모이며 Git에 커밋하지 않는다.
 필요하면 `git rev-parse --git-path info/exclude`로 확인한 파일에 /.threaddock/을 추가한다.
 기능 리더가 동시 갱신하지 않고 중앙 관제 한 곳에서 연결 메모를 관리한다.
-Go/Wails 모니터의 연결 파일 설정에 선택 WSL 배포판에서의 절대 경로를 지정하는 것으로 설계한다.
-Go 설정의 실제 전달 방식과 사용 명령은 구현 후 실행 검증 결과로 확정한다.
+Go/Wails 모니터의 `THREADDOCK_SESSIONS_FILE`에 선택 WSL 배포판에서의 절대 경로를 지정한다.
+선택 배포판은 `THREADDOCK_WSL_DISTRIBUTION`으로 전달한다.
 
 ~~~json
 {
@@ -100,7 +100,7 @@ UI 표시명이나 탭 순서로 ID를 추측하지 않는다.
 
 파일에 적힌 세션만 조회하므로 여러 세션을 보려면 각 세션의 연결을 함께 적는다.
 각 지정 세션에서 연결되지 않은 Agent도 목록으로 볼 수 있다.
-Go 이식에서도 파일 변경을 다음 갱신에 반영하고 파일 자체는 Monitor가 수정하지 않는다.
+현재 Go 경로는 파일 변경을 다음 갱신에 반영하고 파일 자체는 Monitor가 수정하지 않는다.
 정확한 pane과 이름이 있어도 cwd를 확인할 수 없거나 worktree 밖이면 기능 연결을 확정하지 않는다.
 Git remote를 자동 검증한 결과가 아니라, 사용자가 지정한 연결과 관찰한 위치를 대조한 결과다.
 
@@ -118,7 +118,7 @@ Issue의 최근 handoff에는 다음만 남긴다.
 입력 실패를 만나면 실제 화면을 확인한다. prompt를 보냈다는 사실만으로 전달 성공을 보고하지 않는다.
 Wiki 갱신 권한이나 초기화가 막혔으면 문서 초안을 PR에 포함하고 Wiki 미반영을 handoff에 남긴다.
 
-## Go/Wails Monitor 구현 후 실행
+## Go/Wails Monitor 실행
 
 제품은 Windows Go/Wails 앱이다. 기존 React/Vite는 앱 화면을 개발·빌드하는 데 사용한다.
 별도의 npm run dev 조회 서버나 브라우저 전용 API를 제품 실행 조건으로 두지 않는다.

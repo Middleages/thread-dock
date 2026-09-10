@@ -55,7 +55,10 @@ Skill 경로 사용, 실제 Agent 성공, GitHub 반영, Monitor UI 검증은 �
 ## 현재 구현과 재사용
 
 project-template의 다섯 Skill과 기존 Go/Wails·React 기반을 재사용한다.
-PR #69의 Node/Vite 조회 서버는 사용자 의도와 다른 구현이며 Go/Wails 조회로 교체할 대상이다.
-현재 문서 정정만 완료하며 Go 이식·Node 서버 제거·실제 Windows 실행은 미완료다.
+PR #69는 최종 head `f35e248`에서 Node/Vite 조회 서버를 제거하고 GitHub·Herdr 조회를
+Go/Wails `GetMonitorSnapshot` 경로로 옮긴 뒤 main의 merge commit `3f4bebf`로 병합됐다.
+reviewed SHA `325db89`에서 Linux `make check`, 표준 Windows Wails build와 healthy native 실행을
+검증했다. native 오류/degraded 상태의 실제 Windows 재현과 독립 기능 두 개의 Projects 기반
+end-to-end 운영 검증은 아직 남아 있다.
 Contract v2·Work 상태·Go Task Gate·Publisher를 신규 경로의 필수 입력으로 요구하지 않는다.
 덜어낼 것은 중복 실행 관리 기능이며 Go 모니터 자체는 유지한다.

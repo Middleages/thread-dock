@@ -4,7 +4,7 @@
 
 - 먼저 HANDOFF.md, PRODUCT.md, CONTEXT.md, docs/operator/github-first-quickstart.md와 현재 2026-09-10 설계·계획을 읽는다.
 - 중앙 관제·기능별 Herdr 세션·native subagent·GitHub 기록이 기본 사용 흐름이다. 제품은 Go/Wails 모니터와 기존 React 화면이다. Go 백엔드에서 GitHub·Herdr를 조회·결합한다.
-- 과거 2026-09-07 spec/준비 계획과 초기 herdr-first-01-status-wire는 신규 구현의 지침이 아니다. 현재 계획의 Task 1부터 PR #69의 Node 조회를 Go/Wails로 옮긴다. 브라우저 전용 실행 지침은 폐기한다.
+- 과거 2026-09-07 spec/준비 계획과 초기 herdr-first-01-status-wire는 신규 구현의 지침이 아니다. 현재 계획의 Task 1~3과 PR #69의 Go/Wails 이식은 main에 병합됐다. 후속 엔진 삭제는 dependency inventory로 경계를 증명한 작은 slice부터 진행한다. 브라우저 전용 실행 지침은 폐기한다.
 - Vite는 화면 개발·빌드만 담당한다. 별도 Node 조회 서버·HTTP bridge·새 실행 엔진을 추가하지 않는다.
 - 기존 Work/Contract v2, Invocation/Artifact, Go Task Gate/Publisher를 필수 입력으로 요구하지 않는다.
 - 개발 판단·기능 분배는 Agent, 세션 관리는 Herdr, 업무/문서 원본은 GitHub가 맡는다. 작은 관찰·연결 기능만 코드로 만든다.
