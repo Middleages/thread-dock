@@ -72,7 +72,7 @@ base SHA `22dcc6610b34582d9a3a4ee375e7661fde499e5e`에서 production importer는
 - [x] 기존 command/dependency test의 거부 경계를 먼저 확인하고 필요 사례를 작성했다.
 - [x] 전용 구현·테스트를 `apply_patch`로 제거하고 CLI composition·usage·운영 안내를 정정했다.
 - [x] 기존 CLI/cmd 테스트와 vet, 문서 수정 후 직접 영향받는 pilot 문서 테스트를 통과하고 commit했다.
-- [ ] fresh Sol이 base부터 고정 head까지 spec compliance와 code quality를 리뷰한다.
+- [x] fresh Sol이 수정 head `2f5c841`에서 spec compliance와 code quality 모두 ACCEPT했다.
 - [ ] root는 독립 운영 문서 Task와 결합하고 전체 리뷰·새 통합 gate 후 PR을 작성한다.
 
 ## 문서·통합

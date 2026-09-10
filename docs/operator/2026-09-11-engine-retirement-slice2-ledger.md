@@ -21,7 +21,7 @@
 root는 범위·공유 계약·통합·GitHub 기록을 담당한다. Sol medium은 의존성 조사와 문서,
 Luna high는 제품 코드·테스트, fresh Sol medium은 고정 SHA의 독립 리뷰를 담당한다.
 실제 runtime model/effort를 입증할 메타데이터는 노출되지 않아 unverified다.
-모델 자동 대체·승격은 하지 않는다. 구현 worker 상한 3개 중 Luna 1개를 create-revert Task에 예약하고 reviewer 슬롯은 확보한다.
+모델 자동 대체·승격은 하지 않는다. 구현 worker 상한 3개 중 예약한 Luna 1개는 Task 리뷰 완료 후 해제했고 reviewer 슬롯은 확보한다.
 
 ## Task packet: 다음 경계 조사
 
@@ -113,4 +113,5 @@ CLI/cmd 코드가 불변이므로 그 검증 tuple은 반복하지 않는다. �
 역사 설명으로 정정했다. 지정 pilot 문서 테스트의 RED→GREEN과 diff 검사를 통과했다.
 code commit 이후 보고서/문서만 바뀌어 CLI/cmd 테스트는 반복하지 않았다.
 root 통합 commit은 `88ecd02` → `acb45ef` → `c5158e3` → `efa0db2`이며,
-수정 head의 scoped Task 리뷰를 기다리고 있다. 이전 BLOCK을 성공으로 소급 기록하지 않는다.
+fresh Sol이 수정 head에서 spec/quality 모두 ACCEPT했다. 이전 BLOCK 두 건은 해소됐고 새 finding은 없다.
+이전 BLOCK을 성공으로 소급 기록하지 않는다. Task 완료이며 최종 통합 gate와 전체 리뷰는 다음 단계다.
