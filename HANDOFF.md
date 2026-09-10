@@ -11,7 +11,7 @@
 ## PR #69에서 완료된 상태
 
 - PR #69의 최종 head `f35e248`은 main의 merge commit `3f4bebf`로 병합됐다.
-- 2026-09-10 재확인에서 `gh auth status`는 `read:project` scope를 포함했고 Projects 조회는 성공했다. `Middleages`의 Projects와 저장소 ProjectsV2는 각각 0개, 열린 PR은 0개이며 Issue #42~48의 project item도 모두 0개다. Wiki는 비활성화 상태다.
+- 2026-09-10 PR #69 직후 재확인에서 `gh auth status`는 `read:project` scope를 포함했고 Projects 조회는 성공했다. 당시 `Middleages`의 Projects와 저장소 ProjectsV2는 각각 0개, 열린 PR은 0개이며 Issue #42~48의 project item도 모두 0개였다. 당시 Wiki도 비활성화 상태였다. 이후 현재 상태는 아래에 따로 기록한다.
 - Task 1·2가 Go/Wails `GetMonitorSnapshot` 경로에 GitHub와 Herdr 관찰을 연결했다. 공유 Go/TS wire는 유지한다.
 - Task 3가 `monitor/frontend/server/`의 Node adapter·전용 테스트, Vite middleware와 HTTP monitor endpoint를 제거했다. Vite는 React 화면 개발·빌드만 담당한다.
 - 화면에는 GitHub 업무·근거, 단일 선택 업무 Herdr 연결, 관찰 세션·미연결 Agent, degraded/notices, 안전한 외부 링크와 handoff 복사만 남겼다. 비기능 상단 메뉴, 자동화 작업, 옛 Work/발행 표시는 제거했다.
@@ -21,6 +21,19 @@
 - Healthy packaged live acceptance는 GitHub 69개 work item의 약 14초 동기화, Herdr 기본 session과 3개 Agent의 약 30초 관찰, handoff 성공 toast와 실제 clipboard 길이 `188`(repository name 포함), 초록 점과 `로컬 연결 정상` 문구의 일치를 확인했다. 앱 종료 후 Monitor process 수는 `0`, `ThreadDockValidation66158d9` scheduled task는 없음, 관련 process도 `0`이었다. WSL interop은 복구됐고 computer-use는 파일이나 worktree를 수정하지 않았다.
 - Native run에서 오류가 발생하지 않아 native error/degraded 상태는 검증하지 않았다. 결합 degradation은 fixture/UI 테스트 근거만 있다. `UtilAcceptVsock:281: accept4 failed 110`은 superseded historical diagnostic이고, 이전 `aeca770` plain `go build` 관찰과 `66158d9` staging build는 최종 표준 package evidence가 아니다.
 - 기존 Wiki 링크는 문서 참고이며 Wiki 실제 반영과 구분한다.
+
+## PR #70 이후 GitHub 운영 상태
+
+- PR #70은 main의 merge commit `22dcc66`으로 병합됐고 현재 열린 PR은 0개다.
+- 저장소는 public이며 Wiki가 활성화됐다. 사용자가 접근을 확인했지만 `thread-dock.wiki.git`의
+  `git ls-remote`는 `Repository not found`였으므로 Wiki 페이지 발행은 수행하거나 검증하지 않았다.
+- 비공개 사용자 Project [ThreadDock 운영 보드](https://github.com/users/Middleages/projects/1)가 생성됐고
+  저장소에 연결됐다. 기본 [Board view](https://github.com/users/Middleages/projects/1/views/2)에는
+  9개 항목이 있으며 Issue #42~48은 `Todo`, PR #69·#70은 `Done`이다.
+- `정리 방향` 필드는 #43·#48이 재작성 후보, 나머지 Issue가 superseded 종료 후보인 원문 값으로
+  확인했다. CLI의 한글 field key 표시 문제를 제품 버그로 판정하지 않는다.
+- GitHub Projects 쓰기는 `project` scope로 성공했다. 보드 업무 상태는 GitHub가 원본이고,
+  Herdr의 session·Agent 상태와 관찰 시각은 별도 실행 원본이다.
 
 ## 병합 후 정리 작업
 
@@ -39,7 +52,8 @@ build가 제거한 tracked `dist/.placeholder`는 원본 바이트로 복원했�
 `ff977a2` 코드 트리와 동일함을 확인했다. 통합 branch의 `58a59a6`은 재리뷰 SHA와 전체 tree가 동일하다.
 현재 blocking 사항은 없으며 나머지 engine은 v1/v2 호출 군집으로 남는다.
 Issue #42·44·45·46·47은 superseded 종료 후보, #43·48은 새 방향 재작성 후보로 한국어 댓글을 게시했다.
-기존 본문·열린 상태는 보존했다. Projects는 조회 성공/0개로 갱신 대상이 없고 Wiki는 비활성화돼 실제 쓰기가 없다.
+기존 본문·열린 상태는 보존했다. 당시 Projects 조회 성공/0개와 Wiki 비활성 상태는 이후 생성·활성화
+이전의 과거 근거이며, 현재 보드와 Wiki 상태는 위 운영 상태가 기준이다.
 
 ## 남은 제품 검증과 후속 구현
 
@@ -75,11 +89,15 @@ AGENTS.md, HANDOFF.md, PRODUCT.md, CONTEXT.md, ADR 0008,
 제품은 Go/Wails 데스크톱 모니터와 기존 React 화면이다. 브라우저 전용으로 바꾸지 마.
 Go가 GitHub·Herdr 조회·결합을 담당하고, Herdr가 세션 실행을, Agent와 Skills가 개발·기록을 맡아.
 Task 1·2의 Go/Wails GitHub·Herdr 경로와 Task 3의 Node 경로 제거가 반영되어 있다.
+PR #70은 main의 `22dcc66`으로 병합됐다. 현재 Project는
+https://github.com/users/Middleages/projects/1 이고 Issue #42~48과 PR #69·#70을 추적한다.
 Linux 통합 gate와 표준 Windows package/live acceptance는 reviewed SHA `325db89`에서 완료됐다.
 healthy native run은 GitHub 69개 work item, Herdr 기본 session/3 agents, clipboard 188, `로컬 연결 정상`,
 process/task cleanup을 확인했으며 native error-state만 unverified다.
 Windows→WSL Herdr 읽기 접근은 실제 설치 조건으로 확인하고 HERDR_ENV를 임의 설정하지 마.
 새 scheduler/runtime/Publisher나 로컬 Work 계약을 만들지 마.
+Wiki는 활성화됐지만 페이지 발행은 아직 검증되지 않았다. 다음 engine slice는 현재 dependency
+inventory로 경계를 먼저 증명하고 완료되지 않은 삭제를 가정하지 마.
 
 Sol medium이 작은 Task를 계획·분배하고 Luna high가 구현해.
 독립 작업만 worktree로 병렬화하고 고정 변경은 fresh Sol medium이 검토해.
