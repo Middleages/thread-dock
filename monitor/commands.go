@@ -13,7 +13,7 @@ import (
 const maxGitHubOutput = 2 * 1024 * 1024
 
 type wslCommandRunner struct {
-	process     CommandRunner
+	process      CommandRunner
 	distribution string
 	timeout      time.Duration
 }
