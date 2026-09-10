@@ -40,3 +40,9 @@ root 문서는 HANDOFF와 새 plan/ledger로 분리해 코드 경로를 공유�
 worker full suite는 금지하며 root의 마지막 `make check`만 한 번 수행한다. docs-only 후속은 링크/diff만 확인한다.
 기존 Windows `325db89` healthy-path와 현재 Linux 검사·live GitHub 기록을 구분하고 Windows native 오류,
 현재 보드의 native 실행, 두 기능의 Herdr/Projects E2E와 Wiki 페이지 발행을 완료로 확대하지 않는다.
+
+## 착수 기록
+
+- [Issue #73](https://github.com/Middleages/thread-dock/issues/73)을 생성해 Project #1에 연결했다. 상태는 In Progress, 정리 방향은 유지로 관리한다.
+- 통합 fixture TMPDIR은 `/dev/shm/threaddock-slice3-gate.TsRe5M`로 새로 생성했다. npm ci는 exit 0이며 module/package lock 변경은 없다.
+- 구현자가 소유하는 제품 경로는 GitHub 세 파일뿐이며 HANDOFF·plan·ledger는 root가 별도 소유한다.

@@ -35,7 +35,14 @@
 - GitHub Projects 쓰기는 `project` scope로 성공했다. 보드 업무 상태는 GitHub가 원본이고,
   Herdr의 session·Agent 상태와 관찰 시각은 별도 실행 원본이다.
 
-## 두 번째 엔진 정리
+## 세 번째 엔진 정리
+
+[Issue #73](https://github.com/Middleages/thread-dock/issues/73)은 PR #72 이후 호출자가 없어진
+GitHub safe-draft API 세 개와 전용 테스트를 정리한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-safe-draft.md)과
+[ledger](docs/operator/2026-09-11-engine-retirement-slice3-ledger.md)에 정확한 경계와 검증 상태를 기록한다.
+사용 중인 DraftPR 요청 타입·크기 제한·PR 생성/조회 기능은 유지하고 worktree helper 정리는 후속으로 남긴다.
+
+## PR #72의 두 번째 정리 결과
 
 [Issue #71](https://github.com/Middleages/thread-dock/issues/71)의 범위는 옛 `create-revert` CLI 경로와
 전용 adapter/service다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-create-revert.md)과
