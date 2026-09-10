@@ -102,6 +102,54 @@ func TestGitHubMonitorRejectsMalformedRowsAndRetainsIssueCache(t *testing.T) {
 	}
 }
 
+func TestGitHubMonitorRejectsTopLevelNull(t *testing.T) {
+	now := time.Unix(1000, 0)
+	mode := 0
+	pr := map[string]any{"number": 2, "title": "PR", "url": "https://github.com/acme/app/pull/2", "state": "OPEN", "closingIssuesReferences": []any{}, "statusCheckRollup": []any{}}
+	fake := &ghFakeRunner{fn: func(args []string) (runner.Result, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "issue list") {
+			if mode == 1 {
+				return runner.Result{Stdout: `null`}, nil
+			}
+			return runner.Result{Stdout: jsonOutput([]any{issueFixture})}, nil
+		}
+		if strings.Contains(joined, "pr list") {
+			if mode == 2 {
+				return runner.Result{Stdout: `null`}, nil
+			}
+			return runner.Result{Stdout: jsonOutput([]any{pr})}, nil
+		}
+		return runner.Result{Stdout: `[]`}, nil
+	}}
+	monitor := NewGitHubMonitor(map[string]string{"THREADDOCK_REPOS": "acme/app", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, fake, time.Second)
+	monitor.now = func() time.Time { return now }
+	first, _ := monitor.FetchAll(context.Background())
+	issueObserved := first.Projects[0].WorkItems[0].GitHub.ObservedAt
+	prObserved := first.Projects[0].WorkItems[1].GitHub.ObservedAt
+	if issueObserved == nil || prObserved == nil {
+		t.Fatalf("first=%#v", first)
+	}
+	now = now.Add(61 * time.Second)
+	mode = 1
+	issueNull, _ := monitor.FetchAll(context.Background())
+	issueRetainedAt := issueNull.Projects[0].WorkItems[0].GitHub.ObservedAt
+	if issueNull.Freshness.State != "stale" || len(issueNull.Projects[0].WorkItems) != 2 || issueRetainedAt == nil || !issueObserved.Equal(*issueRetainedAt) {
+		t.Fatalf("issue null retention=%#v", issueNull)
+	}
+	prObservedAfterIssueRefresh := issueNull.Projects[0].WorkItems[1].GitHub.ObservedAt
+	if prObservedAfterIssueRefresh == nil {
+		t.Fatalf("issue null PR refresh=%#v", issueNull)
+	}
+	now = now.Add(61 * time.Second)
+	mode = 2
+	prNull, _ := monitor.FetchAll(context.Background())
+	prRetainedAt := prNull.Projects[0].WorkItems[1].GitHub.ObservedAt
+	if prNull.Freshness.State != "stale" || len(prNull.Projects[0].WorkItems) != 2 || prRetainedAt == nil || !prObservedAfterIssueRefresh.Equal(*prRetainedAt) {
+		t.Fatalf("pr null retention=%#v", prNull)
+	}
+}
+
 func TestGitHubMonitorRejectsMalformedProjectFieldsAndRetainsBoardCache(t *testing.T) {
 	now := time.Unix(1000, 0)
 	malformed := false
