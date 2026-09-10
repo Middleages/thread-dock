@@ -46,3 +46,11 @@ worker full suite는 금지하며 root의 마지막 `make check`만 한 번 수�
 - [Issue #73](https://github.com/Middleages/thread-dock/issues/73)을 생성해 Project #1에 연결했다. 상태는 In Progress, 정리 방향은 유지로 관리한다.
 - 통합 fixture TMPDIR은 `/dev/shm/threaddock-slice3-gate.TsRe5M`로 새로 생성했다. npm ci는 exit 0이며 module/package lock 변경은 없다.
 - 구현자가 소유하는 제품 경로는 GitHub 세 파일뿐이며 HANDOFF·plan·ledger는 root가 별도 소유한다.
+
+## 구현 후보와 focused 근거
+
+- code commit: `ea04779bf642f25db479c21ce733c412e7296af5`; report 포함 head: `fea410c6c2e7b6a57b7ff8b119690a5ab677efcd`.
+- GitHub 세 파일에서 승인된 API/테스트/assertion/import 110줄만 제거했다. 새 테스트나 동작 이동은 없다.
+- `/dev/shm/thread-dock-engine-retirement-safe-draft.mHjhhh` TMPDIR과 명시한 Go 1.27.0 경로에서 `go test ./internal/github`(0.151초), focused vet, go list, 참조/whitespace 검사를 통과했다.
+- 최초 bare `go` 명령은 PATH에 없어 exit 127이었다. 이 실행은 성공 근거가 아니며 명시한 toolchain으로 수행한 결과를 채택한다.
+- fresh Sol Task 리뷰는 위 고정 head에서 진행 중이며 아직 통합 gate/전체 리뷰 완료를 주장하지 않는다.

@@ -49,8 +49,8 @@ worktree의 revert helper도 후속 후보지만 `AbortRevert` 테스트가 사�
 
 ## 단계
 
-- [ ] 삭제 전 참조를 확인하고 세 symbol 및 전용 테스트만 `apply_patch`로 제거한다.
-- [ ] 영향받는 기존 GitHub 테스트/vet와 참조·package·diff 검사를 통과하고 self-review 후 commit한다.
+- [x] 삭제 전 참조를 확인하고 세 symbol 및 전용 테스트만 `apply_patch`로 제거했다.
+- [x] 기존 GitHub 테스트/vet와 참조·package·diff 검사를 통과하고 self-review 후 commit했다.
 - [ ] fresh Sol이 고정 SHA의 Task를 검토한다.
 - [ ] root가 문서와 결합해 마지막 통합 gate 및 전체 리뷰 후 PR을 준비한다.
 
