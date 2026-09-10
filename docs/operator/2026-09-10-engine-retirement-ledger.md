@@ -98,7 +98,7 @@ HERDR_ENV 설정, 실패 invocation 재사용, Herdr #3813 해결 가정은 하�
 - 문서 Task: 원본 `cdf89774afc715f74617ba92bf652063c2bf203f`, report `476bb28`, 통합 `3aae2fc`/`6db85d0`. 상대 링크 8파일/6링크, diff/stale 검사 통과. 기존 Task 3 report 보존.
 - 조사 Task: 쓰기 없음. Linux·Windows Go 그래프에서 monitorcli importer 0개 확인. [inventory](2026-09-10-engine-dependency-inventory.md)에 호출·config·fixture·문서 경계 기록.
 - slice1 Luna: 코드 `3656616c91be6366f9753423d85e50a73eeaec63`, report 후속 포함 head `3d89c93cef34c2b4c4aa35ae794afd39c7f6dff6`. 두 bridge 파일 제거, public/shared 변화 없음.
-- slice1 focused: Go 1.27.0 `go test ./monitor`, `go vet ./monitor`, diff 검사 및 package 경로 부재 확인 통과. 첫 chained 실행은 약 90초 무출력 후 중단했으며 성공 근거로 쓰지 않았다. 상세 [Luna report](../../.superpowers/sdd/engine-retirement-slice1/task-report.md)는 통합 시 포함한다.
+- slice1 focused: Go 1.27.0 `go test ./monitor`, `go vet ./monitor`, diff 검사 및 package 경로 부재 확인 통과. 첫 chained 실행은 약 90초 무출력 후 중단했으며 성공 근거로 쓰지 않았다. 상세 [Luna report](../../.superpowers/sdd/engine-retirement-slice1/task-report.md)를 통합했다.
 - slice1 검토: fresh Sol이 고정 head `3d89c93cef34c2b4c4aa35ae794afd39c7f6dff6`에서 spec compliance ACCEPT, code quality ACCEPT를 반환했다. blocking/non-blocking findings 없음. read-only diff/import/ls-tree/현재 runner 주입을 독립 확인하고 기존 focused 검사는 반복하지 않았다. Task 완료.
 - root 문서 검증: inventory/분류/ledger/새 계획 4파일의 상대 링크 6개 검사와 `git diff --check` 통과. 통합 `npm ci --no-audit --no-fund`는 107 packages 설치/exit 0이며 제품 테스트 근거와 구분한다.
 
@@ -136,8 +136,20 @@ frontend build가 제거한 tracked `monitor/frontend/dist/.placeholder`는 root
 
 ## 전체 branch review 상태
 
-root review는 `ff977a2`에서 삭제 범위, GitHub 영수증, 코드 변경을 확인했다. 기존 BLOCK 두 건은
+fresh Sol의 전체 review는 `ff977a2`에서 삭제 범위, GitHub 영수증, 코드 변경을 확인했다. 기존 BLOCK 두 건은
 최종 gate가 끝나지 않았고 ledger에 그 결과가 없다는 점뿐이었다. 위 gate 성공과 이 문서 wave가
-두 근거를 채웠지만, 판단을 ACCEPT로 바꾸는 새 scoped reviewer 검토는 아직 pending이다.
+두 근거를 채웠으며 scoped reviewer는 `ca2cae680a627aee222f2279d866fa5b24e52ee7`에서 ACCEPT를 반환했다.
+두 blocker 모두 해소했고 새 findings는 없다. 통합 branch의 `58a59a6fbd7ef24b3a4bb13d4037f574198ba37a`와
+재리뷰 SHA는 `git diff --exit-code`로 전체 tree 일치를 확인했다. 이후 변경은 이 승인 결과를 기록한 문서 metadata뿐이다.
 native Windows 오류/degraded 실제 재현, 실제 Projects를 사용한 독립 기능 두 개의 end-to-end 흐름,
 runtime model/effort identity도 계속 unverified다.
+
+## 최종 결과와 다음 경계
+
+- changedFiles: engine 코드는 `internal/monitorcli/client.go`, `client_test.go` 삭제만. 나머지는 병합 후 문서·inventory·분류·계획·보고서다.
+- commitSHA: 제품 통합 검증 `ff977a2`, Task 리뷰 `3d89c93`, 전체 수정 리뷰 `ca2cae6`, 같은 tree의 통합 commit `58a59a6`.
+- executedCommands: 위 focused/graph/gate/docs 검사와 GitHub 기록. 최종 코드 diff는 두 삭제만이며 문서 후속으로 full gate를 반복하지 않는다.
+- outcomes: Task와 전체 scoped 리뷰 ACCEPT, 변경된 tmpfs tuple 통합 gate PASS, Issue 댓글 7개 게시 완료. main 및 중단된 dirty 4파일 보존.
+- unverified: 위 native 오류·Projects E2E·runtime identity. Projects는 현재 0개, Wiki 비활성으로 실제 쓰기 없음.
+- blockers: 없음. 후속 PR은 `agent/engine-retirement`에서 준비하며 main 병합은 사용자가 수행한다.
+- 다음 구현: 이 inventory의 v1/v2 호출 군집 중 작은 CLI 경계 하나를 고르고 public/shared 변화부터 직렬 계획한다. 이번 두 파일 삭제를 전체 엔진 정리 완료로 보지 않는다.
