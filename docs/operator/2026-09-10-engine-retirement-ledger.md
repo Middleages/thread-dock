@@ -37,6 +37,20 @@
 - tests: `rg`, `go list` 등 조회만. suite 실행 없음.
 - result: changedFiles `[]`, commitSHA 없음; executedCommands·outcomes·unverified·blockers는 inventory 문서에 기록한다.
 
+## Task packet: 통합 근거 정정
+
+- taskId: `engine-retirement-evidence-fix`
+- baseSHA: `ff977a20d9af9b8aa79e2a75335468d45e932007`
+- deps: 전체 통합 review의 BLOCK 두 건(최종 gate 미완료, ledger 최종 근거 누락). 같은 SHA의 새 검증 tuple에서 gate는 통과했다.
+- ownedPaths: `HANDOFF.md`, `docs/operator/2026-09-10-engine-retirement-ledger.md`, `.superpowers/sdd/engine-retirement/evidence-fix-report.md`
+- worktree: `/home/appuser/dev_system/.worktrees/engine-retirement-evidence`
+- branch: `agent/engine-retirement-evidence`
+- forbiddenPaths: 소유 밖 모든 코드·테스트·config·module/dependency·shared interface·기존 실험
+- interface: 문서만 변경하며 public/shared interface와 제품 내구성 동작은 변경하지 않는다.
+- acceptance: `ff977a2`의 첫 실패, 원인 귀속, 환경을 바꾼 gate 성공, 기존 reviewer BLOCK의 상태를 기록하고 새 scoped review는 pending으로 남긴다.
+- tests: owned 문서의 상대 Markdown 링크와 `git diff --check`만 실행한다. 제품/full suite는 반복하지 않는다.
+- result: `changedFiles`, `commitSHA`, `executedCommands`, `outcomes`, `unverified`, `blockers`는 evidence fix report와 이 ledger의 최종 근거로 확정한다.
+
 ## GitHub 쓰기 영수증
 
 본문과 열린 상태를 보존한 한국어 분류 댓글을 게시했다.
@@ -87,3 +101,41 @@ HERDR_ENV 설정, 실패 invocation 재사용, Herdr #3813 해결 가정은 하�
 - slice1 focused: Go 1.27.0 `go test ./monitor`, `go vet ./monitor`, diff 검사 및 package 경로 부재 확인 통과. 첫 chained 실행은 약 90초 무출력 후 중단했으며 성공 근거로 쓰지 않았다. 상세 [Luna report](../../.superpowers/sdd/engine-retirement-slice1/task-report.md)는 통합 시 포함한다.
 - slice1 검토: fresh Sol이 고정 head `3d89c93cef34c2b4c4aa35ae794afd39c7f6dff6`에서 spec compliance ACCEPT, code quality ACCEPT를 반환했다. blocking/non-blocking findings 없음. read-only diff/import/ls-tree/현재 runner 주입을 독립 확인하고 기존 focused 검사는 반복하지 않았다. Task 완료.
 - root 문서 검증: inventory/분류/ledger/새 계획 4파일의 상대 링크 6개 검사와 `git diff --check` 통과. 통합 `npm ci --no-audit --no-fund`는 107 packages 설치/exit 0이며 제품 테스트 근거와 구분한다.
+
+## 최종 통합 gate 근거
+
+고정 통합 SHA는 `ff977a20d9af9b8aa79e2a75335468d45e932007`이다. 아래 두 실행 사이에
+package, `internal/state/store.go`, Makefile, `go.mod`, `go.sum` 변경은 없었다. fake adapter만
+사용하는 테스트라 live GitHub·Herdr 호출도 없었다.
+
+첫 실행은 ext4 `/tmp`에서
+`PATH=/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin:$PATH make check`를 실행해
+exit 2로 실패했다. shell 검사와 `go vet ./...`는 통과했지만 `go test ./...`의
+`internal/orchestrator` package가 600.220초 timeout에 도달해 UI 검사는 실행되지 않았다.
+timeout 시점의 `TestMainMergeResponseLossReconcilesMergedFlagAndSHA` 자체 경과는 약 1초였고,
+stack은 `internal/state/store.go:224`의 `fsync` 대기를 가리켰다. 나머지 Go package는 통과했다.
+
+Sol 조사는 `internal/orchestrator`의 123개 테스트가 `t.TempDir` fixture에서 누적 fsync 지연을
+겪는 환경 원인으로 귀속했다. root의 fsync 20회 측정은 `/tmp` 1574.460ms,
+`/dev/shm` 0.213ms였다. exact test를
+`TMPDIR=/dev/shm/threaddock-gate.Y9WFN0 go test ./internal/orchestrator -run '^TestMainMergeResponseLossReconcilesMergedFlagAndSHA$' -count=1`
+로 실행한 결과는 exit 0, 0.006초였다.
+
+같은 SHA에서 `TMPDIR=/dev/shm/threaddock-gate.Y9WFN0`와 같은 Go 1.27.0 PATH를 사용한 새 tuple의
+`make check`는 exit 0이다. shell·gofmt·vet·전체 Go test, UI 2 files/26 tests, frontend build가
+모두 통과했다. 주요 package 시간은 `internal/orchestrator` 0.993초,
+`internal/coordinator` 1.771초, `internal/state/v2` 0.750초다. 이는 검증 환경 변경의 근거이며
+제품 코드의 fsync 내구성 변경이나 ext4 성능 개선 근거가 아니다.
+
+원본 로그는 통합 worktree의
+`.superpowers/sdd/2026-09-10-engine-retirement/make-check-ff977a2.log`와
+`.superpowers/sdd/2026-09-10-engine-retirement/make-check-ff977a2-tmpfs.log`에 있다. 두 로그는
+비추적 로컬 증거이며 저장소 문서 산출물이나 커밋에 포함하지 않는다.
+
+## 전체 branch review 상태
+
+root review는 `ff977a2`에서 삭제 범위, GitHub 영수증, 코드 변경을 확인했다. 기존 BLOCK 두 건은
+최종 gate가 끝나지 않았고 ledger에 그 결과가 없다는 점뿐이었다. 위 gate 성공과 이 문서 wave가
+두 근거를 채웠지만, 판단을 ACCEPT로 바꾸는 새 scoped reviewer 검토는 아직 pending이다.
+native Windows 오류/degraded 실제 재현, 실제 Projects를 사용한 독립 기능 두 개의 end-to-end 흐름,
+runtime model/effort identity도 계속 unverified다.
