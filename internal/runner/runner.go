@@ -26,6 +26,7 @@ type OSRunner struct{}
 
 func (OSRunner) Run(ctx context.Context, cwd, executable string, args ...string) (Result, error) {
 	cmd := exec.CommandContext(ctx, executable, args...)
+	applyPlatformCommandAttributes(cmd)
 	cmd.Dir = cwd
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
