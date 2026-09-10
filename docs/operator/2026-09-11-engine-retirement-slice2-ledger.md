@@ -132,4 +132,20 @@ Monitor 0.021초다. 이전 tmpfs 근거에 따라 처음부터 임시 fixture�
 `git diff --exit-code`로 검사한 tree와 일치함을 확인했다.
 
 변경된 Markdown 7파일의 상대 링크 17개 검사도 통과했다. 이후 gate 결과 기록은 docs-only이므로
-제품 테스트를 반복하지 않는다. 전체 branch의 fresh Sol 리뷰는 아직 pending이며 완료로 표시하지 않는다.
+제품 테스트를 반복하지 않는다. 아래 전체 branch 리뷰는 이 gate 이후 별도 고정 SHA에서 수행했다.
+
+## 최종 리뷰·결과
+
+fresh Sol은 `61745bac6f8500b3239a73314f0b26a3691bc2c3`에서 전체 통합 ACCEPT를 반환했다.
+blocking/non-blocking findings 없음. Task 수정 결과, 명령 거부와 외부 의존성 미초기화,
+나머지 CLI·Monitor/shared 불변, 운영 문서와 GitHub 상태, 기존 gate 로그를 독립 확인했다.
+gate SHA `be4b44b`에서 리뷰 SHA까지는 HANDOFF/ledger만 변경했으며 제품 tree가 동일하다.
+이후 기록은 승인 결과 metadata뿐이고 제품 gate를 다시 실행하지 않는다.
+
+- changedFiles: 승인된 create-revert CLI 구성/negative tests, 전용 파일 5개 삭제, parallel-pilot story 6, 운영 문서·계획·ledger·reports. 전체 diff는 18경로다.
+- commitSHA: code `53110f9`, Task 수정 리뷰 `2f5c841`, 통합 gate `be4b44b`, 전체 리뷰 `61745ba`.
+- executedCommands: Task report의 RED→GREEN/focused vet/list, root의 위 단일 make check, 링크/diff, GitHub 조회·Issue/Projects 기록.
+- outcomes: Task/전체 리뷰 ACCEPT, full gate PASS, Issue #71 및 보드 연결. 기존 main과 사용자 실험 보존.
+- unverified: Windows native 오류/degraded, 현재 Project 설정의 native 앱 실행, 두 기능의 Herdr/Projects E2E, 실제 runtime model/effort, Wiki 페이지 발행.
+- blockers: 없음. 이번 PR의 main 병합은 사용자에게 남긴다.
+- 후속 경계: 공유 Git/worktree 파일의 남은 revert helper는 별도 call inventory로 검사한다. 사용 중인 helper나 나머지 v1/v2 engine을 이번 삭제에 포함하지 않는다.

@@ -73,7 +73,7 @@ base SHA `22dcc6610b34582d9a3a4ee375e7661fde499e5e`에서 production importer는
 - [x] 전용 구현·테스트를 `apply_patch`로 제거하고 CLI composition·usage·운영 안내를 정정했다.
 - [x] 기존 CLI/cmd 테스트와 vet, 문서 수정 후 직접 영향받는 pilot 문서 테스트를 통과하고 commit했다.
 - [x] fresh Sol이 수정 head `2f5c841`에서 spec compliance와 code quality 모두 ACCEPT했다.
-- [ ] root는 독립 운영 문서 Task와 결합하고 전체 리뷰·새 통합 gate 후 PR을 작성한다.
+- [x] root는 독립 운영 문서 Task와 결합했다. `be4b44b`의 통합 gate와 `61745ba`의 전체 리뷰를 통과해 PR 전달을 준비했다.
 
 ## 문서·통합
 

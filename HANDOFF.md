@@ -43,7 +43,9 @@
 제거 명령은 production 설정·인증·저장소 조회 없이 기존 usage/exit 2로 끝나는 계약이다.
 현재 Monitor·runner·공용 Git/worktree 및 나머지 CLI 동작은 보존한다.
 Task 리뷰는 수정 head `2f5c841`에서 ACCEPT했고, 통합 SHA `be4b44b`의 tmpfs `make check`가
-전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰와 PR 전달은 진행 중이다.
+전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch의 fresh Sol 리뷰는
+`61745bac6f8500b3239a73314f0b26a3691bc2c3`에서 ACCEPT했으며 남은 blocking 사항은 없다.
+PR은 `agent/engine-retirement-slice2` branch에서 전달하며 main 병합은 사용자에게 남긴다.
 
 ## PR #70의 첫 정리 결과
 
