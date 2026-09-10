@@ -7,7 +7,7 @@
 - 통합 worktree `/home/appuser/dev_system/.worktrees/engine-retirement-slice4`, branch `agent/engine-retirement-slice4`.
 - `.worktrees/codex-runtime`의 cmd/agentctl main.go/main_test.go, internal/config config.go/config_test.go는 기존 modified 상태로 보존했다. 기존 worktree·Windows staging은 삭제하지 않는다.
 - root는 문서·계약·GitHub·통합, Sol medium은 조사, Luna high는 구현, fresh Sol medium은 독립 리뷰를 맡는다. actual runtime identity는 unverified, 자동 승격 없음.
-- worker 상한 3개 중 이번 Luna 1개만 예약하고 reviewer 슬롯을 확보한다.
+- worker 상한 3개 중 예약한 Luna 1개는 Task 리뷰 완료 후 해제했고 reviewer 슬롯을 확보한다.
 
 ## 조사 packet과 결과
 
@@ -51,4 +51,5 @@ native 실행·Herdr/Projects E2E·Wiki 페이지 발행·runtime identity는 �
 - code commit `e3af253f9abd3eb5a802b41c3b5f043821d37380`, report 포함 head `537bda266b4f20f2ab81bb051f2b30e55f0acb13`.
 - `/dev/shm/engine-retirement-worktree-revert.7mkvdP` TMPDIR과 명시한 Go 1.27.0에서 기존 worktree 테스트(3.109초), vet/list/ref/diff 검사를 통과했다.
 - 최초 bare gofmt는 PATH에 없어 실패했으며 절대 toolchain 경로의 gofmt로 완료했다. 실패 호출을 성공 근거로 사용하지 않는다.
-- 전용 API/테스트를 제거하고 결합 테스트를 PushBranch-only로 좁혔다. fresh Sol은 위 고정 head를 리뷰 중이다.
+- 전용 API/테스트를 제거하고 결합 테스트를 PushBranch-only로 좁혔다. fresh Sol은 위 head에서 spec/quality 모두 ACCEPT했다. blocking/non-blocking finding과 수정 요구 없음.
+- Task 리뷰는 여섯 symbol과 전용 테스트 삭제, active helpers/tests 및 정확한 PushBranch/no-force 검증 보존을 독립 확인했다. 통합 gate와 전체 리뷰는 별도 단계다.
