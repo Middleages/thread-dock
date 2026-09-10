@@ -54,6 +54,155 @@ func TestSkillFrontmatter(t *testing.T) {
 	}
 }
 
+func TestPlanWorkSkillDescribesContractV2Planning(t *testing.T) {
+	content := readSkill(t, "plan-work")
+	requireContains(t, content,
+		"version: 2",
+		"workId",
+		"projectId",
+		"revision",
+		"request",
+		"acceptanceCriteria",
+		"repositoryPlans",
+		"tasks",
+		"repoKey",
+		"baseSha",
+		"targetBranch",
+		"verification",
+		"prOrder",
+		"mergeOrder",
+		"argv",
+		"cwdRepoKey",
+		"timeoutSeconds",
+		"shellScript",
+		"issueDrafts",
+		"key",
+		"title",
+		"body",
+		"documentation",
+		"required",
+		"wikiTargets",
+		"allowedPaths",
+		"executionProfiles",
+		"builder",
+		"reviewer",
+		"documenter",
+		"decisionRefs",
+		"interfaceAgreements",
+		"agreementId",
+		"summary",
+		"repoKeys",
+		"crossRepoVerification",
+		"agentctl contract validate CONTRACT.json",
+		"agentctl contract preview CONTRACT.json",
+		"approval",
+	)
+	requireNotContains(t, content,
+		"version: 1",
+		"version `1`",
+		"`parent`",
+		"`children`",
+		"protectedPaths",
+		"`protectedPaths`",
+		"baseCommit",
+		"`baseCommit`",
+		"issueKey",
+		"`issueKey`",
+	)
+}
+
+func TestImplementTaskSkillUsesInvocationArtifactBoundary(t *testing.T) {
+	content := readSkill(t, "implement-task")
+	requireContains(t, content,
+		"requestId",
+		"role",
+		"profileId",
+		"worktree",
+		"readOnly",
+		"packet",
+		"logical profile",
+		"canonical Worktree",
+		"allowedPaths",
+		"output schema",
+		"workspace-write",
+		"Artifact",
+		"status",
+		"result",
+		"Builder result",
+		"focused",
+		"TDD",
+		"Go owns",
+		"staging",
+		"commit",
+		"authoritative verification",
+	)
+	requireNotContains(t, content,
+		"task_id:",
+		"changed_paths:",
+		"commit_sha:",
+		"checks:",
+		"Builder commits",
+		"Builder owns the commit",
+	)
+}
+
+func TestReviewChangeSkillUsesFreshReadOnlyReviewerArtifact(t *testing.T) {
+	content := readSkill(t, "review-change")
+	requireContains(t, content,
+		"fresh",
+		"read-only",
+		"requestId",
+		"role",
+		"profile",
+		"candidate SHA",
+		"candidateSha",
+		"diff",
+		"gate",
+		"criteria",
+		"repair budget",
+		"repairBudget",
+		"Artifact",
+		"Reviewer result",
+		"accept",
+		"block",
+		"blockingFindings",
+		"reviewedSHA",
+		"reviewedSha",
+		"no mutation",
+	)
+	requireNotContains(t, content,
+		"status: approved",
+		"repair_round:",
+	)
+}
+
+func readSkill(t *testing.T, skill string) string {
+	t.Helper()
+	data, err := os.ReadFile(templatePath(filepath.Join(".agents", "skills", skill, "SKILL.md")))
+	if err != nil {
+		t.Fatalf("read %s skill: %v", skill, err)
+	}
+	return string(data)
+}
+
+func requireContains(t *testing.T, content string, markers ...string) {
+	t.Helper()
+	for _, marker := range markers {
+		if !strings.Contains(content, marker) {
+			t.Errorf("skill must describe %q", marker)
+		}
+	}
+}
+
+func requireNotContains(t *testing.T, content string, markers ...string) {
+	t.Helper()
+	for _, marker := range markers {
+		if strings.Contains(content, marker) {
+			t.Errorf("skill must not contain v1 or ownership marker %q", marker)
+		}
+	}
+}
+
 func templatePath(name string) string {
 	return filepath.Join("..", "..", "project-template", name)
 }
