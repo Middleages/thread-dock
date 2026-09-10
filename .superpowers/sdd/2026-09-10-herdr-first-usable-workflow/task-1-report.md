@@ -19,7 +19,7 @@
   - `monitor/frontend/src/App.tsx`
   - `monitor/frontend/src/monitor.test.tsx`
   - `.superpowers/sdd/2026-09-10-herdr-first-usable-workflow/task-1-report.md`
-- `commitSHA`: pending
+- `commitSHA`: `5bf6295295c0ff2398200c9a6c1a920100c5544c`
 - `executedCommands`:
   - `git status --short --branch && git rev-parse HEAD && git branch --show-current`
   - `go test ./monitor -run 'Test(GitHub|Commands|App)'` (RED and GREEN attempts)
