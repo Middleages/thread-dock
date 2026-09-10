@@ -15,7 +15,7 @@ fmt:
 test:
 	bash -n scripts/single-run-pilot.sh
 	go test ./...
-	npm --prefix $(FRONTEND_DIR) exec -- vitest run $(FRONTEND_TESTS)
+	npm --prefix $(FRONTEND_DIR) test -- $(FRONTEND_TESTS)
 	npm --prefix $(FRONTEND_DIR) run build
 
 test-focused:
@@ -31,5 +31,5 @@ check:
 	bash -n scripts/single-run-pilot.sh
 	go vet ./...
 	go test ./...
-	npm --prefix $(FRONTEND_DIR) exec -- vitest run $(FRONTEND_TESTS)
+	npm --prefix $(FRONTEND_DIR) test -- $(FRONTEND_TESTS)
 	npm --prefix $(FRONTEND_DIR) run build

@@ -76,3 +76,11 @@ None for the assigned Task. Windows verification remains a concern for the coord
 - Initial blocker/concern: the focused Go test required an environment with Go available; resolved by the validation follow-up below.
 - Validation follow-up at current SHA `613fcb5`: `/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin/go test ./internal/pilot -run TestReadmeLinksOpenCodeRoleAgentRunbook` — exit 0, `ok thread-dock/internal/pilot 0.003s`.
 - Follow-up `git diff --check` — exit 0. The prior missing-Go concern is resolved for this focused test; no product code or tests changed.
+
+## Makefile UI gate fix
+
+- RED evidence from the tracked `make check` at `ef450f9`: the prior `npm --prefix monitor/frontend exec -- vitest ...` command ran with repository-root config cwd and produced 18/20 `window/document is not defined` failures; the same focused files pass from frontend context.
+- Changed only the Makefile UI invocation in `test` and `check` to `npm --prefix monitor/frontend test -- src/bindings.test.ts src/monitor.test.tsx`, using the existing frontend package script and Vite/Vitest config while preserving the exact focused files.
+- GREEN affected command: `npm --prefix monitor/frontend test -- src/bindings.test.ts src/monitor.test.tsx` — exit 0, 2 files and 20 tests passed.
+- `make -n check` — exit 0 and shows the corrected UI command plus frontend build; `git diff --check` — exit 0. `make check`, full Go suite, and unrelated UI commands were not rerun.
+- Self-review: only the two Makefile UI command lines changed; Go checks, formatting scope, frontend build command, and deleted-server exclusions remain unchanged.
