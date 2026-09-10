@@ -42,7 +42,9 @@
 [ledger](docs/operator/2026-09-11-engine-retirement-slice4-ledger.md)에 소유 경로·호출 근거·검증 상태를 기록한다.
 사용 중인 CreateManagedWorktree/PushBranch, conflict/path helper와 PushBranch의 no-force 검증은 유지한다.
 Task 리뷰는 `537bda2`에서 ACCEPT했고 통합 `7a620c4`의 단일 tmpfs `make check`는
-전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰와 PR 전달은 진행 중이다.
+전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰는
+`acfbf7be0c22fd333874f1e26539debb74abfd12`에서 ACCEPT했으며 남은 finding은 없다.
+PR은 `agent/engine-retirement-slice4`에서 전달하고 이번 main 병합은 사용자에게 남긴다.
 
 ## PR #74의 세 번째 정리 결과
 
