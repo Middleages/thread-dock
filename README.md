@@ -1,49 +1,38 @@
 # ThreadDock
 
-여러 프로젝트를 에이전트와 진행하면서 요청, 결정, 구현, 검증과 문서를 Git/GitHub에
-연결하는 로컬 개발 운영 도구입니다. 프로젝트를 다시 열었을 때 현재 상태와 다음
-행동을 빠르게 회수하는 것을 목표로 합니다.
+GitHub에 업무와 문서를 남기고, Herdr에서 기능별 Agent 세션을 운영하는 개발 워크플로입니다.
+중앙 관제 Agent가 기능을 분배하고, 각 기능 세션이 native subagent로 구현과 독립 리뷰를 진행합니다.
 
-## 현재 설계와 구현 상태
+## 지금 시작하기
 
-2026-09-07부터 프로젝트 중심 MVP를 기준으로 개발합니다.
-프로젝트는 저장소 하나 또는 여러 개를 묶고, 업무는 저장소별 실행·PR을 연결합니다.
-ThreadDock Monitor, GitHub Projects와 Wiki가 MVP에 포함됩니다.
+[빠른 시작](docs/operator/github-first-quickstart.md)에 따라 project-template의 Skill을 작업 저장소에 복사합니다.
+GitHub와 Herdr를 사용할 수 있는 기존 Codex/OpenCode 세션에서 바로 시작하며 agentctl 설치나 로컬 Work 등록은 필요하지 않습니다.
 
-이번 변경은 설계 전환과 문서 정리입니다. 현재 Go 코드는 기존 v1 구현을 포함하며
-새 다중 프로젝트 흐름·UI·Contract v2의 구현 완료를 뜻하지 않습니다.
-기존 Run을 새 MVP에서 실행하는 호환성은 목표가 아닙니다.
+- plan-work: 중앙 계획과 기능 분배
+- open-agent-session: 기존 기능 세션으로 돌아가기 또는 승인된 새 세션 열기
+- implement-task: 기능 세션의 상세계획·구현·커밋·PR 준비
+- review-change: 독립 리뷰
+- record-work: Issue·Projects·설계·Wiki·handoff 기록
 
-## 시작 문서
+브라우저 Monitor는 기존 화면에서 GitHub Issue·PR과 선택한 Projects 보드를 직접 조회합니다.
+저장소에서 다음과 같이 실행한 뒤 터미널의 로컬 주소를 엽니다.
 
-- [현재 MVP 설계](docs/superpowers/specs/2026-09-07-project-workflow-mvp-design.md)
-- [제품 정의](PRODUCT.md)
-- [용어 모델](CONTEXT.md)
-- [현재 handoff와 구현 순서](HANDOFF.md)
-- [설계 전환 결정 ADR 0006](docs/adr/0006-project-workflow-mvp.md)
-
-충돌하는 이전 설계·계획은 현재 tree에서 삭제했고 Git 이력에서 확인할 수 있습니다.
-docs/operator와 project-template은 v1 참고 자료입니다. 새 기능은 현재 설계를 따릅니다.
-
-## 기존 구현 참고
-
-- [Foundation 파일럿](docs/operator/foundation-pilot.md)
-- [Single-run 운영 절차](docs/operator/single-run-pilot.md)
-- [OpenCode 역할 routing](docs/operator/opencode-role-agents.md)
-
-위 절차는 기존 binary 설명이며 새 MVP의 실행 계획이나 완료 조건이 아닙니다.
-
-## 검증
-
-구현 중에는 focused 검증을, 최종 코드 변경에는 make check를 수행합니다.
-문서 변경은 링크·내용 일관성 검사와 실제 Go 검사를 구분해 보고합니다.
-
-```sh
-make test-focused PKGS="./internal/contract"
-make vet-focused PKGS="./internal/contract"
-make check
+```bash
+cd monitor/frontend
+npm ci
+THREADDOCK_REPOS=Middleages/thread-dock npm run dev
 ```
 
-PKGS가 비어 있으면 focused target은 실패합니다.
-검증 근거는 명령, 대상 commit, 결과와 소요 시간을 남깁니다.
-Issue·PR에는 결정과 근거를 요약하고 credential·환경 dump·전체 transcript는 남기지 않습니다.
+Node.js 22.12 이상과 같은 환경의 gh 인증이 필요합니다. 여러 저장소·Projects 설정은 [빠른 시작](docs/operator/github-first-quickstart.md#브라우저-monitor-실행)을 참고하세요.
+기존 Wails 앱은 이전 로컬 Work 경로를 유지합니다. Herdr live 상태 통합은 후속 범위이며, 현재 세션 재개는 Skill로 진행합니다.
+
+## 기준 문서
+
+- [제품 목적](PRODUCT.md)
+- [용어와 책임](CONTEXT.md)
+- [간단한 첫 사용 설계](docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md)
+- [구현 순서](docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)
+- [현재 상태와 다음 세션](HANDOFF.md)
+
+이전 Go 실행기와 Codex adapter 실험은 신규 경로의 선행 조건이 아닙니다.
+변경 검증은 영향 범위에 집중하고, 제품 코드 통합 PR의 마지막에 전체 검사를 한 번 수행합니다.

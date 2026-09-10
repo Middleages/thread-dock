@@ -95,6 +95,22 @@ describe('monitor list and detail', () => {
     expect(screen.getByRole('status')).toHaveTextContent('선택한 업무의 handoff를 클립보드에 복사했습니다.')
   })
 
+  it('renders GitHub issue and project metadata while omitting legacy work sections', async () => {
+    const githubWork = { ...project().workItems[0], tasks: [], publications: [], github: { kind: 'pull_request', number: 9, url: 'https://github.com/acme/app/pull/9', state: 'OPEN', reviewDecision: 'REVIEW_REQUIRED', checks: [{ name: 'build', conclusion: 'SUCCESS' }], fields: { status: 'In progress', priority: 'P1' } } }
+    const githubProject = project({ source: 'github', links: [{ kind: 'github', label: 'Issues', url: 'https://github.com/acme/app/issues' }, { kind: 'github', label: 'PRs', url: 'https://github.com/acme/app/pulls' }, { kind: 'github', label: 'Wiki', url: 'https://github.com/acme/app/wiki' }], workItems: [githubWork] })
+    const source = vi.fn(async () => snapshot([githubProject], { source: 'github', notices: ['GitHub 일부 조회 안내'] }))
+    render(<App snapshotSource={source} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByRole('heading', { name: 'GitHub 상태' })).toBeInTheDocument()
+    expect(screen.getByText('리뷰 필요')).toBeInTheDocument()
+    expect(screen.getByText('성공')).toBeInTheDocument()
+    expect(screen.getByText('Project 필드')).toBeInTheDocument()
+    expect(screen.getByText('In progress')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '저장소별 작업' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '발행 상태' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Wiki' })).toHaveAttribute('href', 'https://github.com/acme/app/wiki')
+  })
+
   it('translates raw aggregate wire status tokens into Korean labels', async () => {
     const raw = project({
       workItems: [{ ...project().workItems[0], nextAction: 'approve', tasks: [{ ...project().workItems[0].tasks[0], state: 'verify', verification: 'verify', review: 'accepted' }, { ...project().workItems[0].tasks[0], taskId: 'task-2', state: 'verified', verification: 'verify', review: 'accepted' }], publications: [{ ...project().workItems[0].publications[0], status: 'published' }], decisions: [{ ...project().workItems[0].decisions![0], status: 'accepted' }], handoffs: [{ ...project().workItems[0].handoffs![0], nextAction: 'approve' }] }],
