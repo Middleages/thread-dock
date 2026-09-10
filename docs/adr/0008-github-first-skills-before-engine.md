@@ -3,32 +3,30 @@ status: accepted
 date: 2026-09-10
 ---
 
-# GitHub 업무와 Agent Skill로 먼저 사용한다
+# Go/Wails 모니터와 GitHub 중심 Agent Skill을 사용한다
 
-사용자는 중앙 관제의 기능 분배, 기능별 Herdr 세션과 내부 subagent 개발,
-GitHub Projects·Issue·설계/PR·Wiki 기록, Monitor의 관찰·재개 지원을 승인했다.
-추가로 “심플하게 구현해서 당장 사용가능하도록” 요청했다.
+## 정정 이유
+
+사용자는 “Go 모니터 도구”를 만들겠다고 명확히 정정했다.
+“심플하게”를 Node/Vite 브라우저 전용 제품으로 해석한 이전 결정은 철회한다.
+GitHub 중심 업무 기록과 Herdr 실행 소유권은 유지한다.
 
 ## 결정
 
-- 업무의 식별자는 GitHub Issue URL이다. 로컬 Work/Contract 생성은 요구하지 않는다.
-- 중앙 관제와 기능 세션의 책임을 Skill에 두고, 기능 리더/구현자가 Git 커밋을 수행한다.
-- 승인 범위의 GitHub 쓰기는 gh/MCP/Git으로 한다. Go Publisher는 선택 사항이다.
-- 기능을 배정하거나 세션을 선택할 때 Issue와 Herdr 위치를 명시적으로 연결한다.
-- 같은 workspace의 여러 Agent는 허용한다. 쓰는 기능끼리는 독립 worktree를 사용한다.
-- Monitor 첫 구현은 실제 GitHub 조회부터 시작한다. 로컬 Work snapshot으로 대체하지 않는다.
-- 첫 실행 경로는 기존 React 화면과 Vite의 로컬 read-only gh adapter다. Node·gh로 시작하며 Wails/Go 실행기를 요구하지 않는다. 브라우저용 조회 adapter를 새 작업 실행기로 확장하지 않는다.
-- 첫 UI의 재개 지원은 링크·handoff 복사·세션 위치 안내다. 실행 조작은 기존 Agent와 Herdr로 한다.
+- 제품은 Windows Go/Wails 데스크톱 모니터다. 기존 React/TypeScript 화면을 재사용한다.
+- Vite는 화면 개발·빌드에만 사용한다. 별도 Node 조회 서버와 브라우저 제품 경로는 제거한다.
+- Go 백엔드가 GitHub·Herdr 조회·결합을 맡고 Wails binding으로 화면에 전달한다.
+- Windows/WSL 경계를 유지하되 기존 agentctl Work 상태와 Go 실행 엔진에 의존하지 않는다.
+- 설치된 Herdr의 데스크톱 읽기 접근은 실제로 검증한다. 환경값을 위조하거나 새 실행 엔진으로 해결하지 않는다.
+- 업무 식별자는 GitHub Issue URL이며 로컬 Work/Contract를 만들지 않는다.
+- 중앙 관제와 기능 리더의 계획·분배·구현·리뷰·커밋·기록은 Agent와 Skills가 맡는다.
+- GitHub 쓰기는 승인 범위의 gh/MCP/Git으로 수행하며 자체 Publisher는 신규 경로에 포함하지 않는다.
+- 재개 첫 범위는 위치 안내·링크·handoff 복사다. Herdr와 Agent가 실제 실행을 맡는다.
 
-## 대체 범위
+## 대체 범위와 상태
 
-ADR 0007의 Herdr 소유권은 유지한다.
-2026-09-07 설계의 Contract/Gate/Publisher/Finalize와 2026-09-10 초기 5-Task 계획의
-로컬 Work 기반 조회·workspace당 Agent 하나 규칙은 신규 경로에서 폐기한다.
-이전 코드를 지우는 일은 첫 사용의 선행 조건이 아니며 미커밋 실험을 보존한다.
-
-## 결과
-
-Agent의 모든 내부 동작을 프로그램이 보증하지 않는다.
-대신 기능별 변경 분리, 독립 리뷰·실제 테스트, GitHub 근거와 handoff로 개발을 운영한다.
-반복되는 실제 불편이 확인될 때만 작은 자동화를 추가한다.
+ADR 0007의 Herdr 소유권과 Go/Wails 제품 형태는 유지한다.
+ADR 0002의 Windows/WSL 경계는 유지하고 agentctl aggregate/coordinator 의존 부분은 대체한다.
+PR #69의 브라우저 전용 실행 결정과 그 착수 프롬프트는 폐기한다.
+실제 코드 이식·삭제는 [현재 계획](../superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)에서 수행한다.
+이번 정정은 문서만 변경하며 사용자 호스트의 미커밋 실험은 보존한다.

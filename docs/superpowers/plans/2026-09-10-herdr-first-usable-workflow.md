@@ -1,110 +1,87 @@
-# GitHub 중심 첫 사용 구현 계획
+# Go/Wails 모니터로 바로잡는 구현 계획
 
-> **For agentic workers:** use superpowers:subagent-driven-development or superpowers:executing-plans when implementing code tasks. 이미 승인한 범위에서 작은 사용 가능한 결과를 끝낸다.
+> **For agentic workers:** Use superpowers:subagent-driven-development or superpowers:executing-plans for implementation. 이번 문서 작성 세션에서는 구현을 시작하지 않는다.
 
-**Goal:** 지금은 Skill로 기능 개발을 시작하고, Monitor에는 실제 GitHub 업무와 Herdr 연결을 순서대로 붙인다.
-**Architecture:** GitHub가 업무 원본, Herdr가 실행 원본, Agent가 분배·개발·기록을 맡는다. Monitor는 읽기와 돌아가기 안내만 제공한다.
-**Tech Stack:** 기존 GitHub/gh, Herdr, Codex/OpenCode, React/Vite/Node. 기존 Go/Wails는 보존한다.
-**Spec:** [첫 사용 설계](../specs/2026-09-10-herdr-first-usable-workflow-design.md).
+**Goal:** Windows Go/Wails 앱에서 GitHub 업무와 Herdr 실행 상태를 함께 확인하고 작업 재개를 지원한다.
+**Architecture:** 기존 React 화면 → Wails GetMonitorSnapshot → Go 조회·결합 → WSL의 gh/Herdr. 실행·개발 조정은 Herdr와 Agent가 맡는다.
+**Tech Stack:** 기존 Go·Wails v2·React/TypeScript·Vite(화면 빌드만)·WSL·gh·Herdr.
+**Spec:** [Go/Wails 설계](../specs/2026-09-10-herdr-first-usable-workflow-design.md).
 
-## 범위
+## 기준과 작업 정책
 
-- 이 계획이 기존 herdr-first-01-status-wire부터 시작하는 5-Task 계획을 대체한다.
-- 신규 경로는 Contract v2, Work store, Invocation/Artifact, Go Publisher에 의존하지 않는다.
-- 기존 실험 branch와 사용자 미커밋 변경을 보존한다.
-- 중앙 Sol medium, 구현 Luna high, 독립 리뷰 Sol medium 지침을 유지한다. 실제 환경이 지원하지 않으면 정확히 보고한다.
-- 문서/Skill은 구조·링크·실제 요청 시나리오를 검증한다. 제품 코드 변경은 focused 검사와 마지막 통합 make check 한 번.
-- 각 PR은 사용자에게 쓸 수 있는 결과와 남은 제한을 함께 보고한다. main 병합은 사람에게 남긴다.
+- PR #69의 3d832bc는 이 계획 작성 전 구현 기준이다. 실제 착수 시 최신 PR head와 main을 확인한다.
+- PR의 Node/Vite 조회 구현은 이식 참고 자료이며 최종 제품 경로가 아니다. 이전 A/B/C 완료 체크는 이 계획의 완료를 뜻하지 않는다.
+- 이번에는 설계·지침만 커밋한다. 아래 제품 코드 Task는 모두 미착수다.
+- Sol medium이 범위·인터페이스·분배·검토를 맡고 Luna high가 구현한다. 모델 자동 승격은 하지 않는다.
+- 병렬로 작성하는 기능은 독립 worktree/branch를 사용한다. 공유 Go/TS wire를 먼저 고정하고, 독립 작업만 병렬화한다.
+- 구현자는 focused 테스트와 self-review 후 커밋한다. fresh Sol이 고정 diff를 검토한다.
+- 동일 코드·명령·환경의 검증을 반복하지 않는다. worker별 full suite는 금지한다.
+- 최종 통합에서 Go와 UI를 포함하도록 바로잡은 make check를 한 번 수행한다. Windows 빌드·실행은 별도 증거다.
+- 기존 Codex runtime 실험/dirty 파일은 reset·삭제·재개하지 않는다. main 병합은 사람에게 남긴다.
 
-## A. 바로 사용하는 Skill 운영 경로
+## Task 1. Go/Wails에서 GitHub 업무가 보이는 경로 완성
 
-**Files:** project-template/.agents/skills/{plan-work,implement-task,review-change,open-agent-session,record-work}/SKILL.md,
-project-template/AGENTS.md, internal/projecttemplate/template_test.go, docs/operator/github-first-quickstart.md,
-AGENTS.md, .codex/agents/td_coordinator.toml, README.md, PRODUCT.md, CONTEXT.md, HANDOFF.md.
+**Files:** `monitor/main.go`, `monitor/app.go`, `monitor/app_test.go`, 새 `monitor/github.go`, `monitor/github_test.go`,
+새 `monitor/snapshot.go`, `monitor/commands.go`, `monitor/commands_test.go`,
+`monitor/frontend/src/{bindings.ts,bindings.test.ts,types.ts,App.tsx,monitor.test.tsx}`.
+기존 `internal/runner`는 재사용 후보, `internal/monitorcli/client.go`는 WSL 프로세스 경계 참고다.
 
-- [x] 이전 strict runtime 입력·Go 커밋 소유 규칙을 기존 세 Skill에서 제거한다.
-- [x] 중앙의 기능 분배와 기능 리더의 상세계획·native subagent·커밋·PR 책임을 정한다.
-- [x] 세션 열기/돌아가기와 GitHub 기록 Skill을 제공한다. 새로운 실행 engine을 호출하지 않는다.
-- [x] 기존 Issue를 가진 사용자, 승인된 병렬 기능 배정, 읽기 전용 리뷰 세션, 세션 부재와 handoff, 불명확한 prompt 결과의 요청 시나리오를 검토한다.
-- [x] 오래된 v2 문구 일치 검사를 제거하고 Skill 파일/이름/설명·참조 구조 검사를 유지한다.
-- [x] 빠른 시작을 따라 기존 Agent에서 Skill을 직접 읽거나 선택적으로 설치할 수 있는지 확인한다.
+**공유 계약:** 화면 진입점 `GetMonitorSnapshot`은 유지한다. Go의 새 화면용 snapshot은
+현재 TS의 GitHub 프로젝트·업무·링크·검증·관찰 시각에 대응하며 Contract v2 타입을 import하지 않는다.
+옛 Task/Publication 모델을 새 Go 모델의 필수 필드로 옮기지 않는다.
+설정은 저장소·Projects URL·WSL 배포판·선택 연결 파일 경로로 제한한다.
 
-**완료 결과:** 중앙 관제/기능 세션에 줄 시작 지침을 실제로 사용할 수 있다. 통합 Monitor 완성으로 보고하지 않는다.
+- [ ] 설치된 Go/Wails와 기존 Windows entrypoint·WSL 실행 설정을 확인한다. 현재 `monitor/main.go`는 windows build tag를 사용한다.
+- [ ] Go app 테스트에서 가짜 조회 원본을 주입해 GetMonitorSnapshot이 GitHub 업무를 그대로 전달하는 실패 사례를 작성한다.
+- [ ] 가짜 command runner로 배포판·명령 인자·timeout을 검증한다. 두 저장소의 같은 Issue 번호, Projects 접근 실패, 마지막 성공 캐시와 시각을 검증한다.
+- [ ] `monitor/frontend/server/github-monitor.mjs`의 실제 gh 필드 매핑과 회귀 사례를 Go로 옮긴다. gh 인증은 선택 WSL 배포판의 인증을 사용한다.
+- [ ] Wails App에 Go 원본을 연결하고 TS와 Go JSON 필드를 함께 맞춘다. 브라우저 fetch fallback을 Wails 전용 binding으로 바꾼다.
+- [ ] 선택 업무·GitHub 링크·PR 검증/리뷰·Projects 실제 필드·handoff가 Wails에서 보이게 한다.
+- [ ] 변경 파일에 필요한 `go test ./monitor -run 'Test(GitHub|Commands|App)'`와 `npx vitest run src/bindings.test.ts src/monitor.test.tsx`를 수행하고 실제 테스트명과 결과를 기록한다.
+- [ ] self-review·커밋 후 독립 리뷰한다. 결과는 “Go/Wails GitHub 조회”, Herdr 완료로 보고하지 않는다.
 
-## B. 기존 GitHub 업무를 보여주는 첫 Monitor PR
+**회귀 사례:** `acme/app#1`과 `acme/api#1`은 다른 URL이다. 한 보드 실패가 저장소 Issue 성공을 지우지 않는다.
+본문의 PR 언급을 검증된 연결이나 병합으로 추론하지 않는다. 조회 한도 100개를 숨기지 않는다.
 
-**Files:** monitor/frontend/server의 새 GitHub 조회 adapter와 Node tests,
-monitor/frontend/vite.config.ts, src/{bindings.ts,App.tsx,types.ts}와 focused UI tests.
-기존 화면에 브라우저용 조회 경로를 직접 연결하고 새 Go/agentctl route는 만들지 않는다.
+## Task 2. 같은 Go 경로에 Herdr 관찰과 재개 안내 연결
 
-**입력:** 사용자가 선택한 Projects URL과 관련 repository 목록. 로컬 Work/Contract 없이 시작한다.
-**출력:** 프로젝트·Issue URL/제목/상태/우선순위/최근 기록·PR 상태/검증/리뷰·설계/Wiki 링크,
-GitHub 마지막 성공 조회 시각과 부분 조회/오류 여부.
-필드명은 이 PR의 실제 provider 응답과 기존 UI를 대조해 한 번 정한다. 먼저 큰 공통 schema를 따로 만들지 않는다.
+**Files:** 새 `monitor/herdr.go`, `monitor/herdr_test.go`, Task 1의 `commands.go`, `snapshot.go`, `app.go`,
+`monitor/frontend/src/{types.ts,App.tsx,monitor.test.tsx}`, `docs/operator/github-first-quickstart.md`.
+Task 1의 Wails 진입점·명령 경계를 재사용한다. 새 runtime/daemon/HTTP bridge는 만들지 않는다.
 
-- [x] 기존 React 화면을 재사용하고 Wails binding 부재 시 로컬 read-only GET endpoint를 조회한다.
-- [x] 기존 Work store가 비어 있는 상태에서 GitHub Issue가 화면에 나오는 검사를 먼저 작성한다.
-- [x] Projects 항목·필드에서 상태/우선순위를 읽고 Issue/PR 근거를 연결한다.
-- [x] 저장소와 보드별 최대 100개 조회 제한을 화면에 명시한다. 두 저장소의 같은 Issue 번호를 혼동하지 않는다.
-- [x] GitHub 오류에는 마지막 성공 결과와 그 시각을 유지한다. 인증·원문 오류는 그대로 출력하지 않는다.
-- [x] 기존 목록/상세를 브라우저에서도 사용한다. GitHub 링크 열기와 handoff 복사를 제공한다. 기존 Wails 모드는 보존한다.
-- [x] GitHub-only 응답·부분 실패·조회 제한을 focused 검증하고, fixture CLI로 두 저장소와 보드를 실제 Vite HTTP 경로에서 확인했다. UI 테스트는 통과했으며, 원격 브라우저의 localhost 접속 차단으로 육안 화면 확인은 미확인이다.
+- [ ] 정상 세션으로 설치 Herdr의 버전·도움말·agent list 응답과 Windows Go→WSL 읽기 접근을 확인한다. 실패한 옛 invocation을 조회·재전송하지 않는다.
+- [ ] 데스크톱 프로세스의 실제 접근 조건을 확인한다. HERDR_ENV를 임의 설정하지 않는다. 접근 불가이면 해당 blocker를 기록하고 코드 fixture와 live 결과를 구분한다.
+- [ ] Node Herdr source의 회귀 사례를 Go 테스트로 옮긴다. 실제 응답에서 명시한 이름·상태·workspace/tab/pane·cwd만 남긴다.
+- [ ] WSL에 있는 연결 파일과 canonical worktree/cwd를 WSL에서 확인한다. Windows에서 Linux 경로를 realpath 처리하지 않는다.
+- [ ] Issue→Project→저장소 중앙 연결의 배타적 우선순위와 session/workspace/tab/pane/name 전체 일치를 적용한다.
+- [ ] GitHub와 Herdr의 캐시·실패·성공 시각을 독립 유지하고, GitHub가 비어도 로컬 관찰을 표시한다.
+- [ ] 상태별 위치·시각·다음 행동을 화면과 handoff에 함께 넣는다. 시작/입력/종료 버튼은 추가하지 않는다.
+- [ ] `go test ./monitor -run 'Test(Herdr|Snapshot)'` 및 영향받는 화면 테스트를 실행한다. self-review·커밋·독립 리뷰를 수행한다.
 
-**완료 결과:** GitHub에서 바꾼 상태·우선순위·기록이 Monitor에 반영된다.
-B 단계에는 Herdr 조회를 포함하지 않는다. C에서 읽기 전용 관찰을 추가하며 prompt 버튼과 실행 계약 작성 기능은 계속 제외한다.
-Projects 접근 불가 시 저장소 Issue 한정 표시와 제한을 명시한다.
+**필수 회귀 사례:** 같은 저장소의 Issue A/B 양쪽 binding에 repository와 issueUrl이 모두 있어도 서로 섞이지 않는다.
+A 본문의 B 링크는 연결 근거가 아니다. 두 세션의 같은 pane ID는 다른 대상이다.
+중앙의 worktree 생략은 허용하지만 Agent 식별자 생략은 connected가 아니다.
+실패 전 캐시가 빈 배열이어도 현재 missing으로 보고하지 않는다. blocked handoff는 질문 확인과 성공 관찰 시각을 포함한다.
 
-## C. 명시적 Herdr 연결과 작업 재개
+## Task 3. 잘못 추가한 제품 경로 제거와 실제 앱 인수
 
-**Files:** B의 로컬 read-only adapter와 frontend, 빠른 시작 문서.
-현재 환경에는 Herdr가 없어 v0.8.2 공개 응답과 fixture를 기준으로 관찰 함수를 구현한다.
-설치 버전의 실제 응답 확인과 두 기능 운영 검증은 사용자 환경에 남긴다.
+**Files:** 삭제 `monitor/frontend/server/`의 Node adapter·전용 테스트,
+수정 `monitor/frontend/vite.config.ts`, `src/{App.tsx,styles.css,safe-url.ts,bindings.ts}` 및 영향 테스트,
+`Makefile`, `README.md`, `HANDOFF.md`, `docs/operator/github-first-quickstart.md`.
+Node source 삭제 전 Task 1/2에서 필요한 회귀 동작이 Go/UI 검사로 옮겨졌는지 확인한다.
 
-**입력:** B의 GitHub 업무와 선택적 .threaddock/sessions.json, 설치된 Herdr read-only 응답.
-**출력:** 업무 옆에 해당 세션 위치·실행 상태·Herdr 마지막 성공 시각, 미연결/부재/확인 불가.
-중앙 관제는 프로젝트 수준으로 연결한다.
+- [ ] Vite middleware와 `/api/github-monitor` fetch 경로를 제거한다. React/Vite 빌드와 Wails 외부 링크 기능은 유지한다.
+- [ ] 아직 기능이 없는 메뉴·옛 Work/발행 화면·중복 Herdr 패널을 정리한다. 업무·기록·세션·handoff만 남긴다.
+- [ ] Makefile에 실제 Go 검사와 Node/UI 검사·프런트엔드 빌드를 포함한다. 제거한 Node server 테스트는 더 이상 호출하지 않는다.
+- [ ] 전체 Go 트리에 남은 기존 엔진 테스트는 코드가 남아 있는 동안 임의로 숨기지 않는다. 관련 엔진 삭제는 아래 후속 범위다.
+- [ ] 최종 `make check`를 한 번 실행한다. Windows에서 `cd monitor` 후 설치된 Wails의 `wails build`와 빌드 앱 실행을 별도 확인한다.
+- [ ] Vite/Node 조회 서버를 별도로 실행하지 않은 상태에서 앱이 실제 GitHub·Herdr를 조회하고 handoff를 복사하는지 확인한다.
+- [ ] 중앙에서 독립 기능 둘을 배정해 각 Herdr 세션의 구현·리뷰·PR·Projects/Issue 기록을 확인한다. 다른 프로젝트를 보고 돌아와 세션 위치와 남은 일을 찾는다.
+- [ ] 설치·실행 방법과 검증 제한을 실제 결과로 문서화하고 PR #69를 갱신한다. main 병합은 사람에게 남긴다.
 
-- [ ] 먼저 설치된 Herdr 응답으로 실제 이름·opaque ID·상태 필드를 확인한다.
-- [x] 명시된 Issue 또는 프로젝트 연결을 조회한다. 정확한 pane이 있으면 같은 workspace의 다른 Agent 때문에 conflict로 처리하지 않는다.
-- [x] GitHub 실패/Herdr 성공과 그 반대에서 살아 있는 원본은 계속 표시하고 시각을 독립 보존하는 검사를 작성한다.
-- [x] 존재하지 않는 위치와 조회 실패를 구분한다. 연결 없는 업무/세션도 탐색할 수 있게 한다.
-- [x] UI는 위치 안내·GitHub 열기·handoff 복사만 제공한다. 실제 시작/입력은 기존 Agent와 open-agent-session Skill을 사용한다.
-- [ ] 중앙이 작은 독립 기능 둘을 배정하고 각 리더가 구현·독립 리뷰·PR을 만든다. Issue 결정·Projects 현황·필요한 Wiki 갱신을 확인한다.
-- [ ] 프로젝트 전환 후 기존 세션에 돌아가거나 handoff로 재개한다. 실제 Windows/Herdr 결과와 fixture 검증을 별도로 기록한다.
+## 후속 정리: 기존 실행 엔진
 
-**완료 결과:** GitHub 기록과 로컬 상태를 한 화면에서 보고 해당 기능으로 돌아갈 수 있다.
-이후 반복되는 실제 불편이 있을 때만 작은 조작 편의를 추가한다.
-
-### Task 1: 지정된 Herdr 세션의 관찰·연결·재개 안내
-
-**배경:** 사용자가 PR #69 이후 가능한 구현을 계속하도록 요청했다. 새 엔진 없이 브라우저 Monitor의 남은 로컬 관찰을 연결한다.
-**taskId:** simple-herdr-status
-**baseSHA:** c523dda54fbfbc43794e43c3594de1ad4b44bae8 (로컬 검토 snapshot; 원격 PR 기준 6e1822702283dd5f43c881e0c473de7e12b9548d)
-**deps:** 완료된 GitHub 브라우저 조회와 기존 화면
-**ownedPaths:** monitor/frontend/
-**forbiddenPaths:** 그 외 경로, 추적되는 node_modules/build 결과, 기존 Go 실행기와 사용자 호스트
-**worktree:** /workspace/scratch/aa953ecaf317/thread-dock-herdr
-**branch:** agent/simple-herdr-status
-
-**interface와 동작:**
-
-- 선택적 THREADDOCK_SESSIONS_FILE에 로컬 연결 JSON의 절대 경로를 받는다. 기존 GitHub 환경 설정이 이 변수를 허용한다. 설정이 없으면 Herdr 조회 없이 안내만 제공한다.
-- JSON은 version=1, bindings 배열이다. 기존 quickstart의 issueUrl/repository/worktree/session/workspaceId/tabId/paneId/agentName/role을 사용한다. coordinator는 issueUrl 없이 repository 또는 projectUrl로 연결할 수 있다. 파일은 읽기만 하고, 매 갱신에 새 내용을 읽어 삭제/수정을 반영한다.
-- HERDR_ENV=1인 실제 Herdr pane에서만 조회한다. 프로그램이 환경 값을 임의로 설정하지 않는다. 파일에 명시된 session 이름을 중복 제거하고 `herdr --session NAME agent list`만 호출한다. 다른 세션 탐색/생성/입력/종료는 하지 않는다.
-- 기준 API는 Herdr v0.8.2 공개 소스의 src/session.rs, src/cli/agent.rs, src/api/schema/{agents,response,common}.rs다. 실제 설치 버전 확인과 live 성공은 사용자 PC에서 별도로 확인한다.
-- 응답의 result.type=agent_list, result.agents를 읽는다. name, agent_status, workspace_id, tab_id, pane_id, cwd/foreground_cwd만 허용해서 변환한다. terminal_id, agent_session, tokens, 원문 출력은 응답과 UI에 넣지 않는다.
-- `getSnapshot()`을 가진 Herdr source를 추가한다. 세션별 5초 캐시/실패 간격과 마지막 성공 시각을 독립 유지한다. subprocess는 인자 배열·timeout·출력 크기 제한을 사용한다. 오류는 분류와 복구 안내를 주되 원문 stderr를 그대로 노출하지 않는다.
-- 기존 Snapshot에 선택적 herdr 관찰을 붙인다. GitHub와 Herdr를 독립 source로 읽고 어느 쪽의 실패도 다른 쪽 기록·시각을 지우거나 갱신하지 않는다. 기존 Wails source는 유지한다.
-- 연결은 Issue의 완전한 URL 또는 명시적 projectUrl/repository로만 선택한다. issueUrl과 repository가 다른 저장소를 가리키면 불일치다. session/pane/workspace/tab/agentName을 확인하고 기능 연결의 worktree와 실제 cwd를 realpath로 확인한다. 경로가 없거나 확인 불가하면 연결을 확정하지 않는다. cwd가 worktree 하위 폴더인 경우 포함 관계를 확인하며 Git remote 검증으로 과장하지 않는다.
-- 같은 workspace의 다른 Agent는 충돌이 아니다. 하나의 Issue에 여러 연결을 허용한다. fresh 목록에 대상이 없으면 missing, 조회 실패는 offline 또는 cached stale, 식별자/경로 불일치는 conflict/unverified로 표시한다. 상태를 업무 완료로 변환하지 않는다.
-- 화면에는 선택 업무와 중앙 관제의 연결, 조회한 세션의 미연결 Agent, 마지막 관찰 시각을 보여준다. GitHub 목록이 비어 있거나 실패해도 로컬 관찰을 볼 수 있다.
-- handoff 복사에 명시적 위치와 관찰 상태·시각·다음 행동을 포함한다. working은 돌아가 관찰, blocked는 질문 확인, idle/done은 최신 GitHub 기록과 남은 일 확인, missing은 보존된 Git 변경·handoff 확인, stale/offline/conflict/unknown은 먼저 재확인으로 안내한다. 명령 실행 버튼은 추가하지 않는다.
-
-**acceptance/tests:**
-
-- Node focused tests: v0.8.2 실제 응답 형태, 두 세션의 같은 pane ID, 같은 workspace의 여러 Agent, 한 Issue 여러 연결, coordinator, canonical 경로, 대상 부재와 source 실패, 파일 미설정/잘못된 파일, 환경 guard, 숨길 필드 제거, 서로 독립인 GitHub/Herdr 관찰.
-- UI focused tests: 업무/프로젝트 전환 시 정확한 연결, GitHub 없음에도 로컬 표시, 상태별 안내와 handoff 복사. 기존 Vite document/module/API composition도 확인한다.
-- frontend build 확인. 이미 확인한 동작의 반복 검사와 worker full suite는 피한다. Go/full make check 및 live Herdr는 실행 불가를 정확히 보고한다.
-- **result:** changedFiles, commitSHA, executedCommands, outcomes, unverified, blockers와 self-review. native live 성공은 fixture 성공으로 대체하지 않는다.
-
-**검증 상태:** C의 조회·연결·안내 코드는 구현했다. v0.8.2 fixture와 focused 테스트/빌드 검증이며, 위에서 미체크한 실제 설치 응답·두 기능 운영·사용자 환경 재개는 아직 수행하지 않았다.
+Go/Wails 실사용 경로 완성 후 `cmd/agentctl`과 internal의 coordinator/scheduler/runtime/recovery/publication/state 등
+옛 엔진에서 새 모니터가 참조하지 않는 모듈을 import·테스트·설정·문서 참조 기준으로 분류한다.
+필요한 runner·경로/링크 기능은 유지하고 죽은 코드·전용 테스트·fixture·옛 계획을 함께 정리한다.
+현재 문서 커밋에서 대량 삭제하거나 삭제를 모니터 완성의 선행 조건으로 만들지 않는다.

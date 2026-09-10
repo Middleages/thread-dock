@@ -5,7 +5,8 @@
 ## Purpose
 
 멀티 세션과 서브에이전트로 기능을 개발하고, GitHub 기록과 로컬 실행 상태를 함께 보며 쉽게 이어간다.
-첫 사용은 기존 GitHub·Herdr·Agent와 Skill로 시작한다. Monitor는 그 사용 흐름을 편리하게 만든다.
+제품은 Go/Wails 데스크톱 모니터와 프로젝트 Skill이다. 기존 React 화면을 유지하고 Go가 조회·결합을 맡는다.
+기능 개발·세션 실행은 기존 Agent와 Herdr를 사용한다. Vite는 화면 개발·빌드 도구다.
 
 ## 책임
 
@@ -53,11 +54,8 @@ Skill 경로 사용, 실제 Agent 성공, GitHub 반영, Monitor UI 검증은 �
 
 ## 현재 구현과 재사용
 
-project-template에는 위 흐름의 Skill을 제공한다.
-첫 브라우저 Monitor는 기존 React/TypeScript 화면과 로컬 Vite/gh 조회를 사용한다.
-Projects·Issue·PR을 읽고 링크·handoff 복사를 제공한다. Wails 앱은 기존 로컬 Work 경로를 유지한다.
-선택적 로컬 연결 파일에 지정한 Herdr 세션을 읽고 관찰 시각·위치·재개 안내를 표시한다.
-조회 코드는 Herdr v0.8.2 공개 API와 fixture로 검증하며 실제 사용자 환경의 연결과 두 기능 운영은 별도 확인한다.
-세션 입력·실행은 기존 Herdr와 Skill을 사용한다.
-기존 Contract v2·Work 상태·Go Task Gate·Final Manifest·Publisher는 필수 절차가 아니다.
-관련 실험과 사용자 미커밋 변경은 보존하되 신규 사용에 연결하지 않는다.
+project-template의 다섯 Skill과 기존 Go/Wails·React 기반을 재사용한다.
+PR #69의 Node/Vite 조회 서버는 사용자 의도와 다른 구현이며 Go/Wails 조회로 교체할 대상이다.
+현재 문서 정정만 완료하며 Go 이식·Node 서버 제거·실제 Windows 실행은 미완료다.
+Contract v2·Work 상태·Go Task Gate·Publisher를 신규 경로의 필수 입력으로 요구하지 않는다.
+덜어낼 것은 중복 실행 관리 기능이며 Go 모니터 자체는 유지한다.

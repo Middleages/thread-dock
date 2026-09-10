@@ -1,6 +1,7 @@
 # GitHub와 Herdr로 바로 시작하기
 
-기능 개발은 기존 Agent의 Skill로 시작하고, 업무 현황은 아래 브라우저 Monitor로 확인한다.
+기능 개발은 기존 Agent의 Skill로 시작하고, 업무 현황은 Go/Wails 데스크톱 Monitor에서 확인하는 것이 목표다.
+현재 PR #69는 Node 조회를 Go로 옮기기 전이다. 이 문서의 Skill 운영 흐름은 사용할 수 있지만 새 Go 조회의 설치·실행 완료를 뜻하지 않는다.
 필요한 것은 대상 Git 저장소, GitHub에 접근 가능한 gh 또는 MCP, 설치된 Herdr, Codex/OpenCode다.
 새 agentctl 계약이나 Work 등록은 필요하지 않다.
 
@@ -65,8 +66,8 @@ Herdr 생성·입력은 open-agent-session Skill과 설치된 herdr --skill/도�
 .threaddock/sessions.json은 로컬 연결 메모이며 Git에 커밋하지 않는다.
 필요하면 `git rev-parse --git-path info/exclude`로 확인한 파일에 /.threaddock/을 추가한다.
 기능 리더가 동시 갱신하지 않고 중앙 관제 한 곳에서 연결 메모를 관리한다.
-브라우저 Monitor에 THREADDOCK_SESSIONS_FILE로 이 파일의 절대 경로를 지정한다.
-기존 Wails 앱에는 이 연결 파일을 적용하지 않는다.
+Go/Wails 모니터의 연결 파일 설정에 선택 WSL 배포판에서의 절대 경로를 지정하는 것으로 설계한다.
+Go 설정의 실제 전달 방식과 사용 명령은 구현 후 실행 검증 결과로 확정한다.
 
 ~~~json
 {
@@ -93,13 +94,13 @@ Herdr 생성·입력은 open-agent-session Skill과 설치된 herdr --skill/도�
 로컬 경로·세션 ID를 공개 Issue에 복사할 필요는 없다.
 
 연결 값을 얻을 때는 실제 Herdr pane 안에서 설치된 도움말을 읽고 대상 세션을 조회한다.
-현재 adapter는 Herdr 0.8.2의 `herdr --session NAME agent list` 응답 형식을 기준으로 한다.
+기존 Node adapter가 참고한 형식은 Herdr 0.8.2의 `herdr --session NAME agent list` 응답 형식을 기준으로 한다.
 여기서 확인한 name, workspace_id, tab_id, pane_id와 실제 worktree를 기록한다.
 UI 표시명이나 탭 순서로 ID를 추측하지 않는다.
 
 파일에 적힌 세션만 조회하므로 여러 세션을 보려면 각 세션의 연결을 함께 적는다.
 각 지정 세션에서 연결되지 않은 Agent도 목록으로 볼 수 있다.
-파일을 수정하면 다음 갱신에 반영된다. 파일 자체는 Monitor가 수정하지 않는다.
+Go 이식에서도 파일 변경을 다음 갱신에 반영하고 파일 자체는 Monitor가 수정하지 않는다.
 정확한 pane과 이름이 있어도 cwd를 확인할 수 없거나 worktree 밖이면 기능 연결을 확정하지 않는다.
 Git remote를 자동 검증한 결과가 아니라, 사용자가 지정한 연결과 관찰한 위치를 대조한 결과다.
 
@@ -117,54 +118,21 @@ Issue의 최근 handoff에는 다음만 남긴다.
 입력 실패를 만나면 실제 화면을 확인한다. prompt를 보냈다는 사실만으로 전달 성공을 보고하지 않는다.
 Wiki 갱신 권한이나 초기화가 막혔으면 문서 초안을 PR에 포함하고 Wiki 미반영을 handoff에 남긴다.
 
-## 브라우저 Monitor 실행
+## Go/Wails Monitor 구현 후 실행
 
-ThreadDock checkout에서 Node.js 22.12 이상과 인증된 gh를 사용한다.
-Windows 사용자는 GitHub 인증이 있는 WSL 터미널에서 실행하고 Windows 브라우저로 연다.
-ChatGPT의 GitHub 연결과 사용자 PC의 gh 인증은 별개다.
+제품은 Windows Go/Wails 앱이다. 기존 React/Vite는 앱 화면을 개발·빌드하는 데 사용한다.
+별도의 npm run dev 조회 서버나 브라우저 전용 API를 제품 실행 조건으로 두지 않는다.
+Go 백엔드는 선택한 WSL 배포판의 gh 인증과 Herdr 읽기 접근을 사용한다.
+ChatGPT GitHub 연결과 사용자 WSL의 gh 인증은 별개다.
 
-~~~bash
-gh auth status
-cd monitor/frontend
-npm ci
-THREADDOCK_REPOS=Middleages/thread-dock npm run dev
-~~~
+설치된 Wails에서 개발은 `wails dev`, 배포 앱 빌드는 `wails build` 경로를 사용하되,
+현재 기존 앱은 옛 로컬 Work 데이터를 사용하므로 위 명령만으로 새 조회가 완성됐다고 설명하지 않는다.
+[현재 구현 계획](../superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)의 Go 이식·연결 후 실행 방법을 검증한다.
 
-터미널에 나온 로컬 주소를 연다. 기본 주소는 http://127.0.0.1:5173이다.
-다른 저장소도 함께 보려면 THREADDOCK_REPOS에 OWNER/REPO를 쉼표로 구분한다.
-Projects 보드는 THREADDOCK_PROJECTS에 실제 보드 URL을 쉼표로 구분해 선택적으로 연결한다.
-
-~~~bash
-THREADDOCK_REPOS=OWNER/APP,OWNER/API \
-THREADDOCK_PROJECTS=https://github.com/users/OWNER/projects/1,https://github.com/orgs/ORG/projects/2 \
-npm run dev
-~~~
-
-조직 보드는 https://github.com/orgs/OWNER/projects/1 형식이다. 예시의 OWNER와 번호는 실제 값으로 바꾼다.
-설정을 바꿨으면 개발 서버를 다시 시작한다. GitHub 조회는 60초 캐시를 사용한다.
-저장소별 Issue·PR과 보드 항목 조회는 각각 최대 100개이며 화면에 제한을 표시한다.
-일부 조회가 실패하면 해당 원본의 마지막 성공 결과와 시각을 보존한다.
-화면에서 Issue·PR·Wiki를 열거나 선택한 업무의 handoff를 복사할 수 있다.
-Wiki의 실제 존재·내용과 Issue 댓글 전체를 자동 동기화하는 범위는 아니다.
-
-이 브라우저 모드는 npm run dev로 제공된다. 정적 build 파일만 열면 gh 조회 서버가 없으므로 동작하지 않는다.
-기존 Wails 데스크톱 앱은 이전 로컬 Work 경로를 유지한다.
-Herdr 상태도 함께 보려면 실제 Herdr pane의 터미널에서 다음처럼 실행한다.
-
-~~~bash
-THREADDOCK_REPOS=Middleages/thread-dock \
-THREADDOCK_SESSIONS_FILE=/absolute/path/to/.threaddock/sessions.json \
-npm run dev
-~~~
-
-HERDR_ENV는 Herdr가 설정하는 값이다. 이 값을 직접 설정해 실행 조건을 우회하지 않는다.
-파일 경로를 설정하지 않았거나 Herdr 밖에서 실행했다면 이유와 설정 안내를 표시하고 GitHub 조회는 계속한다.
-Herdr 조회는 세션별 5초 캐시를 사용한다. 실패 시 마지막 성공 시각을 보존하며 GitHub 시각과 따로 표시한다.
-대상이 없어진 상태, 위치 불일치, 조회 실패, 입력 대기와 실행 중을 구분한다.
-선택한 업무의 handoff를 복사하면 연결 위치와 확인 시각·다음 행동도 포함된다.
-화면에서는 시작·입력·종료 명령을 실행하지 않는다. 재개는 위 Skill이 최신 기록과 실제 화면을 확인한 뒤 수행한다.
-
-구현·fixture 검증과 사용자 PC의 live 성공은 별개다. 실제 설치 버전의 도움말/응답과 정상 세션을 확인하고 사용한다.
+Windows→WSL 명령이 기존 Herdr pane 환경을 상속한다고 가정하지 않는다.
+설치된 CLI의 읽기 접근 조건을 확인하고 HERDR_ENV를 임의로 설정하지 않는다.
+접근이 안 되면 Herdr 조회 불가 이유를 표시하고 GitHub 관찰은 유지한다.
+실제 앱과 정상 세션에서 확인하기 전에는 live 통합 완료로 표시하지 않는다.
 
 ## 실제 사용 확인
 

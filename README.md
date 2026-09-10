@@ -1,39 +1,25 @@
 # ThreadDock
 
-GitHub에 업무와 문서를 남기고, Herdr에서 기능별 Agent 세션을 운영하는 개발 워크플로입니다.
-중앙 관제 Agent가 기능을 분배하고, 각 기능 세션이 native subagent로 구현과 독립 리뷰를 진행합니다.
+**Go/Wails 데스크톱 모니터 + 프로젝트 Skill**로 GitHub 중심 멀티 세션 개발을 지원합니다.
+중앙 Agent가 기능을 분배하고, 각 Herdr 기능 세션이 native subagent로 구현·독립 리뷰를 진행합니다.
+Go 모니터는 GitHub 업무 기록과 Herdr 실행 상태를 함께 보여주고 작업 재개를 돕습니다.
 
-## 지금 시작하기
+## 현재 상태
 
-[빠른 시작](docs/operator/github-first-quickstart.md)에 따라 project-template의 Skill을 작업 저장소에 복사합니다.
-GitHub와 Herdr를 사용할 수 있는 기존 Codex/OpenCode 세션에서 바로 시작하며 agentctl 설치나 로컬 Work 등록은 필요하지 않습니다.
+2026-09-10 사용자 정정에 따라 Go/Wails 제품 방향을 다시 고정했습니다.
+PR #69의 별도 Node/Vite 조회 서버는 Go 백엔드로 옮기고 제거할 대상입니다.
+현재는 문서 정정 단계이며 Go 이식과 실제 Windows/WSL 실행은 아직 완료하지 않았습니다.
+이전 npm run dev 브라우저 전용 실행 안내는 제품 사용 지침으로 사용하지 않습니다.
+Vite와 Node는 React 화면 개발·빌드에 사용합니다.
 
-- plan-work: 중앙 계획과 기능 분배
-- open-agent-session: 기존 기능 세션으로 돌아가기 또는 승인된 새 세션 열기
-- implement-task: 기능 세션의 상세계획·구현·커밋·PR 준비
-- review-change: 독립 리뷰
-- record-work: Issue·Projects·설계·Wiki·handoff 기록
+## 사용·개발 지침
 
-브라우저 Monitor는 기존 화면에서 GitHub Issue·PR과 선택한 Projects 보드를 직접 조회합니다.
-저장소에서 다음과 같이 실행한 뒤 터미널의 로컬 주소를 엽니다.
+[운영 흐름](docs/operator/github-first-quickstart.md)의 중앙/기능 세션 프롬프트와
+project-template/.agents/skills의 plan-work, open-agent-session, implement-task, review-change, record-work를 사용합니다.
+기존 Work 등록이나 Go 실행 계약은 필요하지 않습니다.
 
-```bash
-cd monitor/frontend
-npm ci
-THREADDOCK_REPOS=Middleages/thread-dock npm run dev
-```
-
-Node.js 22.12 이상과 같은 환경의 gh 인증이 필요합니다. 여러 저장소·Projects 설정은 [빠른 시작](docs/operator/github-first-quickstart.md#브라우저-monitor-실행)을 참고하세요.
-Herdr pane 안에서 `THREADDOCK_SESSIONS_FILE`에 연결 파일을 지정하면 해당 세션의 상태·위치·재개 안내도 표시합니다. 설정 방법은 빠른 시작을 참고하세요. 실제 설치 버전과 사용자 환경의 동작 확인은 남아 있습니다.
-기존 Wails 앱은 이전 로컬 Work 경로를 유지합니다.
-
-## 기준 문서
-
-- [제품 목적](PRODUCT.md)
+- [제품 역할](PRODUCT.md)
 - [용어와 책임](CONTEXT.md)
-- [간단한 첫 사용 설계](docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md)
-- [구현 순서](docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)
-- [현재 상태와 다음 세션](HANDOFF.md)
-
-이전 Go 실행기와 Codex adapter 실험은 신규 경로의 선행 조건이 아닙니다.
-변경 검증은 영향 범위에 집중하고, 제품 코드 통합 PR의 마지막에 전체 검사를 한 번 수행합니다.
+- [Go/Wails 진행 설계](docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md)
+- [구현 계획](docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)
+- [현재 상태와 Codex 착수 프롬프트](HANDOFF.md)

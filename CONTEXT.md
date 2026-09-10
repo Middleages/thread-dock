@@ -17,7 +17,7 @@
 | handoff | 완료 내용·남은 일·blocker·다음 행동·관련 링크. 전체 대화 복사본이 아니다 |
 | Herdr session/workspace/tab/pane | Herdr가 관리하는 실행 위치. 업무의 완료 상태와 별개다 |
 | 세션 연결 | Issue 또는 프로젝트와 실제 Herdr 위치·worktree의 명시적 대응 |
-| Monitor | GitHub 기록과 Herdr 관찰을 읽어 보여주는 도구 |
+| Monitor | Windows Go/Wails 앱. Go가 GitHub·Herdr를 조회·결합하고 기존 React 화면에 표시 |
 
 기능과 내부 Task는 일대일이 아니다. 내부 구현 Task는 체크리스트로 충분하며 독립 추적 가치가 있을 때만 Issue를 추가한다.
 한 프로젝트를 중앙 관제 하나가 보고 여러 기능 세션을 운영할 수 있다.
@@ -30,6 +30,8 @@
 idle/done은 업무 완료가 아니고, Issue가 닫혔다고 Agent를 종료하지 않는다.
 연결 없음은 미연결, 조회 실패는 확인 불가, 지정 대상 부재는 대상 없음으로 구분한다.
 대상이 불명확하면 현재 위치를 확인해 연결을 수정하며 새 Agent를 자동 중복 시작하지 않는다.
+
+Vite는 화면 개발·빌드 도구다. Node 조회 서버나 브라우저 전용 실행은 제품 경로가 아니다.
 
 ## 이전 용어
 
