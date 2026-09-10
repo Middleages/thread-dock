@@ -19,7 +19,7 @@ status: DONE_WITH_CONCERNS
 
 ## commitSHA
 
-5477b1a (implementation commit; this report is committed immediately after it because the report records the implementation SHA).
+548f8d185b406355169f080f5f4d6f7b859def81 (latest product implementation commit, including the Makefile UI gate fix; subsequent report-only commits are follow-ups).
 
 ## executedCommands
 
