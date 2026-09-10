@@ -115,7 +115,71 @@ unsupported Windows screenshot claim was added.
 
 - changedFiles: `README.md`, `HANDOFF.md`, `docs/operator/github-first-quickstart.md`, `.superpowers/sdd/github-herdr-monitor-task3/task-3-report.md`
 - commitSHA: docs-only follow-up to `66158d9` (the top-level `commitSHA` remains the last product/dependency implementation SHA and is intentionally not self-referential)
-- executedCommands: `python3` relative-Markdown-link parser — exit 0, 4 files/10 relative links; `python3` evidence-consistency scan — exit 0, 4 files × 9 required terms; `git diff --check` — exit 0; owned-path diff scan — exit 0, exactly the four assigned documents changed
+- executedCommands: see the auditable command ledger below; every command exited 0
 - outcomes: all docs-only validation passed; no Go/UI/product tests, Windows commands, `make check`, push, PR, or merge was run
 - unverified: packaged live GitHub/Herdr UI and completion of `ThreadDockValidation66158d9` cleanup; worker/reviewer runtime model/effort
 - blockers: repeated `UtilAcceptVsock:281: accept4 failed 110` during scheduled-task/WSL interop launch; cleanup confirmation pending
+
+### Auditable docs-only validation ledger
+
+The following commands were run in this worktree against the four assigned documents. No product
+tests, Windows commands, or `make check` were run.
+
+1. Relative Markdown link parser — exit 0; output `OK relative Markdown links: 4 files, 10 links`.
+
+   ```sh
+   python3 - <<'PY'
+   from pathlib import Path
+   import re
+   files = [Path('README.md'), Path('HANDOFF.md'), Path('docs/operator/github-first-quickstart.md'), Path('.superpowers/sdd/github-herdr-monitor-task3/task-3-report.md')]
+   links = 0
+   for source in files:
+       for target in re.findall(r'(?<!!)\[[^\]]+\]\(([^)]+)\)', source.read_text()):
+           if target.startswith(('http://', 'https://', '#', 'mailto:')):
+               continue
+           links += 1
+           path = (source.parent / target.split('#', 1)[0]).resolve()
+           if not path.exists():
+               raise SystemExit(f'MISSING {source}: {target}')
+   print(f'OK relative Markdown links: {len(files)} files, {links} links')
+   PY
+   status=$?
+   printf 'EXIT %s\n' "$status"
+   exit "$status"
+   ```
+
+2. Evidence consistency check — exit 0; output `OK evidence consistency scan: 4 files x 9 required terms`.
+
+   ```sh
+   python3 - <<'PY'
+   from pathlib import Path
+   files = [Path('README.md'), Path('HANDOFF.md'), Path('docs/operator/github-first-quickstart.md'), Path('.superpowers/sdd/github-herdr-monitor-task3/task-3-report.md')]
+   terms = ['66158d9', 'v2.15.0', '26.8.1', '27.436', r'monitor\build\bin\ThreadDockMonitor.exe', 'UtilAcceptVsock:281: accept4 failed 110', 'aeca770', 'ThreadDockValidation66158d9', 'packaged live']
+   for term in terms:
+       missing = [str(path) for path in files if term not in path.read_text()]
+       if missing:
+           raise SystemExit(f'MISSING CONSISTENCY TERM {term!r}: {missing}')
+   print(f'OK evidence consistency scan: {len(files)} files x {len(terms)} required terms')
+   PY
+   status=$?
+   printf 'EXIT %s\n' "$status"
+   exit "$status"
+   ```
+
+3. Owned-path diff against base `66158d9c8f6883434f7271e5c5f64e31ba0221b` — exit 0; output `OK owned-path diff against 66158d9: four assigned documents only`.
+
+   ```sh
+   test "$(git diff --name-only 66158d9c8f6883434f7271e5c5f64e31ba0221b..HEAD | sort)" = "$(printf '%s\n' '.superpowers/sdd/github-herdr-monitor-task3/task-3-report.md' 'HANDOFF.md' 'README.md' 'docs/operator/github-first-quickstart.md' | sort)" && printf '%s\n' 'OK owned-path diff against 66158d9: four assigned documents only'
+   ```
+
+4. Whitespace check — exit 0; output `EXIT 0`.
+
+   ```sh
+   git diff --check; status=$?; printf 'EXIT %s\n' "$status"; exit "$status"
+   ```
+
+5. Worktree status — exit 0; output was ` M .superpowers/sdd/github-herdr-monitor-task3/task-3-report.md` followed by `EXIT 0` before committing this report-only follow-up.
+
+   ```sh
+   git status --short; status=$?; printf 'EXIT %s\n' "$status"; exit "$status"
+   ```
