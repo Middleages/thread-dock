@@ -25,7 +25,7 @@ const snapshot = (projects: Project[], overrides: Partial<Snapshot> = {}): Snaps
 
 describe('monitor list and detail', () => {
   beforeEach(() => vi.useFakeTimers())
-  afterEach(() => { cleanup(); vi.useRealTimers() })
+  afterEach(() => { cleanup(); vi.useRealTimers(); Reflect.deleteProperty(window, 'runtime'); Reflect.deleteProperty(navigator, 'clipboard') })
 
   it('sorts a copied project list with needs-operator first without mutating the snapshot', () => {
     const source = [project({ projectId: 'ordinary', name: 'Ordinary', state: 'running' }), project({ projectId: 'attention', name: 'Attention', state: 'needs_operator', updatedAt: '2026-09-07T00:00:00Z' })]
@@ -258,6 +258,82 @@ describe('monitor list and detail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(screen.getByRole('status')).toHaveTextContent('handoff를 복사하지 못했습니다.')
+  })
+
+  it('uses the Wails clipboard and reports success only for a true result', async () => {
+    const clipboardSetText = vi.fn(async () => true)
+    Object.defineProperty(window, 'runtime', { configurable: true, value: { ClipboardSetText: clipboardSetText } })
+    const browserWriteText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
+    render(<App snapshotSource={vi.fn(async () => snapshot([project()]))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(clipboardSetText).toHaveBeenCalledWith(expect.stringContaining('Retry payment failures'))
+    expect(browserWriteText).not.toHaveBeenCalled()
+    expect(screen.getByRole('status')).toHaveTextContent('선택한 업무의 handoff를 클립보드에 복사했습니다.')
+  })
+
+  it('treats a false Wails clipboard result as failure without browser fallback', async () => {
+    const clipboardSetText = vi.fn(async () => false)
+    Object.defineProperty(window, 'runtime', { configurable: true, value: { ClipboardSetText: clipboardSetText } })
+    const browserWriteText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
+    render(<App snapshotSource={vi.fn(async () => snapshot([project()]))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(clipboardSetText).toHaveBeenCalledTimes(1)
+    expect(browserWriteText).not.toHaveBeenCalled()
+    expect(screen.getByRole('status')).toHaveTextContent('handoff를 복사하지 못했습니다.')
+  })
+
+  it('treats a thrown Wails clipboard call as failure without browser fallback', async () => {
+    const clipboardSetText = vi.fn(async () => { throw new Error('denied') })
+    Object.defineProperty(window, 'runtime', { configurable: true, value: { ClipboardSetText: clipboardSetText } })
+    const browserWriteText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
+    render(<App snapshotSource={vi.fn(async () => snapshot([project()]))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(clipboardSetText).toHaveBeenCalledTimes(1)
+    expect(browserWriteText).not.toHaveBeenCalled()
+    expect(screen.getByRole('status')).toHaveTextContent('handoff를 복사하지 못했습니다.')
+  })
+
+  it('uses browser clipboard only when the Wails clipboard API is absent', async () => {
+    const browserWriteText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
+    render(<App snapshotSource={vi.fn(async () => snapshot([project()]))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(browserWriteText).toHaveBeenCalledWith(expect.stringContaining('Retry payment failures'))
+    expect(screen.getByRole('status')).toHaveTextContent('선택한 업무의 handoff를 클립보드에 복사했습니다.')
+  })
+
+  it('does not report clipboard success for an empty handoff', async () => {
+    const clipboardSetText = vi.fn(async () => true)
+    Object.defineProperty(window, 'runtime', { configurable: true, value: { ClipboardSetText: clipboardSetText } })
+    const browserWriteText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
+    render(<App snapshotSource={vi.fn(async () => snapshot([]))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(clipboardSetText).not.toHaveBeenCalled()
+    expect(browserWriteText).not.toHaveBeenCalled()
+    expect(screen.getByRole('status')).toHaveTextContent('복사할 handoff 내용이 없습니다.')
+  })
+
+  it('marks the local connection as degraded when nested Herdr freshness is stale', async () => {
+    const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'offline', syncStatus: 'offline', freshness: { state: 'stale', syncStatus: 'offline' }, notices: [], sessions: [], connections: [], unconnectedAgents: [] }
+    render(<App snapshotSource={vi.fn(async () => snapshot([project()], { herdr }))} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const nav = screen.getByRole('navigation', { name: '주요 메뉴' })
+    expect(within(nav).getByText(/로컬 연결 확인 필요/)).toBeInTheDocument()
+    expect(nav.querySelector('.status-mark')).toHaveClass('attention')
   })
 
   it('keeps only the product identity in the top navigation and omits forbidden runtime identifiers', async () => {

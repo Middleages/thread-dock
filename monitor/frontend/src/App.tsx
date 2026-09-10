@@ -26,7 +26,7 @@ const timeFor = (value?: string) => value ? new Intl.DateTimeFormat('ko-KR', { h
 const dateFor = (value?: string) => value ? new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '시각 없음'
 
 declare global {
-  interface Window { runtime?: { BrowserOpenURL?: (url: string) => void } }
+  interface Window { runtime?: { BrowserOpenURL?: (url: string) => void; ClipboardSetText?: (text: string) => Promise<boolean> } }
 }
 
 function ExternalLink({ url, label }: { url: string; label: string }) {
@@ -149,13 +149,26 @@ function buildHandoffText(work?: WorkItem, herdrConnections: HerdrConnection[] =
   return [`업무: ${work.title}`, `다음 행동: ${labelFor(work.nextAction)}`, handoff ? `handoff: ${handoff.summary}` : '', ...work.evidenceRefs.map((ref) => `근거: ${ref}`), ...links, ...herdrConnections.map((connection) => `Herdr: ${connection.handoff}`)].filter(Boolean).join('\n')
 }
 
+const degradedConnectionStates = new Set(['stale', 'offline', 'degraded', 'setup_required', 'disabled', 'unverified', 'unknown', 'failed'])
+const hasDegradedConnectionState = (...states: Array<string | undefined>) => states.some((state) => state !== undefined && degradedConnectionStates.has(state))
+
 function ActionRail({ snapshot, project, work, herdr, onAction }: { snapshot: Snapshot; project?: Project; work?: WorkItem; herdr?: HerdrSnapshot; onAction: (message: string) => void }) {
   const state = snapshot.freshness.state === 'stale' || snapshot.syncStatus === 'offline' || snapshot.syncStatus === 'degraded' || snapshot.syncStatus === 'setup_required'
   const github = snapshot.source === 'github'
   return <aside className="action-rail" aria-labelledby="action-title">
     <h2 id="action-title">지금 필요한 행동</h2><p className="rail-intro">중요한 요청만 여기에 표시합니다.</p>
     <div className="attention-block"><strong>{state ? '연결을 확인하세요' : work?.nextAction ? `다음 행동 · ${labelFor(work.nextAction)}` : '현재는 기다리세요'}</strong><p>{state ? github ? 'GitHub 조회에 실패했거나 일부 결과가 오래되었습니다. 마지막 성공 데이터를 확인하세요.' : '마지막으로 확인한 상태를 보존했습니다. WSL 연결을 확인한 뒤 새로고침하세요.' : project ? `${project.name}의 ${github ? 'GitHub 상태와 근거' : '실행 상태와 근거'}를 검토하세요.` : '프로젝트를 선택하면 필요한 행동을 보여드립니다.'}</p></div>
-    <button type="button" className="primary-action" onClick={async () => { if (!navigator.clipboard?.writeText) { onAction('클립보드를 사용할 수 없습니다. handoff 내용을 선택해 복사하세요.'); return } try { await navigator.clipboard.writeText(buildHandoffText(work, connectionsForWork(work, project, herdr))); onAction('선택한 업무의 handoff를 클립보드에 복사했습니다.') } catch { onAction('handoff를 복사하지 못했습니다. 근거 링크를 열어 내용을 전달하세요.') } }}>handoff 복사</button>
+    <button type="button" className="primary-action" onClick={async () => {
+      const handoffText = buildHandoffText(work, connectionsForWork(work, project, herdr))
+      if (!handoffText) { onAction('복사할 handoff 내용이 없습니다.'); return }
+      const wailsClipboard = window.runtime?.ClipboardSetText
+      if (wailsClipboard) {
+        try { if (await wailsClipboard(handoffText)) onAction('선택한 업무의 handoff를 클립보드에 복사했습니다.'); else onAction('handoff를 복사하지 못했습니다. 근거 링크를 열어 내용을 전달하세요.') } catch { onAction('handoff를 복사하지 못했습니다. 근거 링크를 열어 내용을 전달하세요.') }
+        return
+      }
+      if (!navigator.clipboard?.writeText) { onAction('클립보드를 사용할 수 없습니다. handoff 내용을 선택해 복사하세요.'); return }
+      try { await navigator.clipboard.writeText(handoffText); onAction('선택한 업무의 handoff를 클립보드에 복사했습니다.') } catch { onAction('handoff를 복사하지 못했습니다. 근거 링크를 열어 내용을 전달하세요.') }
+    }}>handoff 복사</button>
     {work?.links?.find((link) => isSafeExternalURL(link.url)) && <button type="button" className="secondary-action" onClick={() => { const link = work.links?.find((item) => isSafeExternalURL(item.url)); if (link) openExternalURL(link.url) }}>GitHub에서 보기</button>}
   </aside>
 }
@@ -197,9 +210,11 @@ export function App({ snapshotSource = getMonitorSnapshot, pollIntervalMs = 4000
   const selected = projects.find((project) => project.projectId === selectedProjectId)
   const isGithub = snapshot?.source === 'github'
   const isDegraded = snapshot?.freshness.state === 'stale' || snapshot?.syncStatus === 'offline' || snapshot?.syncStatus === 'degraded' || snapshot?.syncStatus === 'setup_required'
+  const isHerdrDegraded = snapshot?.herdr ? hasDegradedConnectionState(snapshot.herdr.status, snapshot.herdr.state, snapshot.herdr.syncStatus, snapshot.herdr.freshness.state, snapshot.herdr.freshness.syncStatus) : false
+  const isLocalConnectionDegraded = isDegraded || isHerdrDegraded
 
   return <div className="monitor-shell">
-    <nav className="top-nav" aria-label="주요 메뉴"><div className="brand" aria-label="ThreadDock Monitor">Thread<span>Dock</span></div><div className="connection"><span className="status-mark success" aria-hidden="true" />로컬 연결 {isDegraded ? '확인 필요' : '정상'}</div></nav>
+    <nav className="top-nav" aria-label="주요 메뉴"><div className="brand" aria-label="ThreadDock Monitor">Thread<span>Dock</span></div><div className="connection"><span className={`status-mark ${isLocalConnectionDegraded ? 'attention' : 'success'}`} aria-hidden="true" />로컬 연결 {isLocalConnectionDegraded ? '확인 필요' : '정상'}</div></nav>
     <main className="main-content">
       {loading && !snapshot ? <LoadingState /> : error && (!snapshot || snapshot.projects.length === 0) ? <section className="state-panel error-state" role="alert"><h1>상태를 불러오지 못했습니다.</h1><p>{isGithub ? 'GitHub Monitor 연결을 확인하고 잠시 후 다시 시도하세요.' : 'Windows Wails Monitor 설정과 연결을 확인하고 잠시 후 다시 시도하세요.'}</p><button type="button" className="secondary-action" onClick={() => void refresh()}>다시 시도</button></section> : snapshot && <>
         {isDegraded && <div className="degraded-banner" role="status"><strong>{isGithub ? 'GitHub 조회 결과 일부가 오래되었습니다.' : '오래된 상태를 표시하고 있습니다.'}</strong><span><strong>{isGithub ? 'GitHub 연결 확인 필요' : 'WSL 연결 오프라인'}</strong> · 마지막 관찰 {dateFor(snapshot.observedAt)}{snapshot.freshness.lastSyncedAt ? ` · 마지막 성공 ${dateFor(snapshot.freshness.lastSyncedAt)}` : ''}</span></div>}
