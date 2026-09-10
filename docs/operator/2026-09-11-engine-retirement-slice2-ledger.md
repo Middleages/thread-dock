@@ -79,3 +79,10 @@ unverified는 실제 runtime identity 및 아직 수행 전인 코드 검사, bl
 Go 1.27.0은 `/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin/go`를 사용한다.
 Linux fixture/build와 Windows native 실행, live gh/Herdr 결과를 구분한다. native 오류 상태와
 Projects를 사용한 두 기능의 전체 운영 검증은 여전히 미검증이다.
+
+## 작업 기록
+
+- [Issue #71](https://github.com/Middleages/thread-dock/issues/71)을 한국어로 생성하고 Project #1에 연결했다. 상태는 In Progress, 정리 방향은 유지로 설정했다. 기존 종료 후보를 완료로 닫지 않았다.
+- 문서 원본 commit `34ea375c891e082063d2ea22401c2f70dcc060db`, report 포함 head `12e0903d18379da9502251212ef79bc85b0d7bb4`를 통합했다. 통합 commit은 `b86f9e8`/`e9433dc`다.
+- 문서 Task는 상대 링크 3파일/7링크와 diff 검사 통과, 제품 검사 미실행. root는 이후 신규 Issue/계획 링크와 관찰 시점 문구만 보완했다.
+- root 통합 fixture TMPDIR은 `/dev/shm/threaddock-slice2-gate.6A3az3`로 새로 생성했다. npm ci는 exit 0이며 dependency 파일 변화 없음.

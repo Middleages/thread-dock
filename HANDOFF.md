@@ -24,20 +24,28 @@
 
 ## PR #70 이후 GitHub 운영 상태
 
-- PR #70은 main의 merge commit `22dcc66`으로 병합됐고 현재 열린 PR은 0개다.
+- PR #70은 main의 merge commit `22dcc66`으로 병합됐고 이번 착수 시 열린 PR은 0개였다.
 - 저장소는 public이며 Wiki가 활성화됐다. 사용자가 접근을 확인했지만 `thread-dock.wiki.git`의
   `git ls-remote`는 `Repository not found`였으므로 Wiki 페이지 발행은 수행하거나 검증하지 않았다.
-- 비공개 사용자 Project [ThreadDock 운영 보드](https://github.com/users/Middleages/projects/1)가 생성됐고
+- 비공개 사용자 Project [ThreadDock 개발 보드](https://github.com/users/Middleages/projects/1)가 생성됐고
   저장소에 연결됐다. 기본 [Board view](https://github.com/users/Middleages/projects/1/views/2)에는
-  9개 항목이 있으며 Issue #42~48은 `Todo`, PR #69·#70은 `Done`이다.
+  착수 당시 9개 항목이 있었으며 Issue #42~48은 `Todo`, PR #69·#70은 `Done`이었다.
 - `정리 방향` 필드는 #43·#48이 재작성 후보, 나머지 Issue가 superseded 종료 후보인 원문 값으로
   확인했다. CLI의 한글 field key 표시 문제를 제품 버그로 판정하지 않는다.
 - GitHub Projects 쓰기는 `project` scope로 성공했다. 보드 업무 상태는 GitHub가 원본이고,
   Herdr의 session·Agent 상태와 관찰 시각은 별도 실행 원본이다.
 
-## 병합 후 정리 작업
+## 두 번째 엔진 정리
 
-이번 작업은 [의존성 inventory](docs/operator/2026-09-10-engine-dependency-inventory.md),
+[Issue #71](https://github.com/Middleages/thread-dock/issues/71)의 범위는 옛 `create-revert` CLI 경로와
+전용 adapter/service다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-create-revert.md)과
+[진행 ledger](docs/operator/2026-09-11-engine-retirement-slice2-ledger.md)에 정확한 소유 경로·공유 계약·검증 상태를 기록한다.
+제거 명령은 production 설정·인증·저장소 조회 없이 기존 usage/exit 2로 끝나는 계약이다.
+현재 Monitor·runner·공용 Git/worktree 및 나머지 CLI 동작은 보존한다.
+
+## PR #70의 첫 정리 결과
+
+첫 작업은 [의존성 inventory](docs/operator/2026-09-10-engine-dependency-inventory.md),
 [Issue 분류](docs/operator/2026-09-10-engine-retirement-issues.md),
 [첫 삭제 계획](docs/superpowers/plans/2026-09-10-engine-retirement.md),
 [검증·GitHub ledger](docs/operator/2026-09-10-engine-retirement-ledger.md)에서 추적한다.
