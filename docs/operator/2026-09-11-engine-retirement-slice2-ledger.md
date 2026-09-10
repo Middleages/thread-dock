@@ -86,3 +86,13 @@ Projects를 사용한 두 기능의 전체 운영 검증은 여전히 미검증�
 - 문서 원본 commit `34ea375c891e082063d2ea22401c2f70dcc060db`, report 포함 head `12e0903d18379da9502251212ef79bc85b0d7bb4`를 통합했다. 통합 commit은 `b86f9e8`/`e9433dc`다.
 - 문서 Task는 상대 링크 3파일/7링크와 diff 검사 통과, 제품 검사 미실행. root는 이후 신규 Issue/계획 링크와 관찰 시점 문구만 보완했다.
 - root 통합 fixture TMPDIR은 `/dev/shm/threaddock-slice2-gate.6A3az3`로 새로 생성했다. npm ci는 exit 0이며 dependency 파일 변화 없음.
+
+## 구현 후보
+
+Luna 구현 commit은 `53110f96bc4c853d39457ca08fd4166124bd3355`다. 보고서 포함 첫 후보 head는
+`9840cd474b4faa4454b938373339fe05291b6749`이며 현재 fresh Task 리뷰 전이다.
+tmpfs에서 `go test ./internal/cli ./cmd/agentctl`은 제거 명령 negative case의 RED→GREEN을 확인했고,
+focused vet·go list·diff 검사도 통과했다. `internal/revert` 빈 디렉터리 부재 검사가 최초에 실패해
+빈 디렉터리를 제거한 뒤 통과했으며 코드 실패나 전체 gate 성공으로 해석하지 않는다.
+report의 'interface 변경 없음' 문구는 승인된 CLI/Dependencies.Reverter 제거를 정확히 구분하도록
+worker에게 문서 정정을 요청했다. 제품 코드 재검사 이유가 없는 report-only 수정이다.
