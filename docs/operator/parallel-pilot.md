@@ -72,12 +72,13 @@ snapshot and append-only event log, then record:
    `public_contract`); do not broaden a Task's `allowedPaths` to make a
    protected story pass validation. Verify the PR contains exactly one
    secret-free `<!-- threaddock:RUN:protected-change -->` marker with the
-   protected reasons before `needs_operator` is persisted. Run
-   `agentctl confirm RUN protected-change` twice; the first persists the intent
-   and audit record before invalidating all latest-main, Full Suite, check, and
-   mergeability evidence, then resumes the complete refresh/recheck sequence.
-   The second is idempotent. Merge only after the exact final SHA/check/
-   mergeability gate is true.
+   protected reasons before `needs_operator` is persisted. The former
+   `agentctl confirm RUN protected-change` CLI is retired; do not execute it.
+   Historically, its first invocation persisted intent and audit records,
+   invalidated latest-main, Full Suite, check, and mergeability evidence, and
+   resumed the refresh/recheck sequence. A second invocation was idempotent.
+   The orchestrator's protected-change state and tests remain as legacy
+   implementation evidence; this story records the removed CLI's history.
 4. **Git conflict.** Make immutable integration report a confirmed merge
    conflict. Verify the run is `blocked`, conflict evidence is recorded, and
    there is no reset, automatic conflict resolution, push, or main merge.

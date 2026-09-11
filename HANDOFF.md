@@ -35,7 +35,16 @@
 - GitHub Projects 쓰기는 `project` scope로 성공했다. 보드 업무 상태는 GitHub가 원본이고,
   Herdr의 session·Agent 상태와 관찰 시각은 별도 실행 원본이다.
 
-## 다섯 번째 엔진 정리
+## 여섯 번째 엔진 정리
+
+[Issue #79](https://github.com/Middleages/thread-dock/issues/79)에서 옛 confirm CLI adapter/wiring을 제거한다.
+[계획](docs/superpowers/plans/2026-09-11-engine-retirement-confirm-cli.md)과
+[ledger](docs/operator/2026-09-11-engine-retirement-slice6-ledger.md)에 계약·보존 경계·검증 상태를 기록한다.
+orchestrator의 protected-change 구현·상태와 나머지 CLI는 보존한다.
+PR #78은 아직 OPEN이므로 검토된 head `5f3d2b6` 위에 후속 branch를 만들었다. 새 PR의 base는
+`agent/engine-retirement-slice5`이며, #78을 main에 병합한 뒤 후속 PR을 main으로 전환한다.
+
+## PR #78의 다섯 번째 정리 결과
 
 [Issue #77](https://github.com/Middleages/thread-dock/issues/77)은 호출자가 없는 옛 `internal/integration`
 구현과 전용 테스트를 정리한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-v1-integration.md)과
@@ -44,7 +53,8 @@
 Task 리뷰는 `6a4bb17`에서 ACCEPT했고 통합 `e1efc5d`의 단일 tmpfs make check는
 전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰는
 `3022baba83bebcb2a77b3f895100829b95d77a7b`에서 ACCEPT했으며 남은 finding은 없다.
-PR은 `agent/engine-retirement-slice5`에서 전달하고 이번 main 병합은 사용자에게 남긴다.
+[PR #78](https://github.com/Middleages/thread-dock/pull/78)은 `agent/engine-retirement-slice5`에서 열려 있다.
+main 병합은 수행하지 않았으며 Issue #77·PR #78의 보드 상태도 In Progress로 유지한다.
 
 ## PR #76의 네 번째 정리 결과
 

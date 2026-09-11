@@ -26,7 +26,7 @@
 ## 역할과 검증
 
 root는 문서·GitHub·계약·통합, Sol medium은 계획·조사, Luna high는 구현, fresh Sol medium은 리뷰를 맡는다.
-실제 runtime model/effort는 미노출이면 unverified이며 승격하지 않는다. worker 상한 3, 현재 예약 0, reviewer 슬롯 확보.
+실제 runtime model/effort는 미노출이면 unverified이며 승격하지 않는다. worker 상한 3, 코드 worker 1개 예약, reviewer 슬롯 확보.
 이미 완료된 slice의 결과는 재사용하고 새로운 Task에 필요한 focused 검사만 한다. root의 마지막 통합 make check는
 별도 tmpfs TMPDIR `/dev/shm/threaddock-slice6-gate.OKTr3F`에서 한 번 수행한다. npm ci exit 0, lock 변경 없음.
 Windows native·오류 상태·현재 보드 native 실행·Herdr/Projects E2E·Wiki 페이지 발행은 별도 미검증 범위로 유지한다.
@@ -57,3 +57,9 @@ backend protected-change 보존 계약을 먼저 고정했다. Luna 1개를 예�
 |---|---|---|
 | 코드 / root 문서 | CLI 6파일 / 문서 | 소유 중복 없음 |
 | 코드 내부 | 두 CLI interface와 cmd wiring | root/Sol 직렬 합의, Luna 단독 소유 |
+
+## 착수 기록
+
+- [Issue #79](https://github.com/Middleages/thread-dock/issues/79)를 생성해 Project #1의 In Progress·정리 방향 유지로 등록했다.
+- root는 parallel-pilot story 3의 confirm 실행 안내만 역사화했다. 다른 stories·retirement/evidence guard는 수정하지 않았다.
+- Issue #77·PR #78의 In Progress 상태를 확인했으며 선행 구현을 main 완료로 표시하지 않는다.
