@@ -103,3 +103,10 @@ harness의 state.Store는 nonblocking flock을 사용하며 production lock/clai
 
 root가 기존 CLI Task와 분리해 Luna에 이 테스트만 배정한다. 코드 Task의 orchestrator 금지 범위를
 제품 동작까지 넓혀 해제하지 않는다. 수정 SHA가 최초 실패 tuple을 무효화한 뒤에만 최종 gate를 재실행한다.
+
+## Gate 수정 후보
+
+- test-fix code commit `be2f0e6c8fae34014cff93b4721db048ad87d8c3`, report 포함 head `eb62e6ee39a7785f5ea089ad0df7617fae100cee`.
+- 제품 lock/fake 코드는 그대로이며 해당 테스트와 report만 변경했다. 첫 호출을 해제하기 전에 두 번째의 ErrRunBusy를 확인한다.
+- `/dev/shm/threaddock-slice6-gate-fix.rMHGd0`에서 타겟 20회 반복 PASS, `/dev/shm/threaddock-slice6-gate-check.w6iVBl`에서 타겟+StateLockIsProcessSafe 및 vet/diff PASS.
+- fresh Sol의 별도 test-fix Task 리뷰를 받고 있으며, 이 후보를 통합한 뒤 새 SHA에서 최종 gate를 실행한다.
