@@ -1,0 +1,87 @@
+# 다섯 번째 엔진 정리 ledger
+
+## 기준·보존·역할
+
+- baseSHA: `5f5b31e519074f599a1d951cf6c7278e88a4cfef`. 사용자 지시로 PR #76을 검토된 head에서 병합하고 local main도 fast-forward했다.
+- Issue #75는 닫혔고 Project #1의 Issue #75/PR #76은 Done·완료 근거로 갱신했다.
+- 통합 worktree `/home/appuser/dev_system/.worktrees/engine-retirement-slice5`, branch `agent/engine-retirement-slice5`.
+- 중단된 codex-runtime의 cmd/agentctl main.go/main_test.go와 internal/config config.go/config_test.go는 기존 modified 상태로 보존했다. 기존 worktree·Windows staging은 삭제하지 않는다.
+- root는 계약·문서·GitHub·통합, Sol medium은 조사, Luna high는 코드·테스트, fresh Sol medium은 독립 리뷰를 맡는다. 실제 runtime identity는 unverified, 승격 없음.
+- 구현 상한 3개 중 예약한 Luna 1개는 Task 리뷰 완료 후 해제했고 reviewer 슬롯을 확보한다.
+
+## 조사 Task packet
+
+- taskId: `engine-retirement-slice5-inventory`
+- baseSHA: `5f5b31e519074f599a1d951cf6c7278e88a4cfef`
+- deps: PR #76 병합 및 기존 engine inventory
+- ownedPaths: `[]`
+- worktree: `/home/appuser/dev_system`
+- branch: `main` (읽기 전용)
+- forbiddenPaths: 모든 쓰기
+- interface: 남은 engine의 최소 제거 경계와 보존할 현재 소비자 확인
+- acceptance: importer/caller/config/test/docs 근거로 최소 후보 제안
+- tests: rg·source reads·Go 1.27 go list만, 테스트 미실행
+- result: changedFiles `[]`, commitSHA 없음. executedCommands는 위 조회. outcomes는 internal/integration importer 0·전용 테스트만 존재, 현재 workrun 서비스 보존 필요 확인. unverified는 runtime identity·구현 후 검사, blockers 없음.
+
+## 직렬 계약·소유권
+
+[구현 packet](../superpowers/plans/2026-09-11-engine-retirement-v1-integration.md)의 package 삭제를 root/Sol이 먼저 합의했다.
+Luna는 옛 integration 두 파일과 report만, root는 HANDOFF/plan/ledger만 소유한다.
+
+| 조합 | 확인 | 판단 |
+|---|---|---|
+| 조사 / 구현 | importer 0과 현재 workrun 대체 경로 | 계약 고정 후 구현 |
+| 구현 / root 문서 | 제품 두 파일 / 문서 세 파일 | 중복 소유 없음 |
+
+## 검증 원칙
+
+이전 fsync 지연 근거에 따라 처음부터 별도 tmpfs TMPDIR을 사용한다. worker full suite와 동일 tuple
+재실행을 금지하며 root의 마지막 make check만 한 번 수행한다. docs-only 후속은 링크/diff만 검사한다.
+기존 Windows healthy-path를 새 native 실행으로 확대하지 않는다. native 오류·현재 보드의 native 실행,
+Herdr/Projects E2E·Wiki 페이지 발행·runtime identity는 미검증으로 남긴다.
+
+## 착수 기록
+
+- [Issue #77](https://github.com/Middleages/thread-dock/issues/77)을 생성해 Project #1에서 In Progress·정리 방향 유지로 추적한다.
+- 통합 TMPDIR은 `/dev/shm/threaddock-slice5-gate.Uxv15j`다. npm ci는 exit 0이며 package lock은 변경하지 않았다.
+- 제품 소유 범위는 옛 integration 두 파일뿐이고, 현재 통합 서비스나 운영 문서 재작성은 포함하지 않는다.
+
+## 구현 후보
+
+- code commit `727035d7ad37224fcdce5d6b055c5476d71a5511`, 최초 report head `3340e8337bcaf988a984cc9c30e3dcc4c4a78145`.
+- 전용 두 파일 415줄을 제거했다. 현재 workrun 서비스와 Git helper에는 변경이 없다.
+- 명시한 Go 1.27.0과 tmpfs에서 `TestReviewIntegration` 13개가 실제 실행돼 통과했고 workrun vet/list/ref/diff 검사도 통과했다.
+- report의 TMPDIR placeholder는 실제 환경 또는 원문 mktemp 명령으로 정정 요청했다. report-only이며 제품 검사를 반복하지 않는다.
+- `6a4bb17c6da215dc48cd3c302b4d1122dfe7e366`에서 실제 원문 `tmp_dir=$(mktemp -d /dev/shm/engine-retirement-v1-integration.XXXXXX)`와 명령별 TMPDIR을 기록했다. fresh Sol은 이 head에서 spec/quality 모두 ACCEPT했다. finding과 수정 요구 없음.
+- Task 리뷰는 importer/API caller 부재와 current workrun/state/Git/CLI/Monitor 보존을 독립 확인했다. 통합 gate·전체 리뷰는 별도 단계다.
+
+## 통합 gate
+
+고정 SHA `e1efc5db4134721e1e2d5270801409bdc599e408`에서 다음 명령을 한 번 실행해 exit 0을 확인했다.
+
+```sh
+TMPDIR=/dev/shm/threaddock-slice5-gate.Uxv15j PATH=/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin:$PATH make check
+```
+
+gofmt·shell syntax·전체 Go vet/test·UI 2 files/26 tests·frontend build가 모두 통과했다.
+workrun 2.012초, worktree 2.584초, orchestrator 2.476초, Monitor 0.042초다.
+로그는 통합 worktree의 `.superpowers/sdd/2026-09-11-engine-retirement-v1-integration/make-check-e1efc5d.log`에
+있는 비추적 로컬 증거다. build가 제거한 tracked `.placeholder`는 원본 내용으로 복원했고
+`git diff --exit-code`로 검사한 tree와 동일함을 확인했다.
+
+변경 Markdown 4파일의 상대 링크 19개도 통과했다. 이후 결과 기록은 docs-only이며
+제품 검사를 반복하지 않는다. 전체 branch 리뷰 결과는 아래와 같다.
+
+## 최종 리뷰·결과
+
+fresh Sol은 `3022baba83bebcb2a77b3f895100829b95d77a7b`에서 전체 통합 ACCEPT를 반환했다.
+blocking/non-blocking finding 없음. 미사용 두 파일 삭제, package 밖 caller 부재, 현재 workrun·state·Git·CLI·Monitor
+보존 및 단일 gate 로그와 이후 docs-only 변경을 독립 확인했다. 승인 결과 후속 기록도 문서뿐이며 제품 tree는 gate SHA와 같다.
+
+- changedFiles: 옛 integration 두 파일 삭제, HANDOFF·plan·ledger·report 4파일, 총 6경로.
+- commitSHA: code `727035d`, Task 리뷰 `6a4bb17`, 통합 gate `e1efc5d`, 전체 리뷰 `3022bab`.
+- executedCommands: report의 13개 focused 사례·vet/list/ref/diff, root 단일 tmpfs make check·링크/diff, GitHub 기록.
+- outcomes: Task/전체 리뷰 ACCEPT, full gate PASS. PR #76 병합·Issue #75 완료, Issue #77에서 이번 작업 추적.
+- unverified: native Windows·오류 상태·현재 보드의 native 실행·Herdr/Projects E2E·Wiki 페이지 발행·runtime identity.
+- blockers: 없음. 이번 PR의 main 병합은 사용자에게 남긴다.
+- 다음 경계: 남은 CLI와 엔진에서 호출·설정·문서·테스트가 함께 분리되는 작은 경계를 다시 확인한다. 현재 workrun 통합 서비스를 제거 대상으로 혼동하지 않는다.

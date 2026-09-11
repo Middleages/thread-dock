@@ -35,7 +35,18 @@
 - GitHub Projects 쓰기는 `project` scope로 성공했다. 보드 업무 상태는 GitHub가 원본이고,
   Herdr의 session·Agent 상태와 관찰 시각은 별도 실행 원본이다.
 
-## 네 번째 엔진 정리
+## 다섯 번째 엔진 정리
+
+[Issue #77](https://github.com/Middleages/thread-dock/issues/77)은 호출자가 없는 옛 `internal/integration`
+구현과 전용 테스트를 정리한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-v1-integration.md)과
+[ledger](docs/operator/2026-09-11-engine-retirement-slice5-ledger.md)에 정확한 경계와 검증 상태를 기록한다.
+현재 `internal/workrun.ReviewIntegrationService`, shared Git/state/CLI 및 Monitor는 유지한다.
+Task 리뷰는 `6a4bb17`에서 ACCEPT했고 통합 `e1efc5d`의 단일 tmpfs make check는
+전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰는
+`3022baba83bebcb2a77b3f895100829b95d77a7b`에서 ACCEPT했으며 남은 finding은 없다.
+PR은 `agent/engine-retirement-slice5`에서 전달하고 이번 main 병합은 사용자에게 남긴다.
+
+## PR #76의 네 번째 정리 결과
 
 [Issue #75](https://github.com/Middleages/thread-dock/issues/75)에서 미사용 worktree revert API 여섯 개와
 전용 테스트를 정리한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-worktree-revert.md)과
@@ -44,7 +55,8 @@
 Task 리뷰는 `537bda2`에서 ACCEPT했고 통합 `7a620c4`의 단일 tmpfs `make check`는
 전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰는
 `acfbf7be0c22fd333874f1e26539debb74abfd12`에서 ACCEPT했으며 남은 finding은 없다.
-PR은 `agent/engine-retirement-slice4`에서 전달하고 이번 main 병합은 사용자에게 남긴다.
+[PR #76](https://github.com/Middleages/thread-dock/pull/76)은 사용자 지시로
+`5f5b31e519074f599a1d951cf6c7278e88a4cfef`에 병합됐다. Issue #75는 닫혔고 보드의 Issue/PR도 Done으로 갱신했다.
 
 ## PR #74의 세 번째 정리 결과
 
@@ -127,9 +139,10 @@ AGENTS.md, HANDOFF.md, PRODUCT.md, CONTEXT.md, ADR 0008,
 Go가 GitHub·Herdr 조회·결합을 담당하고, Herdr가 세션 실행을, Agent와 Skills가 개발·기록을 맡아.
 Task 1·2의 Go/Wails GitHub·Herdr 경로와 Task 3의 Node 경로 제거가 반영되어 있다.
 PR #70의 monitorcli 제거와 PR #72의 create-revert CLI/service 제거는 main에 병합됐다.
-PR #74의 미사용 GitHub safe-draft 제거도 병합됐고 최신 병합 근거는 `b2acf4c`이다.
+PR #74의 미사용 GitHub safe-draft 제거와 PR #76의 worktree revert 제거도 병합됐다.
+최신 병합 근거는 `5f5b31e`다.
 현재 Project는 https://github.com/users/Middleages/projects/1 이다.
-남은 worktree revert helper는 Issue #75의 계획과 ledger를 확인해 진행한다.
+완료된 revert 정리를 반복하지 말고 남은 CLI·엔진의 다음 작은 경계를 확인해 진행한다.
 Linux 통합 gate와 표준 Windows package/live acceptance는 reviewed SHA `325db89`에서 완료됐다.
 healthy native run은 GitHub 69개 work item, Herdr 기본 session/3 agents, clipboard 188, `로컬 연결 정상`,
 process/task cleanup을 확인했으며 native error-state만 unverified다.
