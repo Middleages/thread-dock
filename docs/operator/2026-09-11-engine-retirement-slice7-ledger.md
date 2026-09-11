@@ -83,3 +83,18 @@ exit 0, 1파일/2 tests, 4.16초로 통과했다. 이는 단일 fork/IPC/jsdom b
 정확한 자원 원인을 확정하지 않는다. frontend/Makefile/lock/dependency diff는 0이다.
 다음 gate는 `VITEST_MAX_WORKERS=1`만 추가해 동시 worker startup을 제한한다. assertion이나 test/hook timeout,
 pool 종류, source/config는 변경하지 않는다. 이 환경 변경으로 실패 tuple과 구분해 최종 gate를 수행한다.
+
+## 단일 worker 환경 최종 gate
+
+고정 SHA `d40b693bcf617926fe86ca6ff9fa61d69f46c01a`에서 다음 명령이 exit 0으로 완료됐다.
+
+```sh
+VITEST_MAX_WORKERS=1 TMPDIR=/dev/shm/threaddock-slice7-gate.5weZvh PATH=/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin:$PATH make check
+```
+
+gofmt/shell/전체 Go vet/test·UI 2 files/26 tests·frontend build가 통과했다. 변경 없는 Go 결과는 cache를
+채택했고 UI는 11.80초에 실행 완료됐다. 정확한 startup 병목은 미확정이지만 지원되는 동시성 제한 환경에서
+전체 검증을 완료했으며 assertion/timeout/isolation이나 제품 코드는 완화·변경하지 않았다.
+로그는 `.superpowers/sdd/2026-09-11-engine-retirement-backend-confirm/make-check-d40b693-single-worker.log`의
+비추적 로컬 근거다. `.placeholder`를 원본 내용으로 복원하고 `git diff --exit-code`로 tree 일치를 확인했다.
+Markdown 4파일/상대 링크 23개 검사를 통과했다. 이후 문서 기록만 변경하며 전체 branch 리뷰는 pending이다.
