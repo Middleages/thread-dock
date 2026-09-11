@@ -232,7 +232,7 @@ func productionDependencies(args []string) (cli.Dependencies, error) {
 		worktreeRoot,
 		cfg.HerdrWorktreeRoot,
 	)
-	return cli.Dependencies{Runs: service, Retirement: service, Confirmer: orch}, nil
+	return cli.Dependencies{Runs: service, Retirement: service}, nil
 }
 
 func roleAgentRouting(cfg config.Config) (builder, reviewer string) {
@@ -267,7 +267,7 @@ func repositoryPathForPersistedCommand(ctx context.Context, args []string, store
 type repositoryDiscoverer func(context.Context, runner.Runner, string) (string, error)
 
 func repositoryPathForCommand(ctx context.Context, args []string, process runner.Runner, binary string, discover repositoryDiscoverer) (string, error) {
-	if len(args) == 0 || (args[0] != "start" && args[0] != "resume" && args[0] != "confirm") {
+	if len(args) == 0 || (args[0] != "start" && args[0] != "resume") {
 		return "", nil
 	}
 	if discover == nil {
@@ -280,5 +280,5 @@ func requiresGHESCredential(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	return args[0] == "start" || args[0] == "resume" || args[0] == "confirm"
+	return args[0] == "start" || args[0] == "resume"
 }
