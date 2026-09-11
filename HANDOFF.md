@@ -42,7 +42,9 @@
 [ledger](docs/operator/2026-09-11-engine-retirement-slice5-ledger.md)에 정확한 경계와 검증 상태를 기록한다.
 현재 `internal/workrun.ReviewIntegrationService`, shared Git/state/CLI 및 Monitor는 유지한다.
 Task 리뷰는 `6a4bb17`에서 ACCEPT했고 통합 `e1efc5d`의 단일 tmpfs make check는
-전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰와 PR 전달은 진행 중이다.
+전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰는
+`3022baba83bebcb2a77b3f895100829b95d77a7b`에서 ACCEPT했으며 남은 finding은 없다.
+PR은 `agent/engine-retirement-slice5`에서 전달하고 이번 main 병합은 사용자에게 남긴다.
 
 ## PR #76의 네 번째 정리 결과
 

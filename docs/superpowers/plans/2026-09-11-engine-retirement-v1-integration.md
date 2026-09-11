@@ -46,6 +46,6 @@ confirm/retire/cleanup은 다른 실행 상태·설정에 연결돼 더 넓으�
 - [x] 참조·보존 경계를 확인하고 전용 두 파일을 제거했다.
 - [x] 현재 통합 경로의 13개 기존 focused 사례와 검사·self-review 후 commit했다.
 - [x] fresh Sol이 `6a4bb17`에서 spec/quality 모두 ACCEPT했다. 수정 요구 없음.
-- [ ] root 단일 통합 gate와 전체 리뷰를 통과해 PR을 준비한다.
+- [x] root가 `e1efc5d`의 단일 통합 gate와 `3022bab`의 전체 리뷰를 통과해 PR을 준비했다.
 
 [진행 ledger](../../operator/2026-09-11-engine-retirement-slice5-ledger.md)에 검증·GitHub 근거를 기록한다.

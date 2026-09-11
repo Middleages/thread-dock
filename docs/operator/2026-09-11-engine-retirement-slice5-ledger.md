@@ -70,4 +70,18 @@ workrun 2.012초, worktree 2.584초, orchestrator 2.476초, Monitor 0.042초다.
 `git diff --exit-code`로 검사한 tree와 동일함을 확인했다.
 
 변경 Markdown 4파일의 상대 링크 19개도 통과했다. 이후 결과 기록은 docs-only이며
-제품 검사를 반복하지 않는다. 전체 branch 리뷰는 아직 pending이다.
+제품 검사를 반복하지 않는다. 전체 branch 리뷰 결과는 아래와 같다.
+
+## 최종 리뷰·결과
+
+fresh Sol은 `3022baba83bebcb2a77b3f895100829b95d77a7b`에서 전체 통합 ACCEPT를 반환했다.
+blocking/non-blocking finding 없음. 미사용 두 파일 삭제, package 밖 caller 부재, 현재 workrun·state·Git·CLI·Monitor
+보존 및 단일 gate 로그와 이후 docs-only 변경을 독립 확인했다. 승인 결과 후속 기록도 문서뿐이며 제품 tree는 gate SHA와 같다.
+
+- changedFiles: 옛 integration 두 파일 삭제, HANDOFF·plan·ledger·report 4파일, 총 6경로.
+- commitSHA: code `727035d`, Task 리뷰 `6a4bb17`, 통합 gate `e1efc5d`, 전체 리뷰 `3022bab`.
+- executedCommands: report의 13개 focused 사례·vet/list/ref/diff, root 단일 tmpfs make check·링크/diff, GitHub 기록.
+- outcomes: Task/전체 리뷰 ACCEPT, full gate PASS. PR #76 병합·Issue #75 완료, Issue #77에서 이번 작업 추적.
+- unverified: native Windows·오류 상태·현재 보드의 native 실행·Herdr/Projects E2E·Wiki 페이지 발행·runtime identity.
+- blockers: 없음. 이번 PR의 main 병합은 사용자에게 남긴다.
+- 다음 경계: 남은 CLI와 엔진에서 호출·설정·문서·테스트가 함께 분리되는 작은 경계를 다시 확인한다. 현재 workrun 통합 서비스를 제거 대상으로 혼동하지 않는다.
