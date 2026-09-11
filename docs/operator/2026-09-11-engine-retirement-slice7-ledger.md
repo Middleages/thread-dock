@@ -1,0 +1,44 @@
+# 일곱 번째 엔진 정리 ledger
+
+## 기준·병합·보존
+
+- baseSHA: `f9fb7256e625e116493729c5accc390a2b8ec953`. 사용자 지시에 따라 PR #78을 main에 병합(`13b20d3`)하고 PR #80의 base를 main으로 전환해 병합했다.
+- local main을 fast-forward했고 `git diff ed42ea9 HEAD --exit-code`로 검토된 PR #80 head와 main의 전체 tree 일치를 확인했다. 기존 gate는 재실행하지 않았다.
+- Issue #77·#79는 닫혔고 Project #1의 해당 Issue/PR #78·#80을 Done·완료 근거로 갱신했다.
+- 통합 worktree `/home/appuser/dev_system/.worktrees/engine-retirement-slice7`, branch `agent/engine-retirement-slice7`.
+- codex-runtime의 cmd/agentctl main.go/main_test.go와 internal/config config.go/config_test.go는 기존 modified 상태로 보존했다. 기존 worktree·Windows staging은 삭제하지 않는다.
+
+## 조사 Task packet
+
+- taskId: `engine-retirement-slice7-inventory`
+- baseSHA: `f9fb7256e625e116493729c5accc390a2b8ec953`
+- deps: PR #78·#80 병합, CLI confirm 제거
+- ownedPaths: `[]`
+- worktree: `/home/appuser/dev_system`
+- branch: `main` (읽기 전용)
+- forbiddenPaths: 모든 쓰기
+- interface: backend confirmation 진입점의 caller와 state/event/test 보존 경계 확인
+- acceptance: 다음 작은 삭제 범위·정확한 소유 파일·focused 검사 제안, 완료된 slice 반복 금지
+- tests: rg/source/go list 등 조회만
+- result: changedFiles `[]`, commitSHA 없음. commands/outcomes/unverified/blockers는 아래 조사 결과로 기록한다.
+
+## 역할·검증 환경
+
+root는 문서·계약·GitHub·통합, Sol medium은 조사, Luna high는 구현, fresh Sol medium은 독립 리뷰를 맡는다.
+actual runtime identity는 미노출이면 unverified, 승격 없음. worker 상한 3, Luna 1개 예약, reviewer 슬롯 확보.
+Go 1.27.0 절대 경로를 사용하며 root 통합 TMPDIR은 `/dev/shm/threaddock-slice7-gate.5weZvh`다.
+npm ci는 exit 0이며 lock 변경 없음. worker full suite와 동일 tuple 재실행을 금지하고 새 최종 gate만 한 번 수행한다.
+native Windows·오류 상태·현재 보드 native 실행·Herdr/Projects E2E·Wiki 페이지 발행은 별도 미검증으로 유지한다.
+
+## 조사 결과·계약
+
+fresh Sol은 Auto wrapper와 Orchestrator confirmation producer에 production 진입 caller가 없음을 확인했다.
+후자는 wrapper 외에는 테스트 세 개만 소비한다. Source/rg/git grep/Go 1.27 go list로 확인했고 파일 변경·테스트 실행은 없다.
+state/mergegate/comment/needs_operator와 invalidate helper는 실제 사용되므로 보존한다. blockers 없음, runtime identity 미검증.
+root/Sol은 [구현 packet](../superpowers/plans/2026-09-11-engine-retirement-backend-confirm.md)의 두 method 제거를 직렬 고정했다.
+mixed 대기·재개 테스트는 persisted fixture로 유지하고 전용 confirmation producer 테스트 두 개만 삭제한다.
+
+| Task 조합 | 경계 | 판단 |
+|---|---|---|
+| 조사 / 구현 | caller 및 mixed-test 보존 근거 → 두 method 제거 | 직렬 합의 후 구현 |
+| 구현 / root 문서 | 지정 Go 함수/테스트 / HANDOFF·plan·ledger | 소유 경로 중복 없음 |

@@ -45,8 +45,8 @@ CLI Task는 `7234f66`에서 ACCEPT했다. 최초 gate `80c9a0d`에서 기존 동
 동기화 결함을 발견해 테스트만 수정했고, 20회 반복·잠금 테스트 및 `eb62e6e`의 독립 리뷰를 통과했다.
 수정 후 `98861c8`의 gate는 전체 Go·UI 26개·frontend build까지 통과했다. 제품 lock 구현은 불변이며
 전체 리뷰는 `60df27dbbcf69c901caa39d4e832f69bfe1bb14c`에서 ACCEPT했다. 남은 blocking 사항은 없다.
-PR #78은 아직 OPEN이므로 검토된 head `5f3d2b6` 위에 후속 branch를 만들었다. 새 PR의 base는
-`agent/engine-retirement-slice5`이며, #78을 main에 병합한 뒤 후속 PR을 main으로 전환한다.
+PR #78을 main에 병합한 뒤 PR #80의 base를 main으로 바꿔 병합했다. 사용자 지시로 수행했으며
+PR #80 merge SHA는 `f9fb7256e625e116493729c5accc390a2b8ec953`다. Issue #79와 보드 항목도 완료로 갱신했다.
 
 ## PR #78의 다섯 번째 정리 결과
 
@@ -57,8 +57,8 @@ PR #78은 아직 OPEN이므로 검토된 head `5f3d2b6` 위에 후속 branch를 
 Task 리뷰는 `6a4bb17`에서 ACCEPT했고 통합 `e1efc5d`의 단일 tmpfs make check는
 전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰는
 `3022baba83bebcb2a77b3f895100829b95d77a7b`에서 ACCEPT했으며 남은 finding은 없다.
-[PR #78](https://github.com/Middleages/thread-dock/pull/78)은 `agent/engine-retirement-slice5`에서 열려 있다.
-main 병합은 수행하지 않았으며 Issue #77·PR #78의 보드 상태도 In Progress로 유지한다.
+[PR #78](https://github.com/Middleages/thread-dock/pull/78)은 `13b20d3dc1e75f55016dadb87993884402ee8088`에 병합됐다.
+Issue #77은 닫혔고 보드의 Issue/PR도 Done으로 갱신했다.
 
 ## PR #76의 네 번째 정리 결과
 
@@ -154,7 +154,7 @@ Go가 GitHub·Herdr 조회·결합을 담당하고, Herdr가 세션 실행을, A
 Task 1·2의 Go/Wails GitHub·Herdr 경로와 Task 3의 Node 경로 제거가 반영되어 있다.
 PR #70의 monitorcli 제거와 PR #72의 create-revert CLI/service 제거는 main에 병합됐다.
 PR #74의 미사용 GitHub safe-draft 제거와 PR #76의 worktree revert 제거도 병합됐다.
-최신 병합 근거는 `5f5b31e`다.
+PR #78과 #80도 main에 병합됐고 최신 병합 근거는 `f9fb725`다.
 현재 Project는 https://github.com/users/Middleages/projects/1 이다.
 완료된 revert 정리를 반복하지 말고 남은 CLI·엔진의 다음 작은 경계를 확인해 진행한다.
 Linux 통합 gate와 표준 Windows package/live acceptance는 reviewed SHA `325db89`에서 완료됐다.
