@@ -44,8 +44,8 @@ func NewConfigurableApp(baseEnv map[string]string, process CommandRunner, timeou
 
 func (a *App) buildSource(settings MonitorSettings) SnapshotSource {
 	env := settings.environment(a.baseEnv)
-	github := NewGitHubMonitor(env, a.process, a.timeout)
-	herdr := NewHerdrMonitor(env, a.process, a.timeout)
+	github := NewHostedGitHubMonitor(env, a.process, a.timeout)
+	herdr := NewHostedHerdrMonitor(env, a.process, a.timeout)
 	return NewCombinedMonitor(github, herdr)
 }
 

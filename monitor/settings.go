@@ -12,6 +12,7 @@ const settingsDirectoryName = "ThreadDock"
 const settingsFileName = "config.json"
 
 type MonitorSettings struct {
+	GitHubHost      string `json:"githubHost"`
 	Repositories    string `json:"repositories"`
 	Projects        string `json:"projects"`
 	WSLDistribution string `json:"wslDistribution"`
@@ -31,7 +32,12 @@ func defaultSettingsStore() settingsStore {
 }
 
 func settingsFromEnv(env map[string]string) MonitorSettings {
+	host, err := normalizeGitHubHost(env["THREADDOCK_GITHUB_HOST"])
+	if err != nil {
+		host = strings.TrimSpace(env["THREADDOCK_GITHUB_HOST"])
+	}
 	return MonitorSettings{
+		GitHubHost:      host,
 		Repositories:    strings.TrimSpace(env["THREADDOCK_REPOS"]),
 		Projects:        strings.TrimSpace(env["THREADDOCK_PROJECTS"]),
 		WSLDistribution: strings.TrimSpace(env["THREADDOCK_WSL_DISTRIBUTION"]),
@@ -49,6 +55,7 @@ func (s MonitorSettings) environment(base map[string]string) map[string]string {
 		}
 		env[key] = value
 	}
+	setOrDelete("THREADDOCK_GITHUB_HOST", s.GitHubHost)
 	setOrDelete("THREADDOCK_REPOS", s.Repositories)
 	setOrDelete("THREADDOCK_PROJECTS", s.Projects)
 	setOrDelete("THREADDOCK_WSL_DISTRIBUTION", s.WSLDistribution)
@@ -58,7 +65,11 @@ func (s MonitorSettings) environment(base map[string]string) map[string]string {
 
 func validateMonitorSettings(settings MonitorSettings) error {
 	env := settings.environment(map[string]string{})
-	config, _ := parseMonitorConfig(env)
+	normalized, _, err := normalizeGitHubEnvironment(env)
+	if err != nil {
+		return err
+	}
+	config, _ := parseMonitorConfig(normalized)
 	if config.err != nil {
 		return config.err
 	}
@@ -86,6 +97,9 @@ func (s settingsStore) load() (MonitorSettings, bool, error) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return MonitorSettings{}, false, fmt.Errorf("ThreadDock 설정 파일을 읽을 수 없습니다: %w", err)
 	}
+	if settings.GitHubHost == "" {
+		settings.GitHubHost = defaultGitHubHost
+	}
 	if err := validateMonitorSettings(settings); err != nil {
 		return MonitorSettings{}, false, fmt.Errorf("저장된 ThreadDock 설정이 올바르지 않습니다: %w", err)
 	}
@@ -95,6 +109,9 @@ func (s settingsStore) load() (MonitorSettings, bool, error) {
 func (s settingsStore) save(settings MonitorSettings) error {
 	if strings.TrimSpace(s.path) == "" {
 		return fmt.Errorf("사용자 설정 경로를 확인할 수 없습니다")
+	}
+	if settings.GitHubHost == "" {
+		settings.GitHubHost = defaultGitHubHost
 	}
 	if err := validateMonitorSettings(settings); err != nil {
 		return err

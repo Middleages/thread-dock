@@ -14,7 +14,7 @@ func TestSettingsFromEnvMapsExistingMonitorConfiguration(t *testing.T) {
 	}
 
 	got := settingsFromEnv(env)
-	if got.Repositories != env["THREADDOCK_REPOS"] || got.Projects != env["THREADDOCK_PROJECTS"] || got.WSLDistribution != "Ubuntu" || got.SessionsFile != env["THREADDOCK_SESSIONS_FILE"] {
+	if got.GitHubHost != "github.com" || got.Repositories != env["THREADDOCK_REPOS"] || got.Projects != env["THREADDOCK_PROJECTS"] || got.WSLDistribution != "Ubuntu" || got.SessionsFile != env["THREADDOCK_SESSIONS_FILE"] {
 		t.Fatalf("settings=%#v", got)
 	}
 }
@@ -42,6 +42,7 @@ func TestSettingsStoreRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ThreadDock", "config.json")
 	store := settingsStore{path: path}
 	want := MonitorSettings{
+		GitHubHost:      "github.com",
 		Repositories:    "Middleages/thread-dock",
 		Projects:        "https://github.com/users/Middleages/projects/1",
 		WSLDistribution: "Ubuntu",
@@ -62,16 +63,17 @@ func TestSettingsStoreRoundTrip(t *testing.T) {
 
 func TestSettingsEnvironmentCanReplaceAndClearInheritedValues(t *testing.T) {
 	base := map[string]string{
+		"THREADDOCK_GITHUB_HOST":      "github.example.com",
 		"THREADDOCK_REPOS":            "Middleages/old",
 		"THREADDOCK_PROJECTS":         "https://github.com/users/Middleages/projects/99",
 		"THREADDOCK_WSL_DISTRIBUTION": "OldDistro",
 		"THREADDOCK_SESSIONS_FILE":    "/tmp/old.json",
 		"OTHER":                       "preserved",
 	}
-	settings := MonitorSettings{Repositories: "Middleages/thread-dock", WSLDistribution: "Ubuntu"}
+	settings := MonitorSettings{GitHubHost: "github.com", Repositories: "Middleages/thread-dock", WSLDistribution: "Ubuntu"}
 
 	got := settings.environment(base)
-	if got["THREADDOCK_REPOS"] != "Middleages/thread-dock" || got["THREADDOCK_WSL_DISTRIBUTION"] != "Ubuntu" || got["OTHER"] != "preserved" {
+	if got["THREADDOCK_GITHUB_HOST"] != "github.com" || got["THREADDOCK_REPOS"] != "Middleages/thread-dock" || got["THREADDOCK_WSL_DISTRIBUTION"] != "Ubuntu" || got["OTHER"] != "preserved" {
 		t.Fatalf("env=%#v", got)
 	}
 	if _, exists := got["THREADDOCK_PROJECTS"]; exists {
