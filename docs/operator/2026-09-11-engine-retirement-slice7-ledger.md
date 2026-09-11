@@ -42,3 +42,9 @@ mixed 대기·재개 테스트는 persisted fixture로 유지하고 전용 confi
 |---|---|---|
 | 조사 / 구현 | caller 및 mixed-test 보존 근거 → 두 method 제거 | 직렬 합의 후 구현 |
 | 구현 / root 문서 | 지정 Go 함수/테스트 / HANDOFF·plan·ledger | 소유 경로 중복 없음 |
+
+## 착수 기록
+
+- [Issue #81](https://github.com/Middleages/thread-dock/issues/81)을 생성해 Project #1에서 In Progress·정리 방향 유지로 추적한다.
+- root는 HANDOFF의 PR #78·#80 미병합 문구를 실제 병합 결과로 정정했다. 지난 ledger의 당시 관찰은 역사 기록으로 보존한다.
+- 코드 소유 범위는 지정된 두 method와 세 테스트이며, private helper/state/mergegate 구현 수정은 포함하지 않는다.

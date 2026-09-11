@@ -35,7 +35,14 @@
 - GitHub Projects 쓰기는 `project` scope로 성공했다. 보드 업무 상태는 GitHub가 원본이고,
   Herdr의 session·Agent 상태와 관찰 시각은 별도 실행 원본이다.
 
-## 여섯 번째 엔진 정리
+## 일곱 번째 엔진 정리
+
+[Issue #81](https://github.com/Middleages/thread-dock/issues/81)에서 미사용 backend ConfirmProtectedChange
+진입점 두 개를 제거한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-backend-confirm.md)과
+[ledger](docs/operator/2026-09-11-engine-retirement-slice7-ledger.md)에 caller·mixed-test·state 보존 경계와 검증 결과를 기록한다.
+현재 protected state/gate/comment/event와 저장된 confirmation 상태의 대기·재개 검증은 유지한다.
+
+## PR #80의 여섯 번째 정리 결과
 
 [Issue #79](https://github.com/Middleages/thread-dock/issues/79)에서 옛 confirm CLI adapter/wiring을 제거한다.
 [계획](docs/superpowers/plans/2026-09-11-engine-retirement-confirm-cli.md)과
