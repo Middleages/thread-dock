@@ -54,3 +54,20 @@ Herdr/Projects E2E·Wiki 페이지 발행·runtime identity는 미검증으로 �
 - report의 TMPDIR placeholder는 실제 환경 또는 원문 mktemp 명령으로 정정 요청했다. report-only이며 제품 검사를 반복하지 않는다.
 - `6a4bb17c6da215dc48cd3c302b4d1122dfe7e366`에서 실제 원문 `tmp_dir=$(mktemp -d /dev/shm/engine-retirement-v1-integration.XXXXXX)`와 명령별 TMPDIR을 기록했다. fresh Sol은 이 head에서 spec/quality 모두 ACCEPT했다. finding과 수정 요구 없음.
 - Task 리뷰는 importer/API caller 부재와 current workrun/state/Git/CLI/Monitor 보존을 독립 확인했다. 통합 gate·전체 리뷰는 별도 단계다.
+
+## 통합 gate
+
+고정 SHA `e1efc5db4134721e1e2d5270801409bdc599e408`에서 다음 명령을 한 번 실행해 exit 0을 확인했다.
+
+```sh
+TMPDIR=/dev/shm/threaddock-slice5-gate.Uxv15j PATH=/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin:$PATH make check
+```
+
+gofmt·shell syntax·전체 Go vet/test·UI 2 files/26 tests·frontend build가 모두 통과했다.
+workrun 2.012초, worktree 2.584초, orchestrator 2.476초, Monitor 0.042초다.
+로그는 통합 worktree의 `.superpowers/sdd/2026-09-11-engine-retirement-v1-integration/make-check-e1efc5d.log`에
+있는 비추적 로컬 증거다. build가 제거한 tracked `.placeholder`는 원본 내용으로 복원했고
+`git diff --exit-code`로 검사한 tree와 동일함을 확인했다.
+
+변경 Markdown 4파일의 상대 링크 19개도 통과했다. 이후 결과 기록은 docs-only이며
+제품 검사를 반복하지 않는다. 전체 branch 리뷰는 아직 pending이다.

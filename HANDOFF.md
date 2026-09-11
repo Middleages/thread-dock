@@ -41,6 +41,8 @@
 구현과 전용 테스트를 정리한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-v1-integration.md)과
 [ledger](docs/operator/2026-09-11-engine-retirement-slice5-ledger.md)에 정확한 경계와 검증 상태를 기록한다.
 현재 `internal/workrun.ReviewIntegrationService`, shared Git/state/CLI 및 Monitor는 유지한다.
+Task 리뷰는 `6a4bb17`에서 ACCEPT했고 통합 `e1efc5d`의 단일 tmpfs make check는
+전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰와 PR 전달은 진행 중이다.
 
 ## PR #76의 네 번째 정리 결과
 
