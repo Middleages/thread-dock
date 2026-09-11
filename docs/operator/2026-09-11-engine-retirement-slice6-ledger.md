@@ -26,7 +26,7 @@
 ## 역할과 검증
 
 root는 문서·GitHub·계약·통합, Sol medium은 계획·조사, Luna high는 구현, fresh Sol medium은 리뷰를 맡는다.
-실제 runtime model/effort는 미노출이면 unverified이며 승격하지 않는다. worker 상한 3, Task 리뷰 완료로 코드 worker 예약 해제, reviewer 슬롯 확보.
+실제 runtime model/effort는 미노출이면 unverified이며 승격하지 않는다. worker 상한 3, CLI worker 예약은 해제했고 gate test fix에 Luna 1개를 예약했다. reviewer 슬롯 확보.
 이미 완료된 slice의 결과는 재사용하고 새로운 Task에 필요한 focused 검사만 한다. root의 마지막 통합 make check는
 별도 tmpfs TMPDIR `/dev/shm/threaddock-slice6-gate.OKTr3F`에서 한 번 수행한다. npm ci exit 0, lock 변경 없음.
 Windows native·오류 상태·현재 보드 native 실행·Herdr/Projects E2E·Wiki 페이지 발행은 별도 미검증 범위로 유지한다.
