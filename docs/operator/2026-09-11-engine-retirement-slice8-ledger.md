@@ -119,3 +119,4 @@ threads 단일-worker의 monitor-only 실행도 startup timeout/no tests/exit 1(
 - result: changedFiles `[]`; commitSHA `bfbd6dc8d97b2fbda4381b59adb16a9b98c1d32e`; executedCommands: SHA/조상/diff/numstat/patch-id/symbol/문서/로그/검증 checkout 조회; outcomes: fresh Sol ACCEPT, blocking finding 없음; unverified: actual runtime model/effort 및 Windows/live E2E; blockers: 없음.
 - 제품 수정 요구 없음. 이후 변경은 리뷰·게시 문서 기록뿐이다. Markdown 링크 25개와 diff 검사가 통과했다.
 - gh auth의 `project` scope와 Project #1 조회가 성공했다. PR #82는 OPEN/head `00cd561`이며 main/origin main은 `f9fb725`다. 사용자 실험 worktree의 미커밋 4개 파일은 보존했다.
+- [PR #84](https://github.com/Middleages/thread-dock/pull/84)를 `agent/engine-retirement-slice7` base로 게시했다. main 병합은 수행하지 않았다.

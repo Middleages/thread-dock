@@ -47,6 +47,7 @@ PR #82가 아직 열려 있어 `00cd561` head 위에서 작업한다. 새 PR의 
 fresh Sol ACCEPT다. 같은 코드 `23906ad`의 tmpfs checkout에서 최종 `make check`가 Go 전체·UI 26개·build까지
 통과했다. 앞선 UI startup/threads 실패와 환경 대조는 ledger에 기록했으며 정확한 환경 병목은 미확정이다.
 Windows/native와 live gh/Herdr 제품 E2E를 새로 검증한 결과는 아니다.
+[PR #84](https://github.com/Middleages/thread-dock/pull/84)를 `agent/engine-retirement-slice7` base로 게시했다.
 
 ## PR #82의 일곱 번째 정리 결과
 
