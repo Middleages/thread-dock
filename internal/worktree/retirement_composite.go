@@ -19,16 +19,8 @@ type CompositeRetirementInspector struct {
 	herdrRoot   string
 }
 
-// RetirementInspector is the concise compatibility name for the composite
-// adapter. Both constructors below return the same focused implementation.
-type RetirementInspector = CompositeRetirementInspector
-
 func NewCompositeRetirementInspector(managedGit, herdrGit *Git, managedRoot, herdrRoot string) *CompositeRetirementInspector {
 	return &CompositeRetirementInspector{managedGit: managedGit, herdrGit: herdrGit, managedRoot: managedRoot, herdrRoot: herdrRoot}
-}
-
-func NewRetirementInspector(managedGit, herdrGit *Git, managedRoot, herdrRoot string) *CompositeRetirementInspector {
-	return NewCompositeRetirementInspector(managedGit, herdrGit, managedRoot, herdrRoot)
 }
 
 // InspectRetirementTarget implements the orchestrator's provider-neutral

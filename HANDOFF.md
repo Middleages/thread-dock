@@ -35,7 +35,21 @@
 - GitHub Projects 쓰기는 `project` scope로 성공했다. 보드 업무 상태는 GitHub가 원본이고,
   Herdr의 session·Agent 상태와 관찰 시각은 별도 실행 원본이다.
 
-## 일곱 번째 엔진 정리
+## 여덟 번째 엔진 정리
+
+[Issue #83](https://github.com/Middleages/thread-dock/issues/83)에서 미사용 retirement alias/constructor와
+bulk cleanup 후보 조회 API를 정리한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-unused-cleanup-api.md)과
+[ledger](docs/operator/2026-09-11-engine-retirement-slice8-ledger.md)에 caller·보존 경계·검증 결과를 기록한다.
+exact-ID retire/cleanup·7일 guard·현재 composite inspector·state persistence/ListRecoverable는 보존한다.
+PR #82가 아직 열려 있어 `00cd561` head 위에서 작업한다. 새 PR의 base는 `agent/engine-retirement-slice7`이며,
+#82 main 병합 후 후속 PR을 main으로 전환한다. 이번 main 병합은 수행하지 않았다.
+제품 세 파일의 미사용 API·전용 테스트 60줄 삭제를 완료했다. Task `a1e7da3` 및 전체 통합 `bfbd6dc`는
+fresh Sol ACCEPT다. 같은 코드 `23906ad`의 tmpfs checkout에서 최종 `make check`가 Go 전체·UI 26개·build까지
+통과했다. 앞선 UI startup/threads 실패와 환경 대조는 ledger에 기록했으며 정확한 환경 병목은 미확정이다.
+Windows/native와 live gh/Herdr 제품 E2E를 새로 검증한 결과는 아니다.
+[PR #84](https://github.com/Middleages/thread-dock/pull/84)를 `agent/engine-retirement-slice7` base로 게시했다.
+
+## PR #82의 일곱 번째 정리 결과
 
 [Issue #81](https://github.com/Middleages/thread-dock/issues/81)에서 미사용 backend ConfirmProtectedChange
 진입점 두 개를 제거한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-backend-confirm.md)과
@@ -44,7 +58,8 @@
 Task는 `ec80575`에서 ACCEPT했다. 최초 gate의 UI worker startup timeout을 기록했고 source/config 변경 없이
 `VITEST_MAX_WORKERS=1` 환경의 `d40b693` gate에서 전체 Go·UI 26개·frontend build가 통과했다.
 정확한 환경 병목은 미확정이다. 전체 branch 리뷰는 `f44082c7bcc8cab6cbb1fc75a62b92e14a736cca`에서
-ACCEPT했으며 남은 finding은 없다. 새 PR은 `agent/engine-retirement-slice7`에서 전달하고 main 병합은 사용자에게 남긴다.
+ACCEPT했으며 남은 finding은 없다. [PR #82](https://github.com/Middleages/thread-dock/pull/82)는
+`agent/engine-retirement-slice7`에서 열려 있으며 main 병합은 사용자에게 남긴다.
 
 ## PR #80의 여섯 번째 정리 결과
 
