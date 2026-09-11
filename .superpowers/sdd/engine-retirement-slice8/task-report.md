@@ -91,7 +91,7 @@ against artificial RED and baseline pure-deletion reruns was followed.
 ## Result
 
 - changedFiles: `internal/worktree/retirement_composite.go`, `internal/state/store.go`, `internal/state/store_test.go`, `.superpowers/sdd/engine-retirement-slice8/task-report.md`
-- commitSHA: `60f8597e2c00378cadd3b2766e0e2befebc0f6a` (implementation commit; this report is recorded in a follow-up metadata commit)
+- commitSHA: `60f85978f7220390fa7a7c0cde6a08dac077e80a` (implementation commit; this report is recorded in a follow-up metadata commit)
 - executedCommands: fixed-base `git rev-parse`/`git log` and caller inventory; absolute-toolchain `gofmt`; focused state/worktree/CLI/cmd tests with `/dev/shm/td-unused-cleanup-api.cQdC5J`; focused `go vet`; `go list ./...`; exact removed-symbol and preserved-symbol searches; `git diff --check`; owned-path `git status`/`git diff` self-review
 - outcomes: three approved unused API surfaces and one dedicated test removed; current composite, exact-ID cleanup/retire, persistence/recoverable, and diagnostic runtime paths preserved; all requested focused tests, vet, list, formatting, symbol, preservation, and whitespace checks passed
 - unverified: fresh Sol `td_reviewer` task-review; root single integration `make check`; Windows native Wails execution; actual runtime model/effort identity
