@@ -52,4 +52,10 @@ root는 `parallel-pilot.md` story 3의 confirm 실행 안내만 제거된 명령
 - [x] root 문서의 직접 영향 pilot 테스트를 통과했다. 후속 역사 설명까지 최종 gate에서 확인한다.
 - [ ] 단일 통합 gate와 전체 리뷰 후 PR #78을 base로 하는 PR을 준비한다.
 
+## 통합 gate에서 발견한 기존 테스트 결함
+
+최초 gate `80c9a0d`는 기존 동시 Advance 테스트의 overlap 미보장으로 실패했다. 제품 lock/claim과 CLI 변경에는
+원인 연결이 없으며, 별도 Luna Task가 `TestRound1ConcurrentAdvanceSerializesOneAction`의 동기화만 수정한다.
+정확한 소유 경로·focused 반복·새 gate 실행 근거는 ledger의 `slice6-gate-concurrency-test-fix` packet을 따른다.
+
 [ledger](../../operator/2026-09-11-engine-retirement-slice6-ledger.md)에 검증 SHA·결과·PR 의존성을 기록한다.

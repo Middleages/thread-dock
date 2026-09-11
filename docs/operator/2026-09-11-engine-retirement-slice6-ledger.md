@@ -71,3 +71,35 @@ backend protected-change 보존 계약을 먼저 고정했다. Luna 1개를 예�
 - root의 문서 commit `e1c6ccd`에서 `TMPDIR=/dev/shm/threaddock-slice6-gate.OKTr3F`와 명시한 Go로 `go test ./internal/pilot -run '^TestParallelPilotRunbookProtectsUnacceptedEvidenceFromRetirement$'`를 수행해 exit 0(0.003초)을 확인했다.
 - 이후 story 3에 기존 exact-SHA/check/mergeability gate 조건을 역사 설명으로 명시했다. 최종 문서는 마지막 통합 gate에서도 검증한다. 다른 story·retirement guard는 불변이다.
 - fresh Sol은 CLI Task head `7234f6602fc071d8881d66d6f07181fd4159fb1c`에서 ACCEPT했다. finding과 수정 요구 없음. root 문서는 최종 통합 리뷰 대상이다.
+
+## 최초 통합 gate 실패
+
+`80c9a0d9d22264e00e78e1389fd5be4bce61eaf4`에서 tmpfs TMPDIR과 Go 1.27.0으로 make check를 실행했다.
+gofmt/shell/vet는 통과했고 Go 테스트 중 `TestRound1ConcurrentAdvanceSerializesOneAction`이
+`concurrent errors=[<nil> <nil>]`로 실패해 make exit 2였다. 나머지 Go package는 통과했고 UI/build는 미실행이다.
+원본 로그는 `.superpowers/sdd/2026-09-11-engine-retirement-confirm-cli/make-check-80c9a0d.log`의 비추적 로컬 근거다.
+
+이번 CLI 변경의 orchestrator diff는 0이다. 기존 테스트가 첫 startEntered 신호 직후 releaseStart를 닫아
+두 번째 호출이 lock을 시도하기 전에 첫 호출이 끝날 수 있는지 Sol에 원인 귀속을 요청했다.
+실패를 성공으로 숨기거나 동일 tuple을 근거 없이 재실행하지 않는다.
+
+## Gate 수정 Task packet
+
+Sol은 기존 테스트가 동시 호출의 겹침을 보장하지 않아 정상 직렬 실행에서도 실패할 수 있음을 확인했다.
+harness의 state.Store는 nonblocking flock을 사용하며 production lock/claim 변경은 필요 없다.
+기존 StateLockIsProcessSafe 테스트가 lease 보유 중 ErrRunBusy 경계도 검증한다.
+
+- taskId: `slice6-gate-concurrency-test-fix`
+- baseSHA: `80c9a0d9d22264e00e78e1389fd5be4bce61eaf4`
+- deps: 최초 통합 gate 실패, Sol의 test barrier 원인 귀속
+- ownedPaths: `internal/orchestrator/review_round1_test.go`의 해당 테스트, `.superpowers/sdd/engine-retirement-slice6/gate-fix-report.md`
+- worktree: `/home/appuser/dev_system/.worktrees/engine-retirement-confirm-gate-fix`
+- branch: `agent/engine-retirement-confirm-gate-fix`
+- forbiddenPaths: production orchestrator/state/lock/fakes와 나머지 모든 코드·테스트·문서
+- interface: 제품 API/잠금 동작 불변. 테스트 동기화만 수정하는 좁은 예외다.
+- acceptance: 첫 호출을 adapter에서 막은 동안 두 번째 결과를 받아 ErrRunBusy 확인 후 첫 호출 해제. 첫 결과 nil과 StartAgent 1회 검증 유지. timeout/error cleanup에서도 해제하여 goroutine 누수 방지. sleep을 추가하지 않는다.
+- tests: tmpfs Go 1.27에서 해당 테스트 `-count=20`, 해당 테스트와 `TestRound1StateLockIsProcessSafe`를 함께 `-count=1`, orchestrator vet, diff 검사. 타이밍 회귀 확인을 위한 focused 반복이며 worker full suite는 금지한다.
+- result: changedFiles/실제 commitSHA/executedCommands/outcomes/unverified/blockers를 report에 기록한다.
+
+root가 기존 CLI Task와 분리해 Luna에 이 테스트만 배정한다. 코드 Task의 orchestrator 금지 범위를
+제품 동작까지 넓혀 해제하지 않는다. 수정 SHA가 최초 실패 tuple을 무효화한 뒤에만 최종 gate를 재실행한다.
