@@ -14,10 +14,10 @@ type App struct {
 
 	source SnapshotSource
 
-	baseEnv map[string]string
-	process CommandRunner
-	timeout time.Duration
-	store   settingsStore
+	baseEnv  map[string]string
+	process  CommandRunner
+	timeout  time.Duration
+	store    settingsStore
 	settings MonitorSettings
 }
 
