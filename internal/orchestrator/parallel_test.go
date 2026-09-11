@@ -210,7 +210,7 @@ func TestUnknownMergeabilityIsRereadAndBounded(t *testing.T) {
 	}
 }
 
-func TestProtectedConfirmationIsIdempotentAndResumesMerge(t *testing.T) {
+func TestPersistedProtectedConfirmationResumesMerge(t *testing.T) {
 	h := newParallelHarness(t)
 	h.protectedRiskCategories = []string{"authentication"}
 	if got := h.runToStable(); got != contract.PhaseNeedsOperator {
@@ -221,7 +221,9 @@ func TestProtectedConfirmationIsIdempotentAndResumesMerge(t *testing.T) {
 		t.Fatalf("runs=%v err=%v", runs, err)
 	}
 	id := runs[0].RunID
-	if err := h.orchestrator.ConfirmProtectedChange(context.Background(), id); err != nil {
+	snapshot := h.mustLoad(id)
+	snapshot.ProtectedConfirmed = true
+	if err := h.store.Save(context.Background(), snapshot); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 20; i++ {
@@ -234,35 +236,7 @@ func TestProtectedConfirmationIsIdempotentAndResumesMerge(t *testing.T) {
 		}
 	}
 	if got := h.mustLoad(id); got.Phase != contract.PhaseCompleted {
-		t.Fatalf("phase after confirmation=%s", got.Phase)
-	}
-	if err := h.orchestrator.ConfirmProtectedChange(context.Background(), id); err != nil {
-		t.Fatalf("idempotent terminal confirmation: %v", err)
-	}
-}
-
-func TestProtectedConfirmationRestartsLatestMainBeforeMerge(t *testing.T) {
-	h := newParallelHarness(t)
-	h.protectedRiskCategories = []string{"authentication"}
-	if got := h.runToStable(); got != contract.PhaseNeedsOperator {
-		t.Fatalf("phase=%s", got)
-	}
-	var id contract.RunID
-	for runID := range h.orchestrator.runs {
-		id = runID
-	}
-	if err := h.orchestrator.ConfirmProtectedChange(context.Background(), id); err != nil {
-		t.Fatal(err)
-	}
-	if got := h.mustLoad(id); got.Phase != contract.PhaseCI {
-		t.Fatalf("phase after first confirmation=%s, want CI revalidation", got.Phase)
-	}
-	merges := h.parallelGH.mergeCalls
-	if err := h.orchestrator.ConfirmProtectedChange(context.Background(), id); err != nil {
-		t.Fatal(err)
-	}
-	if h.parallelGH.mergeCalls != merges {
-		t.Fatalf("repeat confirmation triggered merge: before=%d after=%d", merges, h.parallelGH.mergeCalls)
+		t.Fatalf("phase after persisted confirmation=%s", got.Phase)
 	}
 }
 
