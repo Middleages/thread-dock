@@ -44,7 +44,8 @@
 Task 리뷰는 `537bda2`에서 ACCEPT했고 통합 `7a620c4`의 단일 tmpfs `make check`는
 전체 Go·UI 26개·frontend build까지 통과했다. 전체 branch 리뷰는
 `acfbf7be0c22fd333874f1e26539debb74abfd12`에서 ACCEPT했으며 남은 finding은 없다.
-PR은 `agent/engine-retirement-slice4`에서 전달하고 이번 main 병합은 사용자에게 남긴다.
+[PR #76](https://github.com/Middleages/thread-dock/pull/76)은 사용자 지시로
+`5f5b31e519074f599a1d951cf6c7278e88a4cfef`에 병합됐다. Issue #75는 닫혔고 보드의 Issue/PR도 Done으로 갱신했다.
 
 ## PR #74의 세 번째 정리 결과
 
@@ -127,9 +128,10 @@ AGENTS.md, HANDOFF.md, PRODUCT.md, CONTEXT.md, ADR 0008,
 Go가 GitHub·Herdr 조회·결합을 담당하고, Herdr가 세션 실행을, Agent와 Skills가 개발·기록을 맡아.
 Task 1·2의 Go/Wails GitHub·Herdr 경로와 Task 3의 Node 경로 제거가 반영되어 있다.
 PR #70의 monitorcli 제거와 PR #72의 create-revert CLI/service 제거는 main에 병합됐다.
-PR #74의 미사용 GitHub safe-draft 제거도 병합됐고 최신 병합 근거는 `b2acf4c`이다.
+PR #74의 미사용 GitHub safe-draft 제거와 PR #76의 worktree revert 제거도 병합됐다.
+최신 병합 근거는 `5f5b31e`다.
 현재 Project는 https://github.com/users/Middleages/projects/1 이다.
-남은 worktree revert helper는 Issue #75의 계획과 ledger를 확인해 진행한다.
+완료된 revert 정리를 반복하지 말고 남은 CLI·엔진의 다음 작은 경계를 확인해 진행한다.
 Linux 통합 gate와 표준 Windows package/live acceptance는 reviewed SHA `325db89`에서 완료됐다.
 healthy native run은 GitHub 69개 work item, Herdr 기본 session/3 agents, clipboard 188, `로컬 연결 정상`,
 process/task cleanup을 확인했으며 native error-state만 unverified다.
