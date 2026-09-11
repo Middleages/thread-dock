@@ -24,9 +24,7 @@ var assets embed.FS
 func main() {
 	env := environmentMap(os.Environ())
 	process := runner.OSRunner{}
-	github := NewGitHubMonitor(env, process, 15*time.Second)
-	herdr := NewHerdrMonitor(env, process, 15*time.Second)
-	app := NewApp(NewCombinedMonitor(github, herdr))
+	app := NewConfigurableApp(env, process, 15*time.Second)
 	if err := wails.Run(&options.App{
 		Title: "ThreadDock Monitor",
 		Width: 1280, Height: 800,
