@@ -7,7 +7,7 @@
 - 통합 worktree `/home/appuser/dev_system/.worktrees/engine-retirement-slice5`, branch `agent/engine-retirement-slice5`.
 - 중단된 codex-runtime의 cmd/agentctl main.go/main_test.go와 internal/config config.go/config_test.go는 기존 modified 상태로 보존했다. 기존 worktree·Windows staging은 삭제하지 않는다.
 - root는 계약·문서·GitHub·통합, Sol medium은 조사, Luna high는 코드·테스트, fresh Sol medium은 독립 리뷰를 맡는다. 실제 runtime identity는 unverified, 승격 없음.
-- 구현 상한 3개 중 Luna 1개만 예약하며 reviewer 슬롯을 확보한다.
+- 구현 상한 3개 중 예약한 Luna 1개는 Task 리뷰 완료 후 해제했고 reviewer 슬롯을 확보한다.
 
 ## 조사 Task packet
 
@@ -52,4 +52,5 @@ Herdr/Projects E2E·Wiki 페이지 발행·runtime identity는 미검증으로 �
 - 전용 두 파일 415줄을 제거했다. 현재 workrun 서비스와 Git helper에는 변경이 없다.
 - 명시한 Go 1.27.0과 tmpfs에서 `TestReviewIntegration` 13개가 실제 실행돼 통과했고 workrun vet/list/ref/diff 검사도 통과했다.
 - report의 TMPDIR placeholder는 실제 환경 또는 원문 mktemp 명령으로 정정 요청했다. report-only이며 제품 검사를 반복하지 않는다.
-- `6a4bb17c6da215dc48cd3c302b4d1122dfe7e366`에서 실제 원문 `tmp_dir=$(mktemp -d /dev/shm/engine-retirement-v1-integration.XXXXXX)`와 명령별 TMPDIR을 기록했다. report-only 정정 뒤 fresh Sol Task 리뷰 중이다.
+- `6a4bb17c6da215dc48cd3c302b4d1122dfe7e366`에서 실제 원문 `tmp_dir=$(mktemp -d /dev/shm/engine-retirement-v1-integration.XXXXXX)`와 명령별 TMPDIR을 기록했다. fresh Sol은 이 head에서 spec/quality 모두 ACCEPT했다. finding과 수정 요구 없음.
+- Task 리뷰는 importer/API caller 부재와 current workrun/state/Git/CLI/Monitor 보존을 독립 확인했다. 통합 gate·전체 리뷰는 별도 단계다.
