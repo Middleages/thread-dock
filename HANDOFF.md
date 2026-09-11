@@ -43,6 +43,10 @@ bulk cleanup 후보 조회 API를 정리한다. [계획](docs/superpowers/plans/
 exact-ID retire/cleanup·7일 guard·현재 composite inspector·state persistence/ListRecoverable는 보존한다.
 PR #82가 아직 열려 있어 `00cd561` head 위에서 작업한다. 새 PR의 base는 `agent/engine-retirement-slice7`이며,
 #82 main 병합 후 후속 PR을 main으로 전환한다. 이번 main 병합은 수행하지 않았다.
+제품 세 파일의 미사용 API·전용 테스트 60줄 삭제를 완료했다. Task `a1e7da3` 및 전체 통합 `bfbd6dc`는
+fresh Sol ACCEPT다. 같은 코드 `23906ad`의 tmpfs checkout에서 최종 `make check`가 Go 전체·UI 26개·build까지
+통과했다. 앞선 UI startup/threads 실패와 환경 대조는 ledger에 기록했으며 정확한 환경 병목은 미확정이다.
+Windows/native와 live gh/Herdr 제품 E2E를 새로 검증한 결과는 아니다.
 
 ## PR #82의 일곱 번째 정리 결과
 

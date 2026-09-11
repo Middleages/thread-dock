@@ -110,3 +110,12 @@ threads 단일-worker의 monitor-only 실행도 startup timeout/no tests/exit 1(
 - 로그: 비추적 로컬 `.superpowers/sdd/2026-09-11-engine-retirement-unused-cleanup-api/make-check-23906ad-tmpfs-checkout.log`.
 - build가 제거한 tracked dist placeholder만 원문 복구했다. 검증 checkout의 tracked diff는 0이며 이후 root 변경은 문서뿐이다.
 - 앞선 실패는 취소하거나 숨기지 않는다. 물리적 위치를 바꾼 tuple에서는 통과했지만 정확한 환경 병목은 미확정이다. Windows Wails/native 및 live gh/Herdr 제품 E2E는 이번에 재검증하지 않았다.
+
+## 전체 통합 리뷰와 게시
+
+- taskId: `slice8-integration-review`; baseSHA: `00cd56167a512ea784faeba8fb4ae303ab22dfde`; deps: Task ACCEPT 및 최종 gate.
+- ownedPaths: `[]`; worktree: `/home/appuser/dev_system/.worktrees/engine-retirement-slice8`; branch: `agent/engine-retirement-slice8`; forbiddenPaths: 모든 쓰기와 테스트 재실행.
+- interface/acceptance: 승인된 60줄 삭제와 보존 경계, stacked base 및 검증 문서 정합성; tests: 기존 근거 읽기 전용 검토.
+- result: changedFiles `[]`; commitSHA `bfbd6dc8d97b2fbda4381b59adb16a9b98c1d32e`; executedCommands: SHA/조상/diff/numstat/patch-id/symbol/문서/로그/검증 checkout 조회; outcomes: fresh Sol ACCEPT, blocking finding 없음; unverified: actual runtime model/effort 및 Windows/live E2E; blockers: 없음.
+- 제품 수정 요구 없음. 이후 변경은 리뷰·게시 문서 기록뿐이다. Markdown 링크 25개와 diff 검사가 통과했다.
+- gh auth의 `project` scope와 Project #1 조회가 성공했다. PR #82는 OPEN/head `00cd561`이며 main/origin main은 `f9fb725`다. 사용자 실험 worktree의 미커밋 4개 파일은 보존했다.

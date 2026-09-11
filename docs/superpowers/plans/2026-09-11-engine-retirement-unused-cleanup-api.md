@@ -57,6 +57,6 @@ git diff --check
 
 - [x] 세 symbol과 전용 테스트만 제거하고 active 경계를 보존했다.
 - [x] focused 검사·self-review 후 commit했고 `a1e7da3`에서 fresh Sol Task ACCEPT를 받았다.
-- [ ] root 단일 gate·전체 리뷰 후 PR #82 위의 후속 PR을 준비한다.
+- [x] root 최종 gate `23906ad` 통과·전체 리뷰 `bfbd6dc` ACCEPT 후 PR #82 위의 후속 PR을 준비했다. 실패·환경 대조 근거는 ledger에 보존한다.
 
 [ledger](../../operator/2026-09-11-engine-retirement-slice8-ledger.md)에 검증과 PR 의존성을 기록한다.
