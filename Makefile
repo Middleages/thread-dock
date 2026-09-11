@@ -1,11 +1,13 @@
-.PHONY: help fmt test test-focused vet-focused check
+.PHONY: help fmt test test-focused vet-focused template-check check
 
 GO_FILES := $(shell find cmd internal monitor -name '*.go' -print)
 FRONTEND_DIR := monitor/frontend
-FRONTEND_TESTS := src/bindings.test.ts src/monitor.test.tsx
+FRONTEND_TESTS := src/bindings.test.ts src/monitor.test.tsx src/WorkTable.test.tsx src/AppScope.test.tsx src/MarkdownBody.test.tsx src/ProjectToolbox.test.tsx
+CANONICAL_SKILLS := coordinate-work develop-feature grill-plan tdd-task review-change publish-work
 
 help:
 	@echo 'make check                         Run the repository-wide verification gate'
+	@echo 'make template-check                Validate ThreadDock project-template agents and skills'
 	@echo 'make test-focused PKGS="./path/..." Run focused Go tests for explicit packages'
 	@echo 'make vet-focused PKGS="./path/..."  Run focused go vet for explicit packages'
 
@@ -26,7 +28,15 @@ vet-focused:
 	@test -n "$(strip $(PKGS))" || (echo 'PKGS is required, for example: make vet-focused PKGS="./internal/contract"' >&2; exit 2)
 	go vet $(PKGS)
 
-check:
+template-check:
+	@test -f project-template/.codex/agents/td_coordinator.toml
+	@test -f project-template/.codex/agents/td_feature_leader.toml
+	@for skill in $(CANONICAL_SKILLS); do \
+		test -f "project-template/.agents/skills/$$skill/SKILL.md" || { echo "missing skill: $$skill" >&2; exit 1; }; \
+		grep -q '^description: Use when' "project-template/.agents/skills/$$skill/SKILL.md" || { echo "invalid skill description: $$skill" >&2; exit 1; }; \
+	done
+
+check: template-check
 	@test -z "$$(gofmt -l $(GO_FILES))"
 	bash -n scripts/single-run-pilot.sh
 	go vet ./...

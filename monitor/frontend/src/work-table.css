@@ -1,0 +1,22 @@
+.work-scope { display: inline-flex; gap: 4px; margin-right: auto; }
+.scope-action { min-height: 34px; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: 6px 11px; background: transparent; color: var(--fg-secondary); font-size: var(--text-body-sm); font-weight: 700; }
+.scope-action:hover { background: var(--surface-canvas); color: var(--fg-primary); }
+.scope-action.active { border-color: var(--fg-primary); background: var(--fg-primary); color: var(--surface-primary); }
+
+.work-table { width: 100%; margin: 0 0 22px; border-top: 1px solid var(--fg-primary); }
+.work-table-head, .work-table-row { display: grid; grid-template-columns: 72px 76px minmax(0, 1fr) 86px 142px; align-items: center; gap: 12px; }
+.work-table-head { min-height: 38px; padding: 0 10px; border-bottom: 1px solid var(--border-subtle); color: var(--fg-secondary); font-size: var(--text-caption); font-weight: 750; }
+.work-table-row { width: 100%; min-height: 48px; border: 0; border-bottom: 1px solid var(--border-subtle); padding: 0 10px; background: transparent; color: inherit; text-align: left; }
+.work-table-row:hover { background: var(--surface-canvas); }
+.work-table-row.selected { background: var(--surface-canvas); box-shadow: inset 3px 0 0 var(--action-primary); }
+.work-number, .work-kind, .work-state, .work-updated { color: var(--fg-secondary); font-size: var(--text-body-sm); white-space: nowrap; }
+.work-kind { font-weight: 700; color: var(--fg-primary); }
+.work-title { min-width: 0; overflow: hidden; color: var(--fg-primary); font-size: var(--text-body-sm); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.work-state { font-weight: 650; }
+.work-updated { text-align: right; font-variant-numeric: tabular-nums; }
+.work-table-empty { padding: 14px 0 20px; border-top: 1px solid var(--border-subtle); }
+
+@media (max-width: 820px) {
+  .work-table-head, .work-table-row { grid-template-columns: 58px 56px minmax(0, 1fr) 64px; }
+  .work-table-head > :last-child, .work-table-row > :last-child { display: none; }
+}

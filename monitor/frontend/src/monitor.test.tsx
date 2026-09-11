@@ -93,9 +93,9 @@ describe('monitor list and detail', () => {
     expect(screen.queryByRole('heading', { name: '발행 상태' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '자동화 작업' })).not.toBeInTheDocument()
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => undefined } })
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
-    expect(screen.getByRole('status')).toHaveTextContent('선택한 업무의 handoff를 클립보드에 복사했습니다.')
+    expect(screen.getByRole('status')).toHaveTextContent('선택한 작업 정보를 클립보드에 복사했습니다.')
   })
 
   it('renders GitHub issue and project metadata while omitting legacy work sections', async () => {
@@ -114,7 +114,7 @@ describe('monitor list and detail', () => {
     expect(screen.getByRole('link', { name: 'Wiki' })).toHaveAttribute('href', 'https://github.com/acme/app/wiki')
   })
 
-  it('shows the selected work Herdr connection with location guidance and includes it in handoff', async () => {
+  it('shows the selected work Herdr connection with location guidance and includes it in copied work info', async () => {
     const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'fresh', syncStatus: 'synced', freshness: { state: 'fresh', syncStatus: 'synced' }, notices: [], sessions: [{ session: 'feature-a', status: 'fresh', observedAt: '2026-09-10T01:00:00Z', agents: [{ name: 'Luna', agent_status: 'working', workspace_id: 'w1', tab_id: 't1', pane_id: 'p1', cwd: '/repo/src' }] }], connections: [{ issueUrl: 'https://github.com/acme/app/issues/1', repository: 'github.com/acme/app', session: 'feature-a', workspaceId: 'w1', tabId: 't1', paneId: 'p1', agentName: 'Luna', status: 'connected', agentStatus: 'working', observedAt: '2026-09-10T01:00:00Z', nextAction: 'observe', handoff: '세션 feature-a · workspace w1 · pane p1 · cwd /repo/src · 관찰 상태 working · 다음 행동: observe', location: { session: 'feature-a', workspaceId: 'w1', tabId: 't1', paneId: 'p1', agentName: 'Luna', cwd: '/repo/src' } }], unconnectedAgents: [{ session: 'feature-a', name: 'Reviewer', agent_status: 'idle', pane_id: 'p2' }] }
     const writeText = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
@@ -124,7 +124,7 @@ describe('monitor list and detail', () => {
     expect(screen.getAllByText('feature-a').length).toBeGreaterThan(0)
     expect((document.body.textContent?.match(/\/repo\/src/g) ?? [])).toHaveLength(1)
     expect(screen.getByText('연결되지 않은 Agent')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('feature-a'))
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('다음 행동: observe'))
@@ -155,14 +155,14 @@ describe('monitor list and detail', () => {
     expect(screen.queryByText('central')).not.toBeInTheDocument()
     expect(screen.getAllByText('issue-a').length).toBeGreaterThan(0)
     expect(screen.queryByText('issue-b')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('세션 issue-a'))
     fireEvent.click(screen.getByRole('button', { name: /App B/ }))
     expect(screen.queryByText('central')).not.toBeInTheDocument()
     expect(screen.getAllByText('issue-b').length).toBeGreaterThan(0)
     expect(screen.queryByText('issue-a')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining('세션 issue-b'))
   })
@@ -181,7 +181,7 @@ describe('monitor list and detail', () => {
     expect(screen.getAllByText('issue').length).toBeGreaterThan(0)
     expect(screen.queryByText('project')).not.toBeInTheDocument()
     expect(screen.queryByText('central')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('세션 issue'))
   })
@@ -209,7 +209,7 @@ describe('monitor list and detail', () => {
     expect(screen.queryByRole('heading', { name: '저장소별 작업' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '발행 상태' })).not.toBeInTheDocument()
     expect(screen.getAllByText('승인됨', { exact: true })).toHaveLength(1)
-    expect(screen.getAllByText('승인', { exact: true })).toHaveLength(2)
+    expect(screen.getAllByText('승인', { exact: true })).toHaveLength(1)
     expect(document.body.textContent).not.toMatch(/\bverify\b|\bpublished\b|\baccepted\b/)
   })
 
@@ -241,23 +241,23 @@ describe('monitor list and detail', () => {
     expect(screen.getByText('Unsafe link')).toBeInTheDocument()
   })
 
-  it('shows bounded recovery copy when handoff clipboard is unavailable', async () => {
+  it('shows bounded recovery copy when work-info clipboard is unavailable', async () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
     const source = vi.fn(async () => snapshot([project()]))
     render(<App snapshotSource={source} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     expect(screen.getByRole('status')).toHaveTextContent('클립보드를 사용할 수 없습니다.')
   })
 
-  it('shows bounded recovery copy when handoff clipboard write fails', async () => {
+  it('shows bounded recovery copy when work-info clipboard write fails', async () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('denied') } } })
     const source = vi.fn(async () => snapshot([project()]))
     render(<App snapshotSource={source} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
-    expect(screen.getByRole('status')).toHaveTextContent('handoff를 복사하지 못했습니다.')
+    expect(screen.getByRole('status')).toHaveTextContent('작업 정보를 복사하지 못했습니다.')
   })
 
   it('uses the Wails clipboard and reports success only for a true result', async () => {
@@ -267,11 +267,11 @@ describe('monitor list and detail', () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
     render(<App snapshotSource={vi.fn(async () => snapshot([project()]))} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(clipboardSetText).toHaveBeenCalledWith(expect.stringContaining('Retry payment failures'))
     expect(browserWriteText).not.toHaveBeenCalled()
-    expect(screen.getByRole('status')).toHaveTextContent('선택한 업무의 handoff를 클립보드에 복사했습니다.')
+    expect(screen.getByRole('status')).toHaveTextContent('선택한 작업 정보를 클립보드에 복사했습니다.')
   })
 
   it('treats a false Wails clipboard result as failure without browser fallback', async () => {
@@ -281,11 +281,11 @@ describe('monitor list and detail', () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
     render(<App snapshotSource={vi.fn(async () => snapshot([project()]))} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(clipboardSetText).toHaveBeenCalledTimes(1)
     expect(browserWriteText).not.toHaveBeenCalled()
-    expect(screen.getByRole('status')).toHaveTextContent('handoff를 복사하지 못했습니다.')
+    expect(screen.getByRole('status')).toHaveTextContent('작업 정보를 복사하지 못했습니다.')
   })
 
   it('treats a thrown Wails clipboard call as failure without browser fallback', async () => {
@@ -295,11 +295,11 @@ describe('monitor list and detail', () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
     render(<App snapshotSource={vi.fn(async () => snapshot([project()]))} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(clipboardSetText).toHaveBeenCalledTimes(1)
     expect(browserWriteText).not.toHaveBeenCalled()
-    expect(screen.getByRole('status')).toHaveTextContent('handoff를 복사하지 못했습니다.')
+    expect(screen.getByRole('status')).toHaveTextContent('작업 정보를 복사하지 못했습니다.')
   })
 
   it('uses browser clipboard only when the Wails clipboard API is absent', async () => {
@@ -307,24 +307,24 @@ describe('monitor list and detail', () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
     render(<App snapshotSource={vi.fn(async () => snapshot([project()]))} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(browserWriteText).toHaveBeenCalledWith(expect.stringContaining('Retry payment failures'))
-    expect(screen.getByRole('status')).toHaveTextContent('선택한 업무의 handoff를 클립보드에 복사했습니다.')
+    expect(screen.getByRole('status')).toHaveTextContent('선택한 작업 정보를 클립보드에 복사했습니다.')
   })
 
-  it('does not report clipboard success for an empty handoff', async () => {
+  it('does not report clipboard success for empty work info', async () => {
     const clipboardSetText = vi.fn(async () => true)
     Object.defineProperty(window, 'runtime', { configurable: true, value: { ClipboardSetText: clipboardSetText } })
     const browserWriteText = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
     render(<App snapshotSource={vi.fn(async () => snapshot([]))} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    fireEvent.click(screen.getByRole('button', { name: 'handoff 복사' }))
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
     await act(async () => { await Promise.resolve() })
     expect(clipboardSetText).not.toHaveBeenCalled()
     expect(browserWriteText).not.toHaveBeenCalled()
-    expect(screen.getByRole('status')).toHaveTextContent('복사할 handoff 내용이 없습니다.')
+    expect(screen.getByRole('status')).toHaveTextContent('복사할 작업 정보가 없습니다.')
   })
 
   it('marks the local connection as degraded when nested Herdr freshness is stale', async () => {
