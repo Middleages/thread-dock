@@ -43,8 +43,8 @@ confirm/retire/cleanup은 다른 실행 상태·설정에 연결돼 더 넓으�
 
 ## 단계
 
-- [ ] 참조·보존 경계를 확인하고 전용 두 파일을 제거한다.
-- [ ] 현재 통합 경로의 기존 focused 검사와 self-review 후 commit한다.
+- [x] 참조·보존 경계를 확인하고 전용 두 파일을 제거했다.
+- [x] 현재 통합 경로의 13개 기존 focused 사례와 검사·self-review 후 commit했다.
 - [ ] fresh Sol Task 리뷰를 통과한다.
 - [ ] root 단일 통합 gate와 전체 리뷰를 통과해 PR을 준비한다.
 

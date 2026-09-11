@@ -45,3 +45,10 @@ Herdr/Projects E2E·Wiki 페이지 발행·runtime identity는 미검증으로 �
 - [Issue #77](https://github.com/Middleages/thread-dock/issues/77)을 생성해 Project #1에서 In Progress·정리 방향 유지로 추적한다.
 - 통합 TMPDIR은 `/dev/shm/threaddock-slice5-gate.Uxv15j`다. npm ci는 exit 0이며 package lock은 변경하지 않았다.
 - 제품 소유 범위는 옛 integration 두 파일뿐이고, 현재 통합 서비스나 운영 문서 재작성은 포함하지 않는다.
+
+## 구현 후보
+
+- code commit `727035d7ad37224fcdce5d6b055c5476d71a5511`, 최초 report head `3340e8337bcaf988a984cc9c30e3dcc4c4a78145`.
+- 전용 두 파일 415줄을 제거했다. 현재 workrun 서비스와 Git helper에는 변경이 없다.
+- 명시한 Go 1.27.0과 tmpfs에서 `TestReviewIntegration` 13개가 실제 실행돼 통과했고 workrun vet/list/ref/diff 검사도 통과했다.
+- report의 TMPDIR placeholder는 실제 환경 또는 원문 mktemp 명령으로 정정 요청했다. report-only이며 제품 검사를 반복하지 않는다.
