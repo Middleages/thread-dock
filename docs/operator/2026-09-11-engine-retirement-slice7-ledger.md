@@ -56,3 +56,30 @@ mixed 대기·재개 테스트는 persisted fixture로 유지하고 전용 confi
 - Go 1.27.0·독립 tmpfs에서 ParallelStories 5개 subcase, persisted confirmation 재개 사례, 요청한 mergegate 테스트 3개와 decision table 14개 subcase가 실제 실행돼 통과했다. vet/list/ref/diff도 통과했다.
 - baseline focused 실행은 기존 사례를 확인한 PASS였으며, 인위적 RED나 제품 오류로 표시하지 않는다. 정확한 원문 명령/TMPDIR은 Task report에 기록했다.
 - fresh Sol은 위 head `ec80575e03c2dac68babffda584a5a9c67322784`에서 ACCEPT했다. blocking/non-blocking finding과 수정 요구 없음. 정확한 두 method 제거와 persisted-state/active gate 보존을 확인했다.
+
+## 최초 gate 및 환경 진단
+
+`c62a718b2b2adb528dd79693a6ae8edfa1607d51`에서 tmpfs·Go 1.27.0 make check를 실행했다.
+gofmt/shell/전체 Go vet/test는 통과했으나 Vitest forks worker 두 개의 startup 응답이 60초 안에 오지 않아
+UI는 no tests/2 unhandled errors로 실패했고 make exit 2였다. frontend build는 미실행이다.
+로그는 `.superpowers/sdd/2026-09-11-engine-retirement-backend-confirm/make-check-c62a718.log`의 비추적 로컬 근거다.
+
+### 진단 Task packet
+
+- taskId: `slice7-vitest-startup-diagnosis`
+- baseSHA: `c62a718b2b2adb528dd79693a6ae8edfa1607d51`
+- deps: 최초 gate UI worker startup 실패
+- ownedPaths: `[]`
+- worktree: `/home/appuser/dev_system/.worktrees/engine-retirement-slice7`
+- branch: `agent/engine-retirement-slice7` (진단 읽기 전용)
+- forbiddenPaths: 모든 repo 쓰기·전체 suite 재실행
+- interface: 제품/frontend/config 불변, 검증환경 원인·지원 옵션 확인
+- acceptance: 설치 Vitest 5 source/CLI와 실패 로그로 startup 경계 및 최소 환경 완화 제안
+- tests: source/help/로그 읽기. root가 별도 focused 시작 검사 수행.
+- result: changedFiles `[]`, commitSHA 없음. source/CLI 검색으로 hard-coded START_TIMEOUT=60s와 jsdom setup 이후 started 응답을 확인했다. public startup timeout 설정은 없고 VITEST_MAX_WORKERS는 지원된다. 정확한 CPU/memory/scheduler 병목은 unverified, 제품 회귀 근거 없음.
+
+동일 tree에서 `VITEST_MAX_WORKERS=1 npm --prefix monitor/frontend test -- src/bindings.test.ts`가
+exit 0, 1파일/2 tests, 4.16초로 통과했다. 이는 단일 fork/IPC/jsdom bootstrap 가능 근거이며
+정확한 자원 원인을 확정하지 않는다. frontend/Makefile/lock/dependency diff는 0이다.
+다음 gate는 `VITEST_MAX_WORKERS=1`만 추가해 동시 worker startup을 제한한다. assertion이나 test/hook timeout,
+pool 종류, source/config는 변경하지 않는다. 이 환경 변경으로 실패 tuple과 구분해 최종 gate를 수행한다.
