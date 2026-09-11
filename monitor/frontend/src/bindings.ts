@@ -1,6 +1,7 @@
 import type { Snapshot, SnapshotSource } from './types'
 
 export interface MonitorSettings {
+  githubHost: string
   repositories: string
   projects: string
   wslDistribution: string

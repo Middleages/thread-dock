@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getMonitorSettings, getMonitorSnapshot, saveMonitorSettings } from './bindings'
 
 const response = { schemaVersion: 2, revision: 1, observedAt: '2026-09-10T00:00:00Z', freshness: { state: 'fresh', syncStatus: 'synced' }, state: 'running', syncStatus: 'synced', nextAction: 'review', evidenceRefs: [], projects: [] }
-const settings = { repositories: 'Middleages/thread-dock', projects: 'https://github.com/users/Middleages/projects/1', wslDistribution: 'Ubuntu', sessionsFile: '/home/appuser/.threaddock/sessions.json' }
+const settings = { githubHost: 'github.samsungds.net', repositories: 'FDYPhotoDX/thread-dock', projects: 'https://github.samsungds.net/orgs/FDYPhotoDX/projects/4', wslDistribution: 'Ubuntu', sessionsFile: '/home/appuser/.threaddock/sessions.json' }
 
 describe('monitor browser binding', () => {
   afterEach(() => { vi.restoreAllMocks(); delete (window as Window & { go?: unknown }).go })

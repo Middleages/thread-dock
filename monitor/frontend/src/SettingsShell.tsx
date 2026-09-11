@@ -4,6 +4,7 @@ import { getMonitorSettings, saveMonitorSettings, type MonitorSettings } from '.
 import './settings.css'
 
 const emptySettings: MonitorSettings = {
+  githubHost: 'github.com',
   repositories: '',
   projects: '',
   wslDistribution: '',
@@ -46,6 +47,7 @@ export function SettingsShell() {
       const settings = await getMonitorSettings()
       setForm({
         ...settings,
+        githubHost: settings.githubHost || 'github.com',
         repositories: listForEditor(settings.repositories),
         projects: listForEditor(settings.projects),
       })
@@ -64,6 +66,7 @@ export function SettingsShell() {
     setError('')
     setMessage('')
     const next: MonitorSettings = {
+      githubHost: form.githubHost.trim(),
       repositories: listForStore(form.repositories),
       projects: listForStore(form.projects),
       wslDistribution: form.wslDistribution.trim(),
@@ -73,6 +76,7 @@ export function SettingsShell() {
       const saved = await saveMonitorSettings(next)
       setForm({
         ...saved,
+        githubHost: saved.githubHost || 'github.com',
         repositories: listForEditor(saved.repositories),
         projects: listForEditor(saved.projects),
       })
@@ -97,14 +101,19 @@ export function SettingsShell() {
         </header>
         {loading ? <div className="settings-loading" role="status">설정을 불러오는 중입니다.</div> : <form className="settings-form" onSubmit={(event) => void save(event)}>
           <label>
+            <span>GitHub Host</span>
+            <small><code>https://</code> 없이 호스트 이름만 입력합니다. GitHub.com은 <code>github.com</code>입니다.</small>
+            <input value={form.githubHost} onChange={(event) => update('githubHost', event.target.value)} placeholder="github.samsungds.net" autoFocus />
+          </label>
+          <label>
             <span>GitHub 저장소</span>
             <small><code>OWNER/REPO</code> 형식으로 한 줄에 하나씩 입력합니다.</small>
-            <textarea rows={3} value={form.repositories} onChange={(event) => update('repositories', event.target.value)} placeholder={'Middleages/thread-dock\nMiddleages/jmj'} autoFocus />
+            <textarea rows={3} value={form.repositories} onChange={(event) => update('repositories', event.target.value)} placeholder={'FDYPhotoDX/thread-dock\nFDYPhotoDX/jmj'} />
           </label>
           <label>
             <span>GitHub Projects</span>
-            <small><code>/views/2</code>가 아닌 Project 루트 URL을 입력합니다.</small>
-            <textarea rows={2} value={form.projects} onChange={(event) => update('projects', event.target.value)} placeholder="https://github.com/users/Middleages/projects/1" />
+            <small>위 GitHub Host의 <code>/views/2</code>가 아닌 Project 루트 URL을 입력합니다.</small>
+            <textarea rows={2} value={form.projects} onChange={(event) => update('projects', event.target.value)} placeholder="https://github.samsungds.net/orgs/FDYPhotoDX/projects/4" />
           </label>
           <div className="settings-grid">
             <label>

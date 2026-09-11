@@ -28,6 +28,24 @@ degraded/notices 상태, 외부 링크와 handoff 복사를 제공합니다. 비
 - 오류 상태 범위: native run에서 오류가 발생하지 않았으므로 native degraded/error 화면은 검증하지 않았습니다. 결합 degradation 동작은 Linux fixture/UI 테스트로만 확인했으며, 이전 `UtilAcceptVsock:281: accept4 failed 110` 관찰은 원인 진단용 historical evidence로 superseded됐습니다.
 - 참고 관찰: 이전 `aeca770`의 plain `go build` binary가 GitHub 69개 항목과 Herdr 기본 session/4 agents를 렌더링한 것은 최종 표준 Wails package 증거가 아니며, `66158d9` staging build evidence도 `325db89`의 최종 run으로 superseded됐습니다.
 
+## Monitor 연결 설정
+
+설정 UI에서 GitHub Host, 저장소, GitHub Projects, WSL 배포판과 선택적인 Herdr 연결 파일을 저장할 수 있습니다.
+GitHub.com은 Host를 `github.com`으로 사용합니다. GitHub Enterprise Server는 `https://` 없이 사내 호스트 이름을 지정하고,
+Project에는 같은 호스트의 `/users/.../projects/N` 또는 `/orgs/.../projects/N` 루트 URL을 사용합니다.
+
+예를 들어 GitHub Enterprise Server가 `github.samsungds.net`이면 다음과 같이 설정합니다.
+
+```text
+GitHub Host: github.samsungds.net
+Repository: FDYPhotoDX/thread-dock
+Project: https://github.samsungds.net/orgs/FDYPhotoDX/projects/4
+WSL Distribution: Ubuntu
+```
+
+환경변수를 사용할 경우 `THREADDOCK_GITHUB_HOST=github.samsungds.net`을 함께 지정합니다.
+Monitor의 `gh` 호출은 선택한 WSL 안에서 해당 Host를 사용하므로 그 배포판의 GitHub CLI 인증도 같은 호스트에 대해 준비되어 있어야 합니다.
+
 ## 사용·개발 지침
 
 [운영 흐름](docs/operator/github-first-quickstart.md)의 중앙/기능 세션 프롬프트와
