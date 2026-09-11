@@ -111,3 +111,18 @@ root가 기존 CLI Task와 분리해 Luna에 이 테스트만 배정한다. 코�
 - `/dev/shm/threaddock-slice6-gate-fix.rMHGd0`에서 타겟 20회 반복 PASS, `/dev/shm/threaddock-slice6-gate-check.w6iVBl`에서 타겟+StateLockIsProcessSafe 및 vet/diff PASS.
 - fresh Sol은 `eb62e6ee39a7785f5ea089ad0df7617fae100cee`에서 별도 test-fix Task ACCEPT를 반환했다. 제품 동작 불변과 deterministic overlap·cleanup을 확인했고 blocking finding은 없다.
 - 이 테스트 수정으로 최초 실패 tuple이 무효화됐다. 통합한 새 SHA에서 최종 gate를 실행하며 CLI focused 검사는 반복하지 않는다.
+
+## 수정 후 최종 통합 gate
+
+고정 SHA `98861c887f73b005cbffb7874518dfc07e7d514f`에서 다음 명령을 실행해 exit 0을 확인했다.
+
+```sh
+TMPDIR=/dev/shm/threaddock-slice6-gate.OKTr3F PATH=/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin:$PATH make check
+```
+
+gofmt·shell·전체 Go vet/test·UI 2 files/26 tests·frontend build가 통과했다. orchestrator는 새 테스트로
+0.704초에 통과했고 변경 없는 Go package는 기존 cache 결과를 채택했다. 최초 실패 이후 테스트 수정으로
+새 SHA에서 수행한 두 번째 gate이며, 성공한 tuple을 다시 실행하지 않는다.
+로그는 `.superpowers/sdd/2026-09-11-engine-retirement-confirm-cli/make-check-98861c8.log`의 비추적 로컬 근거다.
+build가 제거한 tracked `.placeholder`는 원본 내용으로 복원하고 `git diff --exit-code`로 tree 일치를 확인했다.
+변경 Markdown 6파일/상대 링크 23개 검사도 통과했다. 이후 결과 기록은 docs-only이며 전체 branch 리뷰는 pending이다.
