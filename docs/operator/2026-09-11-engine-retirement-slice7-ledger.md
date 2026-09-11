@@ -48,3 +48,11 @@ mixed 대기·재개 테스트는 persisted fixture로 유지하고 전용 confi
 - [Issue #81](https://github.com/Middleages/thread-dock/issues/81)을 생성해 Project #1에서 In Progress·정리 방향 유지로 추적한다.
 - root는 HANDOFF의 PR #78·#80 미병합 문구를 실제 병합 결과로 정정했다. 지난 ledger의 당시 관찰은 역사 기록으로 보존한다.
 - 코드 소유 범위는 지정된 두 method와 세 테스트이며, private helper/state/mergegate 구현 수정은 포함하지 않는다.
+
+## 구현 후보
+
+- code commit `9332e9ff433b50f77dcbfba46cdf724991842add`, report 포함 head `ec80575e03c2dac68babffda584a5a9c67322784`.
+- 두 진입점과 전용 테스트 두 개를 제거하고 mixed test는 persisted-state 소비 검증으로 유지했다. 새 setter/API/helper는 없다.
+- Go 1.27.0·독립 tmpfs에서 ParallelStories 5개 subcase, persisted confirmation 재개 사례, 요청한 mergegate 테스트 3개와 decision table 14개 subcase가 실제 실행돼 통과했다. vet/list/ref/diff도 통과했다.
+- baseline focused 실행은 기존 사례를 확인한 PASS였으며, 인위적 RED나 제품 오류로 표시하지 않는다. 정확한 원문 명령/TMPDIR은 Task report에 기록했다.
+- fresh Sol은 위 고정 head를 리뷰 중이다.

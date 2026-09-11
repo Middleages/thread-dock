@@ -52,7 +52,7 @@ needs_operator event와 persisted JSON 필드도 보존한다. confirmation 전�
 
 ## 단계
 
-- [ ] 두 진입점·전용 테스트를 정리하고 persisted-state 검증을 보존한다.
+- [x] 두 진입점·전용 테스트를 정리하고 persisted-state 검증을 보존했다.
 - [ ] focused 검사·self-review 후 commit하고 fresh Sol Task 리뷰를 통과한다.
 - [ ] root가 단일 통합 gate·전체 리뷰 후 PR을 준비한다.
 
