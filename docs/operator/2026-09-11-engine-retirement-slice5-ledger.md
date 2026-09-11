@@ -39,3 +39,9 @@ Luna는 옛 integration 두 파일과 report만, root는 HANDOFF/plan/ledger만 
 재실행을 금지하며 root의 마지막 make check만 한 번 수행한다. docs-only 후속은 링크/diff만 검사한다.
 기존 Windows healthy-path를 새 native 실행으로 확대하지 않는다. native 오류·현재 보드의 native 실행,
 Herdr/Projects E2E·Wiki 페이지 발행·runtime identity는 미검증으로 남긴다.
+
+## 착수 기록
+
+- [Issue #77](https://github.com/Middleages/thread-dock/issues/77)을 생성해 Project #1에서 In Progress·정리 방향 유지로 추적한다.
+- 통합 TMPDIR은 `/dev/shm/threaddock-slice5-gate.Uxv15j`다. npm ci는 exit 0이며 package lock은 변경하지 않았다.
+- 제품 소유 범위는 옛 integration 두 파일뿐이고, 현재 통합 서비스나 운영 문서 재작성은 포함하지 않는다.

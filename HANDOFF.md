@@ -35,7 +35,14 @@
 - GitHub Projects 쓰기는 `project` scope로 성공했다. 보드 업무 상태는 GitHub가 원본이고,
   Herdr의 session·Agent 상태와 관찰 시각은 별도 실행 원본이다.
 
-## 네 번째 엔진 정리
+## 다섯 번째 엔진 정리
+
+[Issue #77](https://github.com/Middleages/thread-dock/issues/77)은 호출자가 없는 옛 `internal/integration`
+구현과 전용 테스트를 정리한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-v1-integration.md)과
+[ledger](docs/operator/2026-09-11-engine-retirement-slice5-ledger.md)에 정확한 경계와 검증 상태를 기록한다.
+현재 `internal/workrun.ReviewIntegrationService`, shared Git/state/CLI 및 Monitor는 유지한다.
+
+## PR #76의 네 번째 정리 결과
 
 [Issue #75](https://github.com/Middleages/thread-dock/issues/75)에서 미사용 worktree revert API 여섯 개와
 전용 테스트를 정리한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-worktree-revert.md)과
