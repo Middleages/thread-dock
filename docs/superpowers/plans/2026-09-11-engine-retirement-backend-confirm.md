@@ -54,6 +54,6 @@ needs_operator event와 persisted JSON 필드도 보존한다. confirmation 전�
 
 - [x] 두 진입점·전용 테스트를 정리하고 persisted-state 검증을 보존했다.
 - [x] focused 검사·self-review 후 commit했고 `ec80575`에서 fresh Sol Task ACCEPT를 받았다.
-- [ ] root가 단일 통합 gate·전체 리뷰 후 PR을 준비한다.
+- [x] root가 최초 UI worker 시작 실패를 진단하고 단일 worker 환경의 `d40b693` 최종 gate 및 `f44082c` 전체 리뷰를 통과해 PR을 준비했다.
 
 [ledger](../../operator/2026-09-11-engine-retirement-slice7-ledger.md)에 검증과 GitHub 기록을 남긴다.
