@@ -1,60 +1,147 @@
 # ThreadDock
 
-**Go/Wails 데스크톱 모니터 + 프로젝트 Skill**로 GitHub 중심 멀티 세션 개발을 지원합니다.
-중앙 Agent가 기능을 분배하고, 각 Herdr 기능 세션이 native subagent로 구현·독립 리뷰를 진행합니다.
-Go 모니터는 GitHub 업무 기록과 Herdr 실행 상태를 함께 보여주고 작업 재개를 돕습니다.
+**Go/Wails 데스크톱 Monitor + 프로젝트 Agent/Skill**로 GitHub 중심 멀티 세션 개발을 지원합니다.
 
-## 현재 상태
+고정 제품 경계는 단순합니다.
 
-2026-09-10 사용자 정정에 따라 Go/Wails 제품 방향을 고정했고, PR #69의 Task 1·2가
-`GetMonitorSnapshot`으로 GitHub와 Herdr 관찰을 전달합니다. Task 3에서 별도 Node 조회 서버,
-Vite middleware, HTTP monitor endpoint와 전용 테스트를 제거했습니다.
-Vite/Node는 React 화면 개발·빌드에만 사용하며 제품 실행에는 Node HTTP 서버가 필요하지 않습니다.
+- GitHub Issue / PR / Projects: durable 업무 원본
+- Herdr: top-level session, pane, worktree, Agent lifecycle
+- native subagent: feature 내부 상세계획·구현·독립 리뷰
+- ThreadDock: GitHub 업무와 top-level Herdr 상태를 한 화면에 연결
 
-현재 화면은 GitHub 업무·근거, 선택 업무의 단일 Herdr 연결, 관찰 세션·미연결 Agent,
-degraded/notices 상태, 외부 링크와 handoff 복사를 제공합니다. 비기능 메뉴와 자동화/옛 Work·발행
-표시는 포함하지 않습니다.
+ThreadDock이 scheduler, lease/recovery engine, 자체 task DB, 별도 execution runtime을 소유하지 않습니다.
 
-## 검증 범위
+## Agent 구조
 
-- Linux Go fixture 근거: Task 1·2에서 `go test ./monitor -run 'Test(GitHub|Commands|App|Herdr|Snapshot)'`가 통과했습니다. 이 Task는 Go 소스를 변경하지 않았습니다.
-- Linux UI 근거: `npm exec vitest run src/bindings.test.ts src/monitor.test.tsx --reporter=verbose` — 2 files, 20 tests 통과.
-- Linux build 근거: `npm run build` — TypeScript와 Vite production build 통과.
-- Linux 통합 gate: final reviewed product/config/dependency SHA `325db89`에서 `make check`가 shell syntax, `go vet ./...`, 전체 Go 테스트, Vitest 26 tests, frontend production build까지 통과했습니다.
-- managed-pane live 근거(상위에서 전달된 외부 관찰, 원본 transcript 없음): 실제 Windows→WSL workstation에서 `gh auth status`가 성공했고, bare `wsl.exe --exec herdr`는 PATH lookup에 실패했으며, absolute `/home/appuser/.local/bin/herdr`의 status와 agent list는 성공했습니다. 이는 Wails Monitor의 Windows→WSL 읽기 경로를 검증한 증거가 아니며, 이 Task에서 GitHub/Wiki 쓰기를 수행했다는 뜻도 아닙니다.
-- Windows native 환경 값: user-local Go `1.27.0 windows/amd64`, Node `26.8.1`, Wails CLI/runtime `v2.15.0`, `THREADDOCK_REPOS=Middleages/thread-dock`, `THREADDOCK_PROJECTS`는 unset, `THREADDOCK_WSL_DISTRIBUTION=Ubuntu`, `THREADDOCK_SESSIONS_FILE=/tmp/threaddock-aeca770-sessions.json`입니다.
-- Windows standard package/live 근거: final reviewed SHA `325db89`를 기준으로 matching Wails CLI/runtime `v2.15.0`의 `wails build`가 exit 0, `1m9.285s`에 완료됐고 `monitor\build\bin\ThreadDockMonitor.exe`를 생성했습니다. bindings/frontend/assets/app stages가 모두 `Done`이었고, native child console은 표시되지 않았습니다.
-- 건강한 packaged live acceptance: GitHub 69개 work item이 약 14초에 동기화됐고 Herdr 기본 session과 3개 Agent가 약 30초에 관찰됐습니다. handoff 성공 toast와 실제 clipboard 길이 `188`(repository name 포함), 초록 점과 `로컬 연결 정상` 문구가 일치했습니다. 앱 종료 후 Monitor process 수는 `0`이었고, `ThreadDockValidation66158d9` scheduled task는 없으며 관련 process도 `0`으로 확인됐습니다. WSL interop은 복구됐고 computer-use는 파일이나 worktree를 수정하지 않았습니다.
-- 오류 상태 범위: native run에서 오류가 발생하지 않았으므로 native degraded/error 화면은 검증하지 않았습니다. 결합 degradation 동작은 Linux fixture/UI 테스트로만 확인했으며, 이전 `UtilAcceptVsock:281: accept4 failed 110` 관찰은 원인 진단용 historical evidence로 superseded됐습니다.
-- 참고 관찰: 이전 `aeca770`의 plain `go build` binary가 GitHub 69개 항목과 Herdr 기본 session/4 agents를 렌더링한 것은 최종 표준 Wails package 증거가 아니며, `66158d9` staging build evidence도 `325db89`의 최종 run으로 superseded됐습니다.
+프로젝트에서 기억할 top-level Agent는 두 개뿐입니다.
+
+```text
+Coordinator -> Herdr Feature Leader -> transient planner/implementer/reviewer -> PR/handoff
+```
+
+- `td_coordinator`: 프로젝트의 열린 GitHub 업무를 feature로 나누고 Herdr Feature Leader session을 배정하며 전역 locator를 관리합니다.
+- `td_feature_leader`: 하나의 Issue/feature를 상세계획부터 reviewed PR readiness까지 책임집니다.
+
+Planner, implementer, reviewer, PR/Wiki/Project helper는 별도 상주 Agent가 아니라 필요할 때만 사용하는 native subagent입니다. ThreadDock Monitor와 `sessions.json`에는 Coordinator와 Feature Leader만 top-level 연결로 기록합니다.
+
+## Canonical Skills
+
+반복 사용할 프로젝트에는 `project-template/.agents/skills`를 대상 저장소의 `.agents/skills`에 복사합니다.
+
+- `coordinate-work`
+- `develop-feature`
+- `grill-plan`
+- `tdd-task`
+- `review-change`
+- `publish-work`
+
+기존 `plan-work`, `open-agent-session`, `implement-task`, `record-work`는 예전 프롬프트 호환용 migration shim입니다.
+
+Codex에서는 `project-template/.codex/agents`의 두 Agent 정의도 대상 `.codex/agents`에 복사합니다. 대상 `.codex/config.toml`의 기존 설정을 덮어쓰지 말고 필요하면 `[agents]` 활성화 stanza만 병합합니다.
+
+자세한 시작 방법은 [GitHub와 Herdr로 바로 시작하기](docs/operator/github-first-quickstart.md)를 참고하세요.
+
+## 전역 Herdr locator
+
+여러 프로젝트를 동시에 써도 locator 파일은 WSL 사용자 기준 하나만 사용합니다.
+
+```text
+~/.threaddock/sessions.json
+```
+
+예:
+
+```json
+{
+  "version": 1,
+  "bindings": []
+}
+```
+
+각 프로젝트 Coordinator는 user-level lock 아래에서 전체 파일을 다시 읽고 자기 exact binding만 upsert/cleanup합니다. 다른 repository/project binding을 추측하거나 bulk prune하지 않습니다.
+
+Feature binding은 다음 세 조건이 모두 확인될 때만 제거합니다.
+
+1. Issue closed
+2. 관련 PR 작업 finished
+3. Herdr top-level Feature Leader session absent
+
+Agent의 `idle`/`done`만으로 GitHub 업무 완료나 locator 삭제를 판단하지 않습니다.
 
 ## Monitor 연결 설정
 
-설정 UI에서 GitHub Host, 저장소, GitHub Projects, WSL 배포판과 선택적인 Herdr 연결 파일을 저장할 수 있습니다.
-GitHub.com은 Host를 `github.com`으로 사용합니다. GitHub Enterprise Server는 `https://` 없이 사내 호스트 이름을 지정하고,
-Project에는 같은 호스트의 `/users/.../projects/N` 또는 `/orgs/.../projects/N` 루트 URL을 사용합니다.
+설정 UI에서 GitHub Host, 저장소, GitHub Projects, WSL 배포판과 Herdr 연결 파일을 저장할 수 있습니다.
 
-예를 들어 GitHub Enterprise Server가 `github.samsungds.net`이면 다음과 같이 설정합니다.
+GitHub Enterprise Server 예:
 
 ```text
 GitHub Host: github.samsungds.net
-Repository: FDYPhotoDX/thread-dock
-Project: https://github.samsungds.net/orgs/FDYPhotoDX/projects/4
-WSL Distribution: Ubuntu
+GitHub 저장소: FDYPhotoDX/thread-dock
+GitHub Projects: https://github.samsungds.net/orgs/FDYPhotoDX/projects/4
+WSL 배포판: Ubuntu
+Herdr 연결 파일: /home/appuser/.threaddock/sessions.json
 ```
 
-환경변수를 사용할 경우 `THREADDOCK_GITHUB_HOST=github.samsungds.net`을 함께 지정합니다.
-Monitor의 `gh` 호출은 선택한 WSL 안에서 해당 Host를 사용하므로 그 배포판의 GitHub CLI 인증도 같은 호스트에 대해 준비되어 있어야 합니다.
+GitHub Host는 `https://` 없이 입력합니다. Project URL은 `/views/N`이 아닌 Project root URL을 사용합니다. 선택한 WSL의 `gh`도 같은 host에 인증되어 있어야 합니다.
 
-## 사용·개발 지침
+## Monitor UI
 
-[운영 흐름](docs/operator/github-first-quickstart.md)의 중앙/기능 세션 프롬프트와
-project-template/.agents/skills의 plan-work, open-agent-session, implement-task, review-change, record-work를 사용합니다.
-기존 Work 등록이나 Go 실행 계약은 필요하지 않습니다.
+Windows Go/Wails Monitor는 기본적으로 열린 Issue/PR만 조회합니다. 닫힌 이력은 사용자가 `전체 보기`를 선택했을 때만 불러오며 전체 이력 모드에서는 4초 자동 polling을 반복하지 않습니다.
 
+프로젝트 표는 실제 workflow 단계를 추측하지 않고 `조회 상태`를 보여줍니다. Issue/PR 상세는 실제 GitHub 상태와 Project field, 연결된 Herdr 위치/Agent 상태를 표시합니다. 긴 Issue 제목은 세로 테이블에서 한 줄로 표시하고, Issue/PR 본문의 일반적인 Markdown을 읽을 수 있게 렌더링합니다.
+
+`작업 정보 복사`는 선택한 작업의 GitHub 근거와 연결된 Herdr handoff 정보를 클립보드에 복사합니다.
+
+## Project Toolbox
+
+각 프로젝트 상세의 `Toolbox` 탭은 **사용자 개인용 로컬 메모**입니다.
+
+- `자료`: Confluence 같은 Web 링크, Windows absolute file path, WSL absolute file path
+- `명령어`: `psql`, `docker`, `kubectl`, `uv`처럼 자주 잊는 명령을 저장하고 복사
+- `체크리스트`: 프로젝트별 개인 확인 항목
+
+Toolbox의 명령어에는 실행 버튼이 없고 **복사만** 제공합니다. 로컬 파일도 사용자가 직접 등록한 absolute path만 열 수 있습니다.
+
+Toolbox 데이터는 Monitor 설정이나 Herdr locator와 분리해 사용자 설정 디렉터리의 다음 파일에 저장합니다.
+
+```text
+%APPDATA%\ThreadDock\projects.json
+```
+
+Toolbox 내용은 `td_coordinator`, `td_feature_leader`, canonical Skill에 자동 주입하지 않습니다. Agent가 참고해야 하는 자료는 사용자가 필요할 때 명시적으로 전달합니다.
+
+ThreadDock 자체 dogfooding 기준은 [사용성 체크리스트](docs/usability-checklist.md)에 유지합니다.
+
+## 검증
+
+정적 project-template 확인:
+
+```bash
+make template-check
+```
+
+저장소 전체 gate:
+
+```bash
+make check
+```
+
+Windows package:
+
+```powershell
+cd monitor
+wails build
+.\build\bin\ThreadDockMonitor.exe
+```
+
+기존 final reviewed SHA `325db89`에서는 Go/Wails package와 healthy native run이 검증된 이력이 있습니다. 현재 PR/브랜치의 새 UI와 Agent/Skill 템플릿은 해당 과거 결과로 자동 승격하지 않으며, merge 전에 현재 SHA에서 `make check`, Windows `wails build`, 실제 GHES + WSL + Herdr smoke를 별도로 확인합니다.
+
+## 문서
+
+- [운영 Quickstart](docs/operator/github-first-quickstart.md)
+- [사용성 체크리스트](docs/usability-checklist.md)
+- [Agent orchestration 설계](docs/superpowers/specs/2026-09-11-thread-dock-agent-orchestration-design.md)
+- [Agent orchestration 구현계획](docs/superpowers/plans/2026-09-11-thread-dock-agent-orchestration.md)
 - [제품 역할](PRODUCT.md)
 - [용어와 책임](CONTEXT.md)
-- [Go/Wails 진행 설계](docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md)
-- [구현 계획](docs/superpowers/plans/2026-09-10-herdr-first-usable-workflow.md)
-- [OpenCode role-agent 운영 참고 (레거시 v1)](docs/operator/opencode-role-agents.md)
-- [현재 상태와 Codex 착수 프롬프트](HANDOFF.md)
+- [현재 상태](HANDOFF.md)
