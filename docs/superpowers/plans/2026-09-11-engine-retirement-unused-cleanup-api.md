@@ -55,7 +55,7 @@ git diff --check
 
 ## 단계
 
-- [ ] 세 symbol과 전용 테스트만 제거하고 active 경계를 보존한다.
+- [x] 세 symbol과 전용 테스트만 제거하고 active 경계를 보존했다.
 - [ ] focused 검사·self-review 후 commit하고 fresh Sol Task 리뷰를 통과한다.
 - [ ] root 단일 gate·전체 리뷰 후 PR #82 위의 후속 PR을 준비한다.
 

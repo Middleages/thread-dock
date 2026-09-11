@@ -53,3 +53,10 @@ fresh Sol은 `RetirementInspector` alias, `NewRetirementInspector`, `Store.ListC
 - [Issue #83](https://github.com/Middleages/thread-dock/issues/83)을 생성해 Project #1에서 In Progress·정리 방향 유지로 추적한다.
 - PR #82/Issue #81은 열린 선행 작업으로 유지한다. 새 PR은 main 완료를 가정하지 않는다.
 - 제품 소유 범위는 미사용 세 symbol과 전용 test뿐이며 current cleanup 실행기/guard 변경은 없다.
+
+## 구현 후보
+
+- code `60f85978f7220390fa7a7c0cde6a08dac077e80a`, 최초 report `cbd4351262045de8532224394a9eccc65ec03491`, report SHA 정정 head `a1e7da3fb779e932e062bd2f1467d0c62f2fa1c2`.
+- 제품 세 파일에서 60줄을 제거했다. 새 동작이나 테스트는 추가하지 않았다.
+- Go 1.27.0과 `/dev/shm/td-unused-cleanup-api.cQdC5J`에서 recoverable, composite 2 tests, CLI Cleanup 16 cases, cmd composition 사례가 실행돼 통과했다. vet/list/ref/diff도 통과했다.
+- fresh Sol Task 리뷰를 받고 있으며 현재 실행기/7일 guard와 공유 helper 보존을 검토한다.
