@@ -25,7 +25,7 @@
 ## 역할·검증 환경
 
 root는 문서·계약·GitHub·통합, Sol medium은 조사, Luna high는 구현, fresh Sol medium은 독립 리뷰를 맡는다.
-actual runtime identity는 미노출이면 unverified, 승격 없음. worker 상한 3, Luna 1개 예약, reviewer 슬롯 확보.
+actual runtime identity는 미노출이면 unverified, 승격 없음. worker 상한 3, Task 리뷰 완료로 Luna 예약 해제, reviewer 슬롯 확보.
 Go 1.27.0 절대 경로를 사용하며 root 통합 TMPDIR은 `/dev/shm/threaddock-slice7-gate.5weZvh`다.
 npm ci는 exit 0이며 lock 변경 없음. worker full suite와 동일 tuple 재실행을 금지하고 새 최종 gate만 한 번 수행한다.
 native Windows·오류 상태·현재 보드 native 실행·Herdr/Projects E2E·Wiki 페이지 발행은 별도 미검증으로 유지한다.
@@ -55,4 +55,4 @@ mixed 대기·재개 테스트는 persisted fixture로 유지하고 전용 confi
 - 두 진입점과 전용 테스트 두 개를 제거하고 mixed test는 persisted-state 소비 검증으로 유지했다. 새 setter/API/helper는 없다.
 - Go 1.27.0·독립 tmpfs에서 ParallelStories 5개 subcase, persisted confirmation 재개 사례, 요청한 mergegate 테스트 3개와 decision table 14개 subcase가 실제 실행돼 통과했다. vet/list/ref/diff도 통과했다.
 - baseline focused 실행은 기존 사례를 확인한 PASS였으며, 인위적 RED나 제품 오류로 표시하지 않는다. 정확한 원문 명령/TMPDIR은 Task report에 기록했다.
-- fresh Sol은 위 고정 head를 리뷰 중이다.
+- fresh Sol은 위 head `ec80575e03c2dac68babffda584a5a9c67322784`에서 ACCEPT했다. blocking/non-blocking finding과 수정 요구 없음. 정확한 두 method 제거와 persisted-state/active gate 보존을 확인했다.
