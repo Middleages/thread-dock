@@ -63,3 +63,11 @@ backend protected-change 보존 계약을 먼저 고정했다. Luna 1개를 예�
 - [Issue #79](https://github.com/Middleages/thread-dock/issues/79)를 생성해 Project #1의 In Progress·정리 방향 유지로 등록했다.
 - root는 parallel-pilot story 3의 confirm 실행 안내만 역사화했다. 다른 stories·retirement/evidence guard는 수정하지 않았다.
 - Issue #77·PR #78의 In Progress 상태를 확인했으며 선행 구현을 main 완료로 표시하지 않는다.
+
+## 구현·문서 검사
+
+- code commit `b77ff5cd47e1a406a37406e3a50a734d006db772`, report 포함 head `7234f6602fc071d8881d66d6f07181fd4159fb1c`.
+- Luna는 새 negative 사례에서 RED를 확인한 뒤 CLI/cmd test·vet/list/ref/diff를 tmpfs·Go 1.27.0에서 통과했다. 실제 TMPDIR과 원문 명령은 Task report에 기록했다.
+- root의 문서 commit `e1c6ccd`에서 `TMPDIR=/dev/shm/threaddock-slice6-gate.OKTr3F`와 명시한 Go로 `go test ./internal/pilot -run '^TestParallelPilotRunbookProtectsUnacceptedEvidenceFromRetirement$'`를 수행해 exit 0(0.003초)을 확인했다.
+- 이후 story 3에 기존 exact-SHA/check/mergeability gate 조건을 역사 설명으로 명시했다. 최종 문서는 마지막 통합 gate에서도 검증한다. 다른 story·retirement guard는 불변이다.
+- CLI Task head는 fresh Sol 리뷰 중이며 root 문서는 최종 통합 리뷰 대상이다.

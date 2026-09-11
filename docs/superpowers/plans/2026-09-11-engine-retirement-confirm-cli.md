@@ -47,9 +47,9 @@ root는 `parallel-pilot.md` story 3의 confirm 실행 안내만 제거된 명령
 
 ## 단계
 
-- [ ] 거부·의존성 미초기화 회귀 사례를 먼저 작성하고 adapter/wiring을 제거한다.
+- [x] 거부·의존성 미초기화 회귀 사례를 먼저 작성하고 adapter/wiring을 제거했다.
 - [ ] focused 검사·self-review 후 commit하고 fresh Sol Task 리뷰를 받는다.
-- [ ] root 문서의 직접 영향 검사를 수행한다.
+- [x] root 문서의 직접 영향 pilot 테스트를 통과했다. 후속 역사 설명까지 최종 gate에서 확인한다.
 - [ ] 단일 통합 gate와 전체 리뷰 후 PR #78을 base로 하는 PR을 준비한다.
 
 [ledger](../../operator/2026-09-11-engine-retirement-slice6-ledger.md)에 검증 SHA·결과·PR 의존성을 기록한다.

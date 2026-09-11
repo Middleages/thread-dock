@@ -77,6 +77,8 @@ snapshot and append-only event log, then record:
    Historically, its first invocation persisted intent and audit records,
    invalidated latest-main, Full Suite, check, and mergeability evidence, and
    resumed the refresh/recheck sequence. A second invocation was idempotent.
+   The historical pilot merged only after the exact final SHA/check/
+   mergeability gate passed.
    The orchestrator's protected-change state and tests remain as legacy
    implementation evidence; this story records the removed CLI's history.
 4. **Git conflict.** Make immutable integration report a confirmed merge
