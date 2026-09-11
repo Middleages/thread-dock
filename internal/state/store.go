@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"thread-dock/internal/contract"
 )
@@ -303,28 +302,6 @@ func (s *Store) ListRecoverable(ctx context.Context) ([]RunSnapshot, error) {
 	result := make([]RunSnapshot, 0, len(all))
 	for _, snapshot := range all {
 		if snapshot.Phase != contract.PhaseCompleted && snapshot.Phase != contract.PhaseBlocked {
-			result = append(result, snapshot)
-		}
-	}
-	sortSnapshots(result)
-	return result, nil
-}
-
-// ListCleanupCandidates identifies completed snapshots older than age. It is
-// intentionally read-only: cleanup is an explicit operator action and this
-// method never removes files.
-func (s *Store) ListCleanupCandidates(now time.Time, age time.Duration) ([]RunSnapshot, error) {
-	if age < 0 {
-		return nil, errors.New("cleanup age must not be negative")
-	}
-	all, err := s.list()
-	if err != nil {
-		return nil, err
-	}
-	cutoff := now.Add(-age)
-	result := make([]RunSnapshot, 0)
-	for _, snapshot := range all {
-		if snapshot.Phase == contract.PhaseCompleted && snapshot.UpdatedAt.Before(cutoff) {
 			result = append(result, snapshot)
 		}
 	}

@@ -435,35 +435,6 @@ func TestListRecoverableSortsNewestFirstAndExcludesTerminalRuns(t *testing.T) {
 	}
 }
 
-func TestListCleanupCandidatesOnlyReturnsOldCompletedRunsWithoutDeleting(t *testing.T) {
-	root := t.TempDir()
-	store := NewStore(root)
-	now := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
-	for _, snapshot := range []RunSnapshot{
-		{RunID: "old-complete", Phase: contract.PhaseCompleted, UpdatedAt: now.Add(-8 * 24 * time.Hour)},
-		{RunID: "boundary-complete", Phase: contract.PhaseCompleted, UpdatedAt: now.Add(-7 * 24 * time.Hour)},
-		{RunID: "recent-complete", Phase: contract.PhaseCompleted, UpdatedAt: now.Add(-6 * 24 * time.Hour)},
-		{RunID: "old-active", Phase: contract.PhaseBuilding, UpdatedAt: now.Add(-8 * 24 * time.Hour)},
-	} {
-		if err := store.Save(context.Background(), snapshot); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got, err := store.ListCleanupCandidates(now, 7*24*time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ids := snapshotIDs(got); !reflect.DeepEqual(ids, []string{"old-complete"}) {
-		t.Fatalf("ids=%v", ids)
-	}
-	if _, err := os.Stat(filepath.Join(root, "runs", "old-complete", "run.json")); err != nil {
-		t.Fatalf("candidate was deleted: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "runs", "boundary-complete", "run.json")); err != nil {
-		t.Fatalf("boundary snapshot was deleted: %v", err)
-	}
-}
-
 func snapshotIDs(snapshots []RunSnapshot) []string {
 	ids := make([]string, len(snapshots))
 	for i := range snapshots {
