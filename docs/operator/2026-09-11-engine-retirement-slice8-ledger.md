@@ -101,3 +101,12 @@ threads 단일-worker의 monitor-only 실행도 startup timeout/no tests/exit 1(
 현재 최종 대조는 이 tmpfs checkout에서 원래 forks/isolation, VITEST_MAX_WORKERS=1, 같은 Go/Node와
 동일 source/lock을 사용하는 make check다. 물리적 검증 경로가 달라진 새 tuple이며 정확한 환경 병목은 미확정이다.
 다른 사용자 process와 기존 worktree/staging은 변경하거나 삭제하지 않았다.
+
+## 최종 통합 gate
+
+- 검증 SHA: `23906adde5a1f90692ac4a099fca4a31e80b0932`.
+- 환경: 위 tmpfs detached checkout, 동일 node_modules, Go 1.27.0, Node 26.8.1, 원래 forks/isolation 및 timeout. `VITEST_MAX_WORKERS=1 TMPDIR=/dev/shm/threaddock-slice8-gate.UQU5Sx`로 `make check`를 실행했다.
+- 결과: exit 0. gofmt/shell/vet/전체 Go tests, UI 2 files·26 tests, TypeScript/Vite build 모두 통과했다. UI 41.06초, Vite build 11.33초였다.
+- 로그: 비추적 로컬 `.superpowers/sdd/2026-09-11-engine-retirement-unused-cleanup-api/make-check-23906ad-tmpfs-checkout.log`.
+- build가 제거한 tracked dist placeholder만 원문 복구했다. 검증 checkout의 tracked diff는 0이며 이후 root 변경은 문서뿐이다.
+- 앞선 실패는 취소하거나 숨기지 않는다. 물리적 위치를 바꾼 tuple에서는 통과했지만 정확한 환경 병목은 미확정이다. Windows Wails/native 및 live gh/Herdr 제품 E2E는 이번에 재검증하지 않았다.
