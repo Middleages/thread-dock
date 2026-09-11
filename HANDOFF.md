@@ -43,7 +43,8 @@
 orchestrator의 protected-change 구현·상태와 나머지 CLI는 보존한다.
 CLI Task는 `7234f66`에서 ACCEPT했다. 최초 gate `80c9a0d`에서 기존 동시 Advance 테스트의
 동기화 결함을 발견해 테스트만 수정했고, 20회 반복·잠금 테스트 및 `eb62e6e`의 독립 리뷰를 통과했다.
-수정 후 `98861c8`의 gate는 전체 Go·UI 26개·frontend build까지 통과했다. 제품 lock 구현은 불변이며 전체 리뷰는 진행 중이다.
+수정 후 `98861c8`의 gate는 전체 Go·UI 26개·frontend build까지 통과했다. 제품 lock 구현은 불변이며
+전체 리뷰는 `60df27dbbcf69c901caa39d4e832f69bfe1bb14c`에서 ACCEPT했다. 남은 blocking 사항은 없다.
 PR #78은 아직 OPEN이므로 검토된 head `5f3d2b6` 위에 후속 branch를 만들었다. 새 PR의 base는
 `agent/engine-retirement-slice5`이며, #78을 main에 병합한 뒤 후속 PR을 main으로 전환한다.
 

@@ -125,4 +125,18 @@ gofmt·shell·전체 Go vet/test·UI 2 files/26 tests·frontend build가 통과�
 새 SHA에서 수행한 두 번째 gate이며, 성공한 tuple을 다시 실행하지 않는다.
 로그는 `.superpowers/sdd/2026-09-11-engine-retirement-confirm-cli/make-check-98861c8.log`의 비추적 로컬 근거다.
 build가 제거한 tracked `.placeholder`는 원본 내용으로 복원하고 `git diff --exit-code`로 tree 일치를 확인했다.
-변경 Markdown 6파일/상대 링크 23개 검사도 통과했다. 이후 결과 기록은 docs-only이며 전체 branch 리뷰는 pending이다.
+변경 Markdown 6파일/상대 링크 23개 검사도 통과했다. 이후 결과 기록은 docs-only이며 전체 branch 리뷰 결과는 아래와 같다.
+
+## 최종 리뷰·결과
+
+fresh Sol은 `60df27dbbcf69c901caa39d4e832f69bfe1bb14c`에서 전체 통합 ACCEPT를 반환했다. blocking finding 없음.
+CLI 정리, root 문서의 story 3 한정 변경, test-only 동기화 수정, 최초 실패와 새 gate 통과 근거,
+PR #78에 대한 의존성과 main 미병합 상태를 독립 확인했다. 이 승인 기록의 후속 변경도 문서뿐이다.
+
+- changedFiles: CLI/cmd 6파일, 기존 동시성 테스트 1파일, HANDOFF·operator 문서·plan·ledger·reports 6파일, 총 13경로.
+- commitSHA: CLI `b77ff5c`/리뷰 `7234f66`, test fix `be2f0e6`/리뷰 `eb62e6e`, 최종 gate `98861c8`, 전체 리뷰 `60df27d`.
+- executedCommands: 각 report의 RED→GREEN/focused/20회 반복 및 vet/list, root 문서 검사, 실패 gate `80c9a0d`와 수정 후 gate `98861c8`, 링크/diff, GitHub 기록.
+- outcomes: 두 Task·전체 리뷰 ACCEPT, 최종 full gate PASS. Issue #79에서 추적하며 선행 PR #78은 열린 상태로 보존했다.
+- unverified: native Windows/오류 상태·현재 보드의 native 실행·Herdr/Projects E2E·Wiki 페이지 발행·actual runtime identity.
+- blockers: 없음. 병합 순서는 PR #78을 main에 병합한 뒤 후속 PR base를 main으로 전환하는 순서다. main 병합은 사용자에게 남긴다.
+- 후속 경계: CLI에서 분리된 backend protected-change 진입점의 실제 caller와 상태/테스트 의존성을 별도로 확인한다. 이번에는 backend 구현과 제품 lock을 바꾸지 않았다.

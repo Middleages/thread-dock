@@ -50,7 +50,7 @@ root는 `parallel-pilot.md` story 3의 confirm 실행 안내만 제거된 명령
 - [x] 거부·의존성 미초기화 회귀 사례를 먼저 작성하고 adapter/wiring을 제거했다.
 - [x] focused 검사·self-review 후 commit했고 `7234f66`에서 fresh Sol Task ACCEPT를 받았다.
 - [x] root 문서의 직접 영향 pilot 테스트를 통과했다. 후속 역사 설명까지 최종 gate에서 확인한다.
-- [ ] 단일 통합 gate와 전체 리뷰 후 PR #78을 base로 하는 PR을 준비한다.
+- [x] 최초 gate의 기존 테스트 결함을 수정한 뒤 `98861c8`의 최종 gate와 `60df27d`의 전체 리뷰를 통과하고 PR #78 위의 후속 PR을 준비했다.
 
 ## 통합 gate에서 발견한 기존 테스트 결함
 
