@@ -59,7 +59,6 @@ type Dependencies struct {
 	Runs       RunService
 	Workflow   WorkflowService
 	Retirement RetirementService
-	Confirmer  ProtectedChangeConfirmer
 }
 
 // NeedsWorkflowDependencies is true only for the accepted v2 command
@@ -124,8 +123,6 @@ func NeedsProductionDependencies(args []string) bool {
 		return len(args) == 2 && strings.TrimSpace(args[1]) != ""
 	case "retire":
 		return validRetireArgs(args[1:])
-	case "confirm":
-		return len(args) == 3 && strings.TrimSpace(args[1]) != "" && args[2] == "protected-change"
 	case "status":
 		_, _, ok := parseStatusArgs(args[1:])
 		return ok
