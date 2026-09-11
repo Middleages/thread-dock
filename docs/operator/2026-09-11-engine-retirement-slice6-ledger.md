@@ -26,7 +26,7 @@
 ## 역할과 검증
 
 root는 문서·GitHub·계약·통합, Sol medium은 계획·조사, Luna high는 구현, fresh Sol medium은 리뷰를 맡는다.
-실제 runtime model/effort는 미노출이면 unverified이며 승격하지 않는다. worker 상한 3, 코드 worker 1개 예약, reviewer 슬롯 확보.
+실제 runtime model/effort는 미노출이면 unverified이며 승격하지 않는다. worker 상한 3, Task 리뷰 완료로 코드 worker 예약 해제, reviewer 슬롯 확보.
 이미 완료된 slice의 결과는 재사용하고 새로운 Task에 필요한 focused 검사만 한다. root의 마지막 통합 make check는
 별도 tmpfs TMPDIR `/dev/shm/threaddock-slice6-gate.OKTr3F`에서 한 번 수행한다. npm ci exit 0, lock 변경 없음.
 Windows native·오류 상태·현재 보드 native 실행·Herdr/Projects E2E·Wiki 페이지 발행은 별도 미검증 범위로 유지한다.
@@ -70,4 +70,4 @@ backend protected-change 보존 계약을 먼저 고정했다. Luna 1개를 예�
 - Luna는 새 negative 사례에서 RED를 확인한 뒤 CLI/cmd test·vet/list/ref/diff를 tmpfs·Go 1.27.0에서 통과했다. 실제 TMPDIR과 원문 명령은 Task report에 기록했다.
 - root의 문서 commit `e1c6ccd`에서 `TMPDIR=/dev/shm/threaddock-slice6-gate.OKTr3F`와 명시한 Go로 `go test ./internal/pilot -run '^TestParallelPilotRunbookProtectsUnacceptedEvidenceFromRetirement$'`를 수행해 exit 0(0.003초)을 확인했다.
 - 이후 story 3에 기존 exact-SHA/check/mergeability gate 조건을 역사 설명으로 명시했다. 최종 문서는 마지막 통합 gate에서도 검증한다. 다른 story·retirement guard는 불변이다.
-- CLI Task head는 fresh Sol 리뷰 중이며 root 문서는 최종 통합 리뷰 대상이다.
+- fresh Sol은 CLI Task head `7234f6602fc071d8881d66d6f07181fd4159fb1c`에서 ACCEPT했다. finding과 수정 요구 없음. root 문서는 최종 통합 리뷰 대상이다.
