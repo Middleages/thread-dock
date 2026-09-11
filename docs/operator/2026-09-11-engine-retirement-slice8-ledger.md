@@ -25,7 +25,7 @@
 ## 역할·검증
 
 root는 계약·문서·GitHub·통합, Sol medium은 조사, Luna high는 구현, fresh Sol medium은 독립 리뷰를 맡는다.
-actual runtime identity는 미노출이면 unverified, 자동 승격 없음. worker 상한 3, Luna 1개 예약, reviewer 슬롯 확보.
+actual runtime identity는 미노출이면 unverified, 자동 승격 없음. worker 상한 3, Task 리뷰 완료로 Luna 예약 해제, reviewer 슬롯 확보.
 이전 환경 근거에 따라 Go 1.27.0·별도 tmpfs·`VITEST_MAX_WORKERS=1`을 처음부터 사용한다.
 worker는 focused 검사만, root는 마지막 full gate 한 번을 수행하며 동일 tuple을 반복하지 않는다.
 native Windows/오류 상태·현재 보드 native 실행·Herdr/Projects E2E·Wiki 페이지 발행·정확한 Vitest 병목은 미검증으로 유지한다.
@@ -59,4 +59,4 @@ fresh Sol은 `RetirementInspector` alias, `NewRetirementInspector`, `Store.ListC
 - code `60f85978f7220390fa7a7c0cde6a08dac077e80a`, 최초 report `cbd4351262045de8532224394a9eccc65ec03491`, report SHA 정정 head `a1e7da3fb779e932e062bd2f1467d0c62f2fa1c2`.
 - 제품 세 파일에서 60줄을 제거했다. 새 동작이나 테스트는 추가하지 않았다.
 - Go 1.27.0과 `/dev/shm/td-unused-cleanup-api.cQdC5J`에서 recoverable, composite 2 tests, CLI Cleanup 16 cases, cmd composition 사례가 실행돼 통과했다. vet/list/ref/diff도 통과했다.
-- fresh Sol Task 리뷰를 받고 있으며 현재 실행기/7일 guard와 공유 helper 보존을 검토한다.
+- fresh Sol은 `a1e7da3fb779e932e062bd2f1467d0c62f2fa1c2`에서 ACCEPT했다. blocking finding과 수정 요구 없음. 현재 실행기/7일 guard와 shared helper 및 전용 test 보존을 확인했다.
