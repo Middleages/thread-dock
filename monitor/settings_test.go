@@ -60,10 +60,12 @@ func TestSettingsStoreRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSettingsEnvironmentCanClearInheritedValues(t *testing.T) {
+func TestSettingsEnvironmentCanReplaceAndClearInheritedValues(t *testing.T) {
 	base := map[string]string{
 		"THREADDOCK_REPOS":            "Middleages/old",
+		"THREADDOCK_PROJECTS":         "https://github.com/users/Middleages/projects/99",
 		"THREADDOCK_WSL_DISTRIBUTION": "OldDistro",
+		"THREADDOCK_SESSIONS_FILE":    "/tmp/old.json",
 		"OTHER":                       "preserved",
 	}
 	settings := MonitorSettings{Repositories: "Middleages/thread-dock", WSLDistribution: "Ubuntu"}
@@ -74,5 +76,8 @@ func TestSettingsEnvironmentCanClearInheritedValues(t *testing.T) {
 	}
 	if _, exists := got["THREADDOCK_PROJECTS"]; exists {
 		t.Fatalf("empty project setting should remove inherited value: %#v", got)
+	}
+	if _, exists := got["THREADDOCK_SESSIONS_FILE"]; exists {
+		t.Fatalf("empty sessions setting should remove inherited value: %#v", got)
 	}
 }
