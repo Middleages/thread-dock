@@ -790,27 +790,54 @@ func TestRound1ConcurrentAdvanceSerializesOneAction(t *testing.T) {
 	}
 	h.herdr.startEntered = make(chan struct{})
 	h.herdr.releaseStart = make(chan struct{})
-	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	for i := range errs {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			errs[i] = h.orchestrator.Advance(context.Background(), id)
-		}(i)
+	firstResult := make(chan error, 1)
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		firstResult <- h.orchestrator.Advance(context.Background(), id)
+	}()
+	var releaseOnce sync.Once
+	releaseStart := func() {
+		releaseOnce.Do(func() { close(h.herdr.releaseStart) })
 	}
+	defer func() {
+		releaseStart()
+		select {
+		case <-firstDone:
+		case <-time.After(time.Second):
+			t.Log("first action cleanup timed out")
+		}
+	}()
 	select {
 	case <-h.herdr.startEntered:
 	case <-time.After(time.Second):
 		t.Fatal("first action did not start")
 	}
-	close(h.herdr.releaseStart)
-	wg.Wait()
+	secondResult := make(chan error, 1)
+	go func() {
+		secondResult <- h.orchestrator.Advance(context.Background(), id)
+	}()
+	var secondErr error
+	select {
+	case secondErr = <-secondResult:
+	case <-time.After(time.Second):
+		t.Fatal("second action did not report busy")
+	}
+	if !errors.Is(secondErr, ErrRunBusy) {
+		t.Fatalf("second concurrent error=%v want busy", secondErr)
+	}
+	releaseStart()
+	var firstErr error
+	select {
+	case firstErr = <-firstResult:
+	case <-time.After(time.Second):
+		t.Fatal("first action did not finish after release")
+	}
+	if firstErr != nil {
+		t.Fatalf("first concurrent error=%v want nil", firstErr)
+	}
 	if h.herdr.startCount != 1 {
 		t.Fatalf("StartAgent calls=%d", h.herdr.startCount)
-	}
-	if !errors.Is(errs[0], ErrRunBusy) && !errors.Is(errs[1], ErrRunBusy) {
-		t.Fatalf("concurrent errors=%v", errs)
 	}
 }
 
