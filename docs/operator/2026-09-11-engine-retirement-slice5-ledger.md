@@ -52,3 +52,4 @@ Herdr/Projects E2E·Wiki 페이지 발행·runtime identity는 미검증으로 �
 - 전용 두 파일 415줄을 제거했다. 현재 workrun 서비스와 Git helper에는 변경이 없다.
 - 명시한 Go 1.27.0과 tmpfs에서 `TestReviewIntegration` 13개가 실제 실행돼 통과했고 workrun vet/list/ref/diff 검사도 통과했다.
 - report의 TMPDIR placeholder는 실제 환경 또는 원문 mktemp 명령으로 정정 요청했다. report-only이며 제품 검사를 반복하지 않는다.
+- `6a4bb17c6da215dc48cd3c302b4d1122dfe7e366`에서 실제 원문 `tmp_dir=$(mktemp -d /dev/shm/engine-retirement-v1-integration.XXXXXX)`와 명령별 TMPDIR을 기록했다. report-only 정정 뒤 fresh Sol Task 리뷰 중이다.
