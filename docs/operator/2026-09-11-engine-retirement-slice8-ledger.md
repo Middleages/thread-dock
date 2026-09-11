@@ -47,3 +47,9 @@ fresh Sol은 `RetirementInspector` alias, `NewRetirementInspector`, `Store.ListC
 |---|---|---|
 | 조사 / 구현 | caller 부재와 active cleanup 검증 → 미사용 세 symbol 제거 | 직렬 합의 후 구현 |
 | 구현 / root 문서 | Go 세 파일 / HANDOFF·plan·ledger | 소유 중복 없음 |
+
+## 착수 기록
+
+- [Issue #83](https://github.com/Middleages/thread-dock/issues/83)을 생성해 Project #1에서 In Progress·정리 방향 유지로 추적한다.
+- PR #82/Issue #81은 열린 선행 작업으로 유지한다. 새 PR은 main 완료를 가정하지 않는다.
+- 제품 소유 범위는 미사용 세 symbol과 전용 test뿐이며 current cleanup 실행기/guard 변경은 없다.
