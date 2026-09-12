@@ -1,1 +1,0 @@
-{"id":"worktree:open","result":{"root_pane":{"pane_id":"pane-1","workspace_id":"ws-1","cwd":"/repo/worktree"}}}
