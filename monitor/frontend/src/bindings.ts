@@ -24,13 +24,6 @@ export interface GlobalToolbox {
   commands: ToolboxCommand[]
   todos: ToolboxTodo[]
 }
-export type ToolboxChecklistItem = { id: string; text: string; done: boolean }
-export type ProjectToolbox = {
-  references: ToolboxReference[]
-  commands: ToolboxCommand[]
-  checklist: ToolboxChecklistItem[]
-}
-
 type WailsAppBinding = {
   GetMonitorSnapshot?: () => Promise<Snapshot>
   GetMonitorSnapshotAll?: () => Promise<Snapshot>
@@ -40,9 +33,6 @@ type WailsAppBinding = {
   SaveProjectReferences?: (projectKey: string, references: ProjectReferences) => Promise<ProjectReferences>
   GetGlobalToolbox?: () => Promise<GlobalToolbox>
   SaveGlobalToolbox?: (toolbox: GlobalToolbox) => Promise<GlobalToolbox>
-  // Transitional bindings remain until the old ProjectToolbox consumer is removed.
-  GetProjectToolbox?: (projectKey: string) => Promise<ProjectToolbox>
-  SaveProjectToolbox?: (projectKey: string, toolbox: ProjectToolbox) => Promise<ProjectToolbox>
   OpenToolboxReference?: (referenceType: ToolboxReferenceType, target: string) => Promise<void>
 }
 
@@ -96,18 +86,6 @@ export const saveGlobalToolbox = async (toolbox: GlobalToolbox): Promise<GlobalT
   const binding = appBinding()?.SaveGlobalToolbox
   if (binding) return binding(toolbox)
   throw new Error('Wails global toolbox save binding is unavailable. Run the Windows Monitor application.')
-}
-
-export const getProjectToolbox = async (projectKey: string): Promise<ProjectToolbox> => {
-  const binding = appBinding()?.GetProjectToolbox
-  if (binding) return binding(projectKey)
-  throw new Error('Wails project toolbox binding is unavailable. Run the Windows Monitor application.')
-}
-
-export const saveProjectToolbox = async (projectKey: string, toolbox: ProjectToolbox): Promise<ProjectToolbox> => {
-  const binding = appBinding()?.SaveProjectToolbox
-  if (binding) return binding(projectKey, toolbox)
-  throw new Error('Wails project toolbox save binding is unavailable. Run the Windows Monitor application.')
 }
 
 export const openToolboxReference = async (referenceType: ToolboxReferenceType, target: string): Promise<void> => {

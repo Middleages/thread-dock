@@ -89,10 +89,7 @@ export function SettingsShell() {
   }
 
   return <>
-    <App />
-    <button type="button" className="settings-launcher" onClick={() => void showSettings()} aria-haspopup="dialog">
-      <span aria-hidden="true">⚙</span> 설정
-    </button>
+    <App onOpenSettings={() => void showSettings()} />
     {open && <div className="settings-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) close() }}>
       <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <header className="settings-header">
@@ -103,28 +100,28 @@ export function SettingsShell() {
           <label>
             <span>GitHub Host</span>
             <small><code>https://</code> 없이 호스트 이름만 입력합니다. GitHub.com은 <code>github.com</code>입니다.</small>
-            <input value={form.githubHost} onChange={(event) => update('githubHost', event.target.value)} placeholder="github.samsungds.net" autoFocus />
+            <input aria-label="GitHub Host" value={form.githubHost} onChange={(event) => update('githubHost', event.target.value)} placeholder="github.samsungds.net" autoFocus />
           </label>
           <label>
             <span>GitHub 저장소</span>
             <small><code>OWNER/REPO</code> 형식으로 한 줄에 하나씩 입력합니다.</small>
-            <textarea rows={3} value={form.repositories} onChange={(event) => update('repositories', event.target.value)} placeholder={'FDYPhotoDX/thread-dock\nFDYPhotoDX/jmj'} />
+            <textarea aria-label="GitHub 저장소" rows={3} value={form.repositories} onChange={(event) => update('repositories', event.target.value)} placeholder={'FDYPhotoDX/thread-dock\nFDYPhotoDX/jmj'} />
           </label>
           <label>
             <span>GitHub Projects</span>
             <small>위 GitHub Host의 <code>/views/2</code>가 아닌 Project 루트 URL을 입력합니다.</small>
-            <textarea rows={2} value={form.projects} onChange={(event) => update('projects', event.target.value)} placeholder="https://github.samsungds.net/orgs/FDYPhotoDX/projects/4" />
+            <textarea aria-label="GitHub Projects" rows={2} value={form.projects} onChange={(event) => update('projects', event.target.value)} placeholder="https://github.samsungds.net/orgs/FDYPhotoDX/projects/4" />
           </label>
           <div className="settings-grid">
             <label>
               <span>WSL 배포판</span>
               <small><code>wsl -l</code>에 표시되는 이름입니다.</small>
-              <input value={form.wslDistribution} onChange={(event) => update('wslDistribution', event.target.value)} placeholder="Ubuntu" />
+              <input aria-label="WSL 배포판" value={form.wslDistribution} onChange={(event) => update('wslDistribution', event.target.value)} placeholder="Ubuntu" />
             </label>
             <label>
               <span>Herdr 연결 파일</span>
               <small>WSL 내부의 절대 경로입니다. Herdr를 쓰지 않으면 비워둘 수 있습니다.</small>
-              <input value={form.sessionsFile} onChange={(event) => update('sessionsFile', event.target.value)} placeholder="/home/appuser/.threaddock/sessions.json" />
+              <input aria-label="Herdr 연결 파일" value={form.sessionsFile} onChange={(event) => update('sessionsFile', event.target.value)} placeholder="/home/appuser/.threaddock/sessions.json" />
             </label>
           </div>
           {error && <div className="settings-error" role="alert">{error}</div>}

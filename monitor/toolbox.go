@@ -35,15 +35,15 @@ type ToolboxCommand struct {
 	Note    string `json:"note,omitempty"`
 }
 
-// ToolboxChecklistItem is retained while the last legacy Wails consumer is
-// removed. New writes use ToolboxTodo in the global store instead.
+// ToolboxChecklistItem is a private v1 migration decoder. New writes use
+// ToolboxTodo in the global store instead.
 type ToolboxChecklistItem struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
 	Done bool   `json:"done"`
 }
 
-// ProjectToolbox is the v1 on-disk and transitional compatibility shape.
+// ProjectToolbox is the private v1 on-disk migration shape.
 type ProjectToolbox struct {
 	References []ToolboxReference     `json:"references"`
 	Commands   []ToolboxCommand       `json:"commands"`
@@ -109,10 +109,6 @@ func defaultGlobalToolboxStore() globalToolboxStore {
 		return globalToolboxStore{}
 	}
 	return globalToolboxStore{path: filepath.Join(dir, settingsDirectoryName, globalToolboxFileName)}
-}
-
-func emptyProjectToolbox() ProjectToolbox {
-	return ProjectToolbox{References: []ToolboxReference{}, Commands: []ToolboxCommand{}, Checklist: []ToolboxChecklistItem{}}
 }
 
 func normalizeProjectToolbox(value ProjectToolbox) ProjectToolbox {
@@ -293,57 +289,6 @@ func (s projectToolboxStore) load() (projectToolboxFile, error) {
 		result.Projects = map[string]ProjectToolbox{}
 	}
 	return result, nil
-}
-
-func (s projectToolboxStore) get(key string) (ProjectToolbox, error) {
-	if err := validateToolboxProjectKey(key); err != nil {
-		return ProjectToolbox{}, err
-	}
-	file, err := s.load()
-	if err != nil {
-		return ProjectToolbox{}, err
-	}
-	value, ok := file.Projects[strings.TrimSpace(key)]
-	if !ok {
-		return emptyProjectToolbox(), nil
-	}
-	return normalizeProjectToolbox(value), nil
-}
-
-// put remains only for the old Wails consumer. It writes v1 and refuses to
-// downgrade a migrated v2 project file.
-func (s projectToolboxStore) put(key string, value ProjectToolbox) (ProjectToolbox, error) {
-	key = strings.TrimSpace(key)
-	value = normalizeProjectToolbox(value)
-	if err := validateToolboxProjectKey(key); err != nil {
-		return ProjectToolbox{}, err
-	}
-	if err := validateProjectToolbox(value); err != nil {
-		return ProjectToolbox{}, err
-	}
-	file, err := s.load()
-	if err != nil {
-		return ProjectToolbox{}, err
-	}
-	file.Projects[key] = value
-	if err := s.saveFile(file); err != nil {
-		return ProjectToolbox{}, err
-	}
-	return value, nil
-}
-
-func (s projectToolboxStore) saveFile(value projectToolboxFile) error {
-	if strings.TrimSpace(s.path) == "" {
-		return errors.New("사용자 Toolbox 경로를 확인할 수 없습니다")
-	}
-	writer := s.writer
-	if writer == nil {
-		writer = writeToolboxFile
-	}
-	if err := writer(s.path, "projects-*.tmp", value); err != nil {
-		return fmt.Errorf("Toolbox 파일을 저장할 수 없습니다: %w", err)
-	}
-	return nil
 }
 
 func (s projectToolboxStore) readVersion() (int, error) {

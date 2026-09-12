@@ -23,8 +23,6 @@ type App struct {
 	store          settingsStore
 	projectToolbox projectToolboxStore
 	globalToolbox  globalToolboxStore
-	// toolbox is retained as a compatibility alias until Task 4 removes the old Wails consumer.
-	toolbox   projectToolboxStore
 	toolboxMu sync.Mutex
 	settings  MonitorSettings
 }
@@ -123,13 +121,6 @@ func (a *App) SaveMonitorSettings(settings MonitorSettings) (MonitorSettings, er
 	return settings, nil
 }
 
-func (a *App) projectToolboxStore() projectToolboxStore {
-	if strings.TrimSpace(a.projectToolbox.path) != "" {
-		return a.projectToolbox
-	}
-	return a.toolbox
-}
-
 // GetProjectReferences returns user-local references for one selected GitHub project.
 // Toolbox data is deliberately not exposed to Agent orchestration.
 func (a *App) GetProjectReferences(projectKey string) (ProjectReferences, error) {
@@ -142,7 +133,7 @@ func (a *App) GetProjectReferences(projectKey string) (ProjectReferences, error)
 	}
 	a.toolboxMu.Lock()
 	defer a.toolboxMu.Unlock()
-	projects := a.projectToolboxStore()
+	projects := a.projectToolbox
 	if err := a.globalToolbox.ensureMigrated(projects); err != nil {
 		return ProjectReferences{}, err
 	}
@@ -164,7 +155,7 @@ func (a *App) SaveProjectReferences(projectKey string, refs ProjectReferences) (
 	}
 	a.toolboxMu.Lock()
 	defer a.toolboxMu.Unlock()
-	projects := a.projectToolboxStore()
+	projects := a.projectToolbox
 	if err := a.globalToolbox.ensureMigrated(projects); err != nil {
 		return ProjectReferences{}, err
 	}
@@ -178,7 +169,7 @@ func (a *App) GetGlobalToolbox() (GlobalToolbox, error) {
 	}
 	a.toolboxMu.Lock()
 	defer a.toolboxMu.Unlock()
-	return a.globalToolbox.get(a.projectToolboxStore())
+	return a.globalToolbox.get(a.projectToolbox)
 }
 
 // SaveGlobalToolbox persists the global human Toolbox. Migration and the caller
@@ -189,28 +180,7 @@ func (a *App) SaveGlobalToolbox(toolbox GlobalToolbox) (GlobalToolbox, error) {
 	}
 	a.toolboxMu.Lock()
 	defer a.toolboxMu.Unlock()
-	return a.globalToolbox.put(a.projectToolboxStore(), toolbox)
-}
-
-// GetProjectToolbox returns user-local notes for one selected GitHub project.
-// Toolbox data is deliberately not exposed to Agent orchestration.
-func (a *App) GetProjectToolbox(projectKey string) (ProjectToolbox, error) {
-	if a == nil {
-		return ProjectToolbox{}, errors.New("monitor app is nil")
-	}
-	a.toolboxMu.Lock()
-	defer a.toolboxMu.Unlock()
-	return a.projectToolboxStore().get(projectKey)
-}
-
-// SaveProjectToolbox persists user-local references, copy-only commands and checklist items.
-func (a *App) SaveProjectToolbox(projectKey string, toolbox ProjectToolbox) (ProjectToolbox, error) {
-	if a == nil {
-		return ProjectToolbox{}, errors.New("monitor app is nil")
-	}
-	a.toolboxMu.Lock()
-	defer a.toolboxMu.Unlock()
-	return a.projectToolboxStore().put(projectKey, toolbox)
+	return a.globalToolbox.put(a.projectToolbox, toolbox)
 }
 
 // OpenToolboxReference opens only a validated user-registered absolute local path.

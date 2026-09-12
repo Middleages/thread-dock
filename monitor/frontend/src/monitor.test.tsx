@@ -108,7 +108,7 @@ describe('monitor list and detail', () => {
     expect(screen.getByText('리뷰 필요')).toBeInTheDocument()
     expect(screen.getByText('성공')).toBeInTheDocument()
     expect(screen.getByText('Project 필드')).toBeInTheDocument()
-    expect(screen.getByText('In progress')).toBeInTheDocument()
+    expect(screen.getByText('Project 필드').closest('.evidence-row')).toHaveTextContent('In progress')
     expect(screen.queryByRole('heading', { name: '저장소별 작업' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '발행 상태' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Wiki' })).toHaveAttribute('href', 'https://github.com/acme/app/wiki')
@@ -313,35 +313,33 @@ describe('monitor list and detail', () => {
     expect(screen.getByRole('status')).toHaveTextContent('선택한 작업 정보를 클립보드에 복사했습니다.')
   })
 
-  it('does not report clipboard success for empty work info', async () => {
+  it('does not render work actions when no project is selected', async () => {
     const clipboardSetText = vi.fn(async () => true)
     Object.defineProperty(window, 'runtime', { configurable: true, value: { ClipboardSetText: clipboardSetText } })
     const browserWriteText = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserWriteText } })
     render(<App snapshotSource={vi.fn(async () => snapshot([]))} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
-    await act(async () => { await Promise.resolve() })
+    expect(screen.queryByRole('button', { name: '작업 정보 복사' })).not.toBeInTheDocument()
     expect(clipboardSetText).not.toHaveBeenCalled()
     expect(browserWriteText).not.toHaveBeenCalled()
-    expect(screen.getByRole('status')).toHaveTextContent('복사할 작업 정보가 없습니다.')
   })
 
   it('marks the local connection as degraded when nested Herdr freshness is stale', async () => {
     const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'offline', syncStatus: 'offline', freshness: { state: 'stale', syncStatus: 'offline' }, notices: [], sessions: [], connections: [], unconnectedAgents: [] }
     render(<App snapshotSource={vi.fn(async () => snapshot([project()], { herdr }))} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    const nav = screen.getByRole('navigation', { name: '주요 메뉴' })
-    expect(within(nav).getByText(/로컬 연결 확인 필요/)).toBeInTheDocument()
-    expect(nav.querySelector('.status-mark')).toHaveClass('attention')
+    const topBar = screen.getByRole('banner')
+    expect(within(topBar).getByText(/로컬 연결 확인 필요/)).toBeInTheDocument()
+    expect(topBar.querySelector('.status-mark')).toHaveClass('attention')
   })
 
   it('keeps only the product identity in the top navigation and omits forbidden runtime identifiers', async () => {
     const source = vi.fn(async () => snapshot([project()]))
     render(<App snapshotSource={source} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    const nav = screen.getByRole('navigation', { name: '주요 메뉴' })
-    expect(within(nav).getByLabelText('ThreadDock Monitor')).toBeInTheDocument()
+    const topBar = screen.getByRole('banner')
+    expect(within(topBar).getByLabelText('ThreadDock Monitor')).toBeInTheDocument()
     for (const label of ['작업 현황', '저장소', '자동화 작업', '완료 기록', '설정']) expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '자동화 작업' })).not.toBeInTheDocument()
     expect(screen.queryByText(/providerSession|processId|sessionId|requestId|rawTranscript/i)).not.toBeInTheDocument()
