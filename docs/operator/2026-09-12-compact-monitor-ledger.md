@@ -69,3 +69,11 @@ Browser plugin/agent-browser CLI는 없지만 cached Playwright1.55.0과 matchin
 Task1: complete (구현a03b2db/report6e77d79 → fix2fd25e3/report `b3b9919de9e6ee49bff1b7580b4e69ba33d745b8`에서 scoped spec/quality ACCEPT). migration put/data overwrite/compaction/누락 tests/검증 로그/diff whitespace findings 모두 addressed. 최초 RED의 runtime path는 미기록으로 명시하고 새 GREEN3tuple의 실제 로그/exit0를 확인했다. tests 재실행한 reviewer는 없다.
 통합은4a8fc08/35b78fc/cd5b5a6/5dc0abb다. Task2 exact base `5dc0abb5cc473dc80512ecec0d21219f25942473`, `.worktrees/compact-toolbox-bindings`, `agent/compact-toolbox-bindings`.
 Task2 packet은 기존 소비자 임시 유지와 App helper 추출 범위를 포함한다. App의 별도 mutex와 first-save migration의 public 경로 회귀를 검증한다. Todo/cache/layout 변경은 아직 배정하지 않았다.
+
+## Task2 후보 · Task3 준비 (2026-09-13)
+
+Task2 후보는 `57bb3b29780cce2ac5e9f041229f1ca3adc726fc`이며 fresh `compact_bindings_review`의 고정 SHA 검토 중이다. worker report는 Go focused, bindings/project-key 5개, AppScope 4개, TypeScript compile 통과와 잘못된 cwd에서 실행한 최초 tsc 실패를 구분한다. 아직 승인·통합으로 표시하지 않는다. root가 준비한 node_modules symlink만 테스트 종료 후 제거했고 연결 대상 dependency cache와 기존 worktree는 보존했다.
+
+Task3의 자료와 Drawer는 독립 파일로 나눌 수 있으며 계약·base를 확정한 뒤 배정한다. 공유 App/cache/bindings 변경은 Task4까지 직렬 소유한다. 무거운 UI 검증은 한 worker씩 실행한다.
+
+Impeccable의 UI 착수 계약은 새 시안이 아닌 사용자 지정 설계의 기록이다. Task3a는 index.html 첫 body child에 150단어 이하 계약 주석을 먼저 남긴다. 기존 cobalt/slate/cloud token과 Segoe UI 계열, 간결한 목록·구분선을 유지한다. 상단 상태/Toolbox/설정, 최대1440px 본문, 좌우 고정 rail 제거, 폭420–480px 우측 overlay와 업무/자료 구분이 첫 화면 구조다. 도구는 복사 전용이며 프로젝트 Todo에서 전역 Drawer의 해당 필터로 연결한다. FORM key는 `user-pinned-compact-monitor`로 명시하고 무작위 seed를 실행했다고 주장하지 않는다. Task6는 build 결과의 주석 유지·화면 검토·기존 시각 체계 문서를 확인한다.
