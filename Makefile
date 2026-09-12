@@ -20,11 +20,11 @@ test:
 	npm --prefix $(FRONTEND_DIR) run build
 
 test-focused:
-	@test -n "$(strip $(PKGS))" || (echo 'PKGS is required, for example: make test-focused PKGS="./internal/contract"' >&2; exit 2)
+	@test -n "$(strip $(PKGS))" || (echo 'PKGS is required, for example: make test-focused PKGS="./monitor"' >&2; exit 2)
 	go test $(PKGS)
 
 vet-focused:
-	@test -n "$(strip $(PKGS))" || (echo 'PKGS is required, for example: make vet-focused PKGS="./internal/contract"' >&2; exit 2)
+	@test -n "$(strip $(PKGS))" || (echo 'PKGS is required, for example: make vet-focused PKGS="./internal/runner"' >&2; exit 2)
 	go vet $(PKGS)
 
 template-check:
