@@ -99,3 +99,8 @@ Task3b는 fix27dc8d9/report `2b6436977adc3259fa921dd2e8c60ecffc0a881b`에서 sam
 Task4 exact base `153c196054c27f0d0addbcd829e9e9985b105992`, worktree `.worktrees/compact-monitor-integration`, branch `agent/compact-monitor-integration`에 live Luna를 배정했다. Task3 경로는 read-only 의존성, App/Settings/private helper/old Go·TS API 제거는 이 worker 하나가 소유한다. UI test slot1/구현1, reviewer용 여유를 유지한다.
 
 Windows 검증 가능 범위 추가 확인: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`가 실행 가능하며 사용자 지정 경로의 실제 버전 명령이 exit0으로 Go1.27.0 windows/amd64, Node26.8.1, Wails2.15.0을 반환했다. 최종 고정 SHA를 새 NTFS 임시 staging에 export해 표준 Wails build를 실행할 수 있다. 이전 staging은 삭제·수정하지 않는다. native computer-use는 여전히 노출되지 않아 앱 조작/clipboard/실제 파일 migration smoke는 Windows GPT app 확인이 필요하다. 버전 probe는 새 제품 build 성공 근거가 아니다.
+
+## Task4 후보와 review fix
+
+후보 `86a0ad4d3860cfb8e49f375d6ed6e322f1c6fc30`(구현1481e0d)는 UI7파일42tests, 추가 AppScope7tests, Go monitor package, typecheck 통과 근거를 제출했다. fresh `compact_integration_review`가 1911줄 고정 diff를 읽고 BLOCK했다: 기존 Project 필드의 별도 section/per-field row를 합치며 정확 assertion을 약화함; ProjectDetail에 unused copy/Herdr detail 함수를 복제함; migration용 reference validation test까지 삭제함; App의 성공 save/cache/count와 실제 shortcut 연결/중복 조작 근거 누락.
+같은 Luna에 원 표시/assertion/validation 복원, dead duplicates 제거, public UI 기반 deferred binding 통합 회귀만 배정했다. 도달 불가능한 race를 강제로 만들 public hook/API는 추가하지 않으며 loading/save guard가 겹침을 막는다면 실제 방지 경로로 증명한다. 새 Go 검증은 복원 validator 한 테스트로 한정하고 전체 monitor/package suite를 반복하지 않는다. 후보는 아직 통합하지 않았다.
