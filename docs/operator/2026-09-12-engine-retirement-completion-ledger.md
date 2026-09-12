@@ -65,3 +65,8 @@ Task 1: complete (`07909fc` + report `0b3625e`, fresh `retirement_task1_review` 
 | 2~8 / root docs | worker report는 각자 분리, root 문서와 제품 소유 겹침 없음 |
 | 2·4·5·7 자체 | orphan source 삭제와 정적 graph 검사 일치, 대체 동작·테스트 추가 없음 |
 | 3·6·8 자체 | 남은 직접 영향 coordinator/v2/runner focused 검사만 실행 |
+
+## Task 2 완료
+
+Task 2: complete (구현 `c393f66`, report `fa4b5b7`, fresh `retirement_task2_review` spec/quality ACCEPT). 통합 `b901b4d`/`fb1ac52`. orphan orchestrator 17파일/9448줄 삭제, 외부 production/test importer 0, 정적 Go graph/Linux·Windows Monitor listing 통과. 제품 테스트는 재실행하지 않았다.
+Report 설명 중 GitHub 저장소 URL형 import 언급은 module의 실제 import path가 아니다. 실제 module과 reviewer의 base/head 검사는 `thread-dock/internal/orchestrator`를 대상으로 했으며 부재를 확인했다.
