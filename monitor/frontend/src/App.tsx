@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { HerdrConnection, HerdrSnapshot, Project, Snapshot, SnapshotSource } from './types'
+import type { Project, Snapshot, SnapshotSource } from './types'
 import { getGlobalToolbox, getMonitorSnapshot, getMonitorSnapshotAll, saveGlobalToolbox, type GlobalToolbox } from './bindings'
 import { GlobalToolboxDrawer } from './GlobalToolboxDrawer'
+import { HerdrSummary } from './HerdrSummary'
 import { ProjectDetail } from './ProjectDetail'
 import { TopBar } from './TopBar'
-import { connectionsForWork, dateFor, herdrGuidance, labelFor } from './monitor-presentation'
+import { dateFor, labelFor } from './monitor-presentation'
 import { toolboxKeyFor } from './project-key'
 import './styles.css'
 
@@ -38,16 +39,6 @@ function ProjectList({ projects, selected, onSelect }: { projects: Project[]; se
       </button>)}
     </div>
   </section>
-}
-
-function HerdrConnections({ connections }: { connections: HerdrConnection[] }) {
-  if (connections.length === 0) return <p className="muted">선택한 업무에 명시된 Herdr 연결이 없습니다.</p>
-  return <div className="ruled-list">{connections.map((connection, index) => <div className="evidence-row" key={`${connection.session}-${connection.paneId ?? index}`}><div><strong>{connection.session}</strong><small>{[connection.location?.workspaceId && `workspace ${connection.location.workspaceId}`, connection.location?.tabId && `tab ${connection.location.tabId}`, connection.location?.paneId && `pane ${connection.location.paneId}`, connection.location?.cwd && `cwd ${connection.location.cwd}`].filter(Boolean).join(' · ') || '위치 없음'}{connection.observedAt ? ` · 관찰 ${dateFor(connection.observedAt)}` : ''}</small></div><span>{labelFor(connection.status)}{connection.agentStatus ? ` · ${labelFor(connection.agentStatus)}` : ''}<small>{herdrGuidance(connection)}</small></span></div>)}</div>
-}
-
-function HerdrPanel({ herdr, project, work }: { herdr: HerdrSnapshot; project?: Project; work?: Project['workItems'][number] }) {
-  const selected = connectionsForWork(work, project, herdr)
-  return <section className="herdr-panel" aria-labelledby="herdr-panel-title"><div className="section-heading"><div><h2 id="herdr-panel-title">Herdr 연결</h2><p>마지막 관찰 {dateFor(herdr.observedAt)} · {labelFor(herdr.status)}</p></div><span className="count-label">{herdr.sessions.length}개 세션</span></div>{herdr.notices.length > 0 && <div className="project-notices">{herdr.notices.map((notice, index) => <p key={`${notice}-${index}`}>{notice}</p>)}</div>}{(selected.length > 0 || work) && <section aria-labelledby="selected-herdr-title"><h3 id="selected-herdr-title">선택 업무 위치</h3><HerdrConnections connections={selected} /></section>}<section aria-labelledby="sessions-title"><h3 id="sessions-title">관찰한 세션</h3><div className="ruled-list">{herdr.sessions.length === 0 ? <p className="muted">관찰한 세션이 없습니다.</p> : herdr.sessions.map((session) => <div className="evidence-row" key={session.session}><div><strong>{session.session}</strong><small>{session.observedAt ? `관찰 ${dateFor(session.observedAt)}` : '관찰 시각 없음'}</small></div><span>{labelFor(session.status)} · {session.agents.length}개 Agent</span></div>)}</div></section>{herdr.unconnectedAgents.length > 0 && <section aria-labelledby="unconnected-title"><h3 id="unconnected-title">연결되지 않은 Agent</h3><div className="ruled-list">{herdr.unconnectedAgents.map((agent, index) => <div className="evidence-row" key={`${agent.session}-${agent.pane_id ?? index}`}><div><strong>{agent.name || '이름 없음'}</strong><small>세션 {agent.session}{agent.pane_id ? ` · pane ${agent.pane_id}` : ''}{agent.cwd ? ` · cwd ${agent.cwd}` : ''}</small></div><span>{labelFor(agent.agent_status || 'unknown')}</span></div>)}</div></section>}</section>
 }
 
 type WorkScope = 'open' | 'all'
@@ -141,7 +132,6 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
 
   const projects = useMemo(() => sortProjects(snapshot?.projects ?? []), [snapshot])
   const selected = projects.find((project) => project.projectId === selectedProjectId)
-  const selectedWork = selected?.workItems.find((item) => item.workId === selectedWorkId) ?? selected?.workItems[0]
   const isGithub = snapshot?.source === 'github'
   const isDegraded = snapshot?.freshness.state === 'stale' || snapshot?.syncStatus === 'offline' || snapshot?.syncStatus === 'degraded' || snapshot?.syncStatus === 'setup_required'
   const isHerdrDegraded = snapshot?.herdr ? hasDegradedConnectionState(snapshot.herdr.status, snapshot.herdr.state, snapshot.herdr.syncStatus, snapshot.herdr.freshness.state, snapshot.herdr.freshness.syncStatus) : false
@@ -158,7 +148,7 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
         {snapshot.notices && snapshot.notices.length > 0 && <section className="monitor-notices" aria-label="GitHub Monitor 안내">{snapshot.notices.map((notice, index) => <p key={`${notice}-${index}`}>{notice}</p>)}</section>}
         <div className="monitor-toolbar">{isGithub && <><div className="work-scope" aria-label="업무 조회 범위"><button type="button" className={`scope-action${workScope === 'open' ? ' active' : ''}`} aria-pressed={workScope === 'open'} onClick={() => setWorkScope('open')}>열린 항목</button><button type="button" className={`scope-action${workScope === 'all' ? ' active' : ''}`} aria-pressed={workScope === 'all'} onClick={() => setWorkScope('all')}>전체 보기</button></div><button type="button" className="secondary-action refresh-action" onClick={() => void refresh()}>GitHub 새로고침</button></>}</div>
         {projects.length === 0 ? <section className="state-panel empty-state"><h1>{isGithub && snapshot.syncStatus === 'setup_required' ? 'GitHub Monitor 설정이 필요합니다.' : '표시할 프로젝트가 없습니다.'}</h1><p>{isGithub ? 'Windows Wails Monitor 설정에서 저장소·Projects URL·WSL 배포판을 지정하면 Issue, PR, Project 정보를 표시합니다.' : 'Windows Wails Monitor가 관찰 결과를 반환하면 이곳에 프로젝트와 작업이 표시됩니다.'}</p>{isGithub && <button type="button" className="secondary-action" onClick={() => void refresh()}>다시 확인</button>}</section> : <><ProjectList projects={projects} selected={selectedProjectId} onSelect={(id) => { setSelectedProjectId(id); setSelectedWorkId(projects.find((project) => project.projectId === id)?.workItems[0]?.workId ?? null) }} />{selected && <ProjectDetail project={selected} selectedWorkId={selectedWorkId} herdr={snapshot.herdr} projectTodoCount={projectTodoCount} onSelectWork={setSelectedWorkId} onOpenProjectTodos={openProjectTodos} onStatus={setStatusMessage} />}</>}
-        {snapshot.herdr && <HerdrPanel herdr={snapshot.herdr} project={selected} work={selectedWork} />}
+        {snapshot.herdr && !selected && <HerdrSummary herdr={snapshot.herdr} />}
       </>}
     </main>
     <GlobalToolboxDrawer open={toolboxOpen} projects={projects} initialProjectKey={toolboxProjectFilter} toolbox={toolbox} loadError={toolboxLoadError || undefined} loading={toolboxLoading} saving={toolboxSaving} onReload={() => void loadToolbox()} onSave={saveToolbox} onClose={() => setToolboxOpen(false)} onStatus={setStatusMessage} />

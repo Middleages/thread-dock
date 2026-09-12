@@ -3,6 +3,7 @@ import type { HerdrConnection, HerdrSnapshot, Project, WorkItem } from './types'
 import { MarkdownBody } from './MarkdownBody'
 import { ProjectReferences } from './ProjectReferences'
 import { WorkTable } from './WorkTable'
+import { HerdrSummary } from './HerdrSummary'
 import { toolboxKeyFor } from './project-key'
 import { isSafeExternalURL, openExternalURL } from './safe-url'
 import { connectionsForWork, dateFor, labelFor } from './monitor-presentation'
@@ -84,5 +85,6 @@ export function ProjectDetail({ project, selectedWorkId, herdr, projectTodoCount
       <button type="button" role="tab" aria-selected={tab === 'references'} onClick={() => setTab('references')}>자료</button>
     </div>
     {tab === 'references' ? <ProjectReferences projectKey={toolboxKeyFor(project)} projectName={project.name} onStatus={onStatus} /> : work ? <><WorkTable items={project.workItems} selected={work.workId} onSelect={onSelectWork} /><article className="work-summary"><h3>{work.title}</h3>{work.request && <MarkdownBody value={work.request} />}{work.blocker && <p className="blocker"><strong>보존된 변경</strong> {work.blocker}</p>}</article><EvidenceList work={work} project={project} /></> : <section className="empty-detail"><p>아직 표시할 업무가 없습니다.</p></section>}
+    {herdr && <HerdrSummary herdr={herdr} project={project} work={work} />}
   </section>
 }
