@@ -3,6 +3,7 @@
 ## 범위와 상태
 
 - 작업: [Issue91](https://github.com/Middleages/thread-dock/issues/91), branch `agent/compact-monitor-toolbox`.
+- 전달: [Draft PR92](https://github.com/Middleages/thread-dock/pull/92). 실제 native 검증을 기다리며 main 병합은 사용자에게 남겼다.
 - 선행 PR90은 main `611bd6a`에 병합 완료했다. 이번 UI/저장소 변경의 main 병합과는 별개다.
 - 저장소/바인딩/자료/Drawer/화면 통합/Herdr/검증 manifest는 Luna 구현과 독립 Sol 리뷰를 거쳤다. 고정 원본·통합 SHA와 실패/수정은 [ledger](../../operator/2026-09-12-compact-monitor-ledger.md)에 있다.
 - Task별 focused 결과는 전체 제품 gate 또는 native 성공을 뜻하지 않는다. 최종 gate·Windows build와 최종 화면 판정은 아래 별도로 기록한다.

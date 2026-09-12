@@ -9,6 +9,7 @@
 - 최종 `make check`는 `fbefd79`에서 Go3패키지·UI13파일95tests·TypeScript/Vite build PASS다. 첫953db4e gate의 gofmt 실패는 두 줄 정렬 수정으로 해결했다. 같은 전체 suite를 이후 반복하지 않는다.
 - Windows 표준 Wails build와 Windows 임시 파일 migration focused tests는953db4e에서 PASS다. 이후 제품 diff는 gofmt 공백뿐이며 정규화 해시가 같다. actual native 앱 조작은 여전히 미검증이고 Windows GPT app 검증을 요청했다. [정확한 검증·artifact 기록](docs/superpowers/reviews/2026-09-13-compact-monitor-toolbox-verification.md)을 따른다.
 - Browser fixture는 console0·narrow overflow0, 독립 visual verdict는 `ship`이다. 새 DESIGN.md는 기존 시각 체계를 기록한다. PR 게시·최종 통합 리뷰 상태는 ledger를 확인하며, 새 PR main 병합은 사용자에게 남긴다.
+- [Draft PR #92](https://github.com/Middleages/thread-dock/pull/92)를 게시했고 Project1에 연결했다. 최종 독립 통합 리뷰78fd14d는 ACCEPT다. Issue91/PR92는 In Progress이며 남은 실제 Windows 앱 검증 뒤 ready/완료 여부를 판단한다. Task1–5와 옛 엔진 삭제를 다시 구현하지 않는다.
 
 ## 과거 기록: 2026-09-12 엔진 제거 재착수
 
