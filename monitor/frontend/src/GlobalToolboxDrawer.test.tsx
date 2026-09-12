@@ -16,6 +16,16 @@ const project = (projectId: string, name = projectId, url = `https://github.com/
   links: [{ kind: 'github', label: 'Repository', url }],
 })
 
+const projectWithoutLink = (projectId: string, name = projectId): Project => ({
+  projectId,
+  name,
+  state: 'active',
+  syncStatus: 'synced',
+  nextAction: 'review',
+  evidenceRefs: [],
+  workItems: [],
+})
+
 const baseToolbox = (): GlobalToolbox => ({
   commands: [],
   todos: [],
@@ -142,6 +152,92 @@ describe('GlobalToolboxDrawer', () => {
     expect(latest?.todos.find((todo) => todo.text === '공통 할 일')).not.toHaveProperty('projectKey')
   })
 
+  it('preserves a linked project key when checking a todo', async () => {
+    const onSave = vi.fn(async (next: GlobalToolbox) => next)
+    renderDrawer({ toolbox: { commands: [], todos: [
+      { id: 'linked', text: '연결된 일', done: false, projectKey: 'github.com/alpha' },
+      { id: 'unknown-linked', text: '알 수 없는 연결 일', done: false, projectKey: 'retired-project' },
+    ] }, onSave })
+    fireEvent.click(screen.getByRole('tab', { name: '할 일' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '연결된 일' }))
+    await act(async () => { await Promise.resolve() })
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ todos: [
+      { id: 'linked', text: '연결된 일', done: true, projectKey: 'github.com/alpha' },
+      { id: 'unknown-linked', text: '알 수 없는 연결 일', done: false, projectKey: 'retired-project' },
+    ] }))
+
+    cleanup()
+    onSave.mockClear()
+    renderDrawer({ toolbox: { commands: [], todos: [{ id: 'unknown-linked', text: '알 수 없는 연결 일', done: false, projectKey: 'retired-project' }] }, onSave })
+    fireEvent.click(screen.getByRole('tab', { name: '할 일' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '알 수 없는 연결 일' }))
+    await act(async () => { await Promise.resolve() })
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ todos: [{ id: 'unknown-linked', text: '알 수 없는 연결 일', done: true, projectKey: 'retired-project' }] }))
+  })
+
+  it('switches between all, common, and project todo filters', () => {
+    renderDrawer({ toolbox: { commands: [], todos: [
+      { id: 'common', text: '공통 일', done: false },
+      { id: 'alpha', text: 'Alpha 일', done: false, projectKey: 'github.com/alpha' },
+      { id: 'beta', text: 'Beta 일', done: false, projectKey: 'github.com/beta' },
+    ] } })
+    fireEvent.click(screen.getByRole('tab', { name: '할 일' }))
+    expect(screen.getByText('공통 일')).toBeInTheDocument()
+    expect(screen.getByText('Alpha 일')).toBeInTheDocument()
+    expect(screen.getByText('Beta 일')).toBeInTheDocument()
+    const filter = screen.getByRole('combobox', { name: '할 일 범위' })
+    fireEvent.change(filter, { target: { value: 'common' } })
+    expect(screen.getByText('공통 일')).toBeInTheDocument()
+    expect(screen.queryByText('Alpha 일')).not.toBeInTheDocument()
+    fireEvent.change(filter, { target: { value: 'project:github.com/alpha' } })
+    expect(screen.getByText('Alpha 일')).toBeInTheDocument()
+    expect(screen.queryByText('공통 일')).not.toBeInTheDocument()
+  })
+
+  it('creates a todo with exactly the selected project key', async () => {
+    const onSave = vi.fn(async (next: GlobalToolbox) => next)
+    renderDrawer({ onSave })
+    fireEvent.click(screen.getByRole('tab', { name: '할 일' }))
+    fireEvent.change(screen.getByRole('combobox', { name: '새 할 일 프로젝트' }), { target: { value: 'project:github.com/beta' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '할 일 내용' }), { target: { value: 'Beta 준비' } })
+    fireEvent.click(screen.getByRole('button', { name: '할 일 추가' }))
+    await act(async () => { await Promise.resolve() })
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ todos: [expect.objectContaining({ text: 'Beta 준비', done: false, projectKey: 'github.com/beta' })] }))
+  })
+
+  it('deletes commands and todos through the controlled save', async () => {
+    const onSave = vi.fn(async (next: GlobalToolbox) => next)
+    renderDrawer({ toolbox: { commands: [{ id: 'cmd', label: '상태', command: 'herdr status' }], todos: [{ id: 'todo', text: '삭제할 일', done: false }] }, onSave })
+    fireEvent.click(screen.getByRole('button', { name: '명령어 삭제: 상태' }))
+    await act(async () => { await Promise.resolve() })
+    expect(onSave).toHaveBeenLastCalledWith({ commands: [], todos: [{ id: 'todo', text: '삭제할 일', done: false }] })
+    fireEvent.click(screen.getByRole('tab', { name: '할 일' }))
+    fireEvent.click(screen.getByRole('button', { name: '삭제' }))
+    await act(async () => { await Promise.resolve() })
+    expect(onSave).toHaveBeenLastCalledWith({ commands: [{ id: 'cmd', label: '상태', command: 'herdr status' }], todos: [] })
+  })
+
+  it('keeps real all/common project keys distinct from the common filter', () => {
+    renderDrawer({
+      projects: [projectWithoutLink('all', 'All 프로젝트'), projectWithoutLink('common', 'Common 프로젝트')],
+      toolbox: { commands: [], todos: [
+        { id: 'all', text: 'All key 일', done: false, projectKey: 'all' },
+        { id: 'common', text: 'Common key 일', done: false, projectKey: 'common' },
+        { id: 'shared', text: '공통 일', done: false },
+      ] },
+    })
+    fireEvent.click(screen.getByRole('tab', { name: '할 일' }))
+    const filter = screen.getByRole('combobox', { name: '할 일 범위' })
+    fireEvent.change(filter, { target: { value: 'common' } })
+    expect(screen.getByText('공통 일')).toBeInTheDocument()
+    expect(screen.queryByText('All key 일')).not.toBeInTheDocument()
+    fireEvent.change(filter, { target: { value: 'project:all' } })
+    expect(screen.getByText('All key 일')).toBeInTheDocument()
+    expect(screen.queryByText('공통 일')).not.toBeInTheDocument()
+    fireEvent.change(filter, { target: { value: 'project:common' } })
+    expect(screen.getByText('Common key 일')).toBeInTheDocument()
+  })
+
   it('keeps unknown project keys visible and offers reassignment', async () => {
     const onSave = vi.fn(async (next: GlobalToolbox) => next)
     renderDrawer({ toolbox: { commands: [], todos: [{ id: 'unknown', text: '옛 업무', done: false, projectKey: 'retired-project' }] }, onSave })
@@ -150,6 +246,16 @@ describe('GlobalToolboxDrawer', () => {
     fireEvent.change(screen.getByRole('combobox', { name: '옛 업무 프로젝트' }), { target: { value: 'project:github.com/alpha' } })
     await act(async () => { await Promise.resolve() })
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ todos: [expect.objectContaining({ projectKey: 'github.com/alpha' })] }))
+  })
+
+  it('can reassign an unknown todo to common without retaining its raw key', async () => {
+    const onSave = vi.fn(async (next: GlobalToolbox) => next)
+    renderDrawer({ toolbox: { commands: [], todos: [{ id: 'unknown', text: '옛 업무', done: false, projectKey: 'retired-project' }] }, onSave })
+    fireEvent.click(screen.getByRole('tab', { name: '할 일' }))
+    fireEvent.change(screen.getByRole('combobox', { name: '옛 업무 프로젝트' }), { target: { value: 'common' } })
+    await act(async () => { await Promise.resolve() })
+    const saved = onSave.mock.calls.at(-1)?.[0]
+    expect(saved?.todos[0]).not.toHaveProperty('projectKey')
   })
 
   it('does not mutate while loading, unavailable, or saving, and retries load errors', () => {
@@ -179,12 +285,53 @@ describe('GlobalToolboxDrawer', () => {
     expect(screen.queryByText('보존할 초안')).not.toBeInTheDocument()
   })
 
-  it('traps focus in the dialog and restores the opener on close', () => {
+  it('does not use browser clipboard after native false or rejection', async () => {
+    const browserClipboard = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserClipboard } })
+    const nativeClipboard = vi.fn(async () => false)
+    Object.defineProperty(window, 'runtime', { configurable: true, value: { ClipboardSetText: nativeClipboard } })
+    renderDrawer({ toolbox: { commands: [{ id: 'cmd', label: '상태', command: 'herdr status' }], todos: [] } })
+    fireEvent.click(screen.getByRole('button', { name: '명령어 복사: 상태' }))
+    await act(async () => { await Promise.resolve() })
+    expect(browserClipboard).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('명령어를 복사하지 못했습니다.')
+
+    cleanup()
+    const rejectingNative = vi.fn(async () => { throw new Error('native failure') })
+    Object.defineProperty(window, 'runtime', { configurable: true, value: { ClipboardSetText: rejectingNative } })
+    renderDrawer({ toolbox: { commands: [{ id: 'cmd', label: '상태', command: 'herdr status' }], todos: [] } })
+    fireEvent.click(screen.getByRole('button', { name: '명령어 복사: 상태' }))
+    await act(async () => { await Promise.resolve() })
+    expect(browserClipboard).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('명령어를 복사하지 못했습니다.')
+  })
+
+  it('blocks duplicate in-flight saves and all mutations while saving', async () => {
+    let resolveSave!: (value: GlobalToolbox) => void
+    const onSave = vi.fn(() => new Promise<GlobalToolbox>((resolve) => { resolveSave = resolve }))
+    renderDrawer({ onSave })
+    fireEvent.change(screen.getByRole('textbox', { name: '명령어 이름' }), { target: { value: '상태' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '명령어 내용' }), { target: { value: 'herdr status' } })
+    const add = screen.getByRole('button', { name: '명령어 추가' })
+    fireEvent.click(add)
+    fireEvent.click(add)
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(add).toBeDisabled()
+    resolveSave({ commands: [], todos: [] })
+    await act(async () => { await Promise.resolve() })
+
+    cleanup()
+    renderDrawer({ saving: true, onSave })
+    expect(screen.getByRole('button', { name: '명령어 추가' })).toBeDisabled()
+    expect(onSave).toHaveBeenCalledTimes(1)
+  })
+
+  it('traps focus in the dialog and restores the opener on controlled close', () => {
     const opener = document.createElement('button')
     document.body.append(opener)
     opener.focus()
     const onClose = vi.fn()
-    renderDrawer({ onClose })
+    const view = renderDrawer({ onClose })
     expect(screen.getByRole('button', { name: '닫기' })).toHaveFocus()
     const dialog = screen.getByRole('dialog')
     const focusables = dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])')
@@ -193,6 +340,18 @@ describe('GlobalToolboxDrawer', () => {
     fireEvent.keyDown(document, { key: 'Tab' })
     expect(document.activeElement).toBe(screen.getByRole('button', { name: '닫기' }))
     fireEvent.click(screen.getByRole('button', { name: '닫기' }))
+    view.rerender(<GlobalToolboxDrawer {...view.props} open={false} onClose={onClose} />)
+    expect(opener).toHaveFocus()
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('restores focus and removes listeners when unmounted while open', () => {
+    const opener = document.createElement('button')
+    document.body.append(opener)
+    opener.focus()
+    const { unmount } = renderDrawer()
+    unmount()
+    expect(opener).toHaveFocus()
+    fireEvent.keyDown(document, { key: 'Escape' })
   })
 })

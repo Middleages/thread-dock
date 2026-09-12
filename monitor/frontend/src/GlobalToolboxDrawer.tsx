@@ -69,6 +69,11 @@ export function GlobalToolboxDrawer({
   const openerRef = useRef<HTMLElement | null>(null)
   const onCloseRef = useRef(onClose)
   const wasOpenRef = useRef(false)
+  const restoreFocus = () => {
+    const opener = openerRef.current
+    openerRef.current = null
+    if (opener && opener.isConnected) opener.focus()
+  }
   const [tab, setTab] = useState<'commands' | 'todos'>(() => initialProjectKey ? 'todos' : 'commands')
   const [todoFilter, setTodoFilter] = useState<TodoFilter>(() => initialProjectKey ? { kind: 'project', key: initialProjectKey } : { kind: 'all' })
   const [includeCompleted, setIncludeCompleted] = useState(false)
@@ -110,6 +115,14 @@ export function GlobalToolboxDrawer({
   useEffect(() => {
     onCloseRef.current = onClose
   }, [onClose])
+
+  useEffect(() => {
+    if (!open) {
+      restoreFocus()
+      return
+    }
+    return () => restoreFocus()
+  }, [open])
 
   useEffect(() => {
     if (!open) {
@@ -166,7 +179,6 @@ export function GlobalToolboxDrawer({
 
   const requestClose = () => {
     onCloseRef.current()
-    openerRef.current?.focus()
   }
 
   const save = async (next: GlobalToolbox, successMessage: string) => {
@@ -211,7 +223,7 @@ export function GlobalToolboxDrawer({
     const nextTodos = todos.map((item) => {
       if (item.id !== todo.id) return item
       const updated = { ...item, ...update }
-      if (update.projectKey === undefined) delete updated.projectKey
+      if (Object.prototype.hasOwnProperty.call(update, 'projectKey') && update.projectKey === undefined) delete updated.projectKey
       return updated
     })
     await save({ ...committed, todos: nextTodos }, message)

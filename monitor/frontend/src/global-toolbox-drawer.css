@@ -27,6 +27,7 @@
 .toolbox-drawer-actions button:hover, .toolbox-drawer-todo button:hover { background: var(--surface-canvas); }
 .toolbox-drawer-form { display: grid; gap: 8px; margin-top: 16px; }
 .toolbox-drawer-form input, .toolbox-drawer-form textarea, .toolbox-drawer-form select, .toolbox-drawer-todo-controls select, .toolbox-drawer-todo select { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: 8px 9px; background: var(--surface-primary); color: var(--fg-primary); font: inherit; font-size: var(--text-body-sm); }
+.toolbox-drawer input:focus-visible, .toolbox-drawer select:focus-visible, .toolbox-drawer textarea:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
 .toolbox-drawer-form textarea { resize: vertical; }
 .toolbox-drawer-form > button { width: max-content; border: 1px solid var(--fg-primary); border-radius: var(--radius-control); padding: 8px 12px; background: var(--fg-primary); color: var(--surface-primary); font-weight: 750; }
 .toolbox-drawer-form button:disabled, .toolbox-drawer-actions button:disabled, .toolbox-drawer-todo button:disabled { cursor: not-allowed; opacity: .48; }
