@@ -125,4 +125,56 @@ describe('work history scope', () => {
     expect(screen.getByText('echo old')).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '명령어 이름' })).toHaveValue('보존할 초안')
   })
+
+  it('opens the project Todo shortcut with the matching filter', async () => {
+    const getGlobal = vi.fn(async () => ({ commands: [], todos: [{ id: 'todo', text: 'Project todo', done: false, projectKey: 'repo:acme/app' }] }))
+    ;(window as Window & { go?: unknown }).go = { main: { App: { GetGlobalToolbox: getGlobal } } }
+    render(<App snapshotSource={vi.fn(async () => snapshot(1, 'Open work'))} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: '할 일 보기' }))
+    expect(screen.getByRole('tab', { name: '할 일' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('combobox', { name: '할 일 범위' })).toHaveValue('project:repo:acme/app')
+  })
+
+  it('updates the project count after a successful save and resets normal Toolbox entry', async () => {
+    const getGlobal = vi.fn(async () => ({ commands: [], todos: [] }))
+    const saveGlobal = vi.fn(async (next) => next)
+    ;(window as Window & { go?: unknown }).go = { main: { App: { GetGlobalToolbox: getGlobal, SaveGlobalToolbox: saveGlobal } } }
+    render(<App snapshotSource={vi.fn(async () => snapshot(1, 'Open work'))} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'Toolbox 열기' }))
+    fireEvent.click(screen.getByRole('tab', { name: '할 일' }))
+    fireEvent.change(screen.getByRole('combobox', { name: '새 할 일 프로젝트' }), { target: { value: 'project:repo:acme/app' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '할 일 내용' }), { target: { value: '새 프로젝트 일' } })
+    fireEvent.click(screen.getByRole('button', { name: '할 일 추가' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(saveGlobal).toHaveBeenCalledWith(expect.objectContaining({ todos: [expect.objectContaining({ projectKey: 'repo:acme/app' })] }))
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }))
+    expect(screen.getByText('할 일 1개')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Toolbox 열기' }))
+    expect(screen.getByRole('tab', { name: '명령어' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('combobox', { name: '할 일 범위' })).not.toBeInTheDocument()
+  })
+
+  it('coalesces repeated mutation while a global save is deferred and keeps the saved command', async () => {
+    const getGlobal = vi.fn(async () => ({ commands: [], todos: [] }))
+    let resolveSave!: (value: { commands: Array<{ id: string; label: string; command: string }>; todos: [] }) => void
+    const saveGlobal = vi.fn(() => new Promise((resolve) => { resolveSave = resolve }))
+    ;(window as Window & { go?: unknown }).go = { main: { App: { GetGlobalToolbox: getGlobal, SaveGlobalToolbox: saveGlobal } } }
+    render(<App snapshotSource={vi.fn(async () => snapshot(1, 'Open work'))} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'Toolbox 열기' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '명령어 이름' }), { target: { value: '저장 명령' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '명령어 내용' }), { target: { value: 'echo saved' } })
+    const add = screen.getByRole('button', { name: '명령어 추가' })
+    fireEvent.click(add)
+    fireEvent.click(add)
+    expect(saveGlobal).toHaveBeenCalledTimes(1)
+    expect(add).toBeDisabled()
+    resolveSave({ commands: [{ id: 'saved', label: '저장 명령', command: 'echo saved' }], todos: [] })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Toolbox 열기' }))
+    expect(screen.getByText('echo saved')).toBeInTheDocument()
+  })
 })

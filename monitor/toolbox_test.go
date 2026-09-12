@@ -20,6 +20,19 @@ func TestAppOpenToolboxReferenceRejectsUnsafeTargetBeforeLaunch(t *testing.T) {
 	}
 }
 
+func TestValidateProjectToolboxRejectsExecutableOrRelativeReferences(t *testing.T) {
+	cases := []ProjectToolbox{
+		{References: []ToolboxReference{{ID: "bad", Label: "script", Type: "web", Target: "javascript:alert(1)"}}},
+		{References: []ToolboxReference{{ID: "bad", Label: "relative", Type: "file", Target: "docs/readme.pdf"}}},
+		{References: []ToolboxReference{{ID: "bad", Label: "relative wsl", Type: "wsl-file", Target: "home/appuser/readme.md"}}},
+	}
+	for index, value := range cases {
+		if err := validateProjectToolbox(value); err == nil {
+			t.Fatalf("case %d should fail", index)
+		}
+	}
+}
+
 func TestProjectReferencesStorePersistsOnlyReferences(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "projects.json")
 	store := projectToolboxStore{path: path}

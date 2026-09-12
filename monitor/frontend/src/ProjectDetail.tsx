@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { HerdrConnection, HerdrSnapshot, Link, Project, WorkItem } from './types'
+import type { HerdrConnection, HerdrSnapshot, Project, WorkItem } from './types'
 import { MarkdownBody } from './MarkdownBody'
 import { ProjectReferences } from './ProjectReferences'
 import { WorkTable } from './WorkTable'
 import { toolboxKeyFor } from './project-key'
 import { isSafeExternalURL, openExternalURL } from './safe-url'
-import { connectionsForWork, dateFor, herdrGuidance, labelFor } from './monitor-presentation'
+import { connectionsForWork, dateFor, labelFor } from './monitor-presentation'
 import './project-detail.css'
 
 declare global {
@@ -23,16 +23,6 @@ function ExternalLink({ url, label }: { url: string; label: string }) {
   return <a href={url} target="_blank" rel="noreferrer" onClick={onClick}>{label}</a>
 }
 
-async function copyText(value: string) {
-  const wailsClipboard = window.runtime?.ClipboardSetText
-  if (wailsClipboard) {
-    if (!(await wailsClipboard(value))) throw new Error('clipboard rejected')
-    return
-  }
-  if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable')
-  await navigator.clipboard.writeText(value)
-}
-
 function buildHandoffText(work?: WorkItem, herdrConnections: HerdrConnection[] = []) {
   if (!work) return ''
   const handoff = work.handoffs?.[0]
@@ -46,14 +36,16 @@ function GithubEvidence({ work }: { work: WorkItem }) {
   if (!github) return null
   const checks = github.checks ?? []
   const fields = Object.entries(github.fields ?? {})
-  return <section aria-labelledby="github-state-title"><h3 id="github-state-title">GitHub 상태</h3><div className="ruled-list">
+  return <>
+    <section aria-labelledby="github-state-title"><h3 id="github-state-title">GitHub 상태</h3><div className="ruled-list">
     <div className="evidence-row"><div><strong>{github.kind === 'pull_request' ? 'Pull request' : github.kind === 'issue' ? 'Issue' : 'Project item'}</strong><small>{github.number ? `#${github.number}` : '번호 없음'} · 관찰 {dateFor(github.observedAt)}</small></div><span>{labelFor((github.state ?? 'unknown').toLowerCase())}</span></div>
     {github.reviewDecision && <div className="evidence-row"><div><strong>리뷰</strong></div><span>{labelFor(github.reviewDecision)}</span></div>}
     {checks.length > 0 && <div className="evidence-row"><div><strong>검사</strong><small>{checks.map((check) => check.name).join(' · ')}</small></div><span>{checks.map((check) => labelFor((check.conclusion || check.status || 'unknown').toLowerCase())).join(' · ')}</span></div>}
     {github.relatedIssueUrls && github.relatedIssueUrls.length > 0 && <div className="evidence-row"><div><strong>연결된 Issue</strong></div><span>{github.relatedIssueUrls.map((url) => <ExternalLink key={url} url={url} label="Issue" />)}</span></div>}
     {github.relatedPullRequestUrls && github.relatedPullRequestUrls.length > 0 && <div className="evidence-row"><div><strong>연결된 PR</strong></div><span>{github.relatedPullRequestUrls.map((url) => <ExternalLink key={url} url={url} label="PR" />)}</span></div>}
-    {fields.length > 0 && <div className="evidence-row"><div><strong>Project 필드</strong></div><span>{fields.map(([name, value]) => <span key={name}>{name}: {value || '값 없음'}</span>)}</span></div>}
-  </div></section>
+    </div></section>
+    {fields.length > 0 && <section aria-labelledby="github-fields-title"><h3 id="github-fields-title">Project 필드</h3><div className="ruled-list">{fields.map(([name, value]) => <div className="evidence-row" key={name}><strong>{name}</strong><span>{value || '값 없음'}</span></div>)}</div></section>}
+  </>
 }
 
 function EvidenceList({ work, project }: { work: WorkItem; project: Project }) {
@@ -64,11 +56,6 @@ function EvidenceList({ work, project }: { work: WorkItem; project: Project }) {
     {work.handoffs && work.handoffs.length > 0 && <section aria-labelledby="handoffs-title"><h3 id="handoffs-title">최근 handoff</h3><div className="ruled-list">{work.handoffs.map((handoff, index) => <div className="evidence-row" key={`${handoff.summary}-${index}`}><div><strong>{handoff.summary}</strong><small>{handoff.evidenceRefs.join(' · ')}</small></div><span>{labelFor(handoff.nextAction)}</span></div>)}</div></section>}
     <section aria-labelledby="links-title"><h3 id="links-title">관련 링크</h3><div className="link-list">{links.length > 0 ? links.map((link) => <ExternalLink key={`${link.kind}-${link.url}`} url={link.url} label={link.label} />) : <p className="muted">연결된 GitHub 링크가 없습니다.</p>}</div></section>
   </div>
-}
-
-function HerdrConnections({ connections }: { connections: HerdrConnection[] }) {
-  if (connections.length === 0) return <p className="muted">선택한 업무에 명시된 Herdr 연결이 없습니다.</p>
-  return <div className="ruled-list">{connections.map((connection, index) => <div className="evidence-row" key={`${connection.session}-${connection.paneId ?? index}`}><div><strong>{connection.session}</strong><small>{[connection.location?.workspaceId && `workspace ${connection.location.workspaceId}`, connection.location?.tabId && `tab ${connection.location.tabId}`, connection.location?.paneId && `pane ${connection.location.paneId}`, connection.location?.cwd && `cwd ${connection.location.cwd}`].filter(Boolean).join(' · ') || '위치 없음'}{connection.observedAt ? ` · 관찰 ${dateFor(connection.observedAt)}` : ''}</small></div><span>{labelFor(connection.status)}{connection.agentStatus ? ` · ${labelFor(connection.agentStatus)}` : ''}<small>{herdrGuidance(connection)}</small></span></div>)}</div>
 }
 
 export function ProjectDetail({ project, selectedWorkId, herdr, projectTodoCount, onSelectWork, onOpenProjectTodos, onStatus }: { project: Project; selectedWorkId: string | null; herdr?: HerdrSnapshot; projectTodoCount: number; onSelectWork: (id: string) => void; onOpenProjectTodos: (projectKey: string) => void; onStatus: (message: string) => void }) {

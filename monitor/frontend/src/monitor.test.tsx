@@ -108,7 +108,7 @@ describe('monitor list and detail', () => {
     expect(screen.getByText('리뷰 필요')).toBeInTheDocument()
     expect(screen.getByText('성공')).toBeInTheDocument()
     expect(screen.getByText('Project 필드')).toBeInTheDocument()
-    expect(screen.getByText('Project 필드').closest('.evidence-row')).toHaveTextContent('In progress')
+    expect(screen.getByText('In progress')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '저장소별 작업' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '발행 상태' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Wiki' })).toHaveAttribute('href', 'https://github.com/acme/app/wiki')
