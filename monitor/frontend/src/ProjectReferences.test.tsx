@@ -86,6 +86,26 @@ describe('ProjectReferences', () => {
     expect(clipboardSetText).toHaveBeenCalledWith('C:\\work\\README.md')
   })
 
+  it.each([
+    ['returns false', async () => false],
+    ['rejects', async () => { throw new Error('native clipboard failed') }],
+  ])('does not fall back to browser clipboard when native clipboard %s', async (_caseName, nativeClipboard) => {
+    mockedGet.mockResolvedValue({ references: [{ id: 'r1', label: '자료', type: 'file', target: 'C:\\work\\README.md' }] })
+    const browserClipboard = vi.fn(async () => undefined)
+    const clipboardSetText = vi.fn(nativeClipboard)
+    Object.defineProperty(window, 'runtime', { configurable: true, value: { ClipboardSetText: clipboardSetText } })
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: browserClipboard } })
+
+    render(<ProjectReferences projectKey="project" projectName="Project" />)
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: /복사$/ }))
+    await flush()
+
+    expect(clipboardSetText).toHaveBeenCalledWith('C:\\work\\README.md')
+    expect(browserClipboard).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('자료 경로를 복사하지 못했습니다.')
+  })
+
   it('adds and deletes references through the project save binding', async () => {
     mockedGet.mockResolvedValue({ references: [] })
     mockedSave.mockImplementation(async (_projectKey, value) => value)
@@ -103,6 +123,30 @@ describe('ProjectReferences', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Runbook 삭제' }))
     await flush()
     expect(mockedSave).toHaveBeenLastCalledWith('project', { references: [] })
+  })
+
+  it('persists exact Windows and WSL reference types and targets', async () => {
+    mockedGet.mockResolvedValue({ references: [] })
+    mockedSave.mockImplementation(async (_projectKey, value) => value)
+
+    render(<ProjectReferences projectKey="project" projectName="Project" />)
+    await flush()
+    fireEvent.change(screen.getByLabelText('자료 이름'), { target: { value: 'Windows 파일' } })
+    fireEvent.change(screen.getByLabelText('자료 유형'), { target: { value: 'file' } })
+    fireEvent.change(screen.getByLabelText('자료 주소 또는 경로'), { target: { value: 'C:\\work\\README.md' } })
+    fireEvent.click(screen.getByRole('button', { name: '자료 추가' }))
+    await flush()
+    expect(mockedSave).toHaveBeenLastCalledWith('project', { references: [expect.objectContaining({ label: 'Windows 파일', type: 'file', target: 'C:\\work\\README.md' })] })
+
+    fireEvent.change(screen.getByLabelText('자료 이름'), { target: { value: 'WSL 파일' } })
+    fireEvent.change(screen.getByLabelText('자료 유형'), { target: { value: 'wsl-file' } })
+    fireEvent.change(screen.getByLabelText('자료 주소 또는 경로'), { target: { value: '/home/app/README.md' } })
+    fireEvent.click(screen.getByRole('button', { name: '자료 추가' }))
+    await flush()
+    expect(mockedSave).toHaveBeenLastCalledWith('project', { references: expect.arrayContaining([
+      expect.objectContaining({ label: 'Windows 파일', type: 'file', target: 'C:\\work\\README.md' }),
+      expect.objectContaining({ label: 'WSL 파일', type: 'wsl-file', target: '/home/app/README.md' }),
+    ]) })
   })
 
   it('does not save after a failed load and offers an explicit retry', async () => {
