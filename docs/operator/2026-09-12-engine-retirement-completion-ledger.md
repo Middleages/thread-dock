@@ -101,3 +101,5 @@ Task 5: complete (구현 `e6b5755`, report `72f7d50`, fresh `retirement_task5_re
 구현 `b473239` + report `8b86693`/`6e566c6`에서 v1 26개 tracked file(24 Go·2 JSON)을 삭제했다. 요구 환경의 v2 state/contract tests는 0.390s/0.004s PASS다. 최초 불필요한 GOCACHE/GOPATH 추가 격리 시도는 종료 불명확으로 통과 근거에서 제외했다.
 
 fresh `retirement_task6_review`는 `6e566c6`의 scope를 ACCEPT, evidence를 BLOCK했다. report가 보존된 state/v2 파일을 실제21개가 아닌26개로 기록했다. contract/v2 5개와 혼동한 수치다. Luna에게 report-only 정정, reviewed candidate와 implementation SHA 구분, exact manifest/diff 검사만 배정했다. final fix SHA는 다음 ledger 항목과 review packet에 기록하며 자기 commit SHA를 본문에 꾸며 넣지 않는다. 제품/Go 테스트 변경·재실행 없음.
+
+Fix candidate: `ca5407f087e09176ca8e2417702e463bc357ec40` (직전 reviewed `6e566c629952ee1ec6c95781d318bd2a817b163e`, implementation `b473239707068dba0b26add0bd7c10dbd6567f68`). report-only 수정과 21/5/1 manifest assertion·diff check PASS, Go tests 재실행 없음. 동일 reviewer에게 fix diff만 재검토 배정했다.
