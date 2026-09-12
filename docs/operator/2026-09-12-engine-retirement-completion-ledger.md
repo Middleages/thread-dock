@@ -87,3 +87,11 @@ Task 4: complete (구현 `87d4b81`, report `62226de`, fresh `retirement_task4_re
 - Task 5 exact base: `1babc9727690393698812ff6c2e0184d1bd563b8`.
 - Luna `retirement_git_adapters`, `.worktrees/retirement-git-adapters`, branch `agent/retirement-git-adapters`.
 - owned는 internal/github와 internal/worktree 소스뿐이며 실제 Git worktree 삭제·cleanup 명령은 금지한다. 나머지 packet은 계획 Task5를 따른다.
+
+## Task 5 완료 · Task 6 배정
+
+Task 5: complete (구현 `e6b5755`, report `72f7d50`, fresh `retirement_task5_review` spec/quality ACCEPT, findings 없음). 통합 `284f53d`/`dc716be`. GitHub5·worktree7, 12파일/6359줄 삭제, 전후 외부 importer0과 정적 graph PASS. 실제 cleanup 미실행은 worker 기록 근거이며 reviewer가 호스트 전체 명령 이력을 관찰했다고 주장하지 않는다.
+
+- Task 6 exact base: `dc716bea082c1be2503f05335d2f51da0f5da22e`.
+- Luna `retirement_v1_foundations`, `.worktrees/retirement-v1-foundations`, branch `agent/retirement-v1-foundations`.
+- state/contract 부모 전체가 아닌 계획의 exact v1 root 파일만 삭제하고 v2 subtree를 보존한다. focused v2 state/contract 검증은 별도 tmpfs를 사용한다. 나머지 packet은 계획 Task6를 따른다.
