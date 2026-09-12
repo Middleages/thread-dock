@@ -938,21 +938,21 @@ git commit -m "docs: close compact monitor verification gate"
 
 Before opening or updating a PR, the coordinator/reviewer must confirm:
 
-- [ ] No permanent `190px` left sidebar remains.
-- [ ] No permanent `300px` action rail remains.
-- [ ] No command execution method was added to Go or TypeScript bindings.
-- [ ] Project detail tabs are exactly `업무 / 자료`.
-- [ ] Global Drawer tabs are `명령어 / 할 일`.
-- [ ] Todo supports zero or one `projectKey`, never an array.
-- [ ] Common/project filters are derived from one global Todo dataset, not duplicated per project.
-- [ ] Legacy project commands/checklists migrate without silent loss.
-- [ ] Project references remain project-local.
-- [ ] Toolbox is not referenced from project Agent/Skill files.
-- [ ] Herdr matching semantics did not change while UI density changed.
-- [ ] Closed-history mode still does not auto-poll.
-- [ ] Markdown rendering tests still pass.
-- [ ] GHES and WSL reference behavior remain covered.
-- [ ] `make check` ran only at final integration, not as a per-worker bottleneck.
+- [x] No permanent `190px` left sidebar remains.
+- [x] No permanent `300px` action rail remains.
+- [x] No command execution method was added to Go or TypeScript bindings.
+- [x] Project detail tabs are exactly `업무 / 자료`.
+- [x] Global Drawer tabs are `명령어 / 할 일`.
+- [x] Todo supports zero or one `projectKey`, never an array.
+- [x] Common/project filters are derived from one global Todo dataset, not duplicated per project.
+- [x] Legacy project commands/checklists migrate without silent loss.
+- [x] Project references remain project-local.
+- [x] Toolbox is not referenced from project Agent/Skill files.
+- [x] Herdr matching semantics did not change while UI density changed.
+- [x] Closed-history mode still does not auto-poll.
+- [x] Markdown rendering tests still pass.
+- [x] GHES and WSL reference behavior remain covered.
+- [x] `make check` ran only at final integration, not as a per-worker bottleneck.
 
 ## Next-session execution prompt
 

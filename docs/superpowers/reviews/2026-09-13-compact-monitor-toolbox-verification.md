@@ -47,6 +47,7 @@ Detector는 한 번 실행해 기존 3px 주의 안내 border 다섯 곳을 warn
 - Windows artifact: `C:\Users\rhwnd\AppData\Local\Temp\threaddock-compact-rztRVp\source\monitor\build\bin\ThreadDockMonitor.exe`, 12,367,872 bytes, SHA-256 `c58a1a939e05eba5774b8fc9612326e9d81e74f732dcb69eb4a637e2ed02dca7`.
 - Windows953db4e와 gatefbefd79의 제품 변경은 app.go 두 줄 정렬뿐이다. 이전 파일을 Go1.27 gofmt로 정규화한 SHA-256과 현재 파일은 모두 `0d4795f341dd5eed5613609084fe32758174146e7317990109305de791c96b9b`다. Windows build를 새 SHA에서 실행했다고 바꾸어 쓰지 않는다.
 - 최종 browser 코드: 후보0917dbf/통합953db4e, 최종 로그 `/dev/shm/threaddock-compact-browser.Y3WqwB/browser-final-contrast.log`, exit0. 동일 경로 캡처를 독립 reviewer가 재확인했다.
+- 최종 독립 통합 리뷰: `78fd14de16ab0be45ec65ff24b723c83cdca273c`, ACCEPT/blockers0. 이후 승인·PR 기록은 metadata-only다. Native 검증을 완료로 표시하지 않도록 Draft PR로 전달한다.
 - Linux/Windows dist/index.html 모두 opening `user-pinned-compact-monitor` 계약을 보존했다. 기존 시각 체계는 [DESIGN.md](../../../DESIGN.md)와 `.impeccable/design.json`에 기록했다.
 - 실제 Windows 앱의 오류/clipboard/파일 열기/재시작·migration 및 live GHES/Herdr: 미검증.
 
