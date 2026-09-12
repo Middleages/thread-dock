@@ -84,3 +84,10 @@ Task3a/3b exact base는 `894f51229b9ec897592462c3ee9b5c6d42eb6042`다. Sol packe
 Task3a의 `9f248274`에서 index.html 첫 body child 계약을 root가 확인했고 Task3b UI 구현을 시작했다. 두 worker는 별도 branch/worktree이며 기존 API/UI 삭제는 아직 하지 않는다.
 
 Ruling: Task4에 private `monitor-presentation.ts`/test 한 쌍을 허용한다 — ProjectDetail의 handoff와 Task5 HerdrSummary 사이 cycle·matching 복제 방지 — 파일 한 쌍이 늘지만 Task5는 read-only 소비하며 public wire는 바뀌지 않는다. 실제 base 코드의 matching은 issue 결과가 있으면 exclusive 반환, 없으면 trusted project 결과, 그것도 없으면 exact repository coordinator fallback이다. 기존 연결이 없는데 항상 project/repo 연결을 섞거나, 반대로 fallback을 일괄 금지하는 해석 모두 채택하지 않는다. Task4 전용 SettingsShell test와 의도적 AppScope/monitor DOM 변경도 같은 Luna가 직렬 소유한다. 상세 packet의 base는 Task3 통합 후 고정한다.
+
+## Task3 리뷰와 수정 배정
+
+Task3a 후보 `473b55a8567cdcdd90cc3789a0274b1a8fcaaf27` (opening contract9f248274)는 focused8tests/유효한 단일 tsconfig typecheck 통과다. RED shell exit는 미기록으로 남았다. fresh Sol은 Windows/WSL 자료 add/delete·native clipboard 실패 회귀 누락과 input/select의 기존 focus token 미사용으로 BLOCK했다. load/save key-switch guard는 적합하며 unmount cleanup은 non-blocking 관찰이다.
+Task3b 후보 `c9068f30be7d8950336765369b06ceb737f0f204`(구현05cefa558)는 focused12tests/typecheck 통과 후 fresh review 중이다. root는 `updateTodo({done:...})`가 기존 projectKey를 지우는 버그를 발견해 reviewer에 전달했다. 두 UI 후보는 아직 통합하지 않았다. 모두 임시 fixture 테스트이며 실제 사용자 데이터는 접근하지 않았다.
+
+운영 blocker와 대응: 이전 references 구현/review thread가 live 목록에서 사라지고 복원 followup이 `agent thread limit reached`로 거부됐다. 완료된 옛 thread interrupt로도 회수되지 않았고 thread-close 도구는 노출되지 않았다. 모델 승격이나 root 코드 수정 없이 live `compact_drawer` Luna에 Task3a test/css/report 수정만 기존 references worktree/base473b55a에서 직렬 재배정했다. Drawer branch는 frozen review 동안 편집하지 않는다. 재배정 packet은 followup에 전체 필드로 전달했으며 UI test slot도 단일로 유지한다. 이후 독립 Sol 리뷰는 구현에 참여하지 않은 사용 가능한 reviewer로 유지한다.
