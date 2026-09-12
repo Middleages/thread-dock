@@ -27,6 +27,23 @@
 
 ## File Structure
 
+### 2026-09-12 실행 전 정합성 보정
+
+지정 설계를 기준으로 아래 충돌과 데이터 보존 경계를 고정했다. 원래 Task 1→6 순서는 유지한다.
+
+- common Todo는 Go string/omitempty와 TS optional string을 사용한다. missing/null/empty/공백 입력은 common으로 정규화하고 출력은 projectKey를 생략한다.
+- migration 재개 기준은 projects.json의 version1이다. global 파일이 이미 있어도 legacy project가 남으면 유효한 기존 global과 merge하고 global 저장→project v2 rewrite 순서로 재시도한다. 잘못된 파일·미지원 version·합산200개 초과는 쓰기 전 오류로 보존하며 truncation하지 않는다.
+- refs 쓰기는 legacy를 migration 없이 덮어쓰지 않는다. store putReferences는 legacy에 migration-required 오류로 fail closed하고 Task2의 모든 Toolbox App 호출은 전용 mutex 아래 migration을 선행한다.
+- 첫 global put이 v1 migration을 동반하면 기존 global·legacy·호출자 항목을 함께 보존한 canonical merge를 저장/반환한다. project가 absent/v2인 정상 put만 전체 교체다. 모든 put은 기존 global의 유효성도 확인해 malformed/unsupported 파일을 덮지 않는다. App SaveGlobalToolbox는 mutex 아래 migration-aware put에 직접 위임하고 별도 ensure 호출로 v1 여부를 먼저 지우지 않는다.
+- migration은 project key 정렬로 결정적이며 semantic dedupe와 ID 충돌을 구분한다. 서로 다른 항목의 중복 ID는 결정적으로 재키하고 기존 global 항목을 우선 보존한다.
+- 설계대로 Todo는 미완료 기본/완료 포함 toggle을 제공한다. unknown project는 `알 수 없는 프로젝트 (<raw key>)`로 표시하고 common/현재 프로젝트로 재지정할 수 있다. 프로젝트 Todo shortcut은 Todo 탭과 해당 필터를 함께 연다.
+- App이 global Toolbox load/cache/save를 한 곳에서 소유한다. 최초 load 성공 전과 save 중에는 mutation을 막고, 실패 시 입력과 마지막 확정 값을 유지한다. Drawer는 아래 controlled props를 추가로 받는다: `toolbox: GlobalToolbox | null`, `loadError?: string`, `loading: boolean`, `saving: boolean`, `onReload: () => void`, `onSave: (next: GlobalToolbox) => Promise<GlobalToolbox>`. App은 초기 한 번 load해 count를 계산하며 오류 후 명시적 reload/reopen에서 재시도한다. ProjectDetail은 계획의 `projectTodoCount: number`를 사용하고 양수일 때 shortcut을 표시한다.
+- compile-valid 중간 전이를 위해 Task1 legacy Go types/get/put, Task2 old Wails/TS contracts, Task3 old ProjectToolbox 파일은 마지막 consumer 교체까지 임시 유지한다. Task4에서 App 교체 후 기존 component/test/CSS·old bindings/methods·legacy get/put을 제거한다. legacy 디스크 decoder 타입은 private로 남길 수 있다. v2에 대한 legacy write는 거절해 schema downgrade를 막는다.
+- Task2에는 project-key helper 추출만 위한 App.tsx 소유권을 추가한다. Task4에는 old API 제거를 위한 toolbox.go/toolbox_test.go/app.go/app_test.go/bindings.ts/bindings.test.ts 및 old ProjectToolbox 세 파일 소유권을 추가한다. 이 공유 경로는 직렬 작업한다.
+- Task6의 사전 전체 Go/UI/build 묶음은 이미 실행한 focused 증거와 중복되므로 추가 full suite로 실행하지 않는다. 변경 영향 검증과 마지막 make check 한 번을 구분한다. Windows/native smoke는 별도 실제 근거가 없으면 not run이다.
+
+Task packet·검증·결정 근거는 [진행 ledger](../../operator/2026-09-12-compact-monitor-ledger.md)를 따른다. 제품 SQLite/새 engine/command 실행/Agent 주입 범위는 추가하지 않는다.
+
 ### Backend
 
 - Modify `monitor/toolbox.go` — own Toolbox domain types, validation, project-reference store, global Toolbox store, and idempotent v1→v2 migration.
@@ -68,6 +85,25 @@
 ---
 
 ### Task 1: Split Toolbox persistence and add idempotent migration
+
+**실행 결과:** 완료. 수정 후보 `b3b9919` fresh review ACCEPT, 통합 `5dc0abb`.
+실행 순서·정확 명령·검증 제한은 task-1-report와 tracked ledger가 원본이다.
+아래 원안의 RED 실행 시점은 historical path 미기록 제한이 있으므로 사후에 증거를 만들지 않는다.
+
+**Execution packet (2026-09-12):**
+- taskId: `compact-toolbox-storage`
+- baseSHA: `33d279a` (full SHA recorded in dispatch/report)
+- deps: approved spec/plan and preflight ledger rulings
+- ownedPaths: `monitor/toolbox.go`, `monitor/toolbox_test.go`, `.superpowers/sdd/2026-09-11-compact-monitor-and-global-toolbox/task-1-report.md`
+- worktree: `/home/appuser/dev_system/.worktrees/compact-toolbox-storage`
+- branch: `agent/compact-toolbox-storage`
+- forbiddenPaths: all other files, especially app.go/frontend/Makefile/go.mod/go.sum/Agent files; actual user configuration/data/session/worktree paths
+- interface: exact new domain/store methods below, plus `func (s globalToolboxStore) ensureMigrated(projects projectToolboxStore) error` for Task2's guarded App methods. Keep existing legacy types/get/put solely until Task4; legacy writes must reject project v2 instead of downgrading.
+- acceptance: reference-only v2, global v1, non-nil lists, common omitted output, atomic global-first migration/retry, no write on malformed/unsupported data/validation/over-limit failures, deterministic semantic dedupe and ID collision re-key. `putReferences` on v1 fails closed; references are never rewritten before global success. Real file fixtures only in t.TempDir. No product/default-profile file access in tests.
+- tests: planned focused RED/GREEN commands with Go1.27.0 and unique TMPDIR under /dev/shm; retain relevant existing Toolbox/reference validation coverage. Do not isolate GOPATH/GOCACHE unnecessarily or run full suite. Record actual command/exit and runtime paths; await tool session completion rather than losing its session ID.
+- result: changedFiles includes code/tests plus report, implementation commitSHA is explicit, final review candidate is pinned externally by root. Include RED/GREEN executedCommands/outcomes, self-review, unverified(actual runtime model/effort/native), blockers.
+
+**Additional concrete cases from the data-preservation review:** existing valid global + legacy v1 retry; malformed/unsupported project/global leaves both files unchanged; project rewrite failure leaves legacy bytes intact and global data complete; same semantic Todo with done conflict keeps false; different items with colliding IDs remain independently addressable; merged >200 commands/Todos errors before writes; reference save without migration cannot drop legacy fields. Composite dedupe keys must not ambiguously concatenate arbitrary text. Keep existing reference/command field limits, and Todo text max2000.
 
 **Files:**
 - Modify: `monitor/toolbox.go`
@@ -156,7 +192,7 @@ go test ./monitor -run 'Test(ProjectReferencesStore|GlobalToolboxStore|GlobalTod
 
 Expected: FAIL because `ProjectReferences`, `GlobalToolbox`, `ToolboxTodo`, and the new store methods do not exist yet.
 
-- [ ] **Step 3: Implement the v2 project-reference store and global Toolbox store**
+- [x] **Step 3: Implement the v2 project-reference store and global Toolbox store**
 
 In `monitor/toolbox.go`:
 
@@ -222,7 +258,7 @@ type toolboxFileWriter func(path, tempPattern string, value any) error
 
 Default it to the real atomic JSON writer. Do not expose this through Wails.
 
-- [ ] **Step 5: Implement idempotent migration**
+- [x] **Step 5: Implement idempotent migration**
 
 Migration rules:
 
@@ -235,7 +271,7 @@ Migration rules:
 7. Only after that succeeds, atomically rewrite `projects.json` as v2 references-only.
 8. If project rewrite fails after global success, a retry must merge idempotently and retry the v2 rewrite.
 
-- [ ] **Step 6: Run focused backend tests**
+- [x] **Step 6: Run focused backend tests**
 
 Run:
 
@@ -245,7 +281,7 @@ go test ./monitor -run 'Test(ProjectReferencesStore|GlobalToolboxStore|GlobalTod
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 ```bash
 git add monitor/toolbox.go monitor/toolbox_test.go
@@ -255,6 +291,23 @@ git commit -m "feat: split project references and global toolbox storage"
 ---
 
 ### Task 2: Replace Wails Toolbox contracts and frontend bindings
+
+**실행 결과:** 완료. App 경계 테스트 보강 후보 `b7af8e3` scoped review ACCEPT, 통합 `894f512`.
+새 네 API와 helper는 사용 가능하다. 아래 Step5의 old API 제거만 사전 결정대로 Task4에 이관했다.
+실제 focused 명령·exit·리뷰 근거는 task-2-report와 tracked ledger를 따른다.
+
+**Execution packet (2026-09-12):**
+- taskId: `compact-toolbox-bindings`
+- baseSHA: `5dc0abb5cc473dc80512ecec0d21219f25942473`
+- deps: Task1 fixed storage candidate b3b9919 ACCEPT, integrated5dc0abb
+- ownedPaths: `monitor/app.go`, `monitor/app_test.go` (create if absent), `monitor/frontend/src/bindings.ts`, `monitor/frontend/src/bindings.test.ts`, `monitor/frontend/src/project-key.ts`, `monitor/frontend/src/project-key.test.ts`, `monitor/frontend/src/App.tsx` (project-key helper extraction only), `.superpowers/sdd/2026-09-11-compact-monitor-and-global-toolbox/task-2-report.md`
+- worktree: `/home/appuser/dev_system/.worktrees/compact-toolbox-bindings`
+- branch: `agent/compact-toolbox-bindings`
+- forbiddenPaths: toolbox.go/toolbox_test.go, rest of UI/CSS, Makefile, module/dependencies, Agent/Skill files and real user profiles/data
+- interface: four new exact Wails/TS methods below; `toolboxMu sync.Mutex` independent of controller/settings lock. All Toolbox data calls, including transitional old get/save, serialize on this mutex. New reference calls validate arguments before migration, then ensureMigrated and refs store access. GetGlobal delegates get; SaveGlobal delegates migration-aware put directly, never pre-migrating separately. Both constructors initialize both stores. OpenToolboxReference unchanged.
+- acceptance: correct typed payloads and no default-profile IO in tests; direct first SaveGlobal on legacy preserves existing+legacy+caller; first SaveRefs migrates before reference-only write; invalid reference/key requests cannot trigger writes; existing-global errors propagate. Move helper from App without output changes and keep old contracts until Task4 removes old consumers. New bindings never fall back to old API or fetch.
+- tests: RED for absent new methods/exports/helper, then planned focused Go Toolbox/ProjectReferences and TS bindings/project-key tests. Explicit Go1.27.0/Node26.8.1, unique tmpfs logs, VITEST_MAX_WORKERS=1/NODE_COMPILE_CACHE. No repo-wide suite, browser or package install. Record completed sessions/exits and actual environment, not placeholders.
+- result: full changedFiles count including report, implementation commitSHA and externally pinned final candidate, exact commands/RED-GREEN outcomes/self-review/unverified/blockers.
 
 **Files:**
 - Modify: `monitor/app.go`
@@ -306,7 +359,7 @@ export function toolboxKeyFor(project: Project): string
 
 It must preserve the current behavior: prefer a valid project/work URL hostname plus `project.projectId`; otherwise use `project.projectId` alone.
 
-- [ ] **Step 1: Update binding tests first**
+- [x] **Step 1: Update binding tests first**
 
 In `bindings.test.ts`, assert missing Wails bindings fail explicitly for all four new methods and never call `fetch`.
 
@@ -321,7 +374,7 @@ await saveGlobalToolbox(toolbox)
 
 call the exact Wails method names and arguments.
 
-- [ ] **Step 2: Write project-key unit tests before moving the helper**
+- [x] **Step 2: Write project-key unit tests before moving the helper**
 
 Cover:
 
@@ -331,7 +384,7 @@ expect(toolboxKeyFor(ghesProject)).toBe('github.samsungds.net/repo:FDYPhotoDX/jm
 expect(toolboxKeyFor(projectWithoutURL)).toBe(projectWithoutURL.projectId)
 ```
 
-- [ ] **Step 3: Run frontend focused tests and confirm failure**
+- [x] **Step 3: Run frontend focused tests and confirm failure**
 
 Run:
 
@@ -341,7 +394,7 @@ npm --prefix monitor/frontend test -- src/bindings.test.ts src/project-key.test.
 
 Expected: FAIL until the new methods/helper exist.
 
-- [ ] **Step 4: Update `App` store ownership and Wails methods**
+- [x] **Step 4: Update `App` store ownership and Wails methods**
 
 Change `App` fields from one project Toolbox store to two stores:
 
@@ -356,13 +409,13 @@ Implement the four Wails methods using Task 1 stores. `GetGlobalToolbox` and `Sa
 
 Keep `OpenToolboxReference` unchanged except for type names needed by the refactor. Do not add command execution.
 
-- [ ] **Step 5: Replace TypeScript bindings and move `toolboxKeyFor`**
+- [x] **Step 5: Replace TypeScript bindings and move `toolboxKeyFor`**
 
 Remove old `GetProjectToolbox` / `SaveProjectToolbox` frontend contracts and expose the four new methods.
 
 Move `toolboxKeyFor` out of `App.tsx` into `project-key.ts` so project references, Todo filters, and project Todo shortcuts share one identity implementation.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -373,7 +426,7 @@ npm --prefix monitor/frontend test -- src/bindings.test.ts src/project-key.test.
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 ```bash
 git add monitor/app.go monitor/app_test.go monitor/frontend/src/bindings.ts monitor/frontend/src/bindings.test.ts monitor/frontend/src/project-key.ts monitor/frontend/src/project-key.test.ts
@@ -383,6 +436,8 @@ git commit -m "refactor: expose project references and global toolbox bindings"
 ---
 
 ### Task 3: Split project references from global Toolbox drawer
+
+**실행 결과:** 자료6bae0ca와 Drawer2b64369에서 독립 리뷰 ACCEPT. 원안 Step3의 missing-component RED는 Drawer에서 그대로 수행되지 않아 체크하지 않았다(첫 기록은 구현 뒤 behavior failure). 자료 RED shell exit도 미기록이다. 실제 focused GREEN·실패/수정 근거를 report에 구분했다. old files 삭제는 Task4에서, global cache는 승인된 controlled App 계약으로 구현했다.
 
 **Files:**
 - Create: `monitor/frontend/src/ProjectReferences.tsx`
@@ -422,7 +477,7 @@ type ToolboxTab = 'commands' | 'todos'
 type TodoFilter = 'all' | 'common' | string // projectKey for project filter
 ```
 
-- [ ] **Step 1: Write `ProjectReferences` tests**
+- [x] **Step 1: Write `ProjectReferences` tests**
 
 Assert:
 - loads project references by key
@@ -432,7 +487,7 @@ Assert:
 - Windows/WSL references use `openToolboxReference`
 - save failure preserves form input and shows an inline error
 
-- [ ] **Step 2: Write Drawer tests before implementation**
+- [x] **Step 2: Write Drawer tests before implementation**
 
 Assert:
 - returns `null` when closed
@@ -455,7 +510,7 @@ npm --prefix monitor/frontend test -- src/ProjectReferences.test.tsx src/GlobalT
 
 Expected: FAIL because the components do not exist.
 
-- [ ] **Step 4: Implement `ProjectReferences` by extracting only the reference portion of the old component**
+- [x] **Step 4: Implement `ProjectReferences` by extracting only the reference portion of the old component**
 
 Reuse the current form fields:
 - label
@@ -464,7 +519,7 @@ Reuse the current form fields:
 
 Keep immediate save semantics after add/delete. Keep copy/open actions. Do not import or render command/Todo data.
 
-- [ ] **Step 5: Implement `GlobalToolboxDrawer`**
+- [x] **Step 5: Implement `GlobalToolboxDrawer`**
 
 Behavior:
 1. Load `getGlobalToolbox()` only when the drawer first opens; reload after a previous load error when reopened.
@@ -476,7 +531,7 @@ Behavior:
 7. Drawer uses `role="dialog"`, `aria-modal="true"`, visible close button, backdrop close, and Escape close.
 8. Do not add command execution or Agent actions.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 ```bash
 npm --prefix monitor/frontend test -- src/ProjectReferences.test.tsx src/GlobalToolboxDrawer.test.tsx
@@ -484,7 +539,7 @@ npm --prefix monitor/frontend test -- src/ProjectReferences.test.tsx src/GlobalT
 
 Expected: PASS.
 
-- [ ] **Step 7: Remove obsolete ProjectToolbox files and commit**
+- [x] **Step 7: Remove obsolete ProjectToolbox files and commit**
 
 ```bash
 git rm monitor/frontend/src/ProjectToolbox.tsx monitor/frontend/src/ProjectToolbox.test.tsx monitor/frontend/src/project-toolbox.css
@@ -495,6 +550,8 @@ git commit -m "feat: split project references from global toolbox drawer"
 ---
 
 ### Task 4: Replace permanent sidebars with top bar and inline work actions
+
+**실행 결과:** 수정 후보4fadafd에서 scoped ACCEPT, 통합2fc9f3f. 원 GitHub 필드 표시·validation 테스트를 복원했고 App 성공/실패 cache와 실제 shortcut을 검증했다. 영향 없는 Task3 테스트는 기존 근거를 채택했다.
 
 **Files:**
 - Create: `monitor/frontend/src/TopBar.tsx`
@@ -545,7 +602,7 @@ export function SettingsShell(): JSX.Element
 
 `App` owns global Toolbox drawer state because it already owns the current project list and can pass those projects directly to the drawer.
 
-- [ ] **Step 1: Write TopBar tests**
+- [x] **Step 1: Write TopBar tests**
 
 Assert:
 - `ThreadDock` brand visible
@@ -554,7 +611,7 @@ Assert:
 - Settings button calls `onOpenSettings`
 - there is no left-nav semantic/sidebar requirement
 
-- [ ] **Step 2: Write ProjectDetail tests**
+- [x] **Step 2: Write ProjectDetail tests**
 
 Assert:
 - project tabs are exactly `업무` and `자료`
@@ -572,7 +629,7 @@ projectTodoCount: number
 
 and keep `onOpenProjectTodos(projectKey)` unchanged.
 
-- [ ] **Step 3: Run focused tests and confirm failure**
+- [x] **Step 3: Run focused tests and confirm failure**
 
 ```bash
 npm --prefix monitor/frontend test -- src/TopBar.test.tsx src/ProjectDetail.test.tsx
@@ -580,7 +637,7 @@ npm --prefix monitor/frontend test -- src/TopBar.test.tsx src/ProjectDetail.test
 
 Expected: FAIL until the new components exist.
 
-- [ ] **Step 4: Extract `ProjectDetail` from `App.tsx` and move action-rail actions into its header**
+- [x] **Step 4: Extract `ProjectDetail` from `App.tsx` and move action-rail actions into its header**
 
 Move/reuse:
 - work identity calculation
@@ -593,13 +650,13 @@ Delete the permanent `ActionRail` component after the equivalent actions are cov
 
 Do not copy degraded/stale status into the project header; keep the existing global degraded banner as the single source for connection failures.
 
-- [ ] **Step 5: Add TopBar and make Settings dialog controlled**
+- [x] **Step 5: Add TopBar and make Settings dialog controlled**
 
 Refactor `SettingsShell` so it no longer adds a floating `.settings-launcher` button. Instead pass a settings-open callback to `App`, and have `TopBar` call it.
 
 Keep existing settings load/save behavior and form contents unchanged.
 
-- [ ] **Step 6: Replace the 3-column shell CSS**
+- [x] **Step 6: Replace the 3-column shell CSS**
 
 Change `.monitor-shell` from:
 
@@ -621,7 +678,7 @@ Use a centered content container such as:
 
 Do not recreate fixed sidebars at any responsive breakpoint.
 
-- [ ] **Step 7: Integrate Global Toolbox drawer in `App`**
+- [x] **Step 7: Integrate Global Toolbox drawer in `App`**
 
 Add App state:
 
@@ -648,7 +705,7 @@ Pass current sorted `projects` to `GlobalToolboxDrawer`.
 
 For Todo counts in project detail, prefer one global Toolbox load owned by App/drawer state rather than N per-project file reads. Keep this simple: one in-memory `GlobalToolbox | null` cache refreshed after Drawer save, then derive counts by `projectKey`.
 
-- [ ] **Step 8: Run focused UI tests**
+- [x] **Step 8: Run focused UI tests**
 
 ```bash
 npm --prefix monitor/frontend test -- src/TopBar.test.tsx src/ProjectDetail.test.tsx src/GlobalToolboxDrawer.test.tsx src/AppScope.test.tsx
@@ -656,7 +713,7 @@ npm --prefix monitor/frontend test -- src/TopBar.test.tsx src/ProjectDetail.test
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit Task 4**
+- [x] **Step 9: Commit Task 4**
 
 ```bash
 git add monitor/frontend/src/TopBar.tsx monitor/frontend/src/TopBar.test.tsx monitor/frontend/src/top-bar.css monitor/frontend/src/ProjectDetail.tsx monitor/frontend/src/ProjectDetail.test.tsx monitor/frontend/src/project-detail.css monitor/frontend/src/App.tsx monitor/frontend/src/SettingsShell.tsx monitor/frontend/src/main.tsx monitor/frontend/src/styles.css monitor/frontend/src/settings.css
@@ -666,6 +723,8 @@ git commit -m "refactor: center monitor around full-width project content"
 ---
 
 ### Task 5: Collapse Herdr details into a summary row
+
+**실행 결과:** 상태 tone·mixed severity 수정 후보cc8e4ec에서 scoped ACCEPT, 통합32f85ce. matching helper는 변경하지 않았다. 실제 native 화면 검증은 Task6에서 별도로 추적한다.
 
 **Files:**
 - Create: `monitor/frontend/src/HerdrSummary.tsx`
@@ -690,7 +749,7 @@ The component may reuse/move these existing helpers from `App.tsx`:
 - `herdrGuidance`
 - `HerdrConnections`
 
-- [ ] **Step 1: Write failing HerdrSummary tests**
+- [x] **Step 1: Write failing HerdrSummary tests**
 
 Cover:
 - default render contains one compact `실행 상태` summary and a `자세히` button
@@ -700,7 +759,7 @@ Cover:
 - clicking `자세히` reveals detailed connections, observed sessions, notices, and unconnected agents
 - clicking `접기` hides details again
 
-- [ ] **Step 2: Run the focused test and confirm failure**
+- [x] **Step 2: Run the focused test and confirm failure**
 
 ```bash
 npm --prefix monitor/frontend test -- src/HerdrSummary.test.tsx
@@ -708,7 +767,7 @@ npm --prefix monitor/frontend test -- src/HerdrSummary.test.tsx
 
 Expected: FAIL because the component does not exist.
 
-- [ ] **Step 3: Implement the summary using existing Herdr selection semantics**
+- [x] **Step 3: Implement the summary using existing Herdr selection semantics**
 
 Priority for collapsed summary:
 1. exact issue connection
@@ -724,11 +783,11 @@ Render one line similar to:
 
 Do not change matching rules while moving them. This task is a density refactor, not a Herdr semantics change.
 
-- [ ] **Step 4: Replace the always-expanded `HerdrPanel` in App**
+- [x] **Step 4: Replace the always-expanded `HerdrPanel` in App**
 
 Remove the large standalone Herdr panel from the bottom of the page. Render `HerdrSummary` inside/below the selected project detail so it is visually associated with the work the user is viewing.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 ```bash
 npm --prefix monitor/frontend test -- src/HerdrSummary.test.tsx src/monitor.test.tsx src/AppScope.test.tsx
@@ -736,7 +795,7 @@ npm --prefix monitor/frontend test -- src/HerdrSummary.test.tsx src/monitor.test
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 5**
+- [x] **Step 6: Commit Task 5**
 
 ```bash
 git add monitor/frontend/src/HerdrSummary.tsx monitor/frontend/src/HerdrSummary.test.tsx monitor/frontend/src/herdr-summary.css monitor/frontend/src/App.tsx monitor/frontend/src/ProjectDetail.tsx monitor/frontend/src/styles.css
@@ -746,6 +805,8 @@ git commit -m "refactor: collapse herdr details into work summary"
 ---
 
 ### Task 6: Update regression gates, docs, and run final verification once
+
+**실행 결과:** manifest13파일, 사용자 문서, DESIGN 기록, visual `ship`, Linux gatefbefd79(Go3/UI95/build), Windows build953db4e와 Windows 임시 파일 migration tests는 완료했다. 최초 gate는 테스트 전에 gofmt에서 실패했고 두 줄 정렬 수정 후 최종 gate가 통과했다. Step4의 중복 full 묶음은 사전 결정대로 실행하지 않았다. Step6 실제 Windows 앱 smoke는 native computer-use 미노출로 사용자 검증을 요청했으며 미완료다. 정확한 결과는 2026-09-13 검증 기록을 따른다.
 
 **Files:**
 - Modify: `Makefile`
@@ -757,7 +818,7 @@ git commit -m "refactor: collapse herdr details into work summary"
 **Interfaces:**
 - No new product interfaces. This task closes regression coverage and user-facing documentation.
 
-- [ ] **Step 1: Update `FRONTEND_TESTS` in Makefile**
+- [x] **Step 1: Update `FRONTEND_TESTS` in Makefile**
 
 Ensure the list includes:
 
@@ -777,7 +838,7 @@ src/HerdrSummary.test.tsx
 
 Remove obsolete `ProjectToolbox.test.tsx`.
 
-- [ ] **Step 2: Update README behavior, not architecture marketing**
+- [x] **Step 2: Update README behavior, not architecture marketing**
 
 Document only current user-visible behavior:
 - top bar instead of permanent sidebars
@@ -791,7 +852,7 @@ Document only current user-visible behavior:
 
 Do not imply SQLite is used.
 
-- [ ] **Step 3: Update usability checklist for the redesign**
+- [x] **Step 3: Update usability checklist for the redesign**
 
 Add manual checks:
 - 1280px: no permanent left/right sidebar
@@ -819,7 +880,7 @@ npm --prefix monitor/frontend run build
 
 Expected: all PASS.
 
-- [ ] **Step 5: Run the repository-wide gate once**
+- [x] **Step 5: Run the repository-wide gate once**
 
 Run:
 
@@ -852,7 +913,7 @@ Manual smoke:
 8. Restart the app and verify references/commands/Todos persist.
 9. If legacy `projects.json` exists, verify migration preserves all prior references, commands, and checklist items.
 
-- [ ] **Step 7: Write verification note with exact evidence**
+- [x] **Step 7: Write verification note with exact evidence**
 
 Record:
 - final commit SHA
@@ -864,7 +925,7 @@ Record:
 
 Never promote earlier PR #87 verification to this branch's current SHA.
 
-- [ ] **Step 8: Commit Task 6**
+- [x] **Step 8: Commit Task 6**
 
 ```bash
 git add Makefile README.md docs/usability-checklist.md docs/superpowers/reviews monitor/frontend/src/monitor.test.tsx monitor/frontend/src/AppScope.test.tsx
@@ -877,25 +938,25 @@ git commit -m "docs: close compact monitor verification gate"
 
 Before opening or updating a PR, the coordinator/reviewer must confirm:
 
-- [ ] No permanent `190px` left sidebar remains.
-- [ ] No permanent `300px` action rail remains.
-- [ ] No command execution method was added to Go or TypeScript bindings.
-- [ ] Project detail tabs are exactly `업무 / 자료`.
-- [ ] Global Drawer tabs are `명령어 / 할 일`.
-- [ ] Todo supports zero or one `projectKey`, never an array.
-- [ ] Common/project filters are derived from one global Todo dataset, not duplicated per project.
-- [ ] Legacy project commands/checklists migrate without silent loss.
-- [ ] Project references remain project-local.
-- [ ] Toolbox is not referenced from project Agent/Skill files.
-- [ ] Herdr matching semantics did not change while UI density changed.
-- [ ] Closed-history mode still does not auto-poll.
-- [ ] Markdown rendering tests still pass.
-- [ ] GHES and WSL reference behavior remain covered.
-- [ ] `make check` ran only at final integration, not as a per-worker bottleneck.
+- [x] No permanent `190px` left sidebar remains.
+- [x] No permanent `300px` action rail remains.
+- [x] No command execution method was added to Go or TypeScript bindings.
+- [x] Project detail tabs are exactly `업무 / 자료`.
+- [x] Global Drawer tabs are `명령어 / 할 일`.
+- [x] Todo supports zero or one `projectKey`, never an array.
+- [x] Common/project filters are derived from one global Todo dataset, not duplicated per project.
+- [x] Legacy project commands/checklists migrate without silent loss.
+- [x] Project references remain project-local.
+- [x] Toolbox is not referenced from project Agent/Skill files.
+- [x] Herdr matching semantics did not change while UI density changed.
+- [x] Closed-history mode still does not auto-poll.
+- [x] Markdown rendering tests still pass.
+- [x] GHES and WSL reference behavior remain covered.
+- [x] `make check` ran only at final integration, not as a per-worker bottleneck.
 
 ## Next-session execution prompt
 
-Use this prompt to start implementation in the next session:
+아래는 설계 작성 당시의 최초 착수 프롬프트다. 구현 Task1–5는 이미 완료했으므로 그대로 재실행하지 않는다. 다음 세션은 HANDOFF와 ledger의 최종 SHA·PR·native 검증 상태부터 확인한다.
 
 ```text
 @GitHub Middleages/thread-dock의 agent/compact-monitor-toolbox 브랜치에서 구현을 시작해줘.

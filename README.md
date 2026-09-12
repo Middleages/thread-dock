@@ -96,25 +96,35 @@ GitHub Host는 `https://` 없이 입력합니다. Project URL은 `/views/N`이 �
 
 Windows Go/Wails Monitor는 기본적으로 열린 Issue/PR만 조회합니다. 닫힌 이력은 사용자가 `전체 보기`를 선택했을 때만 불러오며 전체 이력 모드에서는 4초 자동 polling을 반복하지 않습니다.
 
+고정 좌우 sidebar 대신 상단 bar에 연결 상태·Toolbox·설정을 모으고, 최대 1440px의 본문에 프로젝트 목록과 상세를 이어 표시합니다. 선택 업무의 식별자, `작업 정보 복사`, 안전한 `GitHub에서 보기` 링크는 프로젝트 상세에 있습니다.
+
 프로젝트 표는 실제 workflow 단계를 추측하지 않고 `조회 상태`를 보여줍니다. Issue/PR 상세는 실제 GitHub 상태와 Project field, 연결된 Herdr 위치/Agent 상태를 표시합니다. 긴 Issue 제목은 세로 테이블에서 한 줄로 표시하고, Issue/PR 본문의 일반적인 Markdown을 읽을 수 있게 렌더링합니다.
 
 `작업 정보 복사`는 선택한 작업의 GitHub 근거와 연결된 Herdr handoff 정보를 클립보드에 복사합니다.
 
-## Project Toolbox
+Herdr 실행 상태는 기본 한 줄 요약입니다. `자세히 / 접기`로 위치·관찰 세션·안내를 확인하며, blocked/offline/stale/unverified 같은 주의 상태는 접힌 상태에서도 표시합니다. GitHub 업무 상태와 Herdr 관찰 시각은 구분합니다.
 
-각 프로젝트 상세의 `Toolbox` 탭은 **사용자 개인용 로컬 메모**입니다.
+## 프로젝트 자료와 전역 Toolbox
 
-- `자료`: Confluence 같은 Web 링크, Windows absolute file path, WSL absolute file path
-- `명령어`: `psql`, `docker`, `kubectl`, `uv`처럼 자주 잊는 명령을 저장하고 복사
-- `체크리스트`: 프로젝트별 개인 확인 항목
+프로젝트 상세는 `업무 / 자료`로 나뉩니다. `자료`에는 해당 프로젝트의 HTTP(S) 링크, Windows absolute file path, WSL absolute file path만 저장합니다. 자료 열기·경로 복사·추가·삭제를 지원하며 상대경로나 실행 URL은 허용하지 않습니다.
+
+상단 `Toolbox`는 본문 폭을 줄이지 않는 우측 overlay Drawer입니다. 닫기 버튼·배경·Escape로 닫을 수 있습니다.
+
+- `명령어`: 프로젝트와 무관하게 이름·내용·선택 메모를 저장하고 복사합니다. 실행 기능은 없습니다.
+- `할 일`: 공통 또는 프로젝트 하나에 연결하는 개인 메모입니다. 전체·공통·프로젝트 필터와 기본 미완료/완료 포함 전환을 제공합니다.
+- 현재 목록에서 사라진 프로젝트의 할 일도 원래 key와 함께 보존하며 공통 또는 다른 프로젝트로 재지정할 수 있습니다.
+- 프로젝트 상세의 미완료 할 일 개수와 `보기`는 같은 전역 Drawer의 해당 프로젝트 필터로 연결됩니다. GitHub 업무 상태와는 별개입니다.
 
 Toolbox의 명령어에는 실행 버튼이 없고 **복사만** 제공합니다. 로컬 파일도 사용자가 직접 등록한 absolute path만 열 수 있습니다.
 
 Toolbox 데이터는 Monitor 설정이나 Herdr locator와 분리해 사용자 설정 디렉터리의 다음 파일에 저장합니다.
 
 ```text
-%APPDATA%\ThreadDock\projects.json
+%APPDATA%\ThreadDock\projects.json  # v2: 프로젝트별 자료
+%APPDATA%\ThreadDock\toolbox.json   # v1: 전역 명령어와 할 일
 ```
+
+이전 `projects.json` v1의 명령어·체크리스트는 처음 새 Toolbox 경로에 접근할 때 전역 파일로 옮깁니다. 전역 저장이 성공한 뒤 프로젝트 파일을 자료 전용 v2로 바꾸며, 중간 실패 시 재시도해 중복을 만들지 않습니다. 잘못된 파일·지원하지 않는 버전·항목 한도 초과는 오류로 남기고 원본을 조용히 덮거나 잘라내지 않습니다. SQLite는 사용하지 않습니다.
 
 Toolbox 내용은 `td_coordinator`, `td_feature_leader`, canonical Skill에 자동 주입하지 않습니다. Agent가 참고해야 하는 자료는 사용자가 필요할 때 명시적으로 전달합니다.
 
@@ -143,6 +153,8 @@ wails build
 ```
 
 기존 final reviewed SHA `325db89`에서는 Go/Wails package와 healthy native run이 검증된 이력이 있습니다. 현재 PR/브랜치의 새 UI와 Agent/Skill 템플릿은 해당 과거 결과로 자동 승격하지 않으며, merge 전에 현재 SHA에서 `make check`, Windows `wails build`, 실제 GHES + WSL + Herdr smoke를 별도로 확인합니다.
+
+compact Monitor의 현재 gate·Windows build·browser fixture 및 native 미검증 범위는 [2026-09-13 검증 기록](docs/superpowers/reviews/2026-09-13-compact-monitor-toolbox-verification.md)에 SHA별로 구분했습니다.
 
 ## 문서
 

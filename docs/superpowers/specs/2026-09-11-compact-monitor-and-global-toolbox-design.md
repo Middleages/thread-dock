@@ -141,6 +141,8 @@ projectKey?   # null이면 공통, 값이 있으면 프로젝트 하나에 연�
 
 프로젝트와 무관한 항목은 `projectKey = null`로 저장한다.
 
+실행 wire 정합성: 위 null은 공통 연결의 의미다. 계획의 Go `string`/`omitempty` 및 TS optional string에 맞춰 missing/null/empty/공백 입력은 공통으로 정규화하고 JSON 출력은 `projectKey`를 생략한다.
+
 Todo 하나를 여러 프로젝트에 동시에 연결하는 기능은 넣지 않는다. 필요 시 동일 문구를 프로젝트별로 별도 Todo로 만든다.
 
 등록 UI에는 선택적 프로젝트 selector를 둔다.
@@ -220,6 +222,8 @@ MVP에서는 SQLite를 도입하지 않고 현재 JSON 저장 방식을 유지�
 현재 버전의 `projects.json`에는 프로젝트별 `references`, `commands`, `checklist`가 들어갈 수 있다. 업데이트 후 사용자가 저장한 항목이 사라져 보이면 안 된다.
 
 전역 `toolbox.json`이 아직 없을 때 한 번만 migration한다.
+
+부분 완료 재개: global 저장 후 project rewrite가 실패할 수 있으므로 실제 재개 판정은 `projects.json`의 v1 여부다. global이 이미 있어도 v1 project가 남으면 기존 global과 idempotent merge 후 rewrite를 재시도한다. 잘못된/미지원 파일과 합산 limit 초과는 원본을 덮어쓰거나 잘라내지 않고 명시적 오류로 남긴다.
 
 1. `projects.json`을 읽는다.
 2. 모든 프로젝트의 command를 전역 commands로 모은다.
