@@ -119,3 +119,9 @@ Task 7: complete (구현 `4c181b9`, report `5afc72c`, fresh `retirement_task7_re
 - Task 8 exact base: `4a94053cbce8edee8e4a74dc866f8324578b6a7d`.
 - Luna `retirement_orphan_utilities`, `.worktrees/retirement-orphan-utilities`, branch `agent/retirement-orphan-utilities`.
 - owned는 dag/pathscope/opencodeagent의 orphan source/test뿐이다. 최종 package 목록이 monitor, internal/runner, internal/projecttemplate인지 확인하고 runner focused test를 수행한다. 나머지 packet은 계획 Task8을 따른다.
+
+## Task 8 report 수정 round 1
+
+구현 `896c3df`, report `0a333b9`: orphan6파일/423줄 삭제, runner focused PASS0.119s, package 집합 정확3개와 Linux/Windows graph PASS. fresh `retirement_task8_review`에서 코드·scope는 통과했으나 report metadata 두 항목으로 BLOCK했다: candidate를 구현 SHA로만 표시했고 result.commitSHA 필드가 없으며 report를 포함한 총 changedFiles7과 구현 삭제6을 구분하지 않았다.
+
+Luna에게 report-only fix를 배정했다. result.commitSHA는 구현896c3df임을 명시하고 reviewedCandidate0a333b9를 구분하며 새 fix head는 외부 ledger/packet에 고정한다. 총7=source삭제6+report1, manifest/diff만 검사하고 Go 테스트는 재실행하지 않는다. Task6/8의 동일 계열 metadata 혼동을 반영해 공통 계획의 기록 규칙도 명확히 했다. 제품 변경은 없다.

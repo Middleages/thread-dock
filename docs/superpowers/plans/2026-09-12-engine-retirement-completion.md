@@ -16,6 +16,7 @@
 - worker full suite 금지. 직접 영향 focused 검사, 마지막 통합 make check 한 번. 실패 시 원인/Task 귀속 및 tuple 무효화 근거를 기록한다.
 - Windows/native·live GHES/Herdr·Skill pressure scenario는 Linux fixture/gate와 별개다. HERDR_ENV 위조와 옛 실패 invocation 재사용 금지.
 - 승인된 Issue/Project/PR/push 작업은 한국어로 진행한다. main 병합은 별도 사용자 지시에 남긴다.
+- Report의 implementation commitSHA와 report-only commit을 포함한 review candidate SHA를 구분한다. 구현 파일 수와 report 포함 전체 변경 파일 수도 구분한다. final candidate SHA는 자기 commit 본문에 삽입하지 않고 root ledger·외부 review packet에 고정한다.
 
 ## 종료 기준
 
