@@ -70,3 +70,12 @@ Task 1: complete (`07909fc` + report `0b3625e`, fresh `retirement_task1_review` 
 
 Task 2: complete (구현 `c393f66`, report `fa4b5b7`, fresh `retirement_task2_review` spec/quality ACCEPT). 통합 `b901b4d`/`fb1ac52`. orphan orchestrator 17파일/9448줄 삭제, 외부 production/test importer 0, 정적 Go graph/Linux·Windows Monitor listing 통과. 제품 테스트는 재실행하지 않았다.
 Report 설명 중 GitHub 저장소 URL형 import 언급은 module의 실제 import path가 아니다. 실제 module과 reviewer의 base/head 검사는 `thread-dock/internal/orchestrator`를 대상으로 했으며 부재를 확인했다.
+
+## Task 3 완료 · Task 4 배정
+
+Task 3: complete (구현 `f170b7a`, report `bda6512`, fresh `retirement_task3_review` spec/quality ACCEPT, findings 없음). 통합 `7d77cca`/`4932988`. legacy 16 source/test 파일/6649줄 삭제, 남은 coordinator focused test PASS 3.182s, 역의존/manifest/graph/diff PASS.
+
+- Task 4 exact base: `4932988b3dbebcd843a9577ceecbe5d22b17ea07`.
+- Luna `retirement_v2_adapters`, `.worktrees/retirement-v2-adapters`, branch `agent/retirement-v2-adapters`.
+- owned internal/herdr 전체에는 testdata/v0.8.2의 14개 전용 fixture를 포함한다. 제품 monitor/herdr.go와 실제 Herdr session lifecycle은 변경하지 않는다.
+- packet의 나머지 fields는 계획 Task 4에 고정했다. 구현 worker 1개, reviewer 1개 예약.
