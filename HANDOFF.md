@@ -31,6 +31,8 @@ UI6파일/37tests, TypeScript/Vite build. Windows/native·실제 GHES/Herdr·Ski
 여전히 별도 미검증이며 #43/#48에서 추적한다. 전체 통합 리뷰·게시 상태는 ledger를 확인한다.
 전체 리뷰의 Makefile 오류 예시 두 곳도 수정했고 `5823740`에서 scoped 재리뷰 ACCEPT를 받았다.
 `make check` 실행 명령과 검증 입력은 gate `1e427ed`와 같아 기존 통과 근거를 채택했다. 남은 코드/리뷰 blocker는 없다.
+[PR #90](https://github.com/Middleages/thread-dock/pull/90)을 main base로 게시했다. engine 제거와 문서·Issue 정리는
+이 PR에서 전달하며 main 병합은 사용자에게 남긴다.
 
 사용자 요구는 **Go 모니터 도구**다. Windows Go/Wails 앱과 기존 React 화면을 유지한다.
 “심플하게”는 ThreadDock 자체 실행 엔진을 줄이라는 의미이며 브라우저 전용 전환은 승인되지 않았다.

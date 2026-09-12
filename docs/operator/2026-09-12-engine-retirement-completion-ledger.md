@@ -199,3 +199,9 @@ fresh `retirement_completion_review`는 `ed129036e50a9285ba1f5de16f0f83beece4f6e
 - reviewer result: changedFiles[], reviewed commitSHA5823740, executedCommands SHA/계보/scoped diff·reference·입력 동등성 읽기, outcomes ACCEPT, blockers없음; unverified Windows/native/GHES/Herdr/pressure/Wiki/runtime identity.
 - 문서·Issue 정리: #42/44/45/46/47 not planned 종료, #43/48 실제검증으로 재작성. 사용자 merged PR85~88을 Project1 Done·완료 근거로 추가했다. Issue89는 PR 병합 전 In Progress로 유지한다.
 - 최종 제품 결과: legacy tracked167파일 제거, 남은 Go3packages, 최신 Monitor runtime/runner/template Go 및 module 보존. 추가 변경은 test selector1곳·Makefile 진입점/오류 안내·문서/Agent/GitHub template 문구뿐이다. main과 사용자 실험은 보존한다.
+
+## GitHub 게시
+
+[PR #90](https://github.com/Middleages/thread-dock/pull/90)을 `agent/engine-retirement-completion` → `main`으로 게시했다.
+전체 리뷰 후 변경은 승인·게시 metadata뿐이다. 최종 Markdown106파일/로컬 링크143개 검사와 diff check도 통과했다.
+Issue89는 구현/검증 완료·PR 병합 대기로 유지한다. main 병합은 수행하지 않았다.
