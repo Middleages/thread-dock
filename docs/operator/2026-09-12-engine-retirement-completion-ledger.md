@@ -24,6 +24,8 @@
 
 inventory Sol 1(read-only), 구현 Luna 최대 1(현재 순차), fresh reviewer 1 예약. 모델/effort 실제 runtime identity는 unverified.
 
+Task 1 이후 Task 2/3만 서로 다른 worktree에서 Luna 2개로 병렬화한다. 최대 3개 상한과 reviewer 1개 예약을 유지한다.
+
 ## Task 1 배정
 
 - [Issue #89](https://github.com/Middleages/thread-dock/issues/89), Project #1 In Progress·유지로 추적한다.
@@ -42,3 +44,24 @@ inventory Sol 1(read-only), 구현 Luna 최대 1(현재 순차), fresh reviewer 
 - Python tomllib/PyYAML parse: PASS, model gpt-5.6-sol/medium 및 Issue 8 fields 보존. Markdown 19파일/58 local links와 diff 검사 PASS(이후 새 문서는 최종 재검사).
 - 첫 Task 구현 `07909fc`/report `0b3625e`에서 legacy 23파일 삭제·Makefile 1개 수정, focused Go Monitor/projecttemplate/vet/template-check/dry-run/refs/gofmt/diff PASS. fresh Task 리뷰 진행 중.
 - 최종 gate용 tmpfs checkout `/dev/shm/threaddock-retirement-final.KMxdTI/checkout`를 분리했다. package.json/lock은 c487e8c와 최신 main 사이 동일함을 확인하고 이전 동일 lock의 node_modules를 복사했다. Node 26.8.1/npm11.19.0. 테스트는 아직 실행하지 않았다.
+
+## Task 1 완료 · Task 2/3 배정
+
+Task 1: complete (`07909fc` + report `0b3625e`, fresh `retirement_task1_review` spec/quality ACCEPT, blocking 없음). 통합은 `68a86a5`/`ce3c9ba`다. legacy 23파일과 Makefile만 변경, Monitor/runner/템플릿/모듈 불변을 독립 확인했다.
+
+- Task 2/3 exact base: `ce3c9ba45c1d5b33f951095afa542999847c0063`.
+- Task 2: `retirement_v1_root`, `.worktrees/retirement-v1-root`, `agent/retirement-v1-root`.
+- Task 3: `retirement_v2_entries`, `.worktrees/retirement-v2-entry-roots`, `agent/retirement-v2-entry-roots`.
+- 나머지 packet/interface/acceptance/tests는 계획과 추출된 각 brief를 따른다. report는 각 Task 이름의 report 파일에 남긴다.
+
+| Task 관계 | 사전 정합성·공유 경로 검사 |
+|---|---|
+| 2 / 3 | orchestrator 대 v2 roots+coordinator 단일 test, 파일·interface 겹침 없음 |
+| 3 / 4 | coordinator integration_test 제거 후 잔여 coordinator/herdr 전체 제거, 순차 |
+| 2·3·4 / 5 | GitHub/worktree 역의존 제거 후 adapter 제거, 순차 |
+| 5 / 6·7 | adapter 소비자를 먼저 제거, v1/v2 parent 경로 충돌은 직렬 |
+| 6 / 7 | exact v1 root 파일만 먼저 삭제하므로 v2 subtree 보존 |
+| 7 / 8 | foundation 소비자 제거 후 orphan utility 삭제 |
+| 2~8 / root docs | worker report는 각자 분리, root 문서와 제품 소유 겹침 없음 |
+| 2·4·5·7 자체 | orphan source 삭제와 정적 graph 검사 일치, 대체 동작·테스트 추가 없음 |
+| 3·6·8 자체 | 남은 직접 영향 coordinator/v2/runner focused 검사만 실행 |
