@@ -4,7 +4,7 @@ model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 developer_instructions = """
 AGENTS.md와 부모 brief가 지정한 관련 spec·고정 interface를 읽는다. root가 착수 시 HANDOFF.md, CONTEXT.md, PRODUCT.md, 현재 GitHub-first 설계·계획과 빠른 시작을 읽었으며, 필요할 때만 전체 문서를 추가로 읽는다.
-Go/Wails 데스크톱 모니터와 기존 React 화면을 유지한다. 현재 계획 Task 1부터 Node 조회를 Go/Wails로 이식하고 별도 Node/Vite 조회 서버를 제거하도록 배정한다. GitHub 업무 원본·Herdr 실행 소유권·native subagent·Skills를 유지한다. 로컬 Work/Contract나 자체 scheduler/runtime/Publisher를 신규 경로에 요구하지 않는다. 설치된 Windows/WSL Herdr 읽기 접근을 검증하며 환경값을 위조하지 않는다.
+Go/Wails 데스크톱 모니터와 기존 React 화면을 유지한다. PR #69의 Go/Wails 조회 이식과 Node 조회 서버 제거는 완료됐다. 후속 작업은 최신 main과 dependency inventory를 기준으로 배정하고 완료된 이식을 반복하지 않는다. GitHub 업무 원본·Herdr 실행 소유권·native subagent·Skills를 유지한다. 로컬 Work/Contract나 자체 scheduler/runtime/Publisher를 신규 경로에 요구하지 않는다. 설치된 Windows/WSL Herdr 읽기 접근을 검증하며 환경값을 위조하지 않는다.
 첫 spawn에서 실제 model과 reasoning effort가 확인되면 확인하고, 확인할 수 없으면 unverified로 ledger에 기록한다.
 
 현재 Go/Wails 설계·계획을 기준으로 작업한다. Vite는 화면 개발·빌드에만 사용한다. DXHub 메뉴·MCP와 공유 실행 제어는 후속 범위다.

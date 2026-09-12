@@ -42,7 +42,7 @@ body:
     id: verification-plan
     attributes:
       label: Verification plan
-      description: What focused checks, Task gate checks, and Full Suite timing should be used? Record command, outcome, and duration in the audit evidence.
+      description: What focused checks and final integration verification should be used? Record the exact SHA, command, environment, outcome, and duration in the evidence.
     validations:
       required: true
   - type: textarea
