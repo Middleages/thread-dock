@@ -35,6 +35,7 @@
   - `sed`로 Impeccable `reference/document.md`, `PRODUCT.md`, opening `index.html` contract, 최종 tokens/CSS/components를 읽었다.
   - `node -e` frontmatter parser 및 canonical heading 검증 — exit 0, `frontmatter/headings ok`.
   - `node -e` sidecar JSON/schema/snippet 검증 — exit 0, `sidecar ok`.
+  - docs review 후 `node -e` sidecar glyph/SVG/status-mark 정합성 검증 — exit 0, `sidecar correction ok`.
   - `node -e` local relative link 검증 — exit 0, `relative links ok: 0`.
   - `git diff --check` — exit 0.
   - `git commit -m "docs: compact Monitor 디자인 시스템 기록"` — exit 0, `98616996c50147e38c7cc7a230b22d7cc633037e`.
@@ -43,6 +44,7 @@
   - Markdown body는 canonical heading 8개를 정확한 순서로 사용한다.
   - sidecar는 primitive token을 복제하지 않고 실제 shadow/motion/breakpoint와 대표 component 5개만 기록한다.
   - component snippets는 self-contained markup과 `ds-` scoped CSS를 사용하며 기존 CSS variables를 참조한다.
+  - docs review 수정에서 TopBar의 Unicode status glyph를 실제 8px CSS status mark로, Drawer의 Unicode 닫기 glyph를 실제 SVG path와 18px styling으로 맞췄다.
   - full suite/build/browser 검증은 docs-only 범위라 실행하지 않았다.
 - unverified:
   - 실제 runtime model/effort는 노출되지 않아 unverified다.
