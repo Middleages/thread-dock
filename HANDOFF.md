@@ -5,7 +5,7 @@
 - main을 `2db8f776d22afd849fcb9a1328f7e8aff9b72e50`로 fast-forward했다. PR #82는 `6aced75`, #84는 `c487e8c`에 병합됐다.
 - 사용자 추가 PR #85·#86·#87은 settings 저장/UI, GHES host, 열린 업무 중심 화면, Markdown, 프로젝트 Toolbox 및 새 Agent/Skill 구조를 포함한다. 삭제 작업에서 이 기능과 데이터는 보존한다.
 - [현재 Agent/Skill 설계](docs/superpowers/specs/2026-09-11-thread-dock-agent-orchestration-design.md)와 [빠른 시작](docs/operator/github-first-quickstart.md)이 Coordinator/Feature Leader, 여섯 canonical Skill과 전역 locator를 설명한다.
-- [compact Monitor 설계](docs/superpowers/specs/2026-09-11-compact-monitor-and-global-toolbox-design.md)는 추가 설계다. main에 설계가 있다는 이유로 global Toolbox migration/UI가 구현됐다고 간주하지 않는다. 이번 작업은 UI 재설계가 아니라 옛 엔진 제거다.
+- PR #88의 [compact Monitor 설계](docs/superpowers/specs/2026-09-11-compact-monitor-and-global-toolbox-design.md)는 추가 설계다. main에 설계가 있다는 이유로 global Toolbox migration/UI가 구현됐다고 간주하지 않는다. 이번 작업은 UI 재설계가 아니라 옛 엔진 제거다.
 - PR #87의 [Toolbox 검증 기록](docs/superpowers/reviews/2026-09-11-project-toolbox-verification.md)과 [Skill 검증 기록](docs/superpowers/reviews/2026-09-11-thread-dock-agent-skill-verification.md)은 실행되지 않은 검증을 명시한다. 아래 `325db89` Windows healthy 증거는 과거 SHA의 증거이지 최신 기능의 검증이 아니다.
 - 옛 실행 엔진 전체 제거는 production/test/config/docs 의존성을 증명한 순차 Task로 진행한다. 사용자 실험과 저장된 runtime 데이터는 삭제·이관하지 않는다.
 - 현재 작업은 [Issue #89](https://github.com/Middleages/thread-dock/issues/89), [완료 계획](docs/superpowers/plans/2026-09-12-engine-retirement-completion.md), [진행 ledger](docs/operator/2026-09-12-engine-retirement-completion-ledger.md)에서 추적한다. #42/44/45/46/47은 superseded 종료했고 #43/48은 실제 재개·locator 검증으로 재작성했다.
