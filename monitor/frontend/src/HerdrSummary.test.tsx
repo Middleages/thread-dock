@@ -32,15 +32,19 @@ describe('HerdrSummary', () => {
   it.each([
     ['blocked', '판단 필요'], ['offline', '오프라인'], ['stale', '오래된 상태'], ['unverified', '확인 필요'], ['missing', '대상 없음'],
   ])('keeps %s visible while collapsed', (state, expected) => {
-    render(<HerdrSummary herdr={baseHerdr({ status: state, freshness: { state, syncStatus: state } })} project={project} work={work} />)
+    const { container } = render(<HerdrSummary herdr={baseHerdr({ status: state, freshness: { state, syncStatus: state } })} project={project} work={work} />)
     expect(screen.getByText(new RegExp(expected))).toBeInTheDocument()
+    expect(container.querySelector('.status-mark')).toHaveClass('attention')
     expect(screen.getByRole('button', { name: '자세히' })).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('shows the most severe selected connection instead of hiding later blocked state', () => {
-    const connections = [...baseHerdr().connections, { ...baseHerdr().connections[0], session: 'blocked-session', status: 'connected', agentStatus: 'blocked', paneId: 'pane-2' }]
+    const connections = [
+      { ...baseHerdr().connections[0], session: 'offline-session', status: 'offline', agentStatus: 'idle', paneId: 'pane-2' },
+      { ...baseHerdr().connections[0], session: 'blocked-session', status: 'stale', agentStatus: 'blocked', paneId: 'pane-3' },
+    ]
     render(<HerdrSummary herdr={baseHerdr({ connections })} project={project} work={work} />)
-    expect(screen.getByText(/판단 필요/)).toBeInTheDocument()
+    expect(screen.getByText(/판단 필요 · blocked-session/)).toBeInTheDocument()
     expect(screen.queryByText('workspace-1')).not.toBeInTheDocument()
   })
 

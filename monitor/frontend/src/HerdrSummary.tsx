@@ -12,7 +12,8 @@ function locationText(connection: HerdrConnection) {
 }
 
 function connectionState(connection: HerdrConnection) {
-  return severeState(connection.status) ?? severeState(connection.agentStatus) ?? (connection.status === 'connected' ? 'connected' : connection.status || 'unknown')
+  const states = [connection.status, connection.agentStatus].map((value) => severeState(value) ?? (value === 'connected' ? 'connected' : value || 'unknown'))
+  return states.sort((a, b) => stateRank(b) - stateRank(a))[0]
 }
 
 export function HerdrSummary({ herdr, project, work }: { herdr: HerdrSnapshot; project?: Project; work?: WorkItem }) {
@@ -34,7 +35,7 @@ export function HerdrSummary({ herdr, project, work }: { herdr: HerdrSnapshot; p
 
   return <section className={`herdr-summary${expanded ? ' expanded' : ''}`} aria-labelledby="herdr-summary-title">
     <div className="herdr-summary-row">
-      <div className="herdr-summary-copy"><strong id="herdr-summary-title">실행 상태</strong><span className={`status-mark ${summary.state === 'blocked' || summary.state === 'failed' || summary.state === 'offline' || summary.state === 'stale' || summary.state === 'unverified' ? 'attention' : 'success'}`} aria-hidden="true" /><span>{summaryLabel}</span><small>관찰 {dateFor(herdr.observedAt)}</small></div>
+      <div className="herdr-summary-copy"><strong id="herdr-summary-title">실행 상태</strong><span className={`status-mark ${stateRank(summary.state) > 0 ? 'attention' : 'success'}`} aria-hidden="true" /><span>{summaryLabel}</span><small>관찰 {dateFor(herdr.observedAt)}</small></div>
       <button type="button" aria-expanded={expanded} aria-controls={detailID} onClick={() => setExpanded((value) => !value)}>{expanded ? '접기' : '자세히'}</button>
     </div>
     {expanded && <div id={detailID} className="herdr-summary-detail">
