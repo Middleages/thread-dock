@@ -23,8 +23,8 @@ type App struct {
 	store          settingsStore
 	projectToolbox projectToolboxStore
 	globalToolbox  globalToolboxStore
-	toolboxMu sync.Mutex
-	settings  MonitorSettings
+	toolboxMu      sync.Mutex
+	settings       MonitorSettings
 }
 
 func NewApp(source SnapshotSource) *App {
