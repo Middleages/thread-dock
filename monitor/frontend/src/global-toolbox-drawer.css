@@ -1,0 +1,49 @@
+.toolbox-drawer-backdrop { position: fixed; z-index: 30; inset: 0; display: flex; justify-content: flex-end; background: rgba(23,33,54,.28); }
+.toolbox-drawer { display: flex; flex-direction: column; width: min(480px, 92vw); min-height: 100%; overflow: auto; border-left: 1px solid var(--border-subtle); background: var(--surface-primary); color: var(--fg-primary); box-shadow: -1rem 0 2.625rem rgba(23,33,54,.16); }
+.toolbox-drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 25px 24px 18px; border-bottom: 1px solid var(--border-subtle); }
+.toolbox-drawer-header h2 { margin: 0; }
+.toolbox-drawer-header button { width: 34px; height: 34px; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: transparent; color: var(--fg-primary); font-size: 1.45rem; line-height: 1; }
+.toolbox-drawer .eyebrow { margin: 0 0 4px; color: var(--fg-secondary); font-size: var(--text-caption); font-weight: 750; letter-spacing: .08em; }
+.toolbox-drawer-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 24px 0; padding: 10px 12px; border-left: 3px solid var(--status-attention); background: var(--surface-canvas); color: var(--status-attention); font-size: var(--text-body-sm); }
+.toolbox-drawer-error button { border: 0; background: transparent; color: var(--action-primary); font-weight: 750; text-decoration: underline; text-underline-offset: 3px; }
+.toolbox-drawer-state { margin: 14px 24px 0; color: var(--fg-secondary); font-size: var(--text-body-sm); }
+.toolbox-drawer-tabs { display: flex; gap: 18px; padding: 18px 24px 0; border-bottom: 1px solid var(--border-subtle); }
+.toolbox-drawer-tabs button { border: 0; border-bottom: 2px solid transparent; padding: 0 0 11px; background: transparent; color: var(--fg-secondary); font-size: var(--text-body-sm); }
+.toolbox-drawer-tabs button[aria-selected='true'] { border-color: var(--action-primary); color: var(--fg-primary); font-weight: 750; }
+.toolbox-drawer-section { padding: 20px 24px 28px; }
+.toolbox-drawer-section-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 16px; }
+.toolbox-drawer-section-heading h3 { margin: 0 0 3px; }
+.toolbox-drawer-section-heading p { margin: 0; color: var(--fg-secondary); font-size: var(--text-body-sm); }
+.toolbox-drawer-section-heading > span { color: var(--fg-secondary); font-size: var(--text-caption); white-space: nowrap; }
+.toolbox-drawer-list { border-top: 1px solid var(--border-subtle); }
+.toolbox-drawer-list > .muted { border-bottom: 1px solid var(--border-subtle); padding: 15px 0; }
+.toolbox-drawer-command { border-bottom: 1px solid var(--border-subtle); padding: 13px 0; }
+.toolbox-drawer-row-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.toolbox-drawer-row-heading strong, .toolbox-drawer-row-heading small { display: block; }
+.toolbox-drawer-row-heading small { margin-top: 2px; color: var(--fg-secondary); font-size: var(--text-caption); }
+.toolbox-drawer-command pre { overflow-x: auto; margin: 9px 0 0; padding: 9px 10px; background: var(--surface-canvas); color: var(--fg-primary); font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.toolbox-drawer-actions { display: flex; gap: 6px; }
+.toolbox-drawer-actions button, .toolbox-drawer-todo button { border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: 5px 8px; background: transparent; color: var(--fg-primary); font-size: var(--text-caption); }
+.toolbox-drawer-actions button:hover, .toolbox-drawer-todo button:hover { background: var(--surface-canvas); }
+.toolbox-drawer-form { display: grid; gap: 8px; margin-top: 16px; }
+.toolbox-drawer-form input, .toolbox-drawer-form textarea, .toolbox-drawer-form select, .toolbox-drawer-todo-controls select, .toolbox-drawer-todo select { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: 8px 9px; background: var(--surface-primary); color: var(--fg-primary); font: inherit; font-size: var(--text-body-sm); }
+.toolbox-drawer-form textarea { resize: vertical; }
+.toolbox-drawer-form > button { width: max-content; border: 1px solid var(--fg-primary); border-radius: var(--radius-control); padding: 8px 12px; background: var(--fg-primary); color: var(--surface-primary); font-weight: 750; }
+.toolbox-drawer-form button:disabled, .toolbox-drawer-actions button:disabled, .toolbox-drawer-todo button:disabled { cursor: not-allowed; opacity: .48; }
+.toolbox-drawer-todo-controls { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: var(--fg-secondary); font-size: var(--text-caption); }
+.toolbox-drawer-todo-controls label:first-child { display: grid; gap: 5px; }
+.toolbox-drawer-toggle { display: flex; align-items: center; gap: 6px; padding-bottom: 8px; white-space: nowrap; }
+.toolbox-drawer-todo { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-subtle); padding: 11px 0; }
+.toolbox-drawer-todo-main { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.toolbox-drawer-todo-main span { overflow-wrap: anywhere; }
+.toolbox-drawer-todo.done .toolbox-drawer-todo-main span { color: var(--fg-secondary); text-decoration: line-through; }
+.toolbox-drawer-todo-project { grid-column: 1; margin-left: 23px; color: var(--fg-secondary); font-size: var(--text-caption); overflow-wrap: anywhere; }
+.toolbox-drawer-todo > select { grid-column: 2; grid-row: 1 / span 2; max-width: 145px; }
+.toolbox-drawer-todo > button { grid-column: 3; grid-row: 1 / span 2; }
+.toolbox-drawer-todo-form { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.toolbox-drawer-todo-form input { grid-column: 1 / -1; }
+.toolbox-drawer-todo-form button { grid-column: 2; grid-row: 2; }
+.toolbox-drawer-todo-form select { grid-column: 1; grid-row: 2; }
+.toolbox-drawer .danger-lite { color: var(--status-attention) !important; }
+@media (prefers-reduced-motion: reduce) { .toolbox-drawer-backdrop, .toolbox-drawer { transition: none; } }
+@media (max-width: 520px) { .toolbox-drawer-header, .toolbox-drawer-section, .toolbox-drawer-tabs { padding-left: 18px; padding-right: 18px; } .toolbox-drawer-error, .toolbox-drawer-state { margin-left: 18px; margin-right: 18px; } .toolbox-drawer-todo { grid-template-columns: minmax(0, 1fr) auto; } .toolbox-drawer-todo > select { grid-column: 1; grid-row: 2; max-width: none; margin-left: 23px; } .toolbox-drawer-todo > button { grid-column: 2; grid-row: 1 / span 2; } }
