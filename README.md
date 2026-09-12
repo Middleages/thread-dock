@@ -102,6 +102,8 @@ Windows Go/Wails Monitor는 기본적으로 열린 Issue/PR만 조회합니다. 
 
 `작업 정보 복사`는 선택한 작업의 GitHub 근거와 연결된 Herdr handoff 정보를 클립보드에 복사합니다.
 
+Herdr 실행 상태는 기본 한 줄 요약입니다. `자세히 / 접기`로 위치·관찰 세션·안내를 확인하며, blocked/offline/stale/unverified 같은 주의 상태는 접힌 상태에서도 표시합니다. GitHub 업무 상태와 Herdr 관찰 시각은 구분합니다.
+
 ## 프로젝트 자료와 전역 Toolbox
 
 프로젝트 상세는 `업무 / 자료`로 나뉩니다. `자료`에는 해당 프로젝트의 HTTP(S) 링크, Windows absolute file path, WSL absolute file path만 저장합니다. 자료 열기·경로 복사·추가·삭제를 지원하며 상대경로나 실행 URL은 허용하지 않습니다.

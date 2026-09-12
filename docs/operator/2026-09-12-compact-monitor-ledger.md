@@ -110,3 +110,10 @@ Task5 exact base `2fc9f3f820b664845d7440dd08038b92334cfc81`, worktree `.worktree
 
 Task5 후보 `09645503b3fff1a728a289d0fe243cf99841ffd4`(구현500da557)는 focused9tests/영향47tests/typecheck 통과 후 fresh review BLOCK이다. missing/unknown에 success(녹색) tone을 붙이며, 연결 status의 첫 severe 값만 선택해 더 심각한 agent blocked가 다른 offline 연결 뒤에 숨는다. 같은 Luna에 HerdrSummary/test/report만 수정 배정했다. matching helper 원본과 선택 의미는 바꾸지 않는다.
 독립 Task6 manifest는 base0964550에서 `.worktrees/compact-final-test-manifest`/`agent/compact-final-test-manifest`가 Makefile FRONTEND_TESTS만13파일로 갱신했다. 후보 `26eb0b1b6c322c9c06de9827e7d3252604780787`(구현02b277bc), static path/unique/`make -n check`만 통과했고 실제 suite는 실행하지 않았다. fresh manifest review 중이며 Herdr 수정과 경로가 겹치지 않는다.
+
+Task5 수정cc8e4ecc에서 scoped ACCEPT, manifest26eb0b1에서 fresh ACCEPT를 받았다. 통합02f3640/938cf95/7c9fda4/32f85ce 및57fb379/516a40a 완료. 구현과 테스트 목록의 blockers는 해소됐다.
+
+## 최종 화면 확인
+
+source516a40a의 browser fixture 전체 흐름은 exit0, console0, narrow414px 가로 넘침0/Drawer380.875px를 확인했다. 기본 Chromium GPU 경로 timeout과 사라진 체크박자를 기다린 harness 오류, disable-gpu 대조 및 수정 후 성공을 새 [검증 기록](../superpowers/reviews/2026-09-13-compact-monitor-toolbox-verification.md)에 분리했다.
+독립 visual review는 `disposition: fix`로 toolbar/eyebrow/close icon/자간/자동 focus 다섯 항목을 지정했다. `.worktrees/compact-visual-fix`/`agent/compact-visual-fix`, base516a40a에서 같은 Luna가 한 batch로 수정한다. 루트 원안의 기존 alert3px warning 다섯 건은 시각 체계 보존 결정으로 유지하며 detector는 한 번만 실행했다. final gate와 Windows build는 시각 수정 뒤 고정 SHA에서 수행한다.

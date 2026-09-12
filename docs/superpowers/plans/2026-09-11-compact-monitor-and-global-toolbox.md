@@ -192,7 +192,7 @@ go test ./monitor -run 'Test(ProjectReferencesStore|GlobalToolboxStore|GlobalTod
 
 Expected: FAIL because `ProjectReferences`, `GlobalToolbox`, `ToolboxTodo`, and the new store methods do not exist yet.
 
-- [ ] **Step 3: Implement the v2 project-reference store and global Toolbox store**
+- [x] **Step 3: Implement the v2 project-reference store and global Toolbox store**
 
 In `monitor/toolbox.go`:
 
@@ -258,7 +258,7 @@ type toolboxFileWriter func(path, tempPattern string, value any) error
 
 Default it to the real atomic JSON writer. Do not expose this through Wails.
 
-- [ ] **Step 5: Implement idempotent migration**
+- [x] **Step 5: Implement idempotent migration**
 
 Migration rules:
 
@@ -271,7 +271,7 @@ Migration rules:
 7. Only after that succeeds, atomically rewrite `projects.json` as v2 references-only.
 8. If project rewrite fails after global success, a retry must merge idempotently and retry the v2 rewrite.
 
-- [ ] **Step 6: Run focused backend tests**
+- [x] **Step 6: Run focused backend tests**
 
 Run:
 
@@ -281,7 +281,7 @@ go test ./monitor -run 'Test(ProjectReferencesStore|GlobalToolboxStore|GlobalTod
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 ```bash
 git add monitor/toolbox.go monitor/toolbox_test.go
@@ -359,7 +359,7 @@ export function toolboxKeyFor(project: Project): string
 
 It must preserve the current behavior: prefer a valid project/work URL hostname plus `project.projectId`; otherwise use `project.projectId` alone.
 
-- [ ] **Step 1: Update binding tests first**
+- [x] **Step 1: Update binding tests first**
 
 In `bindings.test.ts`, assert missing Wails bindings fail explicitly for all four new methods and never call `fetch`.
 
@@ -374,7 +374,7 @@ await saveGlobalToolbox(toolbox)
 
 call the exact Wails method names and arguments.
 
-- [ ] **Step 2: Write project-key unit tests before moving the helper**
+- [x] **Step 2: Write project-key unit tests before moving the helper**
 
 Cover:
 
@@ -384,7 +384,7 @@ expect(toolboxKeyFor(ghesProject)).toBe('github.samsungds.net/repo:FDYPhotoDX/jm
 expect(toolboxKeyFor(projectWithoutURL)).toBe(projectWithoutURL.projectId)
 ```
 
-- [ ] **Step 3: Run frontend focused tests and confirm failure**
+- [x] **Step 3: Run frontend focused tests and confirm failure**
 
 Run:
 
@@ -394,7 +394,7 @@ npm --prefix monitor/frontend test -- src/bindings.test.ts src/project-key.test.
 
 Expected: FAIL until the new methods/helper exist.
 
-- [ ] **Step 4: Update `App` store ownership and Wails methods**
+- [x] **Step 4: Update `App` store ownership and Wails methods**
 
 Change `App` fields from one project Toolbox store to two stores:
 
@@ -409,13 +409,13 @@ Implement the four Wails methods using Task 1 stores. `GetGlobalToolbox` and `Sa
 
 Keep `OpenToolboxReference` unchanged except for type names needed by the refactor. Do not add command execution.
 
-- [ ] **Step 5: Replace TypeScript bindings and move `toolboxKeyFor`**
+- [x] **Step 5: Replace TypeScript bindings and move `toolboxKeyFor`**
 
 Remove old `GetProjectToolbox` / `SaveProjectToolbox` frontend contracts and expose the four new methods.
 
 Move `toolboxKeyFor` out of `App.tsx` into `project-key.ts` so project references, Todo filters, and project Todo shortcuts share one identity implementation.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -426,7 +426,7 @@ npm --prefix monitor/frontend test -- src/bindings.test.ts src/project-key.test.
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 ```bash
 git add monitor/app.go monitor/app_test.go monitor/frontend/src/bindings.ts monitor/frontend/src/bindings.test.ts monitor/frontend/src/project-key.ts monitor/frontend/src/project-key.test.ts
@@ -436,6 +436,8 @@ git commit -m "refactor: expose project references and global toolbox bindings"
 ---
 
 ### Task 3: Split project references from global Toolbox drawer
+
+**실행 결과:** 자료6bae0ca와 Drawer2b64369에서 독립 리뷰 ACCEPT. 원안 Step3의 missing-component RED는 Drawer에서 그대로 수행되지 않아 체크하지 않았다(첫 기록은 구현 뒤 behavior failure). 자료 RED shell exit도 미기록이다. 실제 focused GREEN·실패/수정 근거를 report에 구분했다. old files 삭제는 Task4에서, global cache는 승인된 controlled App 계약으로 구현했다.
 
 **Files:**
 - Create: `monitor/frontend/src/ProjectReferences.tsx`
@@ -475,7 +477,7 @@ type ToolboxTab = 'commands' | 'todos'
 type TodoFilter = 'all' | 'common' | string // projectKey for project filter
 ```
 
-- [ ] **Step 1: Write `ProjectReferences` tests**
+- [x] **Step 1: Write `ProjectReferences` tests**
 
 Assert:
 - loads project references by key
@@ -485,7 +487,7 @@ Assert:
 - Windows/WSL references use `openToolboxReference`
 - save failure preserves form input and shows an inline error
 
-- [ ] **Step 2: Write Drawer tests before implementation**
+- [x] **Step 2: Write Drawer tests before implementation**
 
 Assert:
 - returns `null` when closed
@@ -508,7 +510,7 @@ npm --prefix monitor/frontend test -- src/ProjectReferences.test.tsx src/GlobalT
 
 Expected: FAIL because the components do not exist.
 
-- [ ] **Step 4: Implement `ProjectReferences` by extracting only the reference portion of the old component**
+- [x] **Step 4: Implement `ProjectReferences` by extracting only the reference portion of the old component**
 
 Reuse the current form fields:
 - label
@@ -517,7 +519,7 @@ Reuse the current form fields:
 
 Keep immediate save semantics after add/delete. Keep copy/open actions. Do not import or render command/Todo data.
 
-- [ ] **Step 5: Implement `GlobalToolboxDrawer`**
+- [x] **Step 5: Implement `GlobalToolboxDrawer`**
 
 Behavior:
 1. Load `getGlobalToolbox()` only when the drawer first opens; reload after a previous load error when reopened.
@@ -529,7 +531,7 @@ Behavior:
 7. Drawer uses `role="dialog"`, `aria-modal="true"`, visible close button, backdrop close, and Escape close.
 8. Do not add command execution or Agent actions.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 ```bash
 npm --prefix monitor/frontend test -- src/ProjectReferences.test.tsx src/GlobalToolboxDrawer.test.tsx
@@ -537,7 +539,7 @@ npm --prefix monitor/frontend test -- src/ProjectReferences.test.tsx src/GlobalT
 
 Expected: PASS.
 
-- [ ] **Step 7: Remove obsolete ProjectToolbox files and commit**
+- [x] **Step 7: Remove obsolete ProjectToolbox files and commit**
 
 ```bash
 git rm monitor/frontend/src/ProjectToolbox.tsx monitor/frontend/src/ProjectToolbox.test.tsx monitor/frontend/src/project-toolbox.css
@@ -548,6 +550,8 @@ git commit -m "feat: split project references from global toolbox drawer"
 ---
 
 ### Task 4: Replace permanent sidebars with top bar and inline work actions
+
+**실행 결과:** 수정 후보4fadafd에서 scoped ACCEPT, 통합2fc9f3f. 원 GitHub 필드 표시·validation 테스트를 복원했고 App 성공/실패 cache와 실제 shortcut을 검증했다. 영향 없는 Task3 테스트는 기존 근거를 채택했다.
 
 **Files:**
 - Create: `monitor/frontend/src/TopBar.tsx`
@@ -598,7 +602,7 @@ export function SettingsShell(): JSX.Element
 
 `App` owns global Toolbox drawer state because it already owns the current project list and can pass those projects directly to the drawer.
 
-- [ ] **Step 1: Write TopBar tests**
+- [x] **Step 1: Write TopBar tests**
 
 Assert:
 - `ThreadDock` brand visible
@@ -607,7 +611,7 @@ Assert:
 - Settings button calls `onOpenSettings`
 - there is no left-nav semantic/sidebar requirement
 
-- [ ] **Step 2: Write ProjectDetail tests**
+- [x] **Step 2: Write ProjectDetail tests**
 
 Assert:
 - project tabs are exactly `업무` and `자료`
@@ -625,7 +629,7 @@ projectTodoCount: number
 
 and keep `onOpenProjectTodos(projectKey)` unchanged.
 
-- [ ] **Step 3: Run focused tests and confirm failure**
+- [x] **Step 3: Run focused tests and confirm failure**
 
 ```bash
 npm --prefix monitor/frontend test -- src/TopBar.test.tsx src/ProjectDetail.test.tsx
@@ -633,7 +637,7 @@ npm --prefix monitor/frontend test -- src/TopBar.test.tsx src/ProjectDetail.test
 
 Expected: FAIL until the new components exist.
 
-- [ ] **Step 4: Extract `ProjectDetail` from `App.tsx` and move action-rail actions into its header**
+- [x] **Step 4: Extract `ProjectDetail` from `App.tsx` and move action-rail actions into its header**
 
 Move/reuse:
 - work identity calculation
@@ -646,13 +650,13 @@ Delete the permanent `ActionRail` component after the equivalent actions are cov
 
 Do not copy degraded/stale status into the project header; keep the existing global degraded banner as the single source for connection failures.
 
-- [ ] **Step 5: Add TopBar and make Settings dialog controlled**
+- [x] **Step 5: Add TopBar and make Settings dialog controlled**
 
 Refactor `SettingsShell` so it no longer adds a floating `.settings-launcher` button. Instead pass a settings-open callback to `App`, and have `TopBar` call it.
 
 Keep existing settings load/save behavior and form contents unchanged.
 
-- [ ] **Step 6: Replace the 3-column shell CSS**
+- [x] **Step 6: Replace the 3-column shell CSS**
 
 Change `.monitor-shell` from:
 
@@ -674,7 +678,7 @@ Use a centered content container such as:
 
 Do not recreate fixed sidebars at any responsive breakpoint.
 
-- [ ] **Step 7: Integrate Global Toolbox drawer in `App`**
+- [x] **Step 7: Integrate Global Toolbox drawer in `App`**
 
 Add App state:
 
@@ -701,7 +705,7 @@ Pass current sorted `projects` to `GlobalToolboxDrawer`.
 
 For Todo counts in project detail, prefer one global Toolbox load owned by App/drawer state rather than N per-project file reads. Keep this simple: one in-memory `GlobalToolbox | null` cache refreshed after Drawer save, then derive counts by `projectKey`.
 
-- [ ] **Step 8: Run focused UI tests**
+- [x] **Step 8: Run focused UI tests**
 
 ```bash
 npm --prefix monitor/frontend test -- src/TopBar.test.tsx src/ProjectDetail.test.tsx src/GlobalToolboxDrawer.test.tsx src/AppScope.test.tsx
@@ -709,7 +713,7 @@ npm --prefix monitor/frontend test -- src/TopBar.test.tsx src/ProjectDetail.test
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit Task 4**
+- [x] **Step 9: Commit Task 4**
 
 ```bash
 git add monitor/frontend/src/TopBar.tsx monitor/frontend/src/TopBar.test.tsx monitor/frontend/src/top-bar.css monitor/frontend/src/ProjectDetail.tsx monitor/frontend/src/ProjectDetail.test.tsx monitor/frontend/src/project-detail.css monitor/frontend/src/App.tsx monitor/frontend/src/SettingsShell.tsx monitor/frontend/src/main.tsx monitor/frontend/src/styles.css monitor/frontend/src/settings.css
@@ -719,6 +723,8 @@ git commit -m "refactor: center monitor around full-width project content"
 ---
 
 ### Task 5: Collapse Herdr details into a summary row
+
+**실행 결과:** 상태 tone·mixed severity 수정 후보cc8e4ec에서 scoped ACCEPT, 통합32f85ce. matching helper는 변경하지 않았다. 실제 native 화면 검증은 Task6에서 별도로 추적한다.
 
 **Files:**
 - Create: `monitor/frontend/src/HerdrSummary.tsx`
@@ -743,7 +749,7 @@ The component may reuse/move these existing helpers from `App.tsx`:
 - `herdrGuidance`
 - `HerdrConnections`
 
-- [ ] **Step 1: Write failing HerdrSummary tests**
+- [x] **Step 1: Write failing HerdrSummary tests**
 
 Cover:
 - default render contains one compact `실행 상태` summary and a `자세히` button
@@ -753,7 +759,7 @@ Cover:
 - clicking `자세히` reveals detailed connections, observed sessions, notices, and unconnected agents
 - clicking `접기` hides details again
 
-- [ ] **Step 2: Run the focused test and confirm failure**
+- [x] **Step 2: Run the focused test and confirm failure**
 
 ```bash
 npm --prefix monitor/frontend test -- src/HerdrSummary.test.tsx
@@ -761,7 +767,7 @@ npm --prefix monitor/frontend test -- src/HerdrSummary.test.tsx
 
 Expected: FAIL because the component does not exist.
 
-- [ ] **Step 3: Implement the summary using existing Herdr selection semantics**
+- [x] **Step 3: Implement the summary using existing Herdr selection semantics**
 
 Priority for collapsed summary:
 1. exact issue connection
@@ -777,11 +783,11 @@ Render one line similar to:
 
 Do not change matching rules while moving them. This task is a density refactor, not a Herdr semantics change.
 
-- [ ] **Step 4: Replace the always-expanded `HerdrPanel` in App**
+- [x] **Step 4: Replace the always-expanded `HerdrPanel` in App**
 
 Remove the large standalone Herdr panel from the bottom of the page. Render `HerdrSummary` inside/below the selected project detail so it is visually associated with the work the user is viewing.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 ```bash
 npm --prefix monitor/frontend test -- src/HerdrSummary.test.tsx src/monitor.test.tsx src/AppScope.test.tsx
@@ -789,7 +795,7 @@ npm --prefix monitor/frontend test -- src/HerdrSummary.test.tsx src/monitor.test
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 5**
+- [x] **Step 6: Commit Task 5**
 
 ```bash
 git add monitor/frontend/src/HerdrSummary.tsx monitor/frontend/src/HerdrSummary.test.tsx monitor/frontend/src/herdr-summary.css monitor/frontend/src/App.tsx monitor/frontend/src/ProjectDetail.tsx monitor/frontend/src/styles.css
