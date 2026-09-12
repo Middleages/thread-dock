@@ -30,12 +30,15 @@ internal/pathscope/scope_test.go
 
 ## Result
 
-- changedFiles: 6개 tracked file 삭제, 423줄 제거
+- changedFiles: 총 7개 tracked file 변경(owned 제품 삭제 6개 + 이 report 추가 1개); 제품 코드는 423줄 제거
   - `internal/dag/`: 2개
   - `internal/opencodeagent/`: 2개
   - `internal/pathscope/`: 2개
+- implementationChangedFiles: owned 제품 파일 6개 삭제, 423줄 제거
 - implementationSHA: `896c3dfb825ef2ec5e6e185c4145608bd795b1ce`
-- candidateSHA: `896c3dfb825ef2ec5e6e185c4145608bd795b1ce` (fresh Task review 대상; 이 report는 뒤따르는 report-only commit에 포함)
+- result.commitSHA: `896c3dfb825ef2ec5e6e185c4145608bd795b1ce` (값의 범위: orphan utility 제품 코드 삭제 구현 commit; report commit은 포함하지 않음)
+- reviewedCandidateSHA: `0a333b93f4058e8461bc1a64d97d4874968db568` (이전 report-only commit; fresh review에서 report evidence BLOCK)
+- final report-fix candidate: root ledger와 외부 review packet에 고정한다. 이 report 안에는 자기참조 SHA를 만들거나 기록하지 않는다.
 - executedCommands:
   - `git rev-parse HEAD`, `git status --short --branch`로 baseSHA/worktree/branch 확인
   - `git ls-files internal/dag internal/pathscope internal/opencodeagent` exact manifest 확인
@@ -71,5 +74,11 @@ internal/pathscope/scope_test.go
 - [x] dependency/module 변경, 새 구현, compatibility layer, public interface 변경을 추가하지 않았다.
 - [x] `internal/runner` focused test와 Linux/Windows Monitor graph를 통과시켰다.
 - [x] 삭제 후 남은 Go package가 Monitor, runner, projecttemplate 세 package뿐임을 확인했다.
-- [x] changedFiles를 실제 tracked file 6개, 423줄 제거로 기록했다.
+- [x] changedFiles를 최종 diff 기준 총 7개(owned 제품 삭제 6개 + report 1개), 제품 코드 423줄 제거로 기록했다.
 - [x] fresh review와 final integrated gate/native 검증은 unverified로 남겼고 통과로 꾸미지 않았다.
+
+## Fresh review fix round 1 (report-only)
+
+Fresh review에서 이전 report-only commit `0a333b9`의 result 필드가 구현 commit과 report 변경을 구분하지 못한 finding을 받았다. 위 Result를 정정해 `result.commitSHA`는 제품 코드 구현 commit `896c3df...`로, `reviewedCandidateSHA`는 리뷰 대상이었던 `0a333b9...`로 명시했다. 최종 report-fix 후보 SHA는 root ledger/외부 review packet의 값으로 고정하며 이 report에는 기록하지 않는다.
+
+이 round는 report만 수정했으며 제품 코드 변경은 없다. Go test나 package graph 검사는 재실행하지 않았다. 고정 base 대비 manifest/diff count는 총 7개(삭제 6 + report 1)이고, implementation SHA 이후 제품 경로 diff는 0이다. 수정 후 `git diff --check`도 PASS다.
