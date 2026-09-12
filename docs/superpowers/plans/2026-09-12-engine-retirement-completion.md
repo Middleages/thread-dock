@@ -182,5 +182,5 @@ root는 역사 문서를 명시적으로 분류하고 active docs의 legacy 실�
 - acceptance: test-focused의 오류 예시는 `./monitor`, vet-focused는 `./internal/runner`로 변경. `./internal/contract` 안내는 Makefile에0개. 다른 줄은 변경하지 않는다.
 - tests: 수정 전후 실제 PKGS 없는 두 make target의 exit2와 출력 예시 검증. 같은 cwd에서 base Makefile과 수정 Makefile의 `make -n check` 출력을 비교해 동일함을 증명. source/diff checks만 수행하며 Go/UI/full gate 재실행 금지.
 - result: implementation commitSHA와 외부 final candidate를 구분하고 총changedFiles2(Makefile+report), commands/exit/outcomes/unverified/blockers를 기록.
-- [ ] 실제 오류 안내 RED → 두 문자열 apply_patch 정정 → 오류 안내 GREEN 및 check dry-run 동등성 확인.
-- [ ] self-review/commit 후 동일 전체 reviewer에게 fix diff만 재검토받는다.
+- [x] 실제 오류 안내 RED → 두 문자열 apply_patch 정정 → 오류 안내 GREEN 및 check dry-run 동등성 확인.
+- [x] self-review/commit 후 동일 전체 reviewer에게 fix diff만 재검토받는다.

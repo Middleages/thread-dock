@@ -189,3 +189,13 @@ Task9: complete (`1e3cbab` fresh `retirement_task9_review` spec/quality ACCEPT, 
 fresh `retirement_completion_review`는 `ed129036e50a9285ba1f5de16f0f83beece4f6ee`에서 삭제167 union/남은3packages/생산 코드·의존성 보존/Task9 한 줄/gate 계보/미검증 구분을 확인했다. 다만 Makefile23/27의 PKGS 미지정 오류 예시가 삭제된 internal/contract를 가리켜 BLOCK했다. Task1의 help 예시는 바뀌었지만 실제 guard 오류 안내 두 곳이 누락됐다.
 
 원래 Makefile 소유 Luna에게 Task10으로 이 두 문자열만 수정 배정한다. 실제 missing-PKGS exit2/새 예시와 base 대비 `make -n check` 동등성을 확인한다. check recipe와 제품·테스트·입력 파일이 같다면 이미 통과한1e427ed gate를 채택하고 전체 suite를 중복 실행하지 않는다. 수정 후 동일 전체 reviewer가 한정 diff를 재검토한다.
+
+## 전체 통합 승인 · 게시 준비
+
+- Task10 exact base `74868658277a32a018918c2521b2e8a2f703e895`, 독립 `.worktrees/retirement-final-guidance-fix`/`agent/retirement-final-guidance-fix`, 원래 Luna `retirement_root_cut`가 소유했다.
+- implementation `fe3a843f2dba7f2b6f1831f9f82a39f3f49188ca`, report 및 통합 candidate `5823740f71f4dabf468aa82669dc5643141fc4cd`.
+- Task10: complete. 두 guard 문자열만 수정, missing-PKGS의 두 실제 exit2와 안내 GREEN, stale ref0, diff PASS. root도 `1e427ed:Makefile`과 현재 `make -n check`의 byte 동등성을 확인했다(sha256 `28dd07e3f8cb10c2a724028513ca958edb7be1a17c748b729bfb20028cc4bcef`).
+- `retirement_completion_review`의 fix wave1은 `5823740`에서 ACCEPT, 이전 finding 두 곳 ADDRESSED, 새 blocking/non-blocking finding 없음이다. check inputs/recipe가 불변이므로 기존 gate1e427ed의 Go3/UI37/build PASS 채택을 승인했다. 전체 suite는 재실행하지 않았다.
+- reviewer result: changedFiles[], reviewed commitSHA5823740, executedCommands SHA/계보/scoped diff·reference·입력 동등성 읽기, outcomes ACCEPT, blockers없음; unverified Windows/native/GHES/Herdr/pressure/Wiki/runtime identity.
+- 문서·Issue 정리: #42/44/45/46/47 not planned 종료, #43/48 실제검증으로 재작성. 사용자 merged PR85~88을 Project1 Done·완료 근거로 추가했다. Issue89는 PR 병합 전 In Progress로 유지한다.
+- 최종 제품 결과: legacy tracked167파일 제거, 남은 Go3packages, 최신 Monitor runtime/runner/template Go 및 module 보존. 추가 변경은 test selector1곳·Makefile 진입점/오류 안내·문서/Agent/GitHub template 문구뿐이다. main과 사용자 실험은 보존한다.
