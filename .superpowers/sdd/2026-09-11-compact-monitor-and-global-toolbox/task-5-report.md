@@ -48,3 +48,17 @@
 - No matching helper or wire/API file was modified.
 - No session launch, Agent action, auto-expand, or color-only severe-state signaling was added.
 - The selected work/project reset effect prevents stale expanded detail when the user changes context.
+
+## Review fix r1
+
+- review base: `09645503b3fff1a728a289d0fe243cf99841ffd4`
+- fix candidate: `ab8b0582a8e89f2473c357361fe3330b228f2355`
+- findings addressed:
+  - Severe `missing`/unknown-ranked states now use the attention status mark instead of green success; the regression asserts both text and CSS class.
+  - Each selected connection now aggregates the worst severity of its `status` and `agentStatus` before selected-connection ranking. The regression fixture explicitly covers A=`offline/idle` and B=`stale/blocked`, and requires the collapsed summary to show B as blocked.
+- RED: `VITEST_MAX_WORKERS=1 NODE_COMPILE_CACHE=/dev/shm/threaddock-compact-nodecache.dJMMfd TMPDIR=/dev/shm/td-compact-herdr-fix-red.AWi4mZ npm --prefix monitor/frontend test -- src/HerdrSummary.test.tsx`; log `/dev/shm/td-compact-herdr-fix-red.AWi4mZ/herdr-fix-red.log`, exit `1`, exactly the two reviewer regressions failed before the fix.
+- GREEN: `VITEST_MAX_WORKERS=1 NODE_COMPILE_CACHE=/dev/shm/threaddock-compact-nodecache.dJMMfd TMPDIR=/dev/shm/td-compact-herdr-fix-green.lYqIxG npm --prefix monitor/frontend test -- src/HerdrSummary.test.tsx`; log `/dev/shm/td-compact-herdr-fix-green.lYqIxG/herdr-fix-green.log`, exit `0`, `1 file / 9 tests`.
+- TypeScript: `cd monitor/frontend && NODE_COMPILE_CACHE=/dev/shm/threaddock-compact-nodecache.dJMMfd TMPDIR=/dev/shm/td-compact-herdr-fix-tsc.ULYEvk ./node_modules/.bin/tsc --noEmit --project tsconfig.json`; log `/dev/shm/td-compact-herdr-fix-tsc.ULYEvk/tsc.log`, exit `0`.
+- `git diff --check`: clean before fix commit.
+- unverified: runtime model/effort, Windows native, final browser/gate
+- blockers: none
