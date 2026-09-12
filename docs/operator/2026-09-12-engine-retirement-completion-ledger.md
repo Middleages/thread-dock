@@ -135,3 +135,15 @@ Task 8: complete (`b276412` scoped rereview ACCEPT, 두 metadata finding ADDRESS
 통합 `61cf73292f0e1e1d2592a68a1f5a2a7592a5b53b`에서 root Go list는 `thread-dock/internal/projecttemplate`, `thread-dock/internal/runner`, `thread-dock/monitor` 세 개만 반환했다. 삭제된 tracked 파일은167개이며 `2db8f77` 대비 Monitor/runner/projecttemplate Go 코드/go.mod/go.sum diff는0이다. main과 중단된 사용자 실험은 보존했다.
 
 모든 Task의 코드·evidence 리뷰는 완료됐고 final make check와 전체 통합 리뷰를 남겼다. 이 단계에서 전체 제품 검증 완료나 main 병합을 주장하지 않는다.
+
+## 최초 최종 gate 실패와 UI 진단
+
+검증 SHA `e630c5a502280ee88b3c4d608fe65255d8381342`, tmpfs checkout `/dev/shm/threaddock-retirement-final.KMxdTI/checkout`, Go1.27.0/Node26.8.1/npm11.19.0, 원래 forks/isolation과 `VITEST_MAX_WORKERS=1`에서 `make check`를 실행했다. TMPDIR은 `/dev/shm/threaddock-retirement-final.KMxdTI`다.
+
+- template-check/gofmt/Go vet/전체 Go3 packages PASS(projecttemplate0.004s, runner0.014s, monitor0.502s).
+- UI: 3 files PASS·1 file FAIL·2 worker startup errors. 8 tests PASS·WorkTable1 FAIL(timeout5000ms, 실제36.3s). monitor/AppScope worker는 startup timeout으로 실행하지 못했다. UI duration353.85s, make exit2, frontend build 미실행.
+- 로그: 비추적 로컬 `.superpowers/sdd/2026-09-12-engine-retirement-completion/make-check-e630c5a.log`.
+- 현재 source/lock/deps와 assertion/timeout/isolation은 변경하지 않았다. tmpfs만으로 충분하지 않은 새 관찰이다. 제품 원인을 단정하지 않고 synchronous WorkTable query와 worker bootstrap을 분리 진단한다.
+- taskId `retirement-ui-startup-diagnosis`: Sol read-only, base e630c5a, ownedPaths[], above validation worktree(detached); forbidden writes/full suite repeats/timeout·isolation 완화/process 종료; acceptance 설치 Node/Vitest의 지원되는 cache/초기화 환경을 근거로 한 최소 대조; tests source/help/non-test probe만; result는 후속 기록. 실제 runtime model/effort unverified.
+
+문서104개/로컬 링크141개 검사와 diff check는 PASS다. 이 근거가 UI/full gate 성공을 뜻하지 않는다.
