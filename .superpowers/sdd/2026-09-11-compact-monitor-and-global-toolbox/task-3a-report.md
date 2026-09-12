@@ -33,3 +33,24 @@
 - Runtime model/effort identity is unavailable.
 - Windows native Wails behavior, integrated desktop layout, and narrow visual rendering remain for the integration/browser/Windows verification tasks.
 - No blockers found within Task 3a.
+
+## Review fix r1 — `compact-project-references-fix-r1`
+
+- review base: `473b55a8567cdcdd90cc3789a0274b1a8fcaaf27`
+- fix commit: `55c95fa15b0b8a8c3aa1a7f50f69015fb1b950ee`
+- reassignment reason: the fresh references review required explicit false/reject native clipboard regression coverage, exact Windows/WSL type-target save coverage, and scoped input/select focus-visible styling. The original references agent was no longer available for follow-up, so this narrow test/CSS-only fix was reassigned serially.
+- changedFiles:
+  - `monitor/frontend/src/ProjectReferences.test.tsx`
+  - `monitor/frontend/src/project-references.css`
+  - this report
+- executedCommands:
+  - `git diff --check` — clean before the fix commit
+  - `VITEST_MAX_WORKERS=1 NODE_COMPILE_CACHE=/dev/shm/threaddock-compact-nodecache.dJMMfd TMPDIR=/dev/shm/td-compact-references-fix.cOh9K0 npm --prefix monitor/frontend test -- src/ProjectReferences.test.tsx` — log `/dev/shm/td-compact-references-fix.cOh9K0/focused.log`, exit `0`
+- outcomes:
+  - focused ProjectReferences test: `1 file passed`, `11 tests passed`
+  - native ClipboardSetText returning `false` or rejecting never calls browser clipboard and reports the copy error
+  - Windows `file` and WSL `wsl-file` add payloads preserve exact type and target
+  - project reference inputs, select, and buttons have scoped `3px var(--focus-ring)` / `3px` offset focus-visible styling
+- tests: coverage-only fix; no artificial RED was run. Existing trusted type-check evidence remains from the original accepted implementation; no full suite/build was repeated.
+- unverified: runtime model/effort, native Windows clipboard and rendering, integrated visual review
+- blockers: none
