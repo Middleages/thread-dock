@@ -103,3 +103,11 @@ Task 5: complete (구현 `e6b5755`, report `72f7d50`, fresh `retirement_task5_re
 fresh `retirement_task6_review`는 `6e566c6`의 scope를 ACCEPT, evidence를 BLOCK했다. report가 보존된 state/v2 파일을 실제21개가 아닌26개로 기록했다. contract/v2 5개와 혼동한 수치다. Luna에게 report-only 정정, reviewed candidate와 implementation SHA 구분, exact manifest/diff 검사만 배정했다. final fix SHA는 다음 ledger 항목과 review packet에 기록하며 자기 commit SHA를 본문에 꾸며 넣지 않는다. 제품/Go 테스트 변경·재실행 없음.
 
 Fix candidate: `ca5407f087e09176ca8e2417702e463bc357ec40` (직전 reviewed `6e566c629952ee1ec6c95781d318bd2a817b163e`, implementation `b473239707068dba0b26add0bd7c10dbd6567f68`). report-only 수정과 21/5/1 manifest assertion·diff check PASS, Go tests 재실행 없음. 동일 reviewer에게 fix diff만 재검토 배정했다.
+
+## Task 6 완료 · Task 7 배정
+
+Task 6: complete (fix round1 `ca5407f`에서 두 finding ADDRESSED, scoped spec/quality ACCEPT, 새 문제 없음). 통합 `a8b73af`/`9e5b180`/`9558f71`/`b6fb422`. 26개 tracked 파일/4169줄 삭제. 남은 v2 state21·contract5·fixture1 보존과 focused PASS 근거를 유지한다.
+
+- Task 7 exact base: `b6fb422bf88f53cef36e38a984532581313e1057`.
+- Luna `retirement_v2_foundations`, `.worktrees/retirement-v2-foundations`, branch `agent/retirement-v2-foundations`.
+- owned는 v2 registry/runtime/state/contract와 전용 fixture이며 사용자 로컬 데이터는 포함하지 않는다. packet의 나머지는 계획 Task7을 따른다.
