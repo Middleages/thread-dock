@@ -242,8 +242,8 @@ export function GlobalToolboxDrawer({
   return <div className="toolbox-drawer-backdrop" data-testid="toolbox-backdrop" onClick={(event) => { if (event.target === event.currentTarget) requestClose() }}>
     <section className="toolbox-drawer" ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="global-toolbox-title">
       <header className="toolbox-drawer-header">
-        <div><p className="eyebrow">GLOBAL TOOLBOX</p><h2 id="global-toolbox-title">빠른 작업</h2></div>
-        <button type="button" data-drawer-close aria-label="닫기" onClick={requestClose}>×</button>
+        <div><h2 id="global-toolbox-title">빠른 작업</h2></div>
+        <button type="button" data-drawer-close aria-label="닫기" onClick={requestClose}><svg aria-hidden="true" viewBox="0 0 20 20" focusable="false"><path d="M4 4l12 12M16 4L4 16" /></svg></button>
       </header>
       {reportedError && <div className="toolbox-drawer-error" role="alert"><span>{reportedError}</span>{loadError && !error && <button type="button" onClick={onReload}>다시 불러오기</button>}</div>}
       {loading && <p className="toolbox-drawer-state">Toolbox를 불러오는 중입니다.</p>}

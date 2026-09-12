@@ -79,6 +79,17 @@ describe('work history scope', () => {
     expect(screen.getByText('herdr status')).toBeInTheDocument()
   })
 
+  it('does not let the first project row steal focus from an already open Drawer', async () => {
+    let resolveSnapshot!: (value: Snapshot) => void
+    const source = vi.fn(() => new Promise<Snapshot>((resolve) => { resolveSnapshot = resolve }))
+    render(<App snapshotSource={source} pollIntervalMs={60_000} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Toolbox 열기' }))
+    const close = screen.getByRole('button', { name: '닫기' })
+    expect(close).toHaveFocus()
+    await act(async () => { resolveSnapshot(snapshot(1, 'Deferred work')); await Promise.resolve(); await Promise.resolve() })
+    expect(close).toHaveFocus()
+  })
+
   it('does not turn a failed global load into writable empty data and retries explicitly', async () => {
     const getGlobal = vi.fn().mockRejectedValueOnce(new Error('toolbox offline')).mockRejectedValueOnce(new Error('toolbox still offline')).mockResolvedValueOnce({ commands: [], todos: [] })
     ;(window as Window & { go?: unknown }).go = { main: { App: { GetGlobalToolbox: getGlobal } } }

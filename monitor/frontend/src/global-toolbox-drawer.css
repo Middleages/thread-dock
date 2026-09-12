@@ -2,8 +2,9 @@
 .toolbox-drawer { display: flex; flex-direction: column; width: min(480px, 92vw); min-height: 100%; overflow: auto; border-left: 1px solid var(--border-subtle); background: var(--surface-primary); color: var(--fg-primary); box-shadow: -1rem 0 2.625rem rgba(23,33,54,.16); }
 .toolbox-drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 25px 24px 18px; border-bottom: 1px solid var(--border-subtle); }
 .toolbox-drawer-header h2 { margin: 0; }
-.toolbox-drawer-header button { width: 34px; height: 34px; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: transparent; color: var(--fg-primary); font-size: 1.45rem; line-height: 1; }
-.toolbox-drawer .eyebrow { margin: 0 0 4px; color: var(--fg-secondary); font-size: var(--text-caption); font-weight: 750; letter-spacing: .08em; }
+.toolbox-drawer-header button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: transparent; color: var(--fg-primary); }
+.toolbox-drawer-header button svg { width: 18px; height: 18px; }
+.toolbox-drawer-header button path { fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.7; }
 .toolbox-drawer-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 24px 0; padding: 10px 12px; border-left: 3px solid var(--status-attention); background: var(--surface-canvas); color: var(--status-attention); font-size: var(--text-body-sm); }
 .toolbox-drawer-error button { border: 0; background: transparent; color: var(--action-primary); font-weight: 750; text-decoration: underline; text-underline-offset: 3px; }
 .toolbox-drawer-state { margin: 14px 24px 0; color: var(--fg-secondary); font-size: var(--text-body-sm); }

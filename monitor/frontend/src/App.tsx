@@ -32,7 +32,7 @@ function ProjectList({ projects, selected, onSelect }: { projects: Project[]; se
     <div className="section-heading"><div><h1 id="ledger-title">작업 현황</h1><p>열린 Issue와 PR을 확인하고 작업을 선택하세요.</p></div><span className="count-label">{projects.length}개 프로젝트</span></div>
     <div className="project-table" role="table" aria-label="프로젝트 목록">
       <div className="table-head" role="row"><span role="columnheader">최근 활동</span><span role="columnheader">프로젝트</span><span role="columnheader">조회 상태</span></div>
-      {projects.map((project) => <button key={project.projectId} type="button" className={`project-row${selected === project.projectId ? ' selected' : ''}`} aria-pressed={selected === project.projectId} onClick={() => onSelect(project.projectId)} autoFocus={selected === project.projectId && projects[0] === project}>
+      {projects.map((project) => <button key={project.projectId} type="button" className={`project-row${selected === project.projectId ? ' selected' : ''}`} aria-pressed={selected === project.projectId} onClick={() => onSelect(project.projectId)}>
         <time role="cell" dateTime={project.updatedAt}>{timeFor(project.updatedAt)}</time>
         <span role="cell" className="project-name"><strong>{project.name}</strong><small>{project.workItems.length}개 업무 · {dateFor(project.updatedAt)}</small></span>
         <span role="cell" className="state-cell"><StatusMark value={project.state} />{labelFor(project.state)}</span>
