@@ -163,3 +163,5 @@ Task 8: complete (`b276412` scoped rereview ACCEPT, 두 metadata finding ADDRESS
 실패는 `monitor.test.tsx:222`의 exact name `Second work` 선택자다. PR87의 WorkTable이 접근성 이름에 번호·종류·제목·상태·시각을 모두 넣어 실제 tab 이름은 `—ProjectSecond workneeds operator…`였다. 이 테스트와 제품 WorkTable은 2db8f77에서 변경되지 않아 cleanup 회귀가 아닌 유입 main의 stale 테스트다.
 
 Task9 직렬 scope 결정: 생산 코드는 그대로 두고 해당 row 제목을 포함하는 name regex 한 곳만 수정한다. 테스트의 선택 전환·heading·link 검증, role, timeout과 isolation은 보존한다. 이 구체적인 테스트 소스 수정으로 이전 gate tuple은 무효화되며 수정 후 새 최종 통합 gate를 수행한다. 초기 gate 실패와 focused 실패는 모두 이력에 보존한다.
+
+Task9 exact base: `e7ce6e6a9c7dc7d7665f8882e989ae34a442146e`; Luna `retirement_gate_selector_fix`, `.worktrees/retirement-gate-selector-fix`, branch `agent/retirement-gate-selector-fix`. 기존 same-lock tmpfs node_modules를 읽는 ignored symlink를 준비했고 이 시간에는 다른 테스트를 병렬 실행하지 않는다. ownedPaths는 테스트 선택자 한 곳과 Task9 report뿐이다. 이 Task 이후 Monitor **production** diff0와 테스트 한 곳 정정을 구분해 보고한다.
