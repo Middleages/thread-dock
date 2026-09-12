@@ -95,3 +95,9 @@ Task 5: complete (구현 `e6b5755`, report `72f7d50`, fresh `retirement_task5_re
 - Task 6 exact base: `dc716bea082c1be2503f05335d2f51da0f5da22e`.
 - Luna `retirement_v1_foundations`, `.worktrees/retirement-v1-foundations`, branch `agent/retirement-v1-foundations`.
 - state/contract 부모 전체가 아닌 계획의 exact v1 root 파일만 삭제하고 v2 subtree를 보존한다. focused v2 state/contract 검증은 별도 tmpfs를 사용한다. 나머지 packet은 계획 Task6를 따른다.
+
+## Task 6 report 수정 round 1
+
+구현 `b473239` + report `8b86693`/`6e566c6`에서 v1 26개 tracked file(24 Go·2 JSON)을 삭제했다. 요구 환경의 v2 state/contract tests는 0.390s/0.004s PASS다. 최초 불필요한 GOCACHE/GOPATH 추가 격리 시도는 종료 불명확으로 통과 근거에서 제외했다.
+
+fresh `retirement_task6_review`는 `6e566c6`의 scope를 ACCEPT, evidence를 BLOCK했다. report가 보존된 state/v2 파일을 실제21개가 아닌26개로 기록했다. contract/v2 5개와 혼동한 수치다. Luna에게 report-only 정정, reviewed candidate와 implementation SHA 구분, exact manifest/diff 검사만 배정했다. final fix SHA는 다음 ledger 항목과 review packet에 기록하며 자기 commit SHA를 본문에 꾸며 넣지 않는다. 제품/Go 테스트 변경·재실행 없음.
