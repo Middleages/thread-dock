@@ -86,6 +86,10 @@ Task packet·검증·결정 근거는 [진행 ledger](../../operator/2026-09-12-
 
 ### Task 1: Split Toolbox persistence and add idempotent migration
 
+**실행 결과:** 완료. 수정 후보 `b3b9919` fresh review ACCEPT, 통합 `5dc0abb`.
+실행 순서·정확 명령·검증 제한은 task-1-report와 tracked ledger가 원본이다.
+아래 원안의 RED 실행 시점은 historical path 미기록 제한이 있으므로 사후에 증거를 만들지 않는다.
+
 **Execution packet (2026-09-12):**
 - taskId: `compact-toolbox-storage`
 - baseSHA: `33d279a` (full SHA recorded in dispatch/report)
@@ -287,6 +291,10 @@ git commit -m "feat: split project references and global toolbox storage"
 ---
 
 ### Task 2: Replace Wails Toolbox contracts and frontend bindings
+
+**실행 결과:** 완료. App 경계 테스트 보강 후보 `b7af8e3` scoped review ACCEPT, 통합 `894f512`.
+새 네 API와 helper는 사용 가능하다. 아래 Step5의 old API 제거만 사전 결정대로 Task4에 이관했다.
+실제 focused 명령·exit·리뷰 근거는 task-2-report와 tracked ledger를 따른다.
 
 **Execution packet (2026-09-12):**
 - taskId: `compact-toolbox-bindings`
