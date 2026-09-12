@@ -80,3 +80,7 @@ Impeccable의 UI 착수 계약은 새 시안이 아닌 사용자 지정 설계�
 
 Task2는 App boundary coverage 두 건 누락으로 BLOCK 후 같은 Luna가 app_test/report만 수정했다. `b7af8e3d6d51b554840275e6ecf535ecf3f54865`에서 scoped ACCEPT, 새 focused Go 로그 `/dev/shm/td-compact-toolbox-bindings-fix.ZEdOb6/app-focused.log`와 exit0를 확인했다. reviewer는 테스트를 재실행하지 않았다. 통합3a726fc/894f512 완료.
 Task3a/3b exact base는 `894f51229b9ec897592462c3ee9b5c6d42eb6042`다. Sol packet 준비 결과를 root가 검토·확정했다. 일반 Toolbox 진입은 명령어 탭/전체 필터, 프로젝트 바로가기는 할 일 탭/해당 key 필터로 고정했다. 계약 주석은 overlay가 본문을 일부 가릴 수 있으나 본문 폭을 재배치하지 않는다는 의미다. Task3a 먼저 계약을 기록하고 root 확인 뒤 Task3b UI를 시작한다. 구현2슬롯/리뷰1슬롯과 UI 테스트1슬롯을 예약한다.
+
+Task3a의 `9f248274`에서 index.html 첫 body child 계약을 root가 확인했고 Task3b UI 구현을 시작했다. 두 worker는 별도 branch/worktree이며 기존 API/UI 삭제는 아직 하지 않는다.
+
+Ruling: Task4에 private `monitor-presentation.ts`/test 한 쌍을 허용한다 — ProjectDetail의 handoff와 Task5 HerdrSummary 사이 cycle·matching 복제 방지 — 파일 한 쌍이 늘지만 Task5는 read-only 소비하며 public wire는 바뀌지 않는다. 실제 base 코드의 matching은 issue 결과가 있으면 exclusive 반환, 없으면 trusted project 결과, 그것도 없으면 exact repository coordinator fallback이다. 기존 연결이 없는데 항상 project/repo 연결을 섞거나, 반대로 fallback을 일괄 금지하는 해석 모두 채택하지 않는다. Task4 전용 SettingsShell test와 의도적 AppScope/monitor DOM 변경도 같은 Luna가 직렬 소유한다. 상세 packet의 base는 Task3 통합 후 고정한다.
