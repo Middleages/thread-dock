@@ -111,3 +111,11 @@ Task 6: complete (fix round1 `ca5407f`에서 두 finding ADDRESSED, scoped spec/
 - Task 7 exact base: `b6fb422bf88f53cef36e38a984532581313e1057`.
 - Luna `retirement_v2_foundations`, `.worktrees/retirement-v2-foundations`, branch `agent/retirement-v2-foundations`.
 - owned는 v2 registry/runtime/state/contract와 전용 fixture이며 사용자 로컬 데이터는 포함하지 않는다. packet의 나머지는 계획 Task7을 따른다.
+
+## Task 7 완료 · Task 8 배정
+
+Task 7: complete (구현 `4c181b9`, report `5afc72c`, fresh `retirement_task7_review` spec/quality ACCEPT, blocking 없음). 통합 `649ad57`/`4a94053`. v2 Go32·JSON1, 총33파일/10131줄 삭제. 외부 importer/fixture 소비자0, Monitor/runner/template/module 불변, 정적 Go graph/Linux·Windows listing PASS.
+
+- Task 8 exact base: `4a94053cbce8edee8e4a74dc866f8324578b6a7d`.
+- Luna `retirement_orphan_utilities`, `.worktrees/retirement-orphan-utilities`, branch `agent/retirement-orphan-utilities`.
+- owned는 dag/pathscope/opencodeagent의 orphan source/test뿐이다. 최종 package 목록이 monitor, internal/runner, internal/projecttemplate인지 확인하고 runner focused test를 수행한다. 나머지 packet은 계획 Task8을 따른다.
