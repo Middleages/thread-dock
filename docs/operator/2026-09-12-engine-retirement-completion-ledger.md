@@ -34,3 +34,11 @@ inventory Sol 1(read-only), 구현 Luna 최대 1(현재 순차), fresh reviewer 
 ## 검증 제한
 
 사용자 추가 PR87의 source-level tests는 아직 실행 성공 근거가 없다. 최종 gate에서 현재 Makefile의 최신 UI 테스트 전부를 포함한다. native Windows/GHES/Herdr 및 Skill pressure scenario는 #43/#48에 남겨 코드 삭제와 구분한다.
+
+## 후속 inventory와 문서 검증
+
+- 전체 역의존 순서를 [최신 inventory](2026-09-12-engine-dependency-inventory.md)에 기록했다. Task 2/3는 독립, 나머지는 shared 부모/interface 때문에 순차다. runner와 projecttemplate 검증 seam만 남긴다.
+- hidden tracked 파일도 조사했다. .codex coordinator의 stale 이식 지시와 GitHub Issue/PR template의 옛 gate 용어만 정리했다. 모델/effort 값과 template 입력 필드는 보존했다.
+- Python tomllib/PyYAML parse: PASS, model gpt-5.6-sol/medium 및 Issue 8 fields 보존. Markdown 19파일/58 local links와 diff 검사 PASS(이후 새 문서는 최종 재검사).
+- 첫 Task 구현 `07909fc`/report `0b3625e`에서 legacy 23파일 삭제·Makefile 1개 수정, focused Go Monitor/projecttemplate/vet/template-check/dry-run/refs/gofmt/diff PASS. fresh Task 리뷰 진행 중.
+- 최종 gate용 tmpfs checkout `/dev/shm/threaddock-retirement-final.KMxdTI/checkout`를 분리했다. package.json/lock은 c487e8c와 최신 main 사이 동일함을 확인하고 이전 동일 lock의 node_modules를 복사했다. Node 26.8.1/npm11.19.0. 테스트는 아직 실행하지 않았다.
