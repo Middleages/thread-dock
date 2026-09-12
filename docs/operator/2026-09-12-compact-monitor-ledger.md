@@ -61,3 +61,11 @@ Task2 SaveGlobalToolbox는 별도 ensure로 migration 여부를 지우지 않고
 ## Browser 준비 근거
 
 Browser plugin/agent-browser CLI는 없지만 cached Playwright1.55.0과 matching Chromium1187이 존재한다. 첫 headless launch는 /tmp profile에서180초 timeout으로 실패했다. 실제 UI 검증이 아니며 재현·환경 확인 전 통과로 기록하지 않는다. native computer-use는 여전히 없다.
+
+후속 capability probe는 `TMPDIR=/dev/shm/threaddock-compact-browser.Y3WqwB`에서 같은 Playwright1.55.0/headless browser가 Chrome140.0.7339.16으로 시작·종료해 exit0이다. missing shared library와 남은 최초 probe process는 없었다. 이는 실제 UI 검증이 아니라 browser 준비 근거이며 package를 새로 설치하지 않았다.
+
+## Task1 완료 · Task2 배정
+
+Task1: complete (구현a03b2db/report6e77d79 → fix2fd25e3/report `b3b9919de9e6ee49bff1b7580b4e69ba33d745b8`에서 scoped spec/quality ACCEPT). migration put/data overwrite/compaction/누락 tests/검증 로그/diff whitespace findings 모두 addressed. 최초 RED의 runtime path는 미기록으로 명시하고 새 GREEN3tuple의 실제 로그/exit0를 확인했다. tests 재실행한 reviewer는 없다.
+통합은4a8fc08/35b78fc/cd5b5a6/5dc0abb다. Task2 exact base `5dc0abb5cc473dc80512ecec0d21219f25942473`, `.worktrees/compact-toolbox-bindings`, `agent/compact-toolbox-bindings`.
+Task2 packet은 기존 소비자 임시 유지와 App helper 추출 범위를 포함한다. App의 별도 mutex와 first-save migration의 public 경로 회귀를 검증한다. Todo/cache/layout 변경은 아직 배정하지 않았다.

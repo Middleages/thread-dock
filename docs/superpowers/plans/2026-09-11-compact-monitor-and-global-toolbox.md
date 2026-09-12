@@ -288,6 +288,19 @@ git commit -m "feat: split project references and global toolbox storage"
 
 ### Task 2: Replace Wails Toolbox contracts and frontend bindings
 
+**Execution packet (2026-09-12):**
+- taskId: `compact-toolbox-bindings`
+- baseSHA: `5dc0abb5cc473dc80512ecec0d21219f25942473`
+- deps: Task1 fixed storage candidate b3b9919 ACCEPT, integrated5dc0abb
+- ownedPaths: `monitor/app.go`, `monitor/app_test.go` (create if absent), `monitor/frontend/src/bindings.ts`, `monitor/frontend/src/bindings.test.ts`, `monitor/frontend/src/project-key.ts`, `monitor/frontend/src/project-key.test.ts`, `monitor/frontend/src/App.tsx` (project-key helper extraction only), `.superpowers/sdd/2026-09-11-compact-monitor-and-global-toolbox/task-2-report.md`
+- worktree: `/home/appuser/dev_system/.worktrees/compact-toolbox-bindings`
+- branch: `agent/compact-toolbox-bindings`
+- forbiddenPaths: toolbox.go/toolbox_test.go, rest of UI/CSS, Makefile, module/dependencies, Agent/Skill files and real user profiles/data
+- interface: four new exact Wails/TS methods below; `toolboxMu sync.Mutex` independent of controller/settings lock. All Toolbox data calls, including transitional old get/save, serialize on this mutex. New reference calls validate arguments before migration, then ensureMigrated and refs store access. GetGlobal delegates get; SaveGlobal delegates migration-aware put directly, never pre-migrating separately. Both constructors initialize both stores. OpenToolboxReference unchanged.
+- acceptance: correct typed payloads and no default-profile IO in tests; direct first SaveGlobal on legacy preserves existing+legacy+caller; first SaveRefs migrates before reference-only write; invalid reference/key requests cannot trigger writes; existing-global errors propagate. Move helper from App without output changes and keep old contracts until Task4 removes old consumers. New bindings never fall back to old API or fetch.
+- tests: RED for absent new methods/exports/helper, then planned focused Go Toolbox/ProjectReferences and TS bindings/project-key tests. Explicit Go1.27.0/Node26.8.1, unique tmpfs logs, VITEST_MAX_WORKERS=1/NODE_COMPILE_CACHE. No repo-wide suite, browser or package install. Record completed sessions/exits and actual environment, not placeholders.
+- result: full changedFiles count including report, implementation commitSHA and externally pinned final candidate, exact commands/RED-GREEN outcomes/self-review/unverified/blockers.
+
 **Files:**
 - Modify: `monitor/app.go`
 - Modify: `monitor/app_test.go`
