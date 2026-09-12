@@ -11,6 +11,19 @@ export interface MonitorSettings {
 export type ToolboxReferenceType = 'web' | 'file' | 'wsl-file'
 export type ToolboxReference = { id: string; label: string; type: ToolboxReferenceType; target: string }
 export type ToolboxCommand = { id: string; label: string; command: string; note?: string }
+export interface ProjectReferences {
+  references: ToolboxReference[]
+}
+export interface ToolboxTodo {
+  id: string
+  text: string
+  done: boolean
+  projectKey?: string
+}
+export interface GlobalToolbox {
+  commands: ToolboxCommand[]
+  todos: ToolboxTodo[]
+}
 export type ToolboxChecklistItem = { id: string; text: string; done: boolean }
 export type ProjectToolbox = {
   references: ToolboxReference[]
@@ -23,6 +36,11 @@ type WailsAppBinding = {
   GetMonitorSnapshotAll?: () => Promise<Snapshot>
   GetMonitorSettings?: () => Promise<MonitorSettings>
   SaveMonitorSettings?: (settings: MonitorSettings) => Promise<MonitorSettings>
+  GetProjectReferences?: (projectKey: string) => Promise<ProjectReferences>
+  SaveProjectReferences?: (projectKey: string, references: ProjectReferences) => Promise<ProjectReferences>
+  GetGlobalToolbox?: () => Promise<GlobalToolbox>
+  SaveGlobalToolbox?: (toolbox: GlobalToolbox) => Promise<GlobalToolbox>
+  // Transitional bindings remain until the old ProjectToolbox consumer is removed.
   GetProjectToolbox?: (projectKey: string) => Promise<ProjectToolbox>
   SaveProjectToolbox?: (projectKey: string, toolbox: ProjectToolbox) => Promise<ProjectToolbox>
   OpenToolboxReference?: (referenceType: ToolboxReferenceType, target: string) => Promise<void>
@@ -54,6 +72,30 @@ export const saveMonitorSettings = async (settings: MonitorSettings): Promise<Mo
   const binding = appBinding()?.SaveMonitorSettings
   if (binding) return binding(settings)
   throw new Error('Wails settings binding is unavailable. Run the Windows Monitor application.')
+}
+
+export const getProjectReferences = async (projectKey: string): Promise<ProjectReferences> => {
+  const binding = appBinding()?.GetProjectReferences
+  if (binding) return binding(projectKey)
+  throw new Error('Wails project references binding is unavailable. Run the Windows Monitor application.')
+}
+
+export const saveProjectReferences = async (projectKey: string, references: ProjectReferences): Promise<ProjectReferences> => {
+  const binding = appBinding()?.SaveProjectReferences
+  if (binding) return binding(projectKey, references)
+  throw new Error('Wails project references save binding is unavailable. Run the Windows Monitor application.')
+}
+
+export const getGlobalToolbox = async (): Promise<GlobalToolbox> => {
+  const binding = appBinding()?.GetGlobalToolbox
+  if (binding) return binding()
+  throw new Error('Wails global toolbox binding is unavailable. Run the Windows Monitor application.')
+}
+
+export const saveGlobalToolbox = async (toolbox: GlobalToolbox): Promise<GlobalToolbox> => {
+  const binding = appBinding()?.SaveGlobalToolbox
+  if (binding) return binding(toolbox)
+  throw new Error('Wails global toolbox save binding is unavailable. Run the Windows Monitor application.')
 }
 
 export const getProjectToolbox = async (projectKey: string): Promise<ProjectToolbox> => {

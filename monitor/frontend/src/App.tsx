@@ -5,6 +5,7 @@ import { MarkdownBody } from './MarkdownBody'
 import { ProjectToolbox } from './ProjectToolbox'
 import { WorkTable } from './WorkTable'
 import { isSafeExternalURL, openExternalURL } from './safe-url'
+import { toolboxKeyFor } from './project-key'
 import './styles.css'
 
 export const sortProjects = (projects: Project[]): Project[] => [...projects].sort((a, b) => {
@@ -109,16 +110,6 @@ function isTrustedProjectLink(link: Link) {
     const parts = parsed.pathname.split('/').filter(Boolean)
     return parsed.protocol === 'https:' && Boolean(parsed.hostname) && parts.length === 4 && ['users', 'orgs'].includes(parts[0]) && parts[2] === 'projects' && /^\d+$/.test(parts[3])
   } catch { return false }
-}
-
-function toolboxKeyFor(project: Project) {
-  const projectURL = project.links?.find((link) => isSafeExternalURL(link.url))?.url
-  const workURL = project.workItems.find((work) => isSafeExternalURL(work.github?.url ?? ''))?.github?.url
-  const candidate = projectURL ?? workURL
-  if (candidate) {
-    try { return `${new URL(candidate).hostname}/${project.projectId}` } catch { /* use project id */ }
-  }
-  return project.projectId
 }
 
 function connectionsForWork(work: WorkItem | undefined, project: Project | undefined, herdr: HerdrSnapshot | undefined) {
