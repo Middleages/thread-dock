@@ -152,3 +152,19 @@
 ### 최종 문서·통합
 
 root는 역사 문서를 명시적으로 분류하고 active docs의 legacy 실행 안내를 제거한다. go.mod/go.sum은 Wails graph가 소비하므로 이유 없이 tidy/업그레이드하지 않는다. 전체 internal graph와 Git diff·링크 검증, 마지막 `make check`, fresh 전체 리뷰를 완료한 후 한국어 PR과 Issue/보드 기록을 갱신한다. main 병합은 별도 사용자 지시를 기다린다.
+
+### Task 9: 최신 main 업무 표에 맞춰 기존 선택자 회귀 테스트 정정
+
+- taskId: `retirement-gate-selector-fix`
+- baseSHA: 계획 commit 후 배정 시 ledger/외부 packet에 exact SHA 고정
+- deps: e630c5a의 cache 환경 focused 실행에서 실제 assertion 실패 확인(28 passed/1 failed, startup 오류 없음)
+- ownedPaths: `monitor/frontend/src/monitor.test.tsx`의 `uses the selected work identity for detail and action links after a project shrinks` 사례 선택자 한 곳; report `.superpowers/sdd/2026-09-12-engine-retirement-completion/task-9-report.md`
+- worktree: `/home/appuser/dev_system/.worktrees/retirement-gate-selector-fix`
+- branch: `agent/retirement-gate-selector-fix`
+- forbiddenPaths: 모든 production 코드·나머지 테스트·config/dependency/timeout/isolation·사용자 데이터
+- interface: 새 WorkTable은 row의 번호·종류·제목·상태·시각을 accessible name에 포함한다. 선택 전환과 링크 결과의 계약은 불변이다.
+- acceptance: `getByRole('tab', { name: 'Second work' })`를 해당 제목을 포함하는 row 탐색인 `name: /Second work/`로 한정 수정. role·후속 click·heading/link/assertion은 그대로 보존한다. 테스트 skip·제거·timeout 변경·생산 코드 변경 없음.
+- tests: 기존 e630c5a cached focused 로그를 RED로 채택한다. 새 source에서 같은 failing test 이름만 `npm --prefix monitor/frontend test -- src/monitor.test.tsx -t 'uses the selected work identity for detail and action links after a project shrinks'`로 검증한다. Node26.8.1, VITEST_MAX_WORKERS=1, dedicated NODE_COMPILE_CACHE, tmpfs 사용. 나머지 테스트는 최종 gate에 포함하며 worker full suite 금지.
+- result: implementation commitSHA와 root가 고정할 final candidate를 구분한다. changedFiles에는 test1+report1을 구분하고 commands/환경/outcomes/unverified/blockers 및 기존 failing proof를 기록한다.
+- [ ] 기존 실패 원인/새 accessible name 근거를 읽고 apply_patch로 선택자 한 곳만 수정한다.
+- [ ] focused GREEN·diff/self-review·commit 후 fresh Sol에게 고정 diff를 검토받는다.

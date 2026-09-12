@@ -155,3 +155,11 @@ Task 8: complete (`b276412` scoped rereview ACCEPT, 두 metadata finding ADDRESS
 - 현재 시점에는 gate의60s startup/36s sync 실행을 재현하지 못했다. 비균일한 자원·스케줄링 지연 가설이며 정확한 병목은 미확정이다.
 - 설치 Node26은 compile cache를 지원하고 Vitest5는 parent env를 worker에 전달하며 종료 때 flushCompileCache를 호출한다. coverage는 비활성이다. dedicated tmpfs `NODE_COMPILE_CACHE=/dev/shm/threaddock-node-compile.kOQNbZ` 한 변수만 추가해 반복 compilation을 줄이는 대조를 선택했다. 첫 worker와 host starvation 해결을 보장하지 않는다.
 - 첫 대조는 실패했던 WorkTable/monitor/AppScope3파일의 focused 실행이다. 같은 e630c5a·source/lock/deps·forks·isolation·assertion·timeout을 유지한다. full gate 재실행 전 결과를 확인한다. 로그 `ui-failed-files-compile-cache-e630c5a.log`는 같은 비추적 진단 디렉터리에 둔다.
+
+## Cache 환경 대조 결과 · 기존 selector 실패 귀속
+
+같은 e630c5a의 focused3files는 startup error 없이 모두 실행됐다. WorkTable·AppScope는 통과, monitor24 중1개가 실제 assertion으로 실패해 총28 passed/1 failed,102.87s,exit1이다. cache 완화의 인과나 host 병목 해결을 확정하지 않으며 관찰 결과만 채택한다.
+
+실패는 `monitor.test.tsx:222`의 exact name `Second work` 선택자다. PR87의 WorkTable이 접근성 이름에 번호·종류·제목·상태·시각을 모두 넣어 실제 tab 이름은 `—ProjectSecond workneeds operator…`였다. 이 테스트와 제품 WorkTable은 2db8f77에서 변경되지 않아 cleanup 회귀가 아닌 유입 main의 stale 테스트다.
+
+Task9 직렬 scope 결정: 생산 코드는 그대로 두고 해당 row 제목을 포함하는 name regex 한 곳만 수정한다. 테스트의 선택 전환·heading·link 검증, role, timeout과 isolation은 보존한다. 이 구체적인 테스트 소스 수정으로 이전 gate tuple은 무효화되며 수정 후 새 최종 통합 gate를 수행한다. 초기 gate 실패와 focused 실패는 모두 이력에 보존한다.
