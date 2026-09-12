@@ -183,3 +183,9 @@ Task9: complete (`1e3cbab` fresh `retirement_task9_review` spec/quality ACCEPT, 
 - build가 제거한 tracked dist placeholder를 원래 한 줄로 복구했고 validation checkout의 `git diff --exit-code`를 확인했다. generated assets는 commit하지 않는다.
 - 이 성공은 초기 실패와 focused 환경 대조를 대체 삭제하지 않는다. 정확한 host 지연 원인은 미확정이며 cache만으로 해결됐다고 인과를 단정하지 않는다. 이전 gate 이후 실제 테스트 선택자 수정과 환경 변화가 있어 새 tuple로 실행했다.
 - Windows native/Wails build·실제 GHES/Herdr E2E·Skill pressure scenario·Wiki 페이지 발행 및 runtime model/effort identity는 이번 성공으로 확대하지 않는다.
+
+## 전체 통합 리뷰와 마지막 한정 fix
+
+fresh `retirement_completion_review`는 `ed129036e50a9285ba1f5de16f0f83beece4f6ee`에서 삭제167 union/남은3packages/생산 코드·의존성 보존/Task9 한 줄/gate 계보/미검증 구분을 확인했다. 다만 Makefile23/27의 PKGS 미지정 오류 예시가 삭제된 internal/contract를 가리켜 BLOCK했다. Task1의 help 예시는 바뀌었지만 실제 guard 오류 안내 두 곳이 누락됐다.
+
+원래 Makefile 소유 Luna에게 Task10으로 이 두 문자열만 수정 배정한다. 실제 missing-PKGS exit2/새 예시와 base 대비 `make -n check` 동등성을 확인한다. check recipe와 제품·테스트·입력 파일이 같다면 이미 통과한1e427ed gate를 채택하고 전체 suite를 중복 실행하지 않는다. 수정 후 동일 전체 reviewer가 한정 diff를 재검토한다.

@@ -168,3 +168,19 @@ root는 역사 문서를 명시적으로 분류하고 active docs의 legacy 실�
 - result: implementation commitSHA와 root가 고정할 final candidate를 구분한다. changedFiles에는 test1+report1을 구분하고 commands/환경/outcomes/unverified/blockers 및 기존 failing proof를 기록한다.
 - [x] 기존 실패 원인/새 accessible name 근거를 읽고 apply_patch로 선택자 한 곳만 수정한다.
 - [x] focused GREEN·diff/self-review·commit 후 fresh Sol에게 고정 diff를 검토받는다.
+
+### Task 10: 전체 리뷰의 Makefile 오류 안내 정정
+
+- taskId: `retirement-final-guidance-fix`
+- baseSHA: 배정 시 ledger·외부 packet에 exact SHA 고정
+- deps: 전체 리뷰 ed12903의 blocking finding, Task1 acceptance의 누락
+- ownedPaths: `Makefile`의 test-focused/vet-focused PKGS 미지정 오류 안내 두 문자열; report `.superpowers/sdd/2026-09-12-engine-retirement-completion/task-10-report.md`
+- worktree: `/home/appuser/dev_system/.worktrees/retirement-final-guidance-fix`
+- branch: `agent/retirement-final-guidance-fix`
+- forbiddenPaths: 나머지 Makefile recipe/변수, 모든 제품·테스트·설정·dependency, 다른 worktree/사용자 데이터
+- interface: PKGS 미지정은 기존 exit2로 거절하되 존재하는 package 예시를 보여준다. 실제 test/check 실행 계약은 불변이다.
+- acceptance: test-focused의 오류 예시는 `./monitor`, vet-focused는 `./internal/runner`로 변경. `./internal/contract` 안내는 Makefile에0개. 다른 줄은 변경하지 않는다.
+- tests: 수정 전후 실제 PKGS 없는 두 make target의 exit2와 출력 예시 검증. 같은 cwd에서 base Makefile과 수정 Makefile의 `make -n check` 출력을 비교해 동일함을 증명. source/diff checks만 수행하며 Go/UI/full gate 재실행 금지.
+- result: implementation commitSHA와 외부 final candidate를 구분하고 총changedFiles2(Makefile+report), commands/exit/outcomes/unverified/blockers를 기록.
+- [ ] 실제 오류 안내 RED → 두 문자열 apply_patch 정정 → 오류 안내 GREEN 및 check dry-run 동등성 확인.
+- [ ] self-review/commit 후 동일 전체 reviewer에게 fix diff만 재검토받는다.
