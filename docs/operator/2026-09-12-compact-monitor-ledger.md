@@ -77,3 +77,6 @@ Task2 후보는 `57bb3b29780cce2ac5e9f041229f1ca3adc726fc`이며 fresh `compact_
 Task3의 자료와 Drawer는 독립 파일로 나눌 수 있으며 계약·base를 확정한 뒤 배정한다. 공유 App/cache/bindings 변경은 Task4까지 직렬 소유한다. 무거운 UI 검증은 한 worker씩 실행한다.
 
 Impeccable의 UI 착수 계약은 새 시안이 아닌 사용자 지정 설계의 기록이다. Task3a는 index.html 첫 body child에 150단어 이하 계약 주석을 먼저 남긴다. 기존 cobalt/slate/cloud token과 Segoe UI 계열, 간결한 목록·구분선을 유지한다. 상단 상태/Toolbox/설정, 최대1440px 본문, 좌우 고정 rail 제거, 폭420–480px 우측 overlay와 업무/자료 구분이 첫 화면 구조다. 도구는 복사 전용이며 프로젝트 Todo에서 전역 Drawer의 해당 필터로 연결한다. FORM key는 `user-pinned-compact-monitor`로 명시하고 무작위 seed를 실행했다고 주장하지 않는다. Task6는 build 결과의 주석 유지·화면 검토·기존 시각 체계 문서를 확인한다.
+
+Task2는 App boundary coverage 두 건 누락으로 BLOCK 후 같은 Luna가 app_test/report만 수정했다. `b7af8e3d6d51b554840275e6ecf535ecf3f54865`에서 scoped ACCEPT, 새 focused Go 로그 `/dev/shm/td-compact-toolbox-bindings-fix.ZEdOb6/app-focused.log`와 exit0를 확인했다. reviewer는 테스트를 재실행하지 않았다. 통합3a726fc/894f512 완료.
+Task3a/3b exact base는 `894f51229b9ec897592462c3ee9b5c6d42eb6042`다. Sol packet 준비 결과를 root가 검토·확정했다. 일반 Toolbox 진입은 명령어 탭/전체 필터, 프로젝트 바로가기는 할 일 탭/해당 key 필터로 고정했다. 계약 주석은 overlay가 본문을 일부 가릴 수 있으나 본문 폭을 재배치하지 않는다는 의미다. Task3a 먼저 계약을 기록하고 root 확인 뒤 Task3b UI를 시작한다. 구현2슬롯/리뷰1슬롯과 UI 테스트1슬롯을 예약한다.
