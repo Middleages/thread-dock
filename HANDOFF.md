@@ -12,6 +12,16 @@
 
 ## 제품 기준
 
+### 옛 엔진 제거 구현 완료
+
+독립 branch `agent/engine-retirement-completion`에서 8개 Task의 Luna 구현·fresh Sol 리뷰를 완료하고
+옛 소스·전용 테스트·fixture 167개 파일을 제거했다. 현재 Go package는 `monitor`, `internal/runner`,
+`internal/projecttemplate`뿐이다. 최신 main `2db8f77`의 Monitor/settings/GHES/Toolbox/Markdown/open-only 코드,
+runner·템플릿 검증 Go 코드와 go.mod/go.sum은 그대로다. GitHub template의 문구와 Agent의 stale 지시만 정리했다.
+아래 이전 slice에서 보존했던 state/gate/retirement 등은 당시의 중간 보존 범위이며 최종 트리에 남은 엔진이 아니다.
+최종 gate·전체 리뷰·PR 상태는 [ledger](docs/operator/2026-09-12-engine-retirement-completion-ledger.md)에 이어 기록한다.
+사용자 데이터·기존 worktree·중단된 실험은 보존했고 main 병합은 아직 수행하지 않았다.
+
 사용자 요구는 **Go 모니터 도구**다. Windows Go/Wails 앱과 기존 React 화면을 유지한다.
 “심플하게”는 ThreadDock 자체 실행 엔진을 줄이라는 의미이며 브라우저 전용 전환은 승인되지 않았다.
 현재 기준: [ADR 0008](docs/adr/0008-github-first-skills-before-engine.md),
@@ -164,7 +174,7 @@ packaged live 화면, Windows→WSL read path, clipboard/status 및 process/task
 아직 검증하지 않았다. `325db89`의 같은 Linux gate tuple은 반복하지 않으며, 후속 code PR은 마지막
 통합 `make check`를 새 SHA에서 한 번 수행한다.
 Vite는 화면 개발·빌드에 남긴다. Go를 없애거나 브라우저 제품으로 다시 전환하지 않는다.
-옛 엔진 대량 삭제는 필요한 모니터 의존성을 확인한 뒤 후속 정리한다.
+옛 엔진 제거 구현은 위 완료 범위와 ledger를 따른다. 남은 native/E2E 검증은 엔진 제거 완료와 별개다.
 
 Windows의 Go→WSL 호출은 기존 Herdr pane 환경을 자동 상속하지 않는다.
 실제 읽기 접근을 검증하고 환경값을 위조하지 않는다. 접근 실패는 명시적 blocker이며 새 실행 엔진을 만들 이유가 아니다.
@@ -193,7 +203,8 @@ PR #74의 미사용 GitHub safe-draft 제거와 PR #76의 worktree revert 제거
 PR #78·#80·#82·#84도 main에 병합됐다. 2026-09-12 기준 main은 사용자 추가 커밋을 포함한 `2db8f77`다.
 최신 settings/GHES/Toolbox와 여섯 canonical Skill을 보존한다. 2026-09-11 추가 설계·검증 제한도 읽는다.
 현재 Project는 https://github.com/users/Middleages/projects/1 이다.
-완료된 revert 정리를 반복하지 말고 남은 CLI·엔진의 다음 작은 경계를 확인해 진행한다.
+2026-09-12 엔진 제거 branch에서는 옛 CLI·엔진과 전용 fixture를 8개 reviewed Task로 모두 제거했다.
+현재 HANDOFF/ledger의 PR·검증·병합 상태를 먼저 확인하고 완료된 삭제를 반복하지 마.
 Linux 통합 gate와 표준 Windows package/live acceptance는 reviewed SHA `325db89`에서 완료됐다.
 healthy native run은 GitHub 69개 work item, Herdr 기본 session/3 agents, clipboard 188, `로컬 연결 정상`,
 process/task cleanup을 확인했으며 native error-state만 unverified다.

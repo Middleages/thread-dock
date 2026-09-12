@@ -127,3 +127,11 @@ Task 7: complete (구현 `4c181b9`, report `5afc72c`, fresh `retirement_task7_re
 Luna에게 report-only fix를 배정했다. result.commitSHA는 구현896c3df임을 명시하고 reviewedCandidate0a333b9를 구분하며 새 fix head는 외부 ledger/packet에 고정한다. 총7=source삭제6+report1, manifest/diff만 검사하고 Go 테스트는 재실행하지 않는다. Task6/8의 동일 계열 metadata 혼동을 반영해 공통 계획의 기록 규칙도 명확히 했다. 제품 변경은 없다.
 
 Task8 fix candidate: `b276412b8e67981e75ec82b0dbb7acfe40c4f9fd`, 직전 reviewed `0a333b93f4058e8461bc1a64d97d4874968db568`, implementation `896c3dfb825ef2ec5e6e185c4145608bd795b1ce`. report-only 수정과 total7/implementation 이후 제품 diff0/diff-check PASS, Go 테스트 재실행 없음. 동일 reviewer에게 한정 재검토한다.
+
+## Task 8 완료 · 구현 종료
+
+Task 8: complete (`b276412` scoped rereview ACCEPT, 두 metadata finding ADDRESSED, 새 문제 없음). 통합 `cda1e04`/`7c74f30`/`61cf732`. orphan6파일/423줄 삭제, runner test PASS0.119s와 정적 graph 근거 유지.
+
+통합 `61cf73292f0e1e1d2592a68a1f5a2a7592a5b53b`에서 root Go list는 `thread-dock/internal/projecttemplate`, `thread-dock/internal/runner`, `thread-dock/monitor` 세 개만 반환했다. 삭제된 tracked 파일은167개이며 `2db8f77` 대비 Monitor/runner/projecttemplate Go 코드/go.mod/go.sum diff는0이다. main과 중단된 사용자 실험은 보존했다.
+
+모든 Task의 코드·evidence 리뷰는 완료됐고 final make check와 전체 통합 리뷰를 남겼다. 이 단계에서 전체 제품 검증 완료나 main 병합을 주장하지 않는다.

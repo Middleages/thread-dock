@@ -38,6 +38,6 @@ Vite는 화면 개발·빌드 도구다. Node 조회 서버나 브라우저 전�
 ## 이전 용어
 
 Contract v2, Repository Run, Invocation, Artifact, Repair Budget, Go Task Gate,
-Final Manifest, Finalize는 기존 Go 실행기 코드의 용어다.
+Final Manifest, Finalize는 Git 이력에 남은 옛 Go 실행기의 용어다.
 신규 Skill·GitHub 업무 조회·세션 연결의 필수 입력이나 완료 조건으로 사용하지 않는다.
 과거 설계와 코드는 이력·재사용 참고용이며 신규 경로를 규정하지 않는다.

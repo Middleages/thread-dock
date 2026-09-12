@@ -67,4 +67,6 @@ reviewed SHA `325db89`에서 Linux `make check`, 표준 Windows Wails build와 h
 native 오류/degraded 상태의 실제 Windows 재현과 독립 기능 두 개의 Projects 기반
 end-to-end 운영 검증은 아직 남아 있다.
 Contract v2·Work 상태·Go Task Gate·Publisher를 신규 경로의 필수 입력으로 요구하지 않는다.
-덜어낼 것은 중복 실행 관리 기능이며 Go 모니터 자체는 유지한다.
+중복 실행 관리 기능은 2026-09-12 정리 branch에서 8개 reviewed Task로 제거했다. 현재 Go package는
+Monitor, runner, 프로젝트 템플릿 검증뿐이며 기존 사용자 runtime 데이터는 삭제하지 않았다.
+최종 검증·병합 상태는 HANDOFF와 엔진 제거 ledger를 따른다. Go 모니터 자체는 유지한다.

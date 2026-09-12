@@ -39,10 +39,10 @@
 - tests: Go1.27 `go list ./...`; `go test ./monitor ./internal/projecttemplate`; `go vet ./monitor ./internal/runner`; `make template-check`; `make -n check`; refs/gofmt/diff. 별도 TMPDIR tmpfs 사용. full suite 금지.
 - result: changedFiles, commitSHA, executedCommands(환경 포함), outcomes, unverified, blockers를 report에 기록한다.
 
-- [ ] production/test/config/docs caller 근거와 정확 삭제 파일을 report에 기록한다.
-- [ ] apply_patch로 owned 경로만 삭제하고 Makefile discovery/pilot/focused 예시를 정리한다.
-- [ ] focused 검증·self-review 후 commit한다. 삭제한 전용 동작의 대체 테스트를 만들지 않는다.
-- [ ] fresh Sol이 고정 SHA/diff를 검토하고 root가 통합한다.
+- [x] production/test/config/docs caller 근거와 정확 삭제 파일을 report에 기록한다.
+- [x] apply_patch로 owned 경로만 삭제하고 Makefile discovery/pilot/focused 예시를 정리한다.
+- [x] focused 검증·self-review 후 commit한다. 삭제한 전용 동작의 대체 테스트를 만들지 않는다.
+- [x] fresh Sol이 고정 SHA/diff를 검토하고 root가 통합한다.
 
 ### Task 2: v1 orchestrator root 제거
 
@@ -57,7 +57,7 @@
 - acceptance: 17파일의 source/test 삭제, 외부 importer 0, 남은 graph 유효. 로직 이동·대체 엔진 없음.
 - tests: `go list -deps ./...`, Linux/Windows `go list ./monitor`, `git diff --check`, 외부 import 검색. 단순 orphan 삭제이며 제품 테스트를 재실행하지 않는다.
 - result: changedFiles, commitSHA, executedCommands, outcomes, unverified, blockers를 report에 기록.
-- [ ] manifest/importer 증명 → apply_patch 삭제 → focused 정적 검사 → self-review/commit → fresh Task review.
+- [x] manifest/importer 증명 → apply_patch 삭제 → focused 정적 검사 → self-review/commit → fresh Task review.
 
 ### Task 3: v2 업무·발행·집계 root 제거
 
@@ -72,7 +72,7 @@
 - acceptance: source/test 삭제 후 유효 graph, 남은 coordinator 동작 유지. UI/server/대체 상태 모델 추가 금지.
 - tests: `go list -deps ./...`; 별도 tmpfs `go test ./internal/coordinator`; importer·diff 검사. full suite 금지.
 - result: changedFiles, commitSHA, executedCommands, outcomes, unverified, blockers를 report에 기록.
-- [ ] manifest/importer 증명 → apply_patch 삭제 → focused 검사 → self-review/commit → fresh Task review.
+- [x] manifest/importer 증명 → apply_patch 삭제 → focused 검사 → self-review/commit → fresh Task review.
 
 ### Task 4: coordinator와 Herdr 실행 adapter 제거
 
@@ -87,7 +87,7 @@
 - acceptance: coordinator의 유일 외부 소비자가 같은 Task herdr임을 증명하고 둘을 제거. session/worktree를 실제 종료·삭제하지 않음.
 - tests: `go list -deps ./...`, Linux/Windows `go list ./monitor`, 외부 import/diff 확인.
 - result: changedFiles, commitSHA, executedCommands, outcomes, unverified, blockers를 report에 기록.
-- [ ] importer 증명 → source/test 삭제 → 정적 검사 → self-review/commit → fresh Task review.
+- [x] importer 증명 → source/test 삭제 → 정적 검사 → self-review/commit → fresh Task review.
 
 ### Task 5: 옛 GitHub 쓰기·worktree adapter 제거
 
@@ -102,7 +102,7 @@
 - acceptance: 각 package 외부 importer 0, 실제 git/herdr cleanup 실행 0, source 삭제만 수행.
 - tests: `go list -deps ./...`, Linux/Windows `go list ./monitor`, 외부 import/diff 확인.
 - result: changedFiles, commitSHA, executedCommands, outcomes, unverified, blockers를 report에 기록.
-- [ ] importer 증명 → source/test 삭제 → 정적 검사 → self-review/commit → fresh Task review.
+- [x] importer 증명 → source/test 삭제 → 정적 검사 → self-review/commit → fresh Task review.
 
 ### Task 6: v1 상태·계약·정책 foundations 제거
 
@@ -117,7 +117,7 @@
 - acceptance: 폐기 package/fixture의 외부 소비자 0 및 v2 graph 유지, 사용자 runtime 데이터 변경 없음.
 - tests: `go list -deps ./...`, `go test ./internal/state/v2 ./internal/contract/v2`(고유 tmpfs), manifest/import/fixture/diff 검사.
 - result: changedFiles, commitSHA, executedCommands, outcomes, unverified, blockers를 report에 기록.
-- [ ] importer/fixture 증명 → exact source/test/fixture 삭제 → focused 검사 → self-review/commit → fresh Task review.
+- [x] importer/fixture 증명 → exact source/test/fixture 삭제 → focused 검사 → self-review/commit → fresh Task review.
 
 ### Task 7: v2 상태·runtime foundations 제거
 
@@ -132,7 +132,7 @@
 - acceptance: 외부 importer/fixture consumer 0, 소스와 전용 fixture만 삭제.
 - tests: `go list -deps ./...`, Linux/Windows `go list ./monitor`, 외부 import/fixture/diff 검사.
 - result: changedFiles, commitSHA, executedCommands, outcomes, unverified, blockers를 report에 기록.
-- [ ] importer/fixture 증명 → source/test/fixture 삭제 → 정적 검사 → self-review/commit → fresh Task review.
+- [x] importer/fixture 증명 → source/test/fixture 삭제 → 정적 검사 → self-review/commit → fresh Task review.
 
 ### Task 8: 최종 orphan utility 정리
 
@@ -147,7 +147,7 @@
 - acceptance: 남은 Go packages가 monitor/internal/runner/internal/projecttemplate뿐임을 확인한다. dependency/module 또는 새 구현 추가 없음.
 - tests: `go list -deps ./...`, `go test ./internal/runner`, `go list ./...`, Windows `go list ./monitor`, refs/diff. template/Monitor tests는 최종 root gate에서 통합.
 - result: changedFiles, commitSHA, executedCommands, outcomes, unverified, blockers를 report에 기록.
-- [ ] importer 증명 → source/test 삭제 → focused 검사 → self-review/commit → fresh Task review.
+- [x] importer 증명 → source/test 삭제 → focused 검사 → self-review/commit → fresh Task review.
 
 ### 최종 문서·통합
 
