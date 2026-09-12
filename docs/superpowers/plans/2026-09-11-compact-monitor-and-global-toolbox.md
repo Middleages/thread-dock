@@ -85,6 +85,21 @@ Task packet·검증·결정 근거는 [진행 ledger](../../operator/2026-09-12-
 
 ### Task 1: Split Toolbox persistence and add idempotent migration
 
+**Execution packet (2026-09-12):**
+- taskId: `compact-toolbox-storage`
+- baseSHA: `33d279a` (full SHA recorded in dispatch/report)
+- deps: approved spec/plan and preflight ledger rulings
+- ownedPaths: `monitor/toolbox.go`, `monitor/toolbox_test.go`, `.superpowers/sdd/2026-09-11-compact-monitor-and-global-toolbox/task-1-report.md`
+- worktree: `/home/appuser/dev_system/.worktrees/compact-toolbox-storage`
+- branch: `agent/compact-toolbox-storage`
+- forbiddenPaths: all other files, especially app.go/frontend/Makefile/go.mod/go.sum/Agent files; actual user configuration/data/session/worktree paths
+- interface: exact new domain/store methods below, plus `func (s globalToolboxStore) ensureMigrated(projects projectToolboxStore) error` for Task2's guarded App methods. Keep existing legacy types/get/put solely until Task4; legacy writes must reject project v2 instead of downgrading.
+- acceptance: reference-only v2, global v1, non-nil lists, common omitted output, atomic global-first migration/retry, no write on malformed/unsupported data/validation/over-limit failures, deterministic semantic dedupe and ID collision re-key. `putReferences` on v1 fails closed; references are never rewritten before global success. Real file fixtures only in t.TempDir. No product/default-profile file access in tests.
+- tests: planned focused RED/GREEN commands with Go1.27.0 and unique TMPDIR under /dev/shm; retain relevant existing Toolbox/reference validation coverage. Do not isolate GOPATH/GOCACHE unnecessarily or run full suite. Record actual command/exit and runtime paths; await tool session completion rather than losing its session ID.
+- result: changedFiles includes code/tests plus report, implementation commitSHA is explicit, final review candidate is pinned externally by root. Include RED/GREEN executedCommands/outcomes, self-review, unverified(actual runtime model/effort/native), blockers.
+
+**Additional concrete cases from the data-preservation review:** existing valid global + legacy v1 retry; malformed/unsupported project/global leaves both files unchanged; project rewrite failure leaves legacy bytes intact and global data complete; same semantic Todo with done conflict keeps false; different items with colliding IDs remain independently addressable; merged >200 commands/Todos errors before writes; reference save without migration cannot drop legacy fields. Composite dedupe keys must not ambiguously concatenate arbitrary text. Keep existing reference/command field limits, and Todo text max2000.
+
 **Files:**
 - Modify: `monitor/toolbox.go`
 - Modify: `monitor/toolbox_test.go`
