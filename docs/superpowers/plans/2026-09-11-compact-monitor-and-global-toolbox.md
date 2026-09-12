@@ -34,6 +34,7 @@
 - common Todo는 Go string/omitempty와 TS optional string을 사용한다. missing/null/empty/공백 입력은 common으로 정규화하고 출력은 projectKey를 생략한다.
 - migration 재개 기준은 projects.json의 version1이다. global 파일이 이미 있어도 legacy project가 남으면 유효한 기존 global과 merge하고 global 저장→project v2 rewrite 순서로 재시도한다. 잘못된 파일·미지원 version·합산200개 초과는 쓰기 전 오류로 보존하며 truncation하지 않는다.
 - refs 쓰기는 legacy를 migration 없이 덮어쓰지 않는다. store putReferences는 legacy에 migration-required 오류로 fail closed하고 Task2의 모든 Toolbox App 호출은 전용 mutex 아래 migration을 선행한다.
+- 첫 global put이 v1 migration을 동반하면 기존 global·legacy·호출자 항목을 함께 보존한 canonical merge를 저장/반환한다. project가 absent/v2인 정상 put만 전체 교체다. 모든 put은 기존 global의 유효성도 확인해 malformed/unsupported 파일을 덮지 않는다. App SaveGlobalToolbox는 mutex 아래 migration-aware put에 직접 위임하고 별도 ensure 호출로 v1 여부를 먼저 지우지 않는다.
 - migration은 project key 정렬로 결정적이며 semantic dedupe와 ID 충돌을 구분한다. 서로 다른 항목의 중복 ID는 결정적으로 재키하고 기존 global 항목을 우선 보존한다.
 - 설계대로 Todo는 미완료 기본/완료 포함 toggle을 제공한다. unknown project는 `알 수 없는 프로젝트 (<raw key>)`로 표시하고 common/현재 프로젝트로 재지정할 수 있다. 프로젝트 Todo shortcut은 Todo 탭과 해당 필터를 함께 연다.
 - App이 global Toolbox load/cache/save를 한 곳에서 소유한다. 최초 load 성공 전과 save 중에는 mutation을 막고, 실패 시 입력과 마지막 확정 값을 유지한다. Drawer는 아래 controlled props를 추가로 받는다: `toolbox: GlobalToolbox | null`, `loadError?: string`, `loading: boolean`, `saving: boolean`, `onReload: () => void`, `onSave: (next: GlobalToolbox) => Promise<GlobalToolbox>`. App은 초기 한 번 load해 count를 계산하며 오류 후 명시적 reload/reopen에서 재시도한다. ProjectDetail은 계획의 `projectTodoCount: number`를 사용하고 양수일 때 shortcut을 표시한다.

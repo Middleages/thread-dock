@@ -49,3 +49,15 @@ Impeccable context는 한 번 실행했다. 승인된 Operate 레이아웃과 �
 - worktree `.worktrees/compact-toolbox-storage`, branch `agent/compact-toolbox-storage`.
 - ownedPaths는 toolbox.go/toolbox_test.go와 Task1 report뿐이며, app/frontend/실제 사용자 데이터는 forbidden이다. 나머지 packet과 추가 데이터 보존 테스트는 추출된 Task1 brief에 고정했다.
 - Task1 pending; 현재 구현 worker1, fresh reviewer1 슬롯 예약. root는 문서·UI 검증 준비를 병행한다.
+
+## Task1 review BLOCK · fix round1
+
+후보 `6e77d7939f09729abfe152fc3fc38f3491b4c414`(구현a03b2db)를 fresh `compact_storage_review`가 BLOCK했다. global.put이 migration 후 caller값만 저장해 legacy를 잃고, project absent/v2 때 malformed global을 검증 없이 덮으며, existing-global semantic duplicate를 실제 compact하지 않는다. 필수 regression 사례와 정확한 command/TMPDIR 근거가 빠졌고 report 끝 빈 줄도 diff-check에 걸렸다. 후보는 통합하지 않았다. 실제 사용자 파일은 접근하지 않았다.
+
+Ruling: migration을 동반한 최초 global put은 existing global+legacy+caller를 함께 merge해 global-first로 저장/반환하고, 이미 v2인 정상 put만 전체 교체한다 — 첫 호출에서 보이지 않은 legacy 데이터의 유실 방지 — v1 상태에서 직접 replace를 기대하는 호출자는 반환된 merged state를 다시 사용해야 하며 새 UI는 load 성공 후에만 save한다.
+
+Task2 SaveGlobalToolbox는 별도 ensure로 migration 여부를 지우지 않고 mutex 안에서 migration-aware put으로 직접 위임한다. refs methods는 ensure 뒤 reference 접근, GetGlobal은 get을 호출한다. 저장 경로 전체의 existing-file 검증, 완전한 dedupe, missing regression tests와 재현 가능한 새 RED/GREEN evidence를 같은 Luna에 배정한다. old test tuple은 기록이 불충분하므로 새 수정 tuple의 focused 근거로 대체하며 repo-wide suite는 실행하지 않는다.
+
+## Browser 준비 근거
+
+Browser plugin/agent-browser CLI는 없지만 cached Playwright1.55.0과 matching Chromium1187이 존재한다. 첫 headless launch는 /tmp profile에서180초 timeout으로 실패했다. 실제 UI 검증이 아니며 재현·환경 확인 전 통과로 기록하지 않는다. native computer-use는 여전히 없다.
