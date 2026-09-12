@@ -97,3 +97,5 @@ Task3b fresh review는 root 발견 key 유실, 필수 경로 테스트 누락, f
 
 Task3b는 fix27dc8d9/report `2b6436977adc3259fa921dd2e8c60ecffc0a881b`에서 same independent reviewer scoped ACCEPT다. 실제 RED3회귀/최종 GREEN21tests·typecheck를 채택했다. 통합ea59e7b/551bb54/d921f5f/153c196 완료. worker가 언급한 중간 timeout의 상세 invocation은 보고서에서 빠져 별도 확인 요청 중이며 최종 성공 tuple과 혼합하지 않는다. 이전 untracked root node_modules는 Vitest `.vite/results.json` cache뿐이고 보존했다. frontend prepared symlink만 제거했고 연결 대상 dependency cache는 유지했다.
 Task4 exact base `153c196054c27f0d0addbcd829e9e9985b105992`, worktree `.worktrees/compact-monitor-integration`, branch `agent/compact-monitor-integration`에 live Luna를 배정했다. Task3 경로는 read-only 의존성, App/Settings/private helper/old Go·TS API 제거는 이 worker 하나가 소유한다. UI test slot1/구현1, reviewer용 여유를 유지한다.
+
+Windows 검증 가능 범위 추가 확인: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`가 실행 가능하며 사용자 지정 경로의 실제 버전 명령이 exit0으로 Go1.27.0 windows/amd64, Node26.8.1, Wails2.15.0을 반환했다. 최종 고정 SHA를 새 NTFS 임시 staging에 export해 표준 Wails build를 실행할 수 있다. 이전 staging은 삭제·수정하지 않는다. native computer-use는 여전히 노출되지 않아 앱 조작/clipboard/실제 파일 migration smoke는 Windows GPT app 확인이 필요하다. 버전 probe는 새 제품 build 성공 근거가 아니다.

@@ -6,7 +6,7 @@
 - 요청 branch `agent/compact-monitor-toolbox`의 기존03df312 이력을 보존하고 main을 merge한 `4c52f64`에서 시작했다. 독립 worktree는 `.worktrees/compact-monitor-toolbox`이며 초기 tree는 main과 동일하다.
 - [Issue91](https://github.com/Middleages/thread-dock/issues/91), [지정 설계](docs/superpowers/specs/2026-09-11-compact-monitor-and-global-toolbox-design.md), [지정 계획](docs/superpowers/plans/2026-09-11-compact-monitor-and-global-toolbox.md), [새 ledger](docs/operator/2026-09-12-compact-monitor-ledger.md)를 따른다.
 - 첫 Task는 references/global JSON store와 안전한 migration이다. UI·기존 API는 마지막 consumer 교체 뒤 제거하고, command 실행·Agent 자동 주입·SQLite/새 engine은 추가하지 않는다.
-- 구현은 아직 진행 중이다. 이전 PR90의 검증을 새 기능 완료 근거로 사용하지 않는다. Windows/native 도구가 현재 노출되지 않아 마지막 package/실사용 smoke는 사용자 Windows GPT app 근거를 요청한다.
+- 구현은 아직 진행 중이다. 이전 PR90의 검증을 새 기능 완료 근거로 사용하지 않는다. Windows PowerShell의 Go1.27.0/Node26.8.1/Wails2.15.0 실행은 확인돼 최종 package build는 이 세션에서 진행할 수 있다. native computer-use는 노출되지 않아 실제 앱 smoke는 사용자 Windows GPT app 근거를 요청한다.
 
 ## 과거 기록: 2026-09-12 엔진 제거 재착수
 
