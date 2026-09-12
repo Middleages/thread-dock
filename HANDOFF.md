@@ -5,8 +5,10 @@
 - PR90은 사용자 지시로 main `611bd6aec528ed63106bd3ef3167c2f9c95e0d01`에 병합됐다. Issue89와 보드는 완료다. 아래 엔진 정리의 미병합 표현은 이전 게시 시점 기록이다.
 - 요청 branch `agent/compact-monitor-toolbox`의 기존03df312 이력을 보존하고 main을 merge한 `4c52f64`에서 시작했다. 독립 worktree는 `.worktrees/compact-monitor-toolbox`이며 초기 tree는 main과 동일하다.
 - [Issue91](https://github.com/Middleages/thread-dock/issues/91), [지정 설계](docs/superpowers/specs/2026-09-11-compact-monitor-and-global-toolbox-design.md), [지정 계획](docs/superpowers/plans/2026-09-11-compact-monitor-and-global-toolbox.md), [새 ledger](docs/operator/2026-09-12-compact-monitor-ledger.md)를 따른다.
-- 첫 Task는 references/global JSON store와 안전한 migration이다. UI·기존 API는 마지막 consumer 교체 뒤 제거하고, command 실행·Agent 자동 주입·SQLite/새 engine은 추가하지 않는다.
-- 구현은 아직 진행 중이다. 이전 PR90의 검증을 새 기능 완료 근거로 사용하지 않는다. Windows PowerShell의 Go1.27.0/Node26.8.1/Wails2.15.0 실행은 확인돼 최종 package build는 이 세션에서 진행할 수 있다. native computer-use는 노출되지 않아 실제 앱 smoke는 사용자 Windows GPT app 근거를 요청한다.
+- Tasks1–5와 최종 test manifest·화면 수정 구현은 완료했다. references/global JSON migration, 자료/전역 Drawer, TopBar/Settings/ProjectDetail, Herdr summary가 반영됐고 old Toolbox UI/API는 제거했다. command 실행·Agent 자동 주입·SQLite/새 engine은 없다.
+- 최종 `make check`는 `fbefd79`에서 Go3패키지·UI13파일95tests·TypeScript/Vite build PASS다. 첫953db4e gate의 gofmt 실패는 두 줄 정렬 수정으로 해결했다. 같은 전체 suite를 이후 반복하지 않는다.
+- Windows 표준 Wails build와 Windows 임시 파일 migration focused tests는953db4e에서 PASS다. 이후 제품 diff는 gofmt 공백뿐이며 정규화 해시가 같다. actual native 앱 조작은 여전히 미검증이고 Windows GPT app 검증을 요청했다. [정확한 검증·artifact 기록](docs/superpowers/reviews/2026-09-13-compact-monitor-toolbox-verification.md)을 따른다.
+- Browser fixture는 console0·narrow overflow0, 독립 visual verdict는 `ship`이다. 새 DESIGN.md는 기존 시각 체계를 기록한다. PR 게시·최종 통합 리뷰 상태는 ledger를 확인하며, 새 PR main 병합은 사용자에게 남긴다.
 
 ## 과거 기록: 2026-09-12 엔진 제거 재착수
 

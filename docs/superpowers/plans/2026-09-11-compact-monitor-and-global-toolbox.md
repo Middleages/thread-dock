@@ -806,6 +806,8 @@ git commit -m "refactor: collapse herdr details into work summary"
 
 ### Task 6: Update regression gates, docs, and run final verification once
 
+**실행 결과:** manifest13파일, 사용자 문서, DESIGN 기록, visual `ship`, Linux gatefbefd79(Go3/UI95/build), Windows build953db4e와 Windows 임시 파일 migration tests는 완료했다. 최초 gate는 테스트 전에 gofmt에서 실패했고 두 줄 정렬 수정 후 최종 gate가 통과했다. Step4의 중복 full 묶음은 사전 결정대로 실행하지 않았다. Step6 실제 Windows 앱 smoke는 native computer-use 미노출로 사용자 검증을 요청했으며 미완료다. 정확한 결과는 2026-09-13 검증 기록을 따른다.
+
 **Files:**
 - Modify: `Makefile`
 - Modify: `README.md`
@@ -816,7 +818,7 @@ git commit -m "refactor: collapse herdr details into work summary"
 **Interfaces:**
 - No new product interfaces. This task closes regression coverage and user-facing documentation.
 
-- [ ] **Step 1: Update `FRONTEND_TESTS` in Makefile**
+- [x] **Step 1: Update `FRONTEND_TESTS` in Makefile**
 
 Ensure the list includes:
 
@@ -836,7 +838,7 @@ src/HerdrSummary.test.tsx
 
 Remove obsolete `ProjectToolbox.test.tsx`.
 
-- [ ] **Step 2: Update README behavior, not architecture marketing**
+- [x] **Step 2: Update README behavior, not architecture marketing**
 
 Document only current user-visible behavior:
 - top bar instead of permanent sidebars
@@ -850,7 +852,7 @@ Document only current user-visible behavior:
 
 Do not imply SQLite is used.
 
-- [ ] **Step 3: Update usability checklist for the redesign**
+- [x] **Step 3: Update usability checklist for the redesign**
 
 Add manual checks:
 - 1280px: no permanent left/right sidebar
@@ -878,7 +880,7 @@ npm --prefix monitor/frontend run build
 
 Expected: all PASS.
 
-- [ ] **Step 5: Run the repository-wide gate once**
+- [x] **Step 5: Run the repository-wide gate once**
 
 Run:
 
@@ -911,7 +913,7 @@ Manual smoke:
 8. Restart the app and verify references/commands/Todos persist.
 9. If legacy `projects.json` exists, verify migration preserves all prior references, commands, and checklist items.
 
-- [ ] **Step 7: Write verification note with exact evidence**
+- [x] **Step 7: Write verification note with exact evidence**
 
 Record:
 - final commit SHA
@@ -923,7 +925,7 @@ Record:
 
 Never promote earlier PR #87 verification to this branch's current SHA.
 
-- [ ] **Step 8: Commit Task 6**
+- [x] **Step 8: Commit Task 6**
 
 ```bash
 git add Makefile README.md docs/usability-checklist.md docs/superpowers/reviews monitor/frontend/src/monitor.test.tsx monitor/frontend/src/AppScope.test.tsx
@@ -954,7 +956,7 @@ Before opening or updating a PR, the coordinator/reviewer must confirm:
 
 ## Next-session execution prompt
 
-Use this prompt to start implementation in the next session:
+아래는 설계 작성 당시의 최초 착수 프롬프트다. 구현 Task1–5는 이미 완료했으므로 그대로 재실행하지 않는다. 다음 세션은 HANDOFF와 ledger의 최종 SHA·PR·native 검증 상태부터 확인한다.
 
 ```text
 @GitHub Middleages/thread-dock의 agent/compact-monitor-toolbox 브랜치에서 구현을 시작해줘.

@@ -117,3 +117,11 @@ Task5 수정cc8e4ecc에서 scoped ACCEPT, manifest26eb0b1에서 fresh ACCEPT를 
 
 source516a40a의 browser fixture 전체 흐름은 exit0, console0, narrow414px 가로 넘침0/Drawer380.875px를 확인했다. 기본 Chromium GPU 경로 timeout과 사라진 체크박자를 기다린 harness 오류, disable-gpu 대조 및 수정 후 성공을 새 [검증 기록](../superpowers/reviews/2026-09-13-compact-monitor-toolbox-verification.md)에 분리했다.
 독립 visual review는 `disposition: fix`로 toolbar/eyebrow/close icon/자간/자동 focus 다섯 항목을 지정했다. `.worktrees/compact-visual-fix`/`agent/compact-visual-fix`, base516a40a에서 같은 Luna가 한 batch로 수정한다. 루트 원안의 기존 alert3px warning 다섯 건은 시각 체계 보존 결정으로 유지하며 detector는 한 번만 실행했다. final gate와 Windows build는 시각 수정 뒤 고정 SHA에서 수행한다.
+
+## 최종 gate · 게시 준비
+
+Visual fix 후보c22873f(원 구현1ee5609)의 새 focus 회귀는 통과했지만 ext4 AppScope 전체는 세 timeout으로 실패했다. root가 개발 서버를 종료하고 동일 후보를 `/dev/shm/threaddock-compact-final.f5rFZF/checkout`에 격리한 tuple에서11tests가 통과했다. 코드 변경 없이 조건을 분리한 근거이지 특정 OS 원인 확정은 아니다. 첫 RED 로그에는 focus 실패+1timeout이었는데 report의3timeout 표현도 정정했다.
+첫 post-fix visual 판정은 active scope dark-on-dark를 remaining으로 남겼다. CSS-only6f474fe/report0917dbf(통합a2e94db/953db4e)가 중복 theme를 제거했고, 같은 캡처 경로 재검토에서 모든5항목 resolved/remaining clear/`disposition: ship`을 받았다. 최종 대비15.6589:1/refresh119.328px/414px overflow0/console0. 추가 detector는 실행하지 않았다.
+953db4e에서 Windows 표준 Wails build48.277초·임시 파일 storage tests0.675초 PASS. 새 staging만 만들었고 이전 staging은 보존했다. artifact 위치·hash와 time.Time generator 진단은 검증 기록에 있다. native computer-use가 없어 Windows GPT app 검증을 비동기로 요청했으며 아직 native 결과는 없다.
+953db4e의 첫 `make check`는 Makefile39 gofmt에서 멈췄다(Go/UI tests 시작 전). Task4 App fields의 두 줄 정렬을 Luna e705975/reportf60ce2c로 수정해 통합a55134d/fbefd79했다. 정규화 hash 일치로 Windows953과 실행 코드가 같음을 확인했다. 최종 fbefd79 gate는 exit0: Go vet/3packages, UI13files95tests, TypeScript/Vite build. 이후 동일 suite는 반복하지 않는다.
+기존 시각 체계 문서는 coordinator의9861699/3fcf633/63835a8을 ac98ea2/24a08a8/e4203b8로 통합했다. SVG/status snippet도 실제 코드와 일치하게 docs-only 보정했다. 이후 문서 변경은 parse/link 검증과 최종 통합 리뷰로 확인하며 제품 gate를 재실행하지 않는다. final integration review와 PR 게시 대기; main merge는 사용자 작업이다.

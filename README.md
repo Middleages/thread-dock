@@ -154,6 +154,8 @@ wails build
 
 기존 final reviewed SHA `325db89`에서는 Go/Wails package와 healthy native run이 검증된 이력이 있습니다. 현재 PR/브랜치의 새 UI와 Agent/Skill 템플릿은 해당 과거 결과로 자동 승격하지 않으며, merge 전에 현재 SHA에서 `make check`, Windows `wails build`, 실제 GHES + WSL + Herdr smoke를 별도로 확인합니다.
 
+compact Monitor의 현재 gate·Windows build·browser fixture 및 native 미검증 범위는 [2026-09-13 검증 기록](docs/superpowers/reviews/2026-09-13-compact-monitor-toolbox-verification.md)에 SHA별로 구분했습니다.
+
 ## 문서
 
 - [운영 Quickstart](docs/operator/github-first-quickstart.md)
