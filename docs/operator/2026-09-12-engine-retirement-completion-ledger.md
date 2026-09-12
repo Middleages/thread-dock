@@ -147,3 +147,11 @@ Task 8: complete (`b276412` scoped rereview ACCEPT, 두 metadata finding ADDRESS
 - taskId `retirement-ui-startup-diagnosis`: Sol read-only, base e630c5a, ownedPaths[], above validation worktree(detached); forbidden writes/full suite repeats/timeout·isolation 완화/process 종료; acceptance 설치 Node/Vitest의 지원되는 cache/초기화 환경을 근거로 한 최소 대조; tests source/help/non-test probe만; result는 후속 기록. 실제 runtime model/effort unverified.
 
 문서104개/로컬 링크141개 검사와 diff check는 PASS다. 이 근거가 UI/full gate 성공을 뜻하지 않는다.
+
+## UI 초기화·query 분리 진단
+
+- Sol read-only probe: 현재 compile cache는 unset/비활성, Node timer24ms·raw IPC36ms·Vitest import44ms·jsdom import817ms. forks entrypoint는 graph를 읽고 예상한 no-IPC 오류로0.38s에 종료했다. 이는 테스트 성공이 아닌 초기화 가능 근거다.
+- root DOM probe: jsdom import2077ms/create169ms, 첫 getByRole709ms/다음10ms. WorkTable의 실제 CSS와 유사 DOM을 쓴 추가 probe는 load1917ms, Intl14ms, header query89/4ms, button663ms였다. 실제 WorkTable 테스트 대체 증거로 사용하지 않는다.
+- 현재 시점에는 gate의60s startup/36s sync 실행을 재현하지 못했다. 비균일한 자원·스케줄링 지연 가설이며 정확한 병목은 미확정이다.
+- 설치 Node26은 compile cache를 지원하고 Vitest5는 parent env를 worker에 전달하며 종료 때 flushCompileCache를 호출한다. coverage는 비활성이다. dedicated tmpfs `NODE_COMPILE_CACHE=/dev/shm/threaddock-node-compile.kOQNbZ` 한 변수만 추가해 반복 compilation을 줄이는 대조를 선택했다. 첫 worker와 host starvation 해결을 보장하지 않는다.
+- 첫 대조는 실패했던 WorkTable/monitor/AppScope3파일의 focused 실행이다. 같은 e630c5a·source/lock/deps·forks·isolation·assertion·timeout을 유지한다. full gate 재실행 전 결과를 확인한다. 로그 `ui-failed-files-compile-cache-e630c5a.log`는 같은 비추적 진단 디렉터리에 둔다.
