@@ -50,3 +50,22 @@
 - Load/save operation revisions prevent stale responses from replacing a newer successful cache.
 - Failed global save leaves the committed command and draft inputs visible; accepted AppScope regression covers this.
 - No command execution, Agent injection, browser fetch, new Wails API, or shared wire type was added.
+
+## Review fix r1 — `compact-monitor-integration`
+
+- review base: `86a0ad4d3860cfb8e49f375d6ed6e322f1c6fc30`
+- fix candidate: `b33dd8bae8f28fb28d9f9504d5e2d19f747d1882`
+- findings addressed:
+  - Restored the original separate `Project 필드` section and per-field evidence rows in `ProjectDetail`; the exact `In progress` assertion is retained.
+  - Removed unused `copyText`, `HerdrConnections`, and their imports from `ProjectDetail`; Herdr rendering remains in App for Task5.
+  - Restored the exact migration validator regression `TestValidateProjectToolboxRejectsExecutableOrRelativeReferences`.
+  - Added App-level shortcut/filter, successful-save cache/count, normal-entry reset, deferred duplicate-save, and committed-command reopen coverage. The existing Drawer lifecycle already resets normal entry after controlled close/reopen, so no App production change was needed for that finding.
+- executedCommands:
+  - `VITEST_MAX_WORKERS=1 NODE_COMPILE_CACHE=/dev/shm/threaddock-compact-nodecache.dJMMfd TMPDIR=/dev/shm/td-compact-task4-fix-red.A1eIo2 npm --prefix monitor/frontend test -- src/AppScope.test.tsx` — log `/dev/shm/td-compact-task4-fix-red.A1eIo2/appscope-red.log`, exit `1`; one new normal-entry assertion exposed the review regression before correction
+  - `VITEST_MAX_WORKERS=1 NODE_COMPILE_CACHE=/dev/shm/threaddock-compact-nodecache.dJMMfd TMPDIR=/dev/shm/td-compact-task4-fix-green.pgGYxf npm --prefix monitor/frontend test -- src/AppScope.test.tsx` — log `/dev/shm/td-compact-task4-fix-green.pgGYxf/appscope-green.log`, exit `0`, `1 file / 10 tests`
+  - `VITEST_MAX_WORKERS=1 NODE_COMPILE_CACHE=/dev/shm/threaddock-compact-nodecache.dJMMfd TMPDIR=/dev/shm/td-compact-task4-fix-ui.C2IV85 npm --prefix monitor/frontend test -- src/ProjectDetail.test.tsx src/monitor.test.tsx` — log `/dev/shm/td-compact-task4-fix-ui.C2IV85/focused-ui.log`, exit `0`, `2 files / 28 tests`
+  - `PATH=/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin:$PATH TMPDIR=/dev/shm/td-compact-task4-fix-go.675M97 go test ./monitor -run '^TestValidateProjectToolboxRejectsExecutableOrRelativeReferences$' -count=1` — log `/dev/shm/td-compact-task4-fix-go.675M97/validator.log`, exit `0`
+  - `cd monitor/frontend && NODE_COMPILE_CACHE=/dev/shm/threaddock-compact-nodecache.dJMMfd TMPDIR=/dev/shm/td-compact-task4-fix-tsc.gEpQLl ./node_modules/.bin/tsc --noEmit --project tsconfig.json` — log `/dev/shm/td-compact-task4-fix-tsc.gEpQLl/tsc.log`, exit `0`
+- outcomes: exact Project field presentation, migration validator, App cache/count/save/reset regressions all pass; no full suite/build/make check repeated.
+- unverified: runtime model/effort, Windows native behavior, final browser/native visual and integrated gate
+- blockers: none
