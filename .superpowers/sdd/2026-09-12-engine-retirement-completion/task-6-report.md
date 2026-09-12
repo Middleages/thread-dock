@@ -47,6 +47,7 @@ worktree 및 Herdr session에는 접근하거나 변경하지 않았다.
   - exact owned path 삭제 후 `git diff --check`, changed path allow-list, v2 file manifest 검사
   - 삭제 후 Go 1.27 `TMPDIR=/dev/shm/threaddock-task6-list.sHXXB9 go list -deps ./...` (124 deps)
   - 삭제 후 v1 exact graph/import assertion 및 v2 subtree preservation 검사
+  - 별도 `GOCACHE/GOPATH`까지 tmpfs로 격리한 focused test 시도는 표준 라이브러리 재컴파일 지연으로 도구 대기 한도를 넘어 종료가 불명확했으며, 통과 근거로 사용하지 않음
   - `TMPDIR=/dev/shm/threaddock-task6-test2.amB4p1 /home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin/go test ./internal/state/v2 ./internal/contract/v2`
   - `git add` exact owned paths 및 `git commit -m 'v1 상태와 계약 foundations 제거'`
 - outcomes:
@@ -61,6 +62,7 @@ worktree 및 Herdr session에는 접근하거나 변경하지 않았다.
   - final integrated `make check`
   - Windows native Wails build/live GitHub·Herdr execution 및 runtime model/native identity
   - 삭제된 package의 기존 테스트 실행 (package가 제거되어 focused v2 테스트와 정적 graph만 실행)
+  - 별도 tmpfs `GOCACHE/GOPATH`를 사용한 최초 focused test 시도의 종료 상태 (후속 요구 환경 테스트는 PASS)
 - blockers: 없음
 
 ## Self-review
