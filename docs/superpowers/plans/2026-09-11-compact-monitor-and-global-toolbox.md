@@ -27,6 +27,22 @@
 
 ## File Structure
 
+### 2026-09-12 실행 전 정합성 보정
+
+지정 설계를 기준으로 아래 충돌과 데이터 보존 경계를 고정했다. 원래 Task 1→6 순서는 유지한다.
+
+- common Todo는 Go string/omitempty와 TS optional string을 사용한다. missing/null/empty/공백 입력은 common으로 정규화하고 출력은 projectKey를 생략한다.
+- migration 재개 기준은 projects.json의 version1이다. global 파일이 이미 있어도 legacy project가 남으면 유효한 기존 global과 merge하고 global 저장→project v2 rewrite 순서로 재시도한다. 잘못된 파일·미지원 version·합산200개 초과는 쓰기 전 오류로 보존하며 truncation하지 않는다.
+- refs 쓰기는 legacy를 migration 없이 덮어쓰지 않는다. store putReferences는 legacy에 migration-required 오류로 fail closed하고 Task2의 모든 Toolbox App 호출은 전용 mutex 아래 migration을 선행한다.
+- migration은 project key 정렬로 결정적이며 semantic dedupe와 ID 충돌을 구분한다. 서로 다른 항목의 중복 ID는 결정적으로 재키하고 기존 global 항목을 우선 보존한다.
+- 설계대로 Todo는 미완료 기본/완료 포함 toggle을 제공한다. unknown project는 `알 수 없는 프로젝트 (<raw key>)`로 표시하고 common/현재 프로젝트로 재지정할 수 있다. 프로젝트 Todo shortcut은 Todo 탭과 해당 필터를 함께 연다.
+- App이 global Toolbox load/cache/save를 한 곳에서 소유한다. 최초 load 성공 전과 save 중에는 mutation을 막고, 실패 시 입력과 마지막 확정 값을 유지한다. Drawer는 아래 controlled props를 추가로 받는다: `toolbox: GlobalToolbox | null`, `loadError?: string`, `loading: boolean`, `saving: boolean`, `onReload: () => void`, `onSave: (next: GlobalToolbox) => Promise<GlobalToolbox>`. App은 초기 한 번 load해 count를 계산하며 오류 후 명시적 reload/reopen에서 재시도한다. ProjectDetail은 계획의 `projectTodoCount: number`를 사용하고 양수일 때 shortcut을 표시한다.
+- compile-valid 중간 전이를 위해 Task1 legacy Go types/get/put, Task2 old Wails/TS contracts, Task3 old ProjectToolbox 파일은 마지막 consumer 교체까지 임시 유지한다. Task4에서 App 교체 후 기존 component/test/CSS·old bindings/methods·legacy get/put을 제거한다. legacy 디스크 decoder 타입은 private로 남길 수 있다. v2에 대한 legacy write는 거절해 schema downgrade를 막는다.
+- Task2에는 project-key helper 추출만 위한 App.tsx 소유권을 추가한다. Task4에는 old API 제거를 위한 toolbox.go/toolbox_test.go/app.go/app_test.go/bindings.ts/bindings.test.ts 및 old ProjectToolbox 세 파일 소유권을 추가한다. 이 공유 경로는 직렬 작업한다.
+- Task6의 사전 전체 Go/UI/build 묶음은 이미 실행한 focused 증거와 중복되므로 추가 full suite로 실행하지 않는다. 변경 영향 검증과 마지막 make check 한 번을 구분한다. Windows/native smoke는 별도 실제 근거가 없으면 not run이다.
+
+Task packet·검증·결정 근거는 [진행 ledger](../../operator/2026-09-12-compact-monitor-ledger.md)를 따른다. 제품 SQLite/새 engine/command 실행/Agent 주입 범위는 추가하지 않는다.
+
 ### Backend
 
 - Modify `monitor/toolbox.go` — own Toolbox domain types, validation, project-reference store, global Toolbox store, and idempotent v1→v2 migration.
