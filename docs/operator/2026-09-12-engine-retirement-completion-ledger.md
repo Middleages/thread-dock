@@ -79,3 +79,11 @@ Task 3: complete (구현 `f170b7a`, report `bda6512`, fresh `retirement_task3_re
 - Luna `retirement_v2_adapters`, `.worktrees/retirement-v2-adapters`, branch `agent/retirement-v2-adapters`.
 - owned internal/herdr 전체에는 testdata/v0.8.2의 14개 전용 fixture를 포함한다. 제품 monitor/herdr.go와 실제 Herdr session lifecycle은 변경하지 않는다.
 - packet의 나머지 fields는 계획 Task 4에 고정했다. 구현 worker 1개, reviewer 1개 예약.
+
+## Task 4 완료 · Task 5 배정
+
+Task 4: complete (구현 `87d4b81`, report `62226de`, fresh `retirement_task4_review` spec/quality ACCEPT, findings 없음). 통합 `1b85898`/`1babc97`. coordinator15·Herdr source/test5·fixture14, 총34파일/9122줄 삭제. 내부 역의존 군집 외 importer0과 Linux/Windows Monitor graph를 확인했고 실제 session/worktree는 변경하지 않았다.
+
+- Task 5 exact base: `1babc9727690393698812ff6c2e0184d1bd563b8`.
+- Luna `retirement_git_adapters`, `.worktrees/retirement-git-adapters`, branch `agent/retirement-git-adapters`.
+- owned는 internal/github와 internal/worktree 소스뿐이며 실제 Git worktree 삭제·cleanup 명령은 금지한다. 나머지 packet은 계획 Task5를 따른다.
