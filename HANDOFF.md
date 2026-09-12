@@ -8,7 +8,7 @@
 - 첫 Task는 references/global JSON store와 안전한 migration이다. UI·기존 API는 마지막 consumer 교체 뒤 제거하고, command 실행·Agent 자동 주입·SQLite/새 engine은 추가하지 않는다.
 - 구현은 아직 진행 중이다. 이전 PR90의 검증을 새 기능 완료 근거로 사용하지 않는다. Windows/native 도구가 현재 노출되지 않아 마지막 package/실사용 smoke는 사용자 Windows GPT app 근거를 요청한다.
 
-## 2026-09-12 재착수 상태
+## 과거 기록: 2026-09-12 엔진 제거 재착수
 
 - main을 `2db8f776d22afd849fcb9a1328f7e8aff9b72e50`로 fast-forward했다. PR #82는 `6aced75`, #84는 `c487e8c`에 병합됐다.
 - 사용자 추가 PR #85·#86·#87은 settings 저장/UI, GHES host, 열린 업무 중심 화면, Markdown, 프로젝트 Toolbox 및 새 Agent/Skill 구조를 포함한다. 삭제 작업에서 이 기능과 데이터는 보존한다.
@@ -28,7 +28,7 @@
 runner·템플릿 검증 Go 코드와 go.mod/go.sum은 그대로다. GitHub template의 문구와 Agent의 stale 지시만 정리했다.
 아래 이전 slice에서 보존했던 state/gate/retirement 등은 당시의 중간 보존 범위이며 최종 트리에 남은 엔진이 아니다.
 최종 gate·전체 리뷰·PR 상태는 [ledger](docs/operator/2026-09-12-engine-retirement-completion-ledger.md)에 이어 기록한다.
-사용자 데이터·기존 worktree·중단된 실험은 보존했고 main 병합은 아직 수행하지 않았다.
+사용자 데이터·기존 worktree·중단된 실험은 보존했다. 이후 PR90은 main `611bd6a`에 병합 완료했다.
 
 최초 통합 gate는 Go 통과 후 UI timing/startup 오류로 실패했다. 지원되는 Node compile cache 환경의
 focused 대조에서 유입 main의 오래된 테스트 선택자 한 곳을 발견해 Task9로 수정했다. 제품 코드는
@@ -40,7 +40,7 @@ UI6파일/37tests, TypeScript/Vite build. Windows/native·실제 GHES/Herdr·Ski
 전체 리뷰의 Makefile 오류 예시 두 곳도 수정했고 `5823740`에서 scoped 재리뷰 ACCEPT를 받았다.
 `make check` 실행 명령과 검증 입력은 gate `1e427ed`와 같아 기존 통과 근거를 채택했다. 남은 코드/리뷰 blocker는 없다.
 [PR #90](https://github.com/Middleages/thread-dock/pull/90)을 main base로 게시했다. engine 제거와 문서·Issue 정리는
-이 PR에서 전달하며 main 병합은 사용자에게 남긴다.
+이 PR에서 전달했고 사용자 지시로 병합했다. 새 compact Monitor PR의 병합은 별도 사용자 작업이다.
 
 사용자 요구는 **Go 모니터 도구**다. Windows Go/Wails 앱과 기존 React 화면을 유지한다.
 “심플하게”는 ThreadDock 자체 실행 엔진을 줄이라는 의미이며 브라우저 전용 전환은 승인되지 않았다.
@@ -213,25 +213,27 @@ PR #69는 Go 경로 이식과 Node 경로 제거를 포함해 이미 main에 병
 /home/appuser/dev_system의 ThreadDock 작업을 이어가.
 실제 Git 상태와 origin/main을 확인하고 미커밋 실험을 보존한 독립 worktree에서 작업해.
 AGENTS.md, HANDOFF.md, PRODUCT.md, CONTEXT.md, ADR 0008,
-현재 2026-09-10 Go/Wails 설계·구현 계획과 운영 문서를 읽어.
+2026-09-11 compact-monitor-and-global-toolbox 설계·계획과 운영 문서를 읽어.
 
 제품은 Go/Wails 데스크톱 모니터와 기존 React 화면이다. 브라우저 전용으로 바꾸지 마.
 Go가 GitHub·Herdr 조회·결합을 담당하고, Herdr가 세션 실행을, Agent와 Skills가 개발·기록을 맡아.
 Task 1·2의 Go/Wails GitHub·Herdr 경로와 Task 3의 Node 경로 제거가 반영되어 있다.
 PR #70의 monitorcli 제거와 PR #72의 create-revert CLI/service 제거는 main에 병합됐다.
 PR #74의 미사용 GitHub safe-draft 제거와 PR #76의 worktree revert 제거도 병합됐다.
-PR #78·#80·#82·#84도 main에 병합됐다. 2026-09-12 기준 main은 사용자 추가 커밋을 포함한 `2db8f77`다.
+PR #78·#80·#82·#84와 최종 엔진 제거 PR90도 main에 병합됐다. 확인된 merge는 `611bd6a`다.
 최신 settings/GHES/Toolbox와 여섯 canonical Skill을 보존한다. 2026-09-11 추가 설계·검증 제한도 읽는다.
 현재 Project는 https://github.com/users/Middleages/projects/1 이다.
-2026-09-12 엔진 제거 branch에서는 옛 CLI·엔진과 전용 fixture를 8개 reviewed Task로 모두 제거했다.
+옛 CLI·엔진과 전용 fixture 제거는 완료됐다. Issue91의 compact Monitor 구현을 요청 branch
+agent/compact-monitor-toolbox와 독립 worktree .worktrees/compact-monitor-toolbox에서 이어간다.
+2026-09-12-compact-monitor-ledger.md와 .superpowers/sdd의 Task packet/report를 확인한다.
 현재 HANDOFF/ledger의 PR·검증·병합 상태를 먼저 확인하고 완료된 삭제를 반복하지 마.
 Linux 통합 gate와 표준 Windows package/live acceptance는 reviewed SHA `325db89`에서 완료됐다.
 healthy native run은 GitHub 69개 work item, Herdr 기본 session/3 agents, clipboard 188, `로컬 연결 정상`,
 process/task cleanup을 확인했으며 native error-state만 unverified다.
 Windows→WSL Herdr 읽기 접근은 실제 설치 조건으로 확인하고 HERDR_ENV를 임의 설정하지 마.
 새 scheduler/runtime/Publisher나 로컬 Work 계약을 만들지 마.
-Wiki는 활성화됐지만 페이지 발행은 아직 검증되지 않았다. 다음 engine slice는 현재 dependency
-inventory로 경계를 먼저 증명하고 완료되지 않은 삭제를 가정하지 마.
+Wiki는 활성화됐지만 페이지 발행은 아직 검증되지 않았다. 완료된 엔진 삭제를 재개하지 마.
+현재 새 기능의 Windows build/native smoke는 과거 SHA의 결과로 통과 처리하지 마.
 
 Sol medium이 작은 Task를 계획·분배하고 Luna high가 구현해.
 독립 작업만 worktree로 병렬화하고 고정 변경은 fresh Sol medium이 검토해.
