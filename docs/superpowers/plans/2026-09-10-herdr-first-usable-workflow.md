@@ -81,6 +81,9 @@ Node source 삭제 전 Task 1/2에서 필요한 회귀 동작이 Go/UI 검사로
 
 ## 후속 정리: 기존 실행 엔진
 
+2026-09-12 상태: 아래 제거 구현은 [8개 Task 완료 계획](2026-09-12-engine-retirement-completion.md)에서 수행했다.
+현재 tree에는 Monitor·runner·template 검증만 남는다. 최종 검증/병합은 [ledger](../../operator/2026-09-12-engine-retirement-completion-ledger.md)를 확인한다. 위 독립 기능 둘의 실사용 체크는 여전히 별개 미완료다.
+
 Go/Wails 실사용 경로 완성 후 `cmd/agentctl`과 internal의 coordinator/scheduler/runtime/recovery/publication/state 등
 옛 엔진에서 새 모니터가 참조하지 않는 모듈을 import·테스트·설정·문서 참조 기준으로 분류한다.
 필요한 runner·경로/링크 기능은 유지하고 죽은 코드·전용 테스트·fixture·옛 계획을 함께 정리한다.

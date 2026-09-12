@@ -11,6 +11,14 @@
 
 ThreadDock이 scheduler, lease/recovery engine, 자체 task DB, 별도 execution runtime을 소유하지 않습니다.
 
+## 옛 실행 엔진에서 전환
+
+`agentctl` CLI와 옛 pilot 실행 경로는 제거됐습니다. 현재 사용은 아래 Monitor와 Agent/Skill 흐름을 따릅니다.
+옛 엔진 소스 정리의 범위·검증은 [완료 계획](docs/superpowers/plans/2026-09-12-engine-retirement-completion.md)과
+[dependency inventory](docs/operator/2026-09-12-engine-dependency-inventory.md)에서 확인할 수 있습니다.
+이 변경은 기존 runtime snapshot·event log·설정 데이터·Git worktree·Herdr session을 자동 삭제하거나 이관하지 않습니다.
+과거 실행기를 조사해야 할 때는 Git 이력을 참고하고, 역사 runbook의 명령을 현재 제품 실행 방법으로 사용하지 마세요.
+
 ## Agent 구조
 
 프로젝트에서 기억할 top-level Agent는 두 개뿐입니다.

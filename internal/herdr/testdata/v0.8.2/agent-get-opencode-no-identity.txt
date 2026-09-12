@@ -1,1 +1,0 @@
-{"id":"cli:agent:get","result":{"agent":{"agent":"opencode","agent_status":"working","cwd":"/redacted/opencode-builder","interactive_ready":true,"name":"builder-opencode","pane_id":"pane-opencode-builder","revision":4,"state_change_seq":17,"tab_id":"tab-opencode-builder","workspace_id":"workspace-opencode-builder"},"type":"agent_info"}}

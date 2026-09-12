@@ -1,3 +1,0 @@
-THREADDOCK_EVIDENCE_BEGIN
-{"requestId":"inv-1","commitSha":"0123456789abcdef0123456789abcdef01234567","verification":[{"command":"go test ./internal/herdr","outcome":"passed","duration":"1s"}]}
-THREADDOCK_EVIDENCE_END

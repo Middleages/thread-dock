@@ -1,5 +1,7 @@
 # Herdr Builder 실제 실행 준비 점검
 
+> 역사적 capability 조사 기록이다. 옛 엔진·Builder 경로의 당시 관찰을 현재 Monitor 또는 최신 Herdr의 성공 근거로 사용하지 않는다. 현재 운영은 [빠른 시작](github-first-quickstart.md), 옛 소스 제거는 [완료 계획](../superpowers/plans/2026-09-12-engine-retirement-completion.md)을 따른다.
+
 확인일: 2026-09-09. 기준 main: `70e2e677a0d792d22392598c32906690622eba37` ([PR #55](https://github.com/Middleages/thread-dock/pull/55) 병합).
 
 ## 확인 결과
