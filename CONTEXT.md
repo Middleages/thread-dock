@@ -1,6 +1,7 @@
 # ThreadDock 용어와 책임
 
 현재 기준은 [첫 사용 설계](docs/superpowers/specs/2026-09-10-herdr-first-usable-workflow-design.md)다.
+Agent/Skill 역할과 전역 locator의 최신 세부 기준은 [2026-09-11 설계](docs/superpowers/specs/2026-09-11-thread-dock-agent-orchestration-design.md)와 [빠른 시작](docs/operator/github-first-quickstart.md)이다.
 
 | 용어 | 의미 |
 |---|---|
@@ -18,6 +19,7 @@
 | Herdr session/workspace/tab/pane | Herdr가 관리하는 실행 위치. 업무의 완료 상태와 별개다 |
 | 세션 연결 | Issue 또는 프로젝트와 실제 Herdr 위치·worktree의 명시적 대응 |
 | Monitor | Windows Go/Wails 앱. Go가 GitHub·Herdr를 조회·결합하고 기존 React 화면에 표시 |
+| 프로젝트 Toolbox | 사람이 사용하는 로컬 자료·복사용 명령·체크리스트. GitHub 업무나 Agent 실행 상태의 원본이 아니다 |
 
 기능과 내부 Task는 일대일이 아니다. 내부 구현 Task는 체크리스트로 충분하며 독립 추적 가치가 있을 때만 Issue를 추가한다.
 한 프로젝트를 중앙 관제 하나가 보고 여러 기능 세션을 운영할 수 있다.
@@ -39,4 +41,3 @@ Contract v2, Repository Run, Invocation, Artifact, Repair Budget, Go Task Gate,
 Final Manifest, Finalize는 기존 Go 실행기 코드의 용어다.
 신규 Skill·GitHub 업무 조회·세션 연결의 필수 입력이나 완료 조건으로 사용하지 않는다.
 과거 설계와 코드는 이력·재사용 참고용이며 신규 경로를 규정하지 않는다.
-

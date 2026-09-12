@@ -1,7 +1,7 @@
 # ThreadDock Agent Orchestration Design
 
 Date: 2026-09-11
-Status: proposed after user-approved direction; written review required before implementation
+Status: PR #87로 Agent/Skill·문서 구현이 main에 반영됨. 실행 검증·pressure scenario는 별도 검증 기록을 따름.
 
 ## 1. 목적
 

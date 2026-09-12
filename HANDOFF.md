@@ -1,6 +1,15 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
-## 최상위 기준
+## 2026-09-12 재착수 상태
+
+- main을 `2db8f776d22afd849fcb9a1328f7e8aff9b72e50`로 fast-forward했다. PR #82는 `6aced75`, #84는 `c487e8c`에 병합됐다.
+- 사용자 추가 PR #85·#86·#87은 settings 저장/UI, GHES host, 열린 업무 중심 화면, Markdown, 프로젝트 Toolbox 및 새 Agent/Skill 구조를 포함한다. 삭제 작업에서 이 기능과 데이터는 보존한다.
+- [현재 Agent/Skill 설계](docs/superpowers/specs/2026-09-11-thread-dock-agent-orchestration-design.md)와 [빠른 시작](docs/operator/github-first-quickstart.md)이 Coordinator/Feature Leader, 여섯 canonical Skill과 전역 locator를 설명한다.
+- [compact Monitor 설계](docs/superpowers/specs/2026-09-11-compact-monitor-and-global-toolbox-design.md)는 추가 설계다. main에 설계가 있다는 이유로 global Toolbox migration/UI가 구현됐다고 간주하지 않는다. 이번 작업은 UI 재설계가 아니라 옛 엔진 제거다.
+- PR #87의 [Toolbox 검증 기록](docs/superpowers/reviews/2026-09-11-project-toolbox-verification.md)과 [Skill 검증 기록](docs/superpowers/reviews/2026-09-11-thread-dock-agent-skill-verification.md)은 실행되지 않은 검증을 명시한다. 아래 `325db89` Windows healthy 증거는 과거 SHA의 증거이지 최신 기능의 검증이 아니다.
+- 옛 실행 엔진 전체 제거는 production/test/config/docs 의존성을 증명한 순차 Task로 진행한다. 사용자 실험과 저장된 runtime 데이터는 삭제·이관하지 않는다.
+
+## 제품 기준
 
 사용자 요구는 **Go 모니터 도구**다. Windows Go/Wails 앱과 기존 React 화면을 유지한다.
 “심플하게”는 ThreadDock 자체 실행 엔진을 줄이라는 의미이며 브라우저 전용 전환은 승인되지 않았다.
@@ -41,8 +50,8 @@
 bulk cleanup 후보 조회 API를 정리한다. [계획](docs/superpowers/plans/2026-09-11-engine-retirement-unused-cleanup-api.md)과
 [ledger](docs/operator/2026-09-11-engine-retirement-slice8-ledger.md)에 caller·보존 경계·검증 결과를 기록한다.
 exact-ID retire/cleanup·7일 guard·현재 composite inspector·state persistence/ListRecoverable는 보존한다.
-PR #82가 아직 열려 있어 `00cd561` head 위에서 작업한다. 새 PR의 base는 `agent/engine-retirement-slice7`이며,
-#82 main 병합 후 후속 PR을 main으로 전환한다. 이번 main 병합은 수행하지 않았다.
+당시 PR #82의 `00cd561` head 위에서 작업했다. 이후 사용자 지시로 #82를 병합하고 #84의 base를 main으로
+전환한 뒤 `c487e8c4076d9ea804b096213cc8728a6b17e919`에 병합했다. Issue #83과 보드는 완료 상태다.
 제품 세 파일의 미사용 API·전용 테스트 60줄 삭제를 완료했다. Task `a1e7da3` 및 전체 통합 `bfbd6dc`는
 fresh Sol ACCEPT다. 같은 코드 `23906ad`의 tmpfs checkout에서 최종 `make check`가 Go 전체·UI 26개·build까지
 통과했다. 앞선 UI startup/threads 실패와 환경 대조는 ledger에 기록했으며 정확한 환경 병목은 미확정이다.
@@ -59,7 +68,7 @@ Task는 `ec80575`에서 ACCEPT했다. 최초 gate의 UI worker startup timeout�
 `VITEST_MAX_WORKERS=1` 환경의 `d40b693` gate에서 전체 Go·UI 26개·frontend build가 통과했다.
 정확한 환경 병목은 미확정이다. 전체 branch 리뷰는 `f44082c7bcc8cab6cbb1fc75a62b92e14a736cca`에서
 ACCEPT했으며 남은 finding은 없다. [PR #82](https://github.com/Middleages/thread-dock/pull/82)는
-`agent/engine-retirement-slice7`에서 열려 있으며 main 병합은 사용자에게 남긴다.
+`6aced75a44d01b36f9ac632750609cd80c3dbe7a`에 병합됐다. Issue #81과 보드는 완료 상태다.
 
 ## PR #80의 여섯 번째 정리 결과
 
@@ -180,7 +189,8 @@ Go가 GitHub·Herdr 조회·결합을 담당하고, Herdr가 세션 실행을, A
 Task 1·2의 Go/Wails GitHub·Herdr 경로와 Task 3의 Node 경로 제거가 반영되어 있다.
 PR #70의 monitorcli 제거와 PR #72의 create-revert CLI/service 제거는 main에 병합됐다.
 PR #74의 미사용 GitHub safe-draft 제거와 PR #76의 worktree revert 제거도 병합됐다.
-PR #78과 #80도 main에 병합됐고 최신 병합 근거는 `f9fb725`다.
+PR #78·#80·#82·#84도 main에 병합됐다. 2026-09-12 기준 main은 사용자 추가 커밋을 포함한 `2db8f77`다.
+최신 settings/GHES/Toolbox와 여섯 canonical Skill을 보존한다. 2026-09-11 추가 설계·검증 제한도 읽는다.
 현재 Project는 https://github.com/users/Middleages/projects/1 이다.
 완료된 revert 정리를 반복하지 말고 남은 CLI·엔진의 다음 작은 경계를 확인해 진행한다.
 Linux 통합 gate와 표준 Windows package/live acceptance는 reviewed SHA `325db89`에서 완료됐다.
