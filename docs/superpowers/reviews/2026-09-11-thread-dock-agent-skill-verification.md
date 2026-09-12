@@ -2,6 +2,12 @@
 
 Date: 2026-09-11
 
+## 2026-09-12 Linux 검증 후속
+
+`1e427eda673a997245c58420df83dd2f6070d06a`의 최종 `make check`는 template-check·전체 Go3 packages·UI37tests·frontend build까지 통과했다.
+아래 connector 환경의 미실행 설명은 당시 기록이다. canonical Skill의 pressure scenario와 native Codex/Herdr/Windows 실사용을 실행한 것은 아니며 #43/#48에 남긴다.
+검증 환경·초기 실패·정정·제한은 [ledger](../../operator/2026-09-12-engine-retirement-completion-ledger.md)를 따른다.
+
 ## What is verified in this chat/tool environment
 
 - `project-template/.codex/agents` contains exactly the two intended ThreadDock top-level agent definitions: `td_coordinator.toml`, `td_feature_leader.toml`.

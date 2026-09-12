@@ -170,3 +170,16 @@ Task9 implementation `4bfa9653b42886be32dae40a00d2a83385019b8a`, review candidat
 검증 후 root가 준비했던 untracked node_modules **symlink만** 확인 후 unlink했다. 가리키던 tmpfs dependency 파일과 기존 worktree는 삭제하지 않았다. 정확 통과 명령은 Task9 report에 보존한다.
 
 Task9: complete (`1e3cbab` fresh `retirement_task9_review` spec/quality ACCEPT, findings 없음). 한정 selector 수정 외 role/후속 click/heading/link/assertion 및 production/config/timeout/isolation은 보존됐다. 다음 gate는 이 테스트 수정과 NODE_COMPILE_CACHE 환경을 포함하는 새 tuple에서 수행한다. 이전 e630c5a의 실패는 숨기거나 성공으로 바꾸지 않는다.
+
+## 최종 통합 gate 통과
+
+- SHA: `1e427eda673a997245c58420df83dd2f6070d06a`.
+- worktree: `/dev/shm/threaddock-retirement-final.KMxdTI/checkout` (detached, 이 SHA와 tracked diff0).
+- command: `NODE_COMPILE_CACHE=/dev/shm/threaddock-node-compile.kOQNbZ VITEST_MAX_WORKERS=1 TMPDIR=/dev/shm/threaddock-retirement-final.KMxdTI PATH=/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin:$PATH make check`.
+- 환경: Go1.27.0 Linux/amd64, Node26.8.1, npm11.19.0, 동일 package.json/lock/dependencies. 원래 forks/isolation/assertion/test timeout 유지.
+- 결과: exit0. template-check/gofmt/Go vet·전체 Go3 packages PASS(변경 없는 Go tests cache 채택), UI6files/37tests PASS(24.08s), TypeScript/Vite build PASS(8.63s).
+- Vite의 비치명적 `[PLUGIN_TIMINGS]` 진단은 있었으며 오류로 숨기거나 출력이 전혀 없었다고 표시하지 않는다. hook timing이 겹친다는 도구 진단이고 build exit0이다.
+- 로그: 비추적 로컬 `.superpowers/sdd/2026-09-12-engine-retirement-completion/make-check-1e427ed-compile-cache.log`.
+- build가 제거한 tracked dist placeholder를 원래 한 줄로 복구했고 validation checkout의 `git diff --exit-code`를 확인했다. generated assets는 commit하지 않는다.
+- 이 성공은 초기 실패와 focused 환경 대조를 대체 삭제하지 않는다. 정확한 host 지연 원인은 미확정이며 cache만으로 해결됐다고 인과를 단정하지 않는다. 이전 gate 이후 실제 테스트 선택자 수정과 환경 변화가 있어 새 tuple로 실행했다.
+- Windows native/Wails build·실제 GHES/Herdr E2E·Skill pressure scenario·Wiki 페이지 발행 및 runtime model/effort identity는 이번 성공으로 확대하지 않는다.

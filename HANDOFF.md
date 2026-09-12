@@ -26,6 +26,9 @@ runner·템플릿 검증 Go 코드와 go.mod/go.sum은 그대로다. GitHub temp
 focused 대조에서 유입 main의 오래된 테스트 선택자 한 곳을 발견해 Task9로 수정했다. 제품 코드는
 그대로 두고 `monitor.test.tsx`의 row name 탐색만 현재 업무 표에 맞췄다. fresh Sol은 `1e3cbab`에서
 ACCEPT했다. 실패와 환경 대조·최종 gate 결과는 ledger에 분리 기록한다.
+최종 `1e427ed`의 tmpfs·Node compile cache 환경에서 `make check`가 통과했다: Go3 packages,
+UI6파일/37tests, TypeScript/Vite build. Windows/native·실제 GHES/Herdr·Skill pressure scenario는
+여전히 별도 미검증이며 #43/#48에서 추적한다. 전체 통합 리뷰·게시 상태는 ledger를 확인한다.
 
 사용자 요구는 **Go 모니터 도구**다. Windows Go/Wails 앱과 기존 React 화면을 유지한다.
 “심플하게”는 ThreadDock 자체 실행 엔진을 줄이라는 의미이며 브라우저 전용 전환은 승인되지 않았다.
