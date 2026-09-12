@@ -219,7 +219,7 @@ describe('monitor list and detail', () => {
     const source = vi.fn(async () => snapshot([first, second]))
     render(<App snapshotSource={source} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-    fireEvent.click(screen.getByRole('tab', { name: 'Second work' }))
+    fireEvent.click(screen.getByRole('tab', { name: /Second work/ }))
     fireEvent.click(screen.getByRole('button', { name: /Second 1개 업무/ }))
     expect(screen.getByRole('heading', { name: 'Only work' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Only Issue' })).toBeInTheDocument()

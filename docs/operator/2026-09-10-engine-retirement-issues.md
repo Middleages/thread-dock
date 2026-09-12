@@ -1,5 +1,16 @@
 # PR #69 병합 후 업무 분류
 
+## 2026-09-12 확정·반영
+
+아래 최초 조회와 분류 표는 2026-09-10 기록이다. 사용자 지시에 따라 최신 main `2db8f77`과 실제 GitHub 상태를 확인해 다음을 반영했다.
+
+- #42·#44·#45·#46·#47: ADR 0008로 superseded되어 `not planned`로 종료했다. 구현 완료가 아니다. 보드 Status는 Done이며 대체 사유는 Issue 댓글에 남겼다.
+- #43: **GitHub·Herdr 기반 작업 재개와 오류 상태를 실사용 검증한다**로 재작성했다. native 오류/독립 기능 둘의 E2E는 미완료다.
+- #48: **Feature 종료 후 전역 locator의 안전한 정리를 검증한다**로 재작성했다. publish-work의 exact binding·lock·보존 조건 pressure scenario는 미완료다.
+- 인증은 `project` scope로 확인됐고 Project #1 조회·쓰기 모두 성공했다. 저장소는 public, Wiki enabled다. Wiki 페이지 발행 여부는 별도 근거가 필요하다.
+
+재작성된 두 Issue는 Todo로 유지한다. 옛 엔진 코드 삭제나 문서 존재만으로 실제 운영 검증을 완료 처리하지 않는다.
+
 ## 실제 조회
 
 2026-09-10 현재 `gh auth status`는 Middleages 활성 인증과 `read:project`, `repo` scope를 확인했다.

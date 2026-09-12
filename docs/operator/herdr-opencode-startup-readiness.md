@@ -1,5 +1,7 @@
 # Herdr/OpenCode 시작 직후 Prompt 누락 재현 보고서
 
+> 과거 환경의 재현 기록이다. 여기 있는 invocation을 재사용하거나 Herdr 문제 해결을 가정하지 않는다. 현재 실행 소유권은 Herdr에 있으며 [GitHub-first 빠른 시작](github-first-quickstart.md)을 따른다.
+
 상태: 2026-09-09 실제 비교 진단 및 tagged source 검토. [Herdr upstream #3813](https://github.com/herdrdev/herdr/issues/3813)에 재현 버그를 등록했다. 공개 보고에는 upstream 템플릿에 따라 관찰 결과·재현 절차·환경만 담고, 아래 소스 분석과 수정 방향은 로컬 조사 기록으로 유지했다.
 
 ## 문제

@@ -1,4 +1,4 @@
-> **Legacy v1 참고 자료.** 기존 구현·파일럿의 절차와 관찰 기록이며 새 MVP의 실행 계획이나 완료 조건이 아닙니다. [현재 설계](../superpowers/specs/2026-09-07-project-workflow-mvp-design.md)를 먼저 따르십시오.
+> **옛 실행 엔진의 역사 자료.** 이 문서의 agentctl·pilot·runtime 절차는 현재 제품 실행 방법이 아닙니다. 소스 제거는 [완료 계획](../superpowers/plans/2026-09-12-engine-retirement-completion.md)에서 추적하며, 현재 사용법은 [GitHub-first 빠른 시작](github-first-quickstart.md)을 따릅니다. 과거 명령·경로는 재실행 지시가 아닌 당시 증거입니다.
 
 # Parallel Orchestrator Pilot Runbook
 

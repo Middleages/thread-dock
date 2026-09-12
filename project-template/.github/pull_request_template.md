@@ -1,6 +1,6 @@
 ## Issue links
 
-<!-- Link the Parent and Child Issues. -->
+<!-- Link the feature Issue and any actual dependency Issues. -->
 
 ## Changed scope
 
@@ -16,7 +16,7 @@
 
 ## Verification evidence
 
-<!-- State Task gate / Wave End / shared-interface / final PR timing and Full Suite result. -->
+<!-- Separate focused checks from final integration verification. Record the exact SHA, command, environment, result, and any unverified scope. -->
 
 ## Audit category
 

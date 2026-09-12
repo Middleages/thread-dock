@@ -1,1 +1,0 @@
-{"id":"pane:list","result":{"panes":[{"pane_id":"pane-1","workspace_id":"ws-1"}]}}

@@ -54,11 +54,19 @@ Skill 경로 사용, 실제 Agent 성공, GitHub 반영, Monitor UI 검증은 �
 
 ## 현재 구현과 재사용
 
-project-template의 다섯 Skill과 기존 Go/Wails·React 기반을 재사용한다.
+project-template의 여섯 canonical Skill(`coordinate-work`, `develop-feature`, `grill-plan`, `tdd-task`,
+`review-change`, `publish-work`)과 기존 Go/Wails·React 기반을 재사용한다. 네 옛 Skill 이름은 migration shim이다.
+Coordinator와 Feature Leader만 Herdr top-level 연결로 기록하며 native subagent는 locator에 복제하지 않는다.
+PR #85·#86·#87의 설정 저장/UI, GitHub Enterprise host, 열린 업무 중심 조회·Markdown과 사람용 프로젝트
+Toolbox는 main에 반영됐다. Toolbox는 Agent에 자동 주입하지 않고 command는 복사만 제공한다.
+2026-09-11 compact Monitor/global Toolbox 문서는 추가 설계이며 구현·migration 완료 근거가 아니다.
 PR #69는 최종 head `f35e248`에서 Node/Vite 조회 서버를 제거하고 GitHub·Herdr 조회를
 Go/Wails `GetMonitorSnapshot` 경로로 옮긴 뒤 main의 merge commit `3f4bebf`로 병합됐다.
 reviewed SHA `325db89`에서 Linux `make check`, 표준 Windows Wails build와 healthy native 실행을
-검증했다. native 오류/degraded 상태의 실제 Windows 재현과 독립 기능 두 개의 Projects 기반
+검증했다. 이는 해당 과거 SHA의 근거이며 최신 settings/GHES/Toolbox 검증으로 확대하지 않는다.
+native 오류/degraded 상태의 실제 Windows 재현과 독립 기능 두 개의 Projects 기반
 end-to-end 운영 검증은 아직 남아 있다.
 Contract v2·Work 상태·Go Task Gate·Publisher를 신규 경로의 필수 입력으로 요구하지 않는다.
-덜어낼 것은 중복 실행 관리 기능이며 Go 모니터 자체는 유지한다.
+중복 실행 관리 기능은 2026-09-12 정리 branch에서 8개 reviewed Task로 제거했다. 현재 Go package는
+Monitor, runner, 프로젝트 템플릿 검증뿐이며 기존 사용자 runtime 데이터는 삭제하지 않았다.
+최종 검증·병합 상태는 HANDOFF와 엔진 제거 ledger를 따른다. Go 모니터 자체는 유지한다.

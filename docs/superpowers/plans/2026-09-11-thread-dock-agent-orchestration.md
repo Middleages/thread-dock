@@ -1,5 +1,7 @@
 # ThreadDock Agent Orchestration Implementation Plan
 
+> 2026-09-12 상태: PR #87로 두 Agent 정의·여섯 canonical Skill·네 migration shim·quickstart·template-check 구현이 main에 반영됐다. 아래 원래 단계 체크는 실행 증거 ledger가 아니며 미체크를 미구현으로 해석하지 않는다. [검증 제한](../reviews/2026-09-11-thread-dock-agent-skill-verification.md)의 pressure scenario와 native E2E는 별도 미완료다. 재구현하지 않는다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a simple, reusable ThreadDock project template with two top-level Codex agents and six focused skills that coordinate GitHub work through Herdr without turning ThreadDock into an execution engine.
