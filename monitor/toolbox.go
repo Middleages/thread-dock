@@ -516,7 +516,23 @@ func (s globalToolboxStore) put(projects projectToolboxStore, value GlobalToolbo
 	if err := validateGlobalToolbox(value); err != nil {
 		return GlobalToolbox{}, err
 	}
-	if err := s.ensureMigrated(projects); err != nil {
+	version, err := projects.readVersion()
+	if err != nil {
+		return GlobalToolbox{}, err
+	}
+	if version == toolboxVersion {
+		merged, err := s.migrateLegacy(projects, &value)
+		if err != nil {
+			return GlobalToolbox{}, err
+		}
+		return merged, nil
+	}
+	if version != -1 && version != projectReferencesVersion {
+		return GlobalToolbox{}, fmt.Errorf("지원하지 않는 프로젝트 Toolbox 버전입니다: %d", version)
+	}
+	// A normal v2/empty put is a full replacement, but an existing global file
+	// must still be readable and valid before it can be overwritten.
+	if _, err := s.load(); err != nil {
 		return GlobalToolbox{}, err
 	}
 	if err := s.save(value); err != nil {
@@ -538,101 +554,102 @@ func (s globalToolboxStore) ensureMigrated(projects projectToolboxStore) error {
 	if version != toolboxVersion {
 		return fmt.Errorf("지원하지 않는 프로젝트 Toolbox 버전입니다: %d", version)
 	}
+	_, err = s.migrateLegacy(projects, nil)
+	return err
+}
+
+func (s globalToolboxStore) migrateLegacy(projects projectToolboxStore, caller *GlobalToolbox) (GlobalToolbox, error) {
 	legacy, err := projects.load()
 	if err != nil {
-		return err
+		return GlobalToolbox{}, err
 	}
 	keys := make([]string, 0, len(legacy.Projects))
 	for key, value := range legacy.Projects {
 		if err := validateToolboxProjectKey(key); err != nil {
-			return err
+			return GlobalToolbox{}, err
 		}
 		if err := validateProjectToolbox(value); err != nil {
-			return err
+			return GlobalToolbox{}, err
 		}
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	global, err := s.load()
 	if err != nil {
-		return err
+		return GlobalToolbox{}, err
 	}
-	merged, err := mergeLegacyToolbox(global.Toolbox, legacy, keys)
+	merged, err := mergeLegacyToolbox(global.Toolbox, legacy, keys, caller)
 	if err != nil {
-		return err
+		return GlobalToolbox{}, err
 	}
 	if err := s.save(merged); err != nil {
-		return err
+		return GlobalToolbox{}, err
 	}
 	converted := projectReferencesFile{Version: projectReferencesVersion, Projects: make(map[string]ProjectReferences, len(legacy.Projects))}
 	for key, value := range legacy.Projects {
 		converted.Projects[key] = normalizeProjectReferences(ProjectReferences{References: value.References})
 	}
-	return projects.saveReferences(converted)
+	if err := projects.saveReferences(converted); err != nil {
+		return GlobalToolbox{}, err
+	}
+	return merged, nil
 }
 
-func mergeLegacyToolbox(existing GlobalToolbox, legacy projectToolboxFile, projectKeys []string) (GlobalToolbox, error) {
-	merged := normalizeGlobalToolbox(existing)
+func mergeLegacyToolbox(existing GlobalToolbox, legacy projectToolboxFile, projectKeys []string, caller *GlobalToolbox) (GlobalToolbox, error) {
+	merged := emptyGlobalToolbox()
 	commandSeen := map[string]int{}
 	commandIDs := map[string]bool{}
-	for index, command := range merged.Commands {
-		command = normalizeCommand(command)
-		key := toolboxPairKey(command.Label, command.Command)
-		if previous, ok := commandSeen[key]; ok {
-			merged.Commands[previous].Note = preferCommandNote(merged.Commands[previous].Note, command.Note)
-			continue
-		}
-		if commandIDs[command.ID] {
-			command.ID = stableToolboxID("command", command.ID, key, commandIDs)
-		}
-		merged.Commands[index] = command
-		commandSeen[key] = index
-		commandIDs[command.ID] = true
-	}
 	todoSeen := map[string]int{}
 	todoIDs := map[string]bool{}
-	for index, todo := range merged.Todos {
+	addCommand := func(command ToolboxCommand, origin string) {
+		command = normalizeCommand(command)
+		semantic := toolboxPairKey(command.Label, command.Command)
+		if previous, ok := commandSeen[semantic]; ok {
+			merged.Commands[previous].Note = preferCommandNote(merged.Commands[previous].Note, command.Note)
+			return
+		}
+		if commandIDs[command.ID] {
+			command.ID = stableToolboxID("command", command.ID, origin+"\x00"+semantic, commandIDs)
+		}
+		commandSeen[semantic] = len(merged.Commands)
+		commandIDs[command.ID] = true
+		merged.Commands = append(merged.Commands, command)
+	}
+	addTodo := func(todo ToolboxTodo, origin string) {
 		todo = normalizeTodo(todo)
-		key := toolboxPairKey(todo.ProjectKey, todo.Text)
-		if previous, ok := todoSeen[key]; ok {
+		semantic := toolboxPairKey(todo.ProjectKey, todo.Text)
+		if previous, ok := todoSeen[semantic]; ok {
 			merged.Todos[previous].Done = merged.Todos[previous].Done && todo.Done
-			continue
+			return
 		}
 		if todoIDs[todo.ID] {
-			todo.ID = stableToolboxID("todo", todo.ID, key, todoIDs)
+			todo.ID = stableToolboxID("todo", todo.ID, origin+"\x00"+semantic, todoIDs)
 		}
-		merged.Todos[index] = todo
-		todoSeen[key] = index
+		todoSeen[semantic] = len(merged.Todos)
 		todoIDs[todo.ID] = true
+		merged.Todos = append(merged.Todos, todo)
+	}
+	for _, command := range normalizeGlobalToolbox(existing).Commands {
+		addCommand(command, "existing")
+	}
+	for _, todo := range normalizeGlobalToolbox(existing).Todos {
+		addTodo(todo, "existing")
 	}
 	for _, projectKey := range projectKeys {
 		value := normalizeProjectToolbox(legacy.Projects[projectKey])
 		for _, command := range value.Commands {
-			command = normalizeCommand(command)
-			semantic := toolboxPairKey(command.Label, command.Command)
-			if _, ok := commandSeen[semantic]; ok {
-				continue
-			}
-			if commandIDs[command.ID] {
-				command.ID = stableToolboxID("command", command.ID, projectKey+"\x00"+semantic, commandIDs)
-			}
-			commandSeen[semantic] = len(merged.Commands)
-			commandIDs[command.ID] = true
-			merged.Commands = append(merged.Commands, command)
+			addCommand(command, projectKey)
 		}
 		for _, item := range value.Checklist {
-			todo := normalizeTodo(ToolboxTodo{ID: item.ID, Text: item.Text, Done: item.Done, ProjectKey: projectKey})
-			semantic := toolboxPairKey(todo.ProjectKey, todo.Text)
-			if previous, ok := todoSeen[semantic]; ok {
-				merged.Todos[previous].Done = merged.Todos[previous].Done && todo.Done
-				continue
-			}
-			if todoIDs[todo.ID] {
-				todo.ID = stableToolboxID("todo", todo.ID, projectKey+"\x00"+semantic, todoIDs)
-			}
-			todoIDs[todo.ID] = true
-			todoSeen[semantic] = len(merged.Todos)
-			merged.Todos = append(merged.Todos, todo)
+			addTodo(ToolboxTodo{ID: item.ID, Text: item.Text, Done: item.Done, ProjectKey: projectKey}, projectKey)
+		}
+	}
+	if caller != nil {
+		for _, command := range caller.Commands {
+			addCommand(command, "caller")
+		}
+		for _, todo := range caller.Todos {
+			addTodo(todo, "caller")
 		}
 	}
 	merged = normalizeGlobalToolbox(merged)

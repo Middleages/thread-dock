@@ -174,6 +174,17 @@ func writeLegacyToolbox(t *testing.T, path string, value projectToolboxFile) {
 	}
 }
 
+func writeGlobalToolbox(t *testing.T, path string, value GlobalToolbox) {
+	t.Helper()
+	data, err := json.Marshal(globalToolboxFile{Version: globalToolboxVersion, Toolbox: value})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func legacyFixture() projectToolboxFile {
 	return projectToolboxFile{Version: toolboxVersion, Projects: map[string]ProjectToolbox{
 		"github.example/repo:acme/jmj": {
@@ -414,5 +425,162 @@ func TestToolboxMigrationRekeysCollidingIDsDeterministically(t *testing.T) {
 	}
 	if len(got.Commands) != 2 || got.Commands[0].ID == got.Commands[1].ID || !strings.HasPrefix(got.Commands[1].ID, "legacy-command-") {
 		t.Fatalf("colliding IDs were not rekeyed: %#v", got.Commands)
+	}
+}
+
+func TestGlobalToolboxPutMigrationPreservesExistingAndCallerData(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	writeLegacyToolbox(t, projects.path, legacyFixture())
+	writeGlobalToolbox(t, global.path, GlobalToolbox{
+		Commands: []ToolboxCommand{{ID: "existing", Label: "existing", Command: "existing"}},
+		Todos:    []ToolboxTodo{{ID: "existing-todo", Text: "existing todo"}},
+	})
+	caller := GlobalToolbox{
+		Commands: []ToolboxCommand{{ID: "caller", Label: "caller", Command: "caller"}},
+		Todos:    []ToolboxTodo{{ID: "caller-todo", Text: "caller todo"}},
+	}
+	got, err := global.put(projects, caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Commands) != 3 || len(got.Todos) != 4 {
+		t.Fatalf("put dropped migrated or existing data: %#v", got)
+	}
+	if _, err := projects.getReferences("github.example/repo:acme/jmj"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGlobalToolboxPutRejectsMalformedExistingGlobal(t *testing.T) {
+	cases := []struct {
+		name          string
+		projectJSON   string
+		globalJSON    string
+		wantProjectV2 bool
+	}{
+		{name: "legacy project", projectJSON: `{"version":1,"projects":{}}`, globalJSON: `{"version":1,"toolbox":`},
+		{name: "v2 project", projectJSON: `{"version":2,"projects":{}}`, globalJSON: `{"version":1,"toolbox":`},
+		{name: "absent project", globalJSON: `{"version":1,"toolbox":`},
+		{name: "unsupported global", projectJSON: `{"version":2,"projects":{}}`, globalJSON: `{"version":2,"toolbox":{"commands":[],"todos":[]}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+			global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+			if tc.projectJSON != "" {
+				if err := os.WriteFile(projects.path, []byte(tc.projectJSON), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(global.path, []byte(tc.globalJSON), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(global.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := global.put(projects, GlobalToolbox{Commands: []ToolboxCommand{{ID: "new", Label: "new", Command: "new"}}}); err == nil {
+				t.Fatal("put must reject malformed existing global")
+			}
+			after, err := os.ReadFile(global.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Fatal("malformed global was overwritten")
+			}
+		})
+	}
+}
+
+func TestGlobalToolboxGetRejectsMalformedOrUnsupportedExistingGlobal(t *testing.T) {
+	cases := []struct {
+		name        string
+		projectJSON string
+		globalJSON  string
+	}{
+		{name: "legacy project malformed global", projectJSON: `{"version":1,"projects":{}}`, globalJSON: `{"version":1,"toolbox":`},
+		{name: "v2 project unsupported global", projectJSON: `{"version":2,"projects":{}}`, globalJSON: `{"version":9,"toolbox":{"commands":[],"todos":[]}}`},
+		{name: "absent project malformed global", globalJSON: `{"version":1,"toolbox":`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+			global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+			if tc.projectJSON != "" {
+				if err := os.WriteFile(projects.path, []byte(tc.projectJSON), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(global.path, []byte(tc.globalJSON), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := global.get(projects); err == nil {
+				t.Fatal("get must reject malformed or unsupported existing global")
+			}
+		})
+	}
+}
+
+func TestToolboxMigrationCompactsExistingGlobalDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	writeLegacyToolbox(t, projects.path, projectToolboxFile{Version: toolboxVersion, Projects: map[string]ProjectToolbox{
+		"github.example/repo:acme/app": {Checklist: []ToolboxChecklistItem{{ID: "legacy-todo", Text: "same todo", Done: false}}},
+	}})
+	writeGlobalToolbox(t, global.path, GlobalToolbox{
+		Commands: []ToolboxCommand{{ID: "cmd-1", Label: "same", Command: "run"}, {ID: "cmd-2", Label: " same ", Command: " run "}},
+		Todos:    []ToolboxTodo{{ID: "todo-1", Text: "same todo", Done: true, ProjectKey: "github.example/repo:acme/app"}, {ID: "todo-2", Text: " same todo ", Done: true, ProjectKey: "github.example/repo:acme/app"}},
+	})
+	got, err := global.get(projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Commands) != 1 || len(got.Todos) != 1 || got.Todos[0].Done {
+		t.Fatalf("existing duplicates were not compacted or incomplete state lost: %#v", got)
+	}
+}
+
+func TestToolboxMigrationRekeysCollidingTodoIDs(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	writeLegacyToolbox(t, projects.path, projectToolboxFile{Version: toolboxVersion, Projects: map[string]ProjectToolbox{
+		"github.example/repo:acme/a": {Checklist: []ToolboxChecklistItem{{ID: "same", Text: "one"}}},
+		"github.example/repo:acme/b": {Checklist: []ToolboxChecklistItem{{ID: "same", Text: "two"}}},
+	}})
+	got, err := global.get(projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Todos) != 2 || got.Todos[0].ID == got.Todos[1].ID || !strings.HasPrefix(got.Todos[1].ID, "legacy-todo-") {
+		t.Fatalf("colliding Todo IDs were not rekeyed: %#v", got.Todos)
+	}
+}
+
+func TestToolboxMigrationRejectsMergedTodoOverLimitBeforeWrites(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	legacy := projectToolboxFile{Version: toolboxVersion, Projects: map[string]ProjectToolbox{"github.example/repo:acme/a": {}, "github.example/repo:acme/b": {}}}
+	for i := 0; i < 101; i++ {
+		projectA := legacy.Projects["github.example/repo:acme/a"]
+		projectA.Checklist = append(projectA.Checklist, ToolboxChecklistItem{ID: "todo-a-" + strconv.Itoa(i), Text: "todo-a-" + strconv.Itoa(i)})
+		legacy.Projects["github.example/repo:acme/a"] = projectA
+		projectB := legacy.Projects["github.example/repo:acme/b"]
+		projectB.Checklist = append(projectB.Checklist, ToolboxChecklistItem{ID: "todo-b-" + strconv.Itoa(i), Text: "todo-b-" + strconv.Itoa(i)})
+		legacy.Projects["github.example/repo:acme/b"] = projectB
+	}
+	writeLegacyToolbox(t, projects.path, legacy)
+	if _, err := global.get(projects); err == nil {
+		t.Fatal("merged Todo limit must be rejected")
+	}
+	if _, err := os.Stat(global.path); !os.IsNotExist(err) {
+		t.Fatalf("global file should not be written, stat error=%v", err)
 	}
 }
