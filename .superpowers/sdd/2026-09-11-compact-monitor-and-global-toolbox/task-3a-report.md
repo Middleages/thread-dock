@@ -51,6 +51,6 @@
   - native ClipboardSetText returning `false` or rejecting never calls browser clipboard and reports the copy error
   - Windows `file` and WSL `wsl-file` add payloads preserve exact type and target
   - project reference inputs, select, and buttons have scoped `3px var(--focus-ring)` / `3px` offset focus-visible styling
-- tests: coverage-only fix; no artificial RED was run. Existing trusted type-check evidence remains from the original accepted implementation; no full suite/build was repeated.
+- tests: coverage-only fix; no artificial RED was run. Existing trusted type-check evidence remains from the original implementation; no full suite/build was repeated.
 - unverified: runtime model/effort, native Windows clipboard and rendering, integrated visual review
 - blockers: none
