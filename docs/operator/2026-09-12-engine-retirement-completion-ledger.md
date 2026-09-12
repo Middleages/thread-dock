@@ -24,6 +24,13 @@
 
 inventory Sol 1(read-only), 구현 Luna 최대 1(현재 순차), fresh reviewer 1 예약. 모델/effort 실제 runtime identity는 unverified.
 
+## Task 1 배정
+
+- [Issue #89](https://github.com/Middleages/thread-dock/issues/89), Project #1 In Progress·유지로 추적한다.
+- `retirement_root_cut` Luna에 실제 base `91d37632723ffca8114700498e43efcdba7f0ec8`, 독립 `.worktrees/retirement-root-cut`/`agent/retirement-root-cut`를 배정했다.
+- 초기 plan의 `38a505a`는 앞 문서 commit이며 구현은 계획 commit `91d3763` 위에서 시작한다. packet에 실제 SHA로 정정했다.
+- Inventory 확인: `internal/config`의 소비자는 삭제 대상 cmd/agentctl·internal/pilot뿐이다. 후속 단계의 내부 모듈은 이 첫 Task에서 건드리지 않는다.
+
 ## 검증 제한
 
 사용자 추가 PR87의 source-level tests는 아직 실행 성공 근거가 없다. 최종 gate에서 현재 Makefile의 최신 UI 테스트 전부를 포함한다. native Windows/GHES/Herdr 및 Skill pressure scenario는 #43/#48에 남겨 코드 삭제와 구분한다.

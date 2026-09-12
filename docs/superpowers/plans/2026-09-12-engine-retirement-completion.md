@@ -27,7 +27,7 @@
 ### Task 1: 옛 CLI와 pilot 진입점 제거
 
 - taskId: `retirement-root-cut`
-- baseSHA: `38a505a` (정확 SHA는 Task report와 ledger에 기록)
+- baseSHA: `91d37632723ffca8114700498e43efcdba7f0ec8`
 - deps: Linux/Windows inventory에서 Monitor의 유일 internal dependency가 runner임을 확인, root 직렬 interface 결정
 - ownedPaths: `cmd/agentctl/`, `internal/cli/`, `internal/config/`, `internal/pilot/`, `scripts/single-run-pilot.sh`, `Makefile`; report `.superpowers/sdd/2026-09-12-engine-retirement-completion/task-1-report.md`
 - worktree: `/home/appuser/dev_system/.worktrees/retirement-root-cut`
