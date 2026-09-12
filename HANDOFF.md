@@ -22,6 +22,11 @@ runner·템플릿 검증 Go 코드와 go.mod/go.sum은 그대로다. GitHub temp
 최종 gate·전체 리뷰·PR 상태는 [ledger](docs/operator/2026-09-12-engine-retirement-completion-ledger.md)에 이어 기록한다.
 사용자 데이터·기존 worktree·중단된 실험은 보존했고 main 병합은 아직 수행하지 않았다.
 
+최초 통합 gate는 Go 통과 후 UI timing/startup 오류로 실패했다. 지원되는 Node compile cache 환경의
+focused 대조에서 유입 main의 오래된 테스트 선택자 한 곳을 발견해 Task9로 수정했다. 제품 코드는
+그대로 두고 `monitor.test.tsx`의 row name 탐색만 현재 업무 표에 맞췄다. fresh Sol은 `1e3cbab`에서
+ACCEPT했다. 실패와 환경 대조·최종 gate 결과는 ledger에 분리 기록한다.
+
 사용자 요구는 **Go 모니터 도구**다. Windows Go/Wails 앱과 기존 React 화면을 유지한다.
 “심플하게”는 ThreadDock 자체 실행 엔진을 줄이라는 의미이며 브라우저 전용 전환은 승인되지 않았다.
 현재 기준: [ADR 0008](docs/adr/0008-github-first-skills-before-engine.md),

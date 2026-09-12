@@ -168,3 +168,5 @@ Task9 exact base: `e7ce6e6a9c7dc7d7665f8882e989ae34a442146e`; Luna `retirement_g
 
 Task9 implementation `4bfa9653b42886be32dae40a00d2a83385019b8a`, review candidate `1e3cbab5ad87c7ad681ae3aa63a750465323e550`. 총2파일(test1+report1), action selector 한 줄만 수정했다. 첫 worker wrapper 호출의 종료 상태는 불명확해 unverified로 남겼고 새 전용 tmpfs/cache 환경의 한정 테스트는1 passed/23 filtered,6.56s,explicit exit0이다. production/assertion/timeout/isolation 변경 없음. fresh Sol 리뷰에 넘겼다.
 검증 후 root가 준비했던 untracked node_modules **symlink만** 확인 후 unlink했다. 가리키던 tmpfs dependency 파일과 기존 worktree는 삭제하지 않았다. 정확 통과 명령은 Task9 report에 보존한다.
+
+Task9: complete (`1e3cbab` fresh `retirement_task9_review` spec/quality ACCEPT, findings 없음). 한정 selector 수정 외 role/후속 click/heading/link/assertion 및 production/config/timeout/isolation은 보존됐다. 다음 gate는 이 테스트 수정과 NODE_COMPILE_CACHE 환경을 포함하는 새 tuple에서 수행한다. 이전 e630c5a의 실패는 숨기거나 성공으로 바꾸지 않는다.

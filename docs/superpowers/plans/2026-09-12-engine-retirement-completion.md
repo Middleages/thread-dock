@@ -166,5 +166,5 @@ root는 역사 문서를 명시적으로 분류하고 active docs의 legacy 실�
 - acceptance: `getByRole('tab', { name: 'Second work' })`를 해당 제목을 포함하는 row 탐색인 `name: /Second work/`로 한정 수정. role·후속 click·heading/link/assertion은 그대로 보존한다. 테스트 skip·제거·timeout 변경·생산 코드 변경 없음.
 - tests: 기존 e630c5a cached focused 로그를 RED로 채택한다. 새 source에서 같은 failing test 이름만 `npm --prefix monitor/frontend test -- src/monitor.test.tsx -t 'uses the selected work identity for detail and action links after a project shrinks'`로 검증한다. Node26.8.1, VITEST_MAX_WORKERS=1, dedicated NODE_COMPILE_CACHE, tmpfs 사용. 나머지 테스트는 최종 gate에 포함하며 worker full suite 금지.
 - result: implementation commitSHA와 root가 고정할 final candidate를 구분한다. changedFiles에는 test1+report1을 구분하고 commands/환경/outcomes/unverified/blockers 및 기존 failing proof를 기록한다.
-- [ ] 기존 실패 원인/새 accessible name 근거를 읽고 apply_patch로 선택자 한 곳만 수정한다.
-- [ ] focused GREEN·diff/self-review·commit 후 fresh Sol에게 고정 diff를 검토받는다.
+- [x] 기존 실패 원인/새 accessible name 근거를 읽고 apply_patch로 선택자 한 곳만 수정한다.
+- [x] focused GREEN·diff/self-review·commit 후 fresh Sol에게 고정 diff를 검토받는다.
