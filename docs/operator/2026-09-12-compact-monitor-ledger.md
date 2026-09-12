@@ -41,3 +41,11 @@ root는 docs/Git/공유 경계를 조정, Luna high는 코드·테스트, fresh 
 Go1.27.0 `/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin`, Node26.8.1. 테스트 TMPDIR는 고유 `/dev/shm` 경로, UI는 단일 worker+전용 NODE_COMPILE_CACHE를 사용하고 timeout/isolation을 완화하지 않는다.
 현재 native computer-use와 Browser plugin은 노출되지 않았다. 후반 visual은 로컬 browser fixture 검증으로 분리하고 Windows Wails/native smoke는 사용자 Windows GPT app 근거를 요청한다.
 Impeccable context는 한 번 실행했다. 승인된 Operate 레이아웃과 기존 token/style을 따르며 별도 Superdesign canvas/새 시안은 생성하지 않는다. UI 완성 후 detector 한 번·desktop/narrow 캡처와 fresh Sol review를 수행한다.
+
+## Task1 배정
+
+- Issue91을 생성했다. 요청 remote branch는 초기 통합·계획 정합성 commit까지 정상 push했다.
+- taskId `compact-toolbox-storage`, exact base `33d279ab59653a42a997b4f9c835c7857ce075dd`, Luna `compact_storage`.
+- worktree `.worktrees/compact-toolbox-storage`, branch `agent/compact-toolbox-storage`.
+- ownedPaths는 toolbox.go/toolbox_test.go와 Task1 report뿐이며, app/frontend/실제 사용자 데이터는 forbidden이다. 나머지 packet과 추가 데이터 보존 테스트는 추출된 Task1 brief에 고정했다.
+- Task1 pending; 현재 구현 worker1, fresh reviewer1 슬롯 예약. root는 문서·UI 검증 준비를 병행한다.

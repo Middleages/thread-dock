@@ -1,5 +1,13 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 현재 작업: compact Monitor와 전역 Toolbox
+
+- PR90은 사용자 지시로 main `611bd6aec528ed63106bd3ef3167c2f9c95e0d01`에 병합됐다. Issue89와 보드는 완료다. 아래 엔진 정리의 미병합 표현은 이전 게시 시점 기록이다.
+- 요청 branch `agent/compact-monitor-toolbox`의 기존03df312 이력을 보존하고 main을 merge한 `4c52f64`에서 시작했다. 독립 worktree는 `.worktrees/compact-monitor-toolbox`이며 초기 tree는 main과 동일하다.
+- [Issue91](https://github.com/Middleages/thread-dock/issues/91), [지정 설계](docs/superpowers/specs/2026-09-11-compact-monitor-and-global-toolbox-design.md), [지정 계획](docs/superpowers/plans/2026-09-11-compact-monitor-and-global-toolbox.md), [새 ledger](docs/operator/2026-09-12-compact-monitor-ledger.md)를 따른다.
+- 첫 Task는 references/global JSON store와 안전한 migration이다. UI·기존 API는 마지막 consumer 교체 뒤 제거하고, command 실행·Agent 자동 주입·SQLite/새 engine은 추가하지 않는다.
+- 구현은 아직 진행 중이다. 이전 PR90의 검증을 새 기능 완료 근거로 사용하지 않는다. Windows/native 도구가 현재 노출되지 않아 마지막 package/실사용 smoke는 사용자 Windows GPT app 근거를 요청한다.
+
 ## 2026-09-12 재착수 상태
 
 - main을 `2db8f776d22afd849fcb9a1328f7e8aff9b72e50`로 fast-forward했다. PR #82는 `6aced75`, #84는 `c487e8c`에 병합됐다.
