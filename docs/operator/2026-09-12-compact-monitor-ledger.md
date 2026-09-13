@@ -78,7 +78,7 @@
 
 ## 남은 검증 / 운영
 
-- Task 리뷰와 마지막 gate는 완료했고, 후속 변경분 최종 통합 리뷰 및 PR/Issue 갱신을 진행한다.
+- 후속 변경분 최종 독립 통합 리뷰 `d6aff6bd0a50618b86d82ea4a05320d191b6ecbb`는 ACCEPT/blockers0이다. 이후 변경은 승인·게시 문서뿐이며 코드 gate를 반복하지 않는다. PR92 본문과 Issue91에 새111tests/Windows 결과를 반영한다.
 - 실제 Windows 앱 clipboard/파일 열기/재시작/사용자 파일 migration/live GHES·Herdr는 여전히 미검증이다. 새 코드 Windows 결과가 없으면 이전 build를 새 검증으로 표시하지 않는다.
 - 현재 sandbox는 Git 메타데이터 read-only다. 작업 worktree 생성·report 추적 해제는 도구 escalation으로 처리했고 우회하지 않았다.
 - 모델/effort 설정은 Luna high·Sol medium, 실제 runtime identity는 unverified. 자동 승격 없음.
