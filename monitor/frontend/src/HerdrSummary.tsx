@@ -30,8 +30,8 @@ export function HerdrSummary({ herdr, project, work }: { herdr: HerdrSnapshot; p
   useEffect(() => setExpanded(false), [project?.projectId, work?.workId])
   const selected = useMemo(() => connectionsForWork(work, project, herdr), [herdr, project, work])
   const summary = useMemo(() => {
-    const snapshotStates = [herdr.status, herdr.state, herdr.syncStatus, herdr.freshness.state, herdr.freshness.syncStatus].filter(Boolean)
-    const snapshotState = !herdr.status ? 'unknown' : snapshotStates.sort((a, b) => stateRank(b) - stateRank(a))[0] ?? 'unknown'
+    const snapshotStates = [herdr.status || 'unknown', herdr.state, herdr.syncStatus, herdr.freshness.state, herdr.freshness.syncStatus].filter(Boolean)
+    const snapshotState = snapshotStates.sort((a, b) => stateRank(b) - stateRank(a))[0] ?? 'unknown'
     const chosen = selected.slice().sort((a, b) => stateRank(connectionState(b)) - stateRank(connectionState(a)))[0]
     const chosenState = chosen ? connectionState(chosen) : snapshotState
     const state = stateRank(chosenState) >= stateRank(snapshotState) ? chosenState : snapshotState

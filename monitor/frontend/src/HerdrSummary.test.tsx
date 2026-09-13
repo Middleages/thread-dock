@@ -88,6 +88,16 @@ describe('HerdrSummary', () => {
     expect(screen.queryByText(/알 수 없음/)).not.toBeInTheDocument()
   })
 
+  it.each([
+    ['offline', '오프라인'],
+    ['degraded', '저하됨'],
+    ['cached', '캐시된 관찰'],
+  ])('keeps the strongest snapshot state when required status is absent and %s is still present', (state, expected) => {
+    const { container } = render(<HerdrSummary herdr={baseHerdr({ status: '', syncStatus: state, freshness: { state: 'stale', syncStatus: state }, connections: [] })} />)
+    expect(screen.getByText(new RegExp(`${expected} · 연결 없음`))).toBeInTheDocument()
+    expect(container.querySelector('.status-mark')).toHaveClass('attention')
+  })
+
   it('shows unknown when the required snapshot status is absent', () => {
     const { container } = render(<HerdrSummary herdr={baseHerdr({ status: '', syncStatus: '', freshness: { state: '', syncStatus: '' }, connections: [] })} />)
     expect(screen.getByText(/알 수 없음 · 연결 없음/)).toBeInTheDocument()
