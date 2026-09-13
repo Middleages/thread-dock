@@ -5,7 +5,7 @@
 - 저장소 `Middleages/thread-dock`, [Draft PR92](https://github.com/Middleages/thread-dock/pull/92), [Issue91](https://github.com/Middleages/thread-dock/issues/91), [Project1](https://github.com/users/Middleages/projects/1).
 - 선행 PR90은 main `611bd6a`에 병합 완료. 요청 branch `agent/compact-monitor-toolbox`의 기존03df312 이력은 보존했다.
 - 2026-09-14 사용자 리뷰 base: `67b4759725dc33a94639d1f4ffac63e551b8ef62`. PR은 Draft 유지, main 병합/Ready 전환 안 함.
-- conflict severity와 legacy aggregate-limit 문제를 수정 중이다. 이전 ACCEPT/95tests는 이전 SHA의 근거이며 이번 변경을 검증한 것으로 쓰지 않는다.
+- conflict severity와 legacy aggregate-limit 및 Todo0개 진입점 수정은 통합 `e1fe17f`에 반영됐다. 새 gate는 Go3패키지/UI13파일111tests/build PASS, 같은 SHA의 Windows Wails build/storage tests도 PASS다. 이전95tests를 재사용한 결과가 아니다.
 - Go/Wails+React, Go GitHub/Herdr 조회, copy-only Toolbox 경계 유지. 사용자 실험·실제 데이터·기존 worktree/Windows staging은 보존한다.
 
 ## 유지할 원본
@@ -52,7 +52,9 @@
 - interface: ProjectDetail count number|null 외 API 불변.
 - acceptance: conflict/unknown은 정상 아님; 명시적 상태 분류·optional 부재 처리·mixed severity; 0/완료-only/미조회 진입점과 실제 Drawer 필터.
 - tests: 해당 UI focused RED/GREEN·필요 typecheck, 전체 suite 없음.
-- result: changedFiles/commitSHA/executedCommands/outcomes는 작업 완료 시 합침. unverified: runtime identity/native. blockers: 작업 중.
+- result.changedFiles: 위 UI7파일; commitSHA `c1011290d448aa6175f41a8170f000e3b6b13b61` (초기3cb2c7, 통합25029fc/e1fe17f).
+- result.executedCommands/outcomes: Node26.8.1/npm11.19.0/Vitest5.0.0, 해당4파일 focused39tests+tsc PASS. 첫 결과는 transcript 요약만 있다. 리뷰에서 필수 status 부재가 더 강한 offline을 덮는 문제를 수정한 후 HerdrSummary21tests PASS; `/tmp/pr92-ui-round1-red-20260914.log`는3개 실패/exit1, `...-green-20260914.log`는21개 통과/exit0다. 잘못된 poolOptions 초기 호출은 실행 설정 오류로 분리했다. fresh Sol의 최종 code/spec/result ACCEPT, canonical report SHA도 정정했다.
+- result.unverified: runtime identity, 실제 native/live/browser 재검증. blockers: 없음.
 
 ### pr92-migration-review-fix
 
@@ -62,11 +64,21 @@
 - interface: private validation 정책만 변경, JSON version/mutex/Wails 계약 불변.
 - acceptance: 101+101 migration 및 자료 접근, 10000초과 유효 legacy/read 보존, 새 저장 증가만 제한, direct v1 caller/partial retry/원본 보존.
 - tests: 직접 영향 Go focused RED/GREEN, 전체 suite 없음.
-- result: changedFiles/commitSHA/executedCommands/outcomes는 작업 완료 시 합침. unverified: runtime identity/native. blockers: 작업 중.
+- result.changedFiles: monitor/toolbox.go, toolbox_test.go, app_test.go; commitSHA `227bce2dfc4a5dc382b79285eeed61e740f3b1de` (통합f240e36).
+- result.executedCommands/outcomes: Go1.27 `go test ./monitor -run 'Toolbox|ProjectReferences' -count=1` focused PASS, go fmt/diff-check PASS. 첫 sandbox cache 오류는 assertions 전 실패이며, escalation 후 실제202개 migration RED를 확인했다. worker 단계는 raw 로그 없는 transcript 요약 근거다. fresh Sol은 count/read/growth/partial retry/원본 보존 및 동일 ensureMigrated를 거치는 App 자료 경로를 검토해 ACCEPT했다. root의 새 통합·Windows 원시 로그는 아래에 있다.
+- result.unverified: actual runtime identity/native 앱 조작. blockers: 없음.
+
+## 이번 통합 검증
+
+- 코드 SHA `e1fe17ff9eb640f87436339794c7a3787c2664d4`에서 마지막 `make check` 한 번, exit0: Go vet/3 packages, UI13 files/111tests, TypeScript/Vite build. `/tmp/pr92-final.8htgHa/make-check.log`에 실제 출력 보존.
+- 명령: `PATH=/home/appuser/.local/share/threaddock/toolchains/go1.27.0/bin:$PATH TMPDIR=/tmp/pr92-final.8htgHa NODE_COMPILE_CACHE=/tmp/pr92-final.8htgHa/node-cache VITEST_MAX_WORKERS=1 make check`. cache 쓰기는 sandbox escalation으로 허용받았다.
+- 같은 코드 SHA를 새 Windows staging에 export해 Wails2.15.0 표준 build42.619초 PASS. `go test ./monitor -run 'Toolbox|ProjectReferences' -count=1`은1.326초/exit0. `/tmp/pr92-final.8htgHa/windows.log` 보존. 실제 앱을 실행하거나 사용자 Toolbox 파일을 migration한 것은 아니다.
+- artifact 위치/hash는 최종 verification 기록에 있다. 기존 staging은 삭제하지 않았다. Linux build가 비운 tracked dist/.placeholder는 원본 내용 그대로 복원했고, 제품 소스 변경은 아니다.
+- 본 변경의 browser/native 실행은 새로 수행하지 않았다. 이전 visual ship/스크린샷을 새 conflict/0개 UI의 실제 화면 검증으로 확대하지 않는다. 이번 UI 근거는 컴포넌트·App 통합 테스트다.
 
 ## 남은 검증 / 운영
 
-- 수정 Task의 fresh Sol 검토, 마지막 통합 gate와 PR/Issue 갱신을 완료해야 한다.
+- Task 리뷰와 마지막 gate는 완료했고, 후속 변경분 최종 통합 리뷰 및 PR/Issue 갱신을 진행한다.
 - 실제 Windows 앱 clipboard/파일 열기/재시작/사용자 파일 migration/live GHES·Herdr는 여전히 미검증이다. 새 코드 Windows 결과가 없으면 이전 build를 새 검증으로 표시하지 않는다.
 - 현재 sandbox는 Git 메타데이터 read-only다. 작업 worktree 생성·report 추적 해제는 도구 escalation으로 처리했고 우회하지 않았다.
 - 모델/effort 설정은 Luna high·Sol medium, 실제 runtime identity는 unverified. 자동 승격 없음.

@@ -1,5 +1,16 @@
 # compact Monitor와 전역 Toolbox 검증
 
+## 최신: 2026-09-14 사용자 리뷰 반영
+
+- 코드 `e1fe17ff9eb640f87436339794c7a3787c2664d4`: conflict 및 낯선 상태를 정상으로 보지 않는 severity, 누락 status와 stronger 상태의 max 처리, 항상 존재하는 Todo 진입점/미조회 null, 유효 legacy 합산 보존과 새 저장 증가 제한을 반영했다.
+- `make check` exit0: Go3패키지, UI13파일111tests, TypeScript/Vite build. 원시 로그 `/tmp/pr92-final.8htgHa/make-check.log`. 이번 변경 후 전체 gate는 이 한 번이며 이전95tests 결과와 별개다.
+- 동일 코드 Windows 표준 Wails2.15.0 build42.619초 PASS. Windows Go1.27의 `go test ./monitor -run 'Toolbox|ProjectReferences' -count=1`은1.326초/exit0. 원시 로그 `/tmp/pr92-final.8htgHa/windows.log`. `Not found: time.Time` generator 진단은 있었으나 각 build 단계는 Done이다.
+- 새 실행 파일: `C:\Users\rhwnd\AppData\Local\Temp\threaddock-pr92-c9ce86d8507e47f19399f9151ba69cd8\source\monitor\build\bin\ThreadDockMonitor.exe`; 12,370,944 bytes; SHA-256 `7a60d68456377907975de0368c66083d4d4512e2462b3ed5c7b2dd7b214fcebd`.
+- UI Task는c101129, migration Task는227bce2에서 fresh Sol ACCEPT. 정확한 owner/commands/수정·증거 제한은 최종 ledger에 통합했다. 중간 report10개는 로컬/Git 이력에 보존하고 PR 최종 트리에서 추적 해제했다.
+- 실제 Windows 앱 clipboard/파일 열기/재시작·사용자 파일 migration·live GHES/Herdr는 계속 미검증이다. 이번 UI의 별도 browser 캡처도 미실행이며 아래 예전 visual ship을 새 실제 화면 검증으로 옮겨 적지 않는다. PR92는 Draft 유지.
+
+아래는 2026-09-13 이전 구현의 역사적 근거다. 현재 변경 검증은 위 절과 ledger를 기준으로 한다.
+
 ## 범위와 상태
 
 - 작업: [Issue91](https://github.com/Middleages/thread-dock/issues/91), branch `agent/compact-monitor-toolbox`.
