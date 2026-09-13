@@ -19,6 +19,7 @@ const projectReferencesVersion = 2
 const globalToolboxFileName = "toolbox.json"
 const globalToolboxVersion = 1
 const maxToolboxItems = 200
+const maxGlobalToolboxItems = 10000
 const maxToolboxText = 16 * 1024
 
 type ToolboxReference struct {
@@ -210,9 +211,6 @@ func validateCommands(items []ToolboxCommand) error {
 
 func validateGlobalToolbox(value GlobalToolbox) error {
 	value = normalizeGlobalToolbox(value)
-	if len(value.Commands) > maxToolboxItems || len(value.Todos) > maxToolboxItems {
-		return fmt.Errorf("전역 Toolbox 항목은 종류별 최대 %d개까지 저장할 수 있습니다", maxToolboxItems)
-	}
 	if err := validateCommands(value.Commands); err != nil {
 		return err
 	}
@@ -225,6 +223,18 @@ func validateGlobalToolbox(value GlobalToolbox) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func validateGlobalToolboxGrowth(existing, candidate GlobalToolbox) error {
+	existing = normalizeGlobalToolbox(existing)
+	candidate = normalizeGlobalToolbox(candidate)
+	if len(candidate.Commands) > maxGlobalToolboxItems && len(candidate.Commands) > len(existing.Commands) {
+		return fmt.Errorf("전역 명령어는 기존 항목보다 늘릴 때 최대 %d개까지 저장할 수 있습니다", maxGlobalToolboxItems)
+	}
+	if len(candidate.Todos) > maxGlobalToolboxItems && len(candidate.Todos) > len(existing.Todos) {
+		return fmt.Errorf("전역 할 일은 기존 항목보다 늘릴 때 최대 %d개까지 저장할 수 있습니다", maxGlobalToolboxItems)
 	}
 	return nil
 }
@@ -477,7 +487,11 @@ func (s globalToolboxStore) put(projects projectToolboxStore, value GlobalToolbo
 	}
 	// A normal v2/empty put is a full replacement, but an existing global file
 	// must still be readable and valid before it can be overwritten.
-	if _, err := s.load(); err != nil {
+	existing, err := s.load()
+	if err != nil {
+		return GlobalToolbox{}, err
+	}
+	if err := validateGlobalToolboxGrowth(existing.Toolbox, value); err != nil {
 		return GlobalToolbox{}, err
 	}
 	if err := s.save(value); err != nil {
@@ -523,9 +537,19 @@ func (s globalToolboxStore) migrateLegacy(projects projectToolboxStore, caller *
 	if err != nil {
 		return GlobalToolbox{}, err
 	}
-	merged, err := mergeLegacyToolbox(global.Toolbox, legacy, keys, caller)
+	baseline, err := mergeLegacyToolbox(global.Toolbox, legacy, keys, nil)
 	if err != nil {
 		return GlobalToolbox{}, err
+	}
+	merged := baseline
+	if caller != nil {
+		merged, err = mergeLegacyToolbox(global.Toolbox, legacy, keys, caller)
+		if err != nil {
+			return GlobalToolbox{}, err
+		}
+		if err := validateGlobalToolboxGrowth(baseline, merged); err != nil {
+			return GlobalToolbox{}, err
+		}
 	}
 	if err := s.save(merged); err != nil {
 		return GlobalToolbox{}, err

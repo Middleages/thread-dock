@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -210,6 +211,41 @@ func TestAppSaveProjectReferencesMigratesLegacyAndPreservesData(t *testing.T) {
 	}
 	if len(global.Toolbox.Todos) != 1 || global.Toolbox.Todos[0].ProjectKey != selectedKey {
 		t.Fatalf("legacy checklist was not linked to its project: %#v", global.Toolbox.Todos)
+	}
+}
+
+func TestAppSaveProjectReferencesMigratesAggregateLegacyDataAboveOldLimit(t *testing.T) {
+	app, projectsPath, globalPath := appWithToolboxStores(t)
+	selectedKey := "github.example/repo:acme/app"
+	otherKey := "github.example/repo:acme/other"
+	legacy := projectToolboxFile{Version: toolboxVersion, Projects: map[string]ProjectToolbox{
+		selectedKey: {},
+		otherKey:    {},
+	}}
+	for i := 0; i < 101; i++ {
+		selected := legacy.Projects[selectedKey]
+		selected.Commands = append(selected.Commands, ToolboxCommand{ID: "selected-" + strconv.Itoa(i), Label: "selected-" + strconv.Itoa(i), Command: "run-selected-" + strconv.Itoa(i)})
+		legacy.Projects[selectedKey] = selected
+		other := legacy.Projects[otherKey]
+		other.Commands = append(other.Commands, ToolboxCommand{ID: "other-" + strconv.Itoa(i), Label: "other-" + strconv.Itoa(i), Command: "run-other-" + strconv.Itoa(i)})
+		legacy.Projects[otherKey] = other
+	}
+	writeLegacyToolbox(t, projectsPath, legacy)
+
+	want := ProjectReferences{References: []ToolboxReference{{ID: "new-ref", Label: "New", Type: "web", Target: "https://example.com/new"}}}
+	if _, err := app.SaveProjectReferences(selectedKey, want); err != nil {
+		t.Fatal("valid aggregate legacy data must migrate before saving references:", err)
+	}
+	data, err := os.ReadFile(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var global globalToolboxFile
+	if err := json.Unmarshal(data, &global); err != nil {
+		t.Fatal(err)
+	}
+	if len(global.Toolbox.Commands) != 202 {
+		t.Fatalf("migrated command count=%d, want 202", len(global.Toolbox.Commands))
 	}
 }
 

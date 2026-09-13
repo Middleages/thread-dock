@@ -136,6 +136,24 @@ func writeGlobalToolbox(t *testing.T, path string, value GlobalToolbox) {
 	}
 }
 
+func generatedCommands(prefix string, count int) []ToolboxCommand {
+	items := make([]ToolboxCommand, 0, count)
+	for i := 0; i < count; i++ {
+		suffix := strconv.Itoa(i)
+		items = append(items, ToolboxCommand{ID: prefix + "-id-" + suffix, Label: prefix + "-label-" + suffix, Command: prefix + "-command-" + suffix})
+	}
+	return items
+}
+
+func generatedTodos(prefix string, count int) []ToolboxTodo {
+	items := make([]ToolboxTodo, 0, count)
+	for i := 0; i < count; i++ {
+		suffix := strconv.Itoa(i)
+		items = append(items, ToolboxTodo{ID: prefix + "-id-" + suffix, Text: prefix + "-text-" + suffix})
+	}
+	return items
+}
+
 func legacyFixture() projectToolboxFile {
 	return projectToolboxFile{Version: toolboxVersion, Projects: map[string]ProjectToolbox{
 		"github.example/repo:acme/jmj": {
@@ -328,7 +346,7 @@ func TestToolboxMigrationRejectsMalformedProjectBeforeWrites(t *testing.T) {
 	}
 }
 
-func TestToolboxMigrationRejectsMergedOverLimitBeforeWrites(t *testing.T) {
+func TestToolboxMigrationAllowsAggregateCommandsAboveLegacyLimit(t *testing.T) {
 	dir := t.TempDir()
 	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
 	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
@@ -342,22 +360,15 @@ func TestToolboxMigrationRejectsMergedOverLimitBeforeWrites(t *testing.T) {
 		legacy.Projects["github.example/repo:acme/b"] = projectB
 	}
 	writeLegacyToolbox(t, projects.path, legacy)
-	before, err := os.ReadFile(projects.path)
+	got, err := global.get(projects)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal("valid per-project commands must migrate despite aggregate count", err)
 	}
-	if _, err := global.get(projects); err == nil {
-		t.Fatal("merged command limit must be rejected")
+	if len(got.Commands) != 202 {
+		t.Fatalf("migrated command count=%d, want 202", len(got.Commands))
 	}
-	after, err := os.ReadFile(projects.path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(before) != string(after) {
-		t.Fatal("project file changed after over-limit rejection")
-	}
-	if _, err := os.Stat(global.path); !os.IsNotExist(err) {
-		t.Fatalf("global file should not be written, stat error=%v", err)
+	if _, err := os.Stat(global.path); err != nil {
+		t.Fatalf("global file should be written, stat error=%v", err)
 	}
 }
 
@@ -401,6 +412,159 @@ func TestGlobalToolboxPutMigrationPreservesExistingAndCallerData(t *testing.T) {
 	}
 	if _, err := projects.getReferences("github.example/repo:acme/jmj"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGlobalToolboxPutRejectsNewGrowthPastGlobalCap(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	existing := GlobalToolbox{Commands: generatedCommands("existing", maxGlobalToolboxItems)}
+	writeGlobalToolbox(t, global.path, existing)
+	before, err := os.ReadFile(global.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := normalizeGlobalToolbox(existing)
+	candidate.Commands = append(candidate.Commands, ToolboxCommand{ID: "new-id", Label: "new", Command: "new"})
+	if _, err := global.put(projects, candidate); err == nil {
+		t.Fatal("new command growth beyond the global cap must be rejected")
+	}
+	after, err := os.ReadFile(global.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("global file changed after rejected command growth")
+	}
+}
+
+func TestGlobalToolboxPutAppliesTodoGrowthCapIndependently(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	existing := GlobalToolbox{Todos: generatedTodos("existing", maxGlobalToolboxItems)}
+	writeGlobalToolbox(t, global.path, existing)
+	candidate := normalizeGlobalToolbox(existing)
+	candidate.Todos = append(candidate.Todos, ToolboxTodo{ID: "new-id", Text: "new"})
+	if _, err := global.put(projects, candidate); err == nil {
+		t.Fatal("new Todo growth beyond the global cap must be rejected independently")
+	}
+}
+
+func TestGlobalToolboxPutAllowsGrandfatheredOverCapEditsAndDeletes(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	existing := GlobalToolbox{Commands: generatedCommands("existing", maxGlobalToolboxItems+1)}
+	writeGlobalToolbox(t, global.path, existing)
+	if got, err := global.get(projects); err != nil || len(got.Commands) != maxGlobalToolboxItems+1 {
+		t.Fatalf("valid over-cap global read failed: got=%d err=%v", len(got.Commands), err)
+	}
+	edited := normalizeGlobalToolbox(existing)
+	edited.Commands[0].Note = "edited"
+	if _, err := global.put(projects, edited); err != nil {
+		t.Fatal("editing grandfathered data must remain allowed:", err)
+	}
+	deleted := edited
+	deleted.Commands = deleted.Commands[:maxGlobalToolboxItems]
+	if _, err := global.put(projects, deleted); err != nil {
+		t.Fatal("deleting grandfathered data must remain allowed:", err)
+	}
+}
+
+func TestGlobalToolboxPutRejectsOverCapFirstPut(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	if _, err := global.put(projects, GlobalToolbox{Todos: generatedTodos("first", maxGlobalToolboxItems+1)}); err == nil {
+		t.Fatal("first put must reject a Todo count beyond the global cap")
+	}
+	if _, err := os.Stat(global.path); !os.IsNotExist(err) {
+		t.Fatalf("rejected first put must not create global file, stat error=%v", err)
+	}
+}
+
+func TestGlobalToolboxPutMigrationCallerChecksOnlyCallerGrowth(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	legacy := projectToolboxFile{Version: toolboxVersion, Projects: map[string]ProjectToolbox{}}
+	for project := 0; project < maxGlobalToolboxItems/200; project++ {
+		key := "github.example/repo:acme/project-" + strconv.Itoa(project)
+		legacy.Projects[key] = ProjectToolbox{Commands: generatedCommands("legacy-"+strconv.Itoa(project), 200)}
+	}
+	writeLegacyToolbox(t, projects.path, legacy)
+	before, err := os.ReadFile(projects.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := GlobalToolbox{Commands: []ToolboxCommand{{ID: "caller", Label: "caller", Command: "caller"}}}
+	if _, err := global.put(projects, caller); err == nil {
+		t.Fatal("v1 caller growth beyond the cap must be rejected")
+	}
+	if _, err := os.Stat(global.path); !os.IsNotExist(err) {
+		t.Fatalf("rejected migration caller must not write global file, stat error=%v", err)
+	}
+	after, err := os.ReadFile(projects.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("rejected migration caller changed legacy project bytes")
+	}
+}
+
+func TestToolboxMigrationAllowsLegacyAggregateAboveGlobalCap(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	legacy := projectToolboxFile{Version: toolboxVersion, Projects: map[string]ProjectToolbox{}}
+	for project := 0; project < maxGlobalToolboxItems/200+1; project++ {
+		key := "github.example/repo:acme/project-" + strconv.Itoa(project)
+		legacy.Projects[key] = ProjectToolbox{Checklist: make([]ToolboxChecklistItem, 0, 200)}
+		for item := 0; item < 200; item++ {
+			suffix := strconv.Itoa(project) + "-" + strconv.Itoa(item)
+			legacy.Projects[key] = ProjectToolbox{Checklist: append(legacy.Projects[key].Checklist, ToolboxChecklistItem{ID: "legacy-" + suffix, Text: "legacy-" + suffix})}
+		}
+	}
+	writeLegacyToolbox(t, projects.path, legacy)
+	got, err := global.get(projects)
+	if err != nil {
+		t.Fatal("valid legacy data beyond the new global cap must migrate:", err)
+	}
+	if len(got.Todos) != maxGlobalToolboxItems+200 {
+		t.Fatalf("migrated Todo count=%d, want %d", len(got.Todos), maxGlobalToolboxItems+200)
+	}
+}
+
+func TestToolboxMigrationRetriesGrandfatheredGlobalAfterProjectRewriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
+	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
+	legacy := projectToolboxFile{Version: toolboxVersion, Projects: map[string]ProjectToolbox{}}
+	for project := 0; project < maxGlobalToolboxItems/200+1; project++ {
+		key := "github.example/repo:acme/project-" + strconv.Itoa(project)
+		legacy.Projects[key] = ProjectToolbox{Commands: generatedCommands("legacy-"+strconv.Itoa(project), 200)}
+	}
+	writeLegacyToolbox(t, projects.path, legacy)
+	failOnce := true
+	projects.writer = func(path, pattern string, value any) error {
+		if failOnce {
+			failOnce = false
+			return errors.New("simulated project rewrite failure")
+		}
+		return writeToolboxFile(path, pattern, value)
+	}
+	if _, err := global.get(projects); err == nil {
+		t.Fatal("project rewrite failure must be reported after large migration")
+	}
+	got, err := global.get(projects)
+	if err != nil {
+		t.Fatal("retry must allow a grandfathered over-cap global:", err)
+	}
+	if len(got.Commands) != maxGlobalToolboxItems+200 {
+		t.Fatalf("retried command count=%d, want %d", len(got.Commands), maxGlobalToolboxItems+200)
 	}
 }
 
@@ -514,7 +678,7 @@ func TestToolboxMigrationRekeysCollidingTodoIDs(t *testing.T) {
 	}
 }
 
-func TestToolboxMigrationRejectsMergedTodoOverLimitBeforeWrites(t *testing.T) {
+func TestToolboxMigrationAllowsAggregateTodosAboveLegacyLimit(t *testing.T) {
 	dir := t.TempDir()
 	projects := projectToolboxStore{path: filepath.Join(dir, "projects.json")}
 	global := globalToolboxStore{path: filepath.Join(dir, "toolbox.json")}
@@ -528,10 +692,14 @@ func TestToolboxMigrationRejectsMergedTodoOverLimitBeforeWrites(t *testing.T) {
 		legacy.Projects["github.example/repo:acme/b"] = projectB
 	}
 	writeLegacyToolbox(t, projects.path, legacy)
-	if _, err := global.get(projects); err == nil {
-		t.Fatal("merged Todo limit must be rejected")
+	got, err := global.get(projects)
+	if err != nil {
+		t.Fatal("valid per-project todos must migrate despite aggregate count", err)
 	}
-	if _, err := os.Stat(global.path); !os.IsNotExist(err) {
-		t.Fatalf("global file should not be written, stat error=%v", err)
+	if len(got.Todos) != 202 {
+		t.Fatalf("migrated Todo count=%d, want 202", len(got.Todos))
+	}
+	if _, err := os.Stat(global.path); err != nil {
+		t.Fatalf("global file should be written, stat error=%v", err)
 	}
 }
