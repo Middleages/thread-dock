@@ -2,7 +2,7 @@
 
 GO_FILES := $(shell find internal monitor -name '*.go' -print)
 FRONTEND_DIR := monitor/frontend
-FRONTEND_TESTS := src/bindings.test.ts src/monitor.test.tsx src/WorkTable.test.tsx src/AppScope.test.tsx src/MarkdownBody.test.tsx src/ProjectToolbox.test.tsx
+FRONTEND_TESTS := src/bindings.test.ts src/project-key.test.ts src/monitor.test.tsx src/WorkTable.test.tsx src/AppScope.test.tsx src/MarkdownBody.test.tsx src/ProjectReferences.test.tsx src/GlobalToolboxDrawer.test.tsx src/TopBar.test.tsx src/ProjectDetail.test.tsx src/HerdrSummary.test.tsx src/SettingsShell.test.tsx src/monitor-presentation.test.ts
 CANONICAL_SKILLS := coordinate-work develop-feature grill-plan tdd-task review-change publish-work
 
 help:

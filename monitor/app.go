@@ -17,16 +17,18 @@ type App struct {
 	source    SnapshotSource
 	allSource SnapshotSource
 
-	baseEnv  map[string]string
-	process  CommandRunner
-	timeout  time.Duration
-	store    settingsStore
-	toolbox  projectToolboxStore
-	settings MonitorSettings
+	baseEnv        map[string]string
+	process        CommandRunner
+	timeout        time.Duration
+	store          settingsStore
+	projectToolbox projectToolboxStore
+	globalToolbox  globalToolboxStore
+	toolboxMu      sync.Mutex
+	settings       MonitorSettings
 }
 
 func NewApp(source SnapshotSource) *App {
-	return &App{source: source, allSource: source, toolbox: defaultProjectToolboxStore()}
+	return &App{source: source, allSource: source, projectToolbox: defaultProjectToolboxStore(), globalToolbox: defaultGlobalToolboxStore()}
 }
 
 func NewConfigurableApp(baseEnv map[string]string, process CommandRunner, timeout time.Duration) *App {
@@ -36,12 +38,13 @@ func NewConfigurableApp(baseEnv map[string]string, process CommandRunner, timeou
 		settings = stored
 	}
 	app := &App{
-		baseEnv:  cloneStringMap(baseEnv),
-		process:  process,
-		timeout:  timeout,
-		store:    store,
-		toolbox:  defaultProjectToolboxStore(),
-		settings: settings,
+		baseEnv:        cloneStringMap(baseEnv),
+		process:        process,
+		timeout:        timeout,
+		store:          store,
+		projectToolbox: defaultProjectToolboxStore(),
+		globalToolbox:  defaultGlobalToolboxStore(),
+		settings:       settings,
 	}
 	app.source = app.buildSource(settings, true)
 	app.allSource = app.buildSource(settings, false)
@@ -118,21 +121,66 @@ func (a *App) SaveMonitorSettings(settings MonitorSettings) (MonitorSettings, er
 	return settings, nil
 }
 
-// GetProjectToolbox returns user-local notes for one selected GitHub project.
+// GetProjectReferences returns user-local references for one selected GitHub project.
 // Toolbox data is deliberately not exposed to Agent orchestration.
-func (a *App) GetProjectToolbox(projectKey string) (ProjectToolbox, error) {
+func (a *App) GetProjectReferences(projectKey string) (ProjectReferences, error) {
 	if a == nil {
-		return ProjectToolbox{}, errors.New("monitor app is nil")
+		return ProjectReferences{}, errors.New("monitor app is nil")
 	}
-	return a.toolbox.get(projectKey)
+	projectKey = strings.TrimSpace(projectKey)
+	if err := validateToolboxProjectKey(projectKey); err != nil {
+		return ProjectReferences{}, err
+	}
+	a.toolboxMu.Lock()
+	defer a.toolboxMu.Unlock()
+	projects := a.projectToolbox
+	if err := a.globalToolbox.ensureMigrated(projects); err != nil {
+		return ProjectReferences{}, err
+	}
+	return projects.getReferences(projectKey)
 }
 
-// SaveProjectToolbox persists user-local references, copy-only commands and checklist items.
-func (a *App) SaveProjectToolbox(projectKey string, toolbox ProjectToolbox) (ProjectToolbox, error) {
+// SaveProjectReferences persists only user-local references for one project.
+func (a *App) SaveProjectReferences(projectKey string, refs ProjectReferences) (ProjectReferences, error) {
 	if a == nil {
-		return ProjectToolbox{}, errors.New("monitor app is nil")
+		return ProjectReferences{}, errors.New("monitor app is nil")
 	}
-	return a.toolbox.put(projectKey, toolbox)
+	projectKey = strings.TrimSpace(projectKey)
+	refs = normalizeProjectReferences(refs)
+	if err := validateToolboxProjectKey(projectKey); err != nil {
+		return ProjectReferences{}, err
+	}
+	if err := validateProjectReferences(refs); err != nil {
+		return ProjectReferences{}, err
+	}
+	a.toolboxMu.Lock()
+	defer a.toolboxMu.Unlock()
+	projects := a.projectToolbox
+	if err := a.globalToolbox.ensureMigrated(projects); err != nil {
+		return ProjectReferences{}, err
+	}
+	return projects.putReferences(projectKey, refs)
+}
+
+// GetGlobalToolbox returns the migration-aware global human Toolbox.
+func (a *App) GetGlobalToolbox() (GlobalToolbox, error) {
+	if a == nil {
+		return GlobalToolbox{}, errors.New("monitor app is nil")
+	}
+	a.toolboxMu.Lock()
+	defer a.toolboxMu.Unlock()
+	return a.globalToolbox.get(a.projectToolbox)
+}
+
+// SaveGlobalToolbox persists the global human Toolbox. Migration and the caller
+// value are handled together so legacy, existing global, and caller data survive.
+func (a *App) SaveGlobalToolbox(toolbox GlobalToolbox) (GlobalToolbox, error) {
+	if a == nil {
+		return GlobalToolbox{}, errors.New("monitor app is nil")
+	}
+	a.toolboxMu.Lock()
+	defer a.toolboxMu.Unlock()
+	return a.globalToolbox.put(a.projectToolbox, toolbox)
 }
 
 // OpenToolboxReference opens only a validated user-registered absolute local path.
