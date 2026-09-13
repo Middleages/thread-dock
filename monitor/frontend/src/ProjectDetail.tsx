@@ -59,7 +59,7 @@ function EvidenceList({ work, project }: { work: WorkItem; project: Project }) {
   </div>
 }
 
-export function ProjectDetail({ project, selectedWorkId, herdr, projectTodoCount, onSelectWork, onOpenProjectTodos, onStatus }: { project: Project; selectedWorkId: string | null; herdr?: HerdrSnapshot; projectTodoCount: number; onSelectWork: (id: string) => void; onOpenProjectTodos: (projectKey: string) => void; onStatus: (message: string) => void }) {
+export function ProjectDetail({ project, selectedWorkId, herdr, projectTodoCount, onSelectWork, onOpenProjectTodos, onStatus }: { project: Project; selectedWorkId: string | null; herdr?: HerdrSnapshot; projectTodoCount: number | null; onSelectWork: (id: string) => void; onOpenProjectTodos: (projectKey: string) => void; onStatus: (message: string) => void }) {
   const [tab, setTab] = useState<'work' | 'references'>('work')
   useEffect(() => setTab('work'), [project.projectId])
   const work = project.workItems.find((item) => item.workId === selectedWorkId) ?? project.workItems[0]
@@ -79,7 +79,7 @@ export function ProjectDetail({ project, selectedWorkId, herdr, projectTodoCount
   return <section className="detail" aria-labelledby="detail-title">
     <div className="detail-heading"><div><h2 id="detail-title">{project.name}</h2><p>최근 동기화 {dateFor(project.updatedAt)} · {labelFor(project.syncStatus)}</p><p className="work-identity">{identity}</p></div>{work && <span className="state-badge"><StatusMark value={work.state} />{labelFor(work.state)}</span>}</div>
     {project.notices && project.notices.length > 0 && <div className="project-notices">{project.notices.map((notice, index) => <p key={`${notice}-${index}`}>{notice}</p>)}</div>}
-    <div className="detail-actions"><button type="button" className="primary-action" onClick={() => void copyHandoff()}>작업 정보 복사</button>{workURL && <button type="button" className="secondary-action" onClick={() => openExternalURL(workURL.url)}>GitHub에서 보기</button>}{projectTodoCount > 0 && <button type="button" className="todo-shortcut" aria-label="할 일 보기" onClick={() => onOpenProjectTodos(toolboxKeyFor(project))}><strong>할 일 {projectTodoCount}개</strong><span>보기</span></button>}</div>
+    <div className="detail-actions"><button type="button" className="primary-action" onClick={() => void copyHandoff()}>작업 정보 복사</button>{workURL && <button type="button" className="secondary-action" onClick={() => openExternalURL(workURL.url)}>GitHub에서 보기</button>}<button type="button" className="todo-shortcut" aria-label="할 일 보기" onClick={() => onOpenProjectTodos(toolboxKeyFor(project))}>{projectTodoCount === null ? <span>할 일 보기</span> : <><strong>할 일 {projectTodoCount}개</strong><span> · 보기</span></>}</button></div>
     <div className="project-detail-tabs" role="tablist" aria-label="프로젝트 상세 보기">
       <button type="button" role="tab" aria-selected={tab === 'work'} onClick={() => setTab('work')}>업무</button>
       <button type="button" role="tab" aria-selected={tab === 'references'} onClick={() => setTab('references')}>자료</button>

@@ -7,10 +7,10 @@ const stateLabel: Record<string, string> = {
   published: '발행 완료', accepted: '승인됨', approve: '승인',
   open: '열림', closed: '닫힘', merged: '병합됨', unknown: '알 수 없음', pending: '대기 중', success: '성공', failure: '실패', neutral: '중립',
   REVIEW_REQUIRED: '리뷰 필요', APPROVED: '승인됨', CHANGES_REQUESTED: '변경 요청',
-  working: '작업 중', idle: '대기 중', done: '완료', fresh: '최신', cached: '캐시된 관찰', missing: '대상 없음', conflict: '불일치', unverified: '확인 필요', connected: '연결됨', observe: '돌아가 관찰', recheck: '먼저 재확인', configure: '연결 파일 설정',
+  working: '작업 중', idle: '대기 중', done: '완료', fresh: '최신', cached: '캐시된 관찰', degraded: '저하됨', setup_required: '설정 필요', disabled: '사용 중지', missing: '대상 없음', conflict: '불일치', unverified: '확인 필요', connected: '연결됨', observe: '돌아가 관찰', recheck: '먼저 재확인', configure: '연결 파일 설정',
 }
 
-export const labelFor = (value: string) => stateLabel[value] ?? value.replaceAll('_', ' ')
+export const labelFor = (value: string) => Object.prototype.hasOwnProperty.call(stateLabel, value) ? stateLabel[value] : value.replaceAll('_', ' ')
 export const dateFor = (value?: string) => value ? new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '시각 없음'
 
 function repositoryFor(url?: string) {

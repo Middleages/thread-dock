@@ -136,7 +136,7 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
   const isDegraded = snapshot?.freshness.state === 'stale' || snapshot?.syncStatus === 'offline' || snapshot?.syncStatus === 'degraded' || snapshot?.syncStatus === 'setup_required'
   const isHerdrDegraded = snapshot?.herdr ? hasDegradedConnectionState(snapshot.herdr.status, snapshot.herdr.state, snapshot.herdr.syncStatus, snapshot.herdr.freshness.state, snapshot.herdr.freshness.syncStatus) : false
   const isLocalConnectionDegraded = isDegraded || isHerdrDegraded
-  const projectTodoCount = selected ? toolbox?.todos.filter((todo) => !todo.done && todo.projectKey === toolboxKeyFor(selected)).length ?? 0 : 0
+  const projectTodoCount: number | null = selected && toolbox ? toolbox.todos.filter((todo) => !todo.done && todo.projectKey === toolboxKeyFor(selected)).length : null
   const openToolbox = () => { if (toolboxLoadError && !toolboxLoadInFlight.current) void loadToolbox(); setToolboxProjectFilter(undefined); setToolboxOpen(true) }
   const openProjectTodos = (projectKey: string) => { if (toolboxLoadError && !toolboxLoadInFlight.current) void loadToolbox(); setToolboxProjectFilter(projectKey); setToolboxOpen(true) }
 

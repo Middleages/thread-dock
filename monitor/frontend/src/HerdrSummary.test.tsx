@@ -48,6 +48,52 @@ describe('HerdrSummary', () => {
     expect(screen.queryByText('workspace-1')).not.toBeInTheDocument()
   })
 
+  it('promotes a conflicting connection above a healthy connection in the collapsed summary', () => {
+    const connections = [
+      { ...baseHerdr().connections[0], session: 'connected-session', status: 'connected', agentStatus: 'working', paneId: 'pane-connected' },
+      { ...baseHerdr().connections[0], session: 'conflict-session', status: 'conflict', agentStatus: undefined, paneId: 'pane-conflict' },
+    ]
+    render(<HerdrSummary herdr={baseHerdr({ connections })} project={project} work={work} />)
+    expect(screen.getByText(/불일치 · conflict-session/)).toBeInTheDocument()
+    expect(screen.getByText(/불일치 · conflict-session/).closest('.herdr-summary')?.querySelector('.status-mark')).toHaveClass('attention')
+  })
+
+  it.each([
+    ['degraded', '저하됨'],
+    ['setup_required', '설정 필요'],
+    ['cached', '캐시된 관찰'],
+    ['disabled', '사용 중지'],
+  ])('classifies %s as an explicit attention state', (state, expected) => {
+    const { container } = render(<HerdrSummary herdr={baseHerdr({ status: state, syncStatus: state, freshness: { state, syncStatus: state } })} />)
+    expect(screen.getByText(new RegExp(expected))).toBeInTheDocument()
+    expect(container.querySelector('.status-mark')).toHaveClass('attention')
+  })
+
+  it('treats a future non-empty state as a warning instead of green', () => {
+    const { container } = render(<HerdrSummary herdr={baseHerdr({ status: 'future_state' })} />)
+    expect(screen.getByText(/future state/)).toBeInTheDocument()
+    expect(container.querySelector('.status-mark')).toHaveClass('attention')
+  })
+
+  it('does not treat prototype property names as known healthy states', () => {
+    const { container } = render(<HerdrSummary herdr={baseHerdr({ status: 'toString' })} />)
+    expect(screen.getByText('toString · 연결 없음')).toBeInTheDocument()
+    expect(container.querySelector('.status-mark')).toHaveClass('attention')
+  })
+
+  it('does not replace a healthy connection with an absent optional agent status', () => {
+    const connection = { ...baseHerdr().connections[0], agentStatus: undefined }
+    render(<HerdrSummary herdr={baseHerdr({ connections: [connection] })} project={project} work={work} />)
+    expect(screen.getByText('연결됨 · feature-123')).toBeInTheDocument()
+    expect(screen.queryByText(/알 수 없음/)).not.toBeInTheDocument()
+  })
+
+  it('shows unknown when the required snapshot status is absent', () => {
+    const { container } = render(<HerdrSummary herdr={baseHerdr({ status: '', syncStatus: '', freshness: { state: '', syncStatus: '' }, connections: [] })} />)
+    expect(screen.getByText(/알 수 없음 · 연결 없음/)).toBeInTheDocument()
+    expect(container.querySelector('.status-mark')).toHaveClass('attention')
+  })
+
   it('reveals notices, observed sessions, and unconnected agents only on expand', () => {
     const herdr = baseHerdr({ notices: ['Herdr 연결을 확인하세요'], unconnectedAgents: [{ session: 'feature-123', name: 'Reviewer', agent_status: 'idle', pane_id: 'pane-9' }] })
     render(<HerdrSummary herdr={herdr} project={project} work={work} />)

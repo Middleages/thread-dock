@@ -48,6 +48,21 @@ describe('ProjectDetail', () => {
     expect(onOpenProjectTodos).toHaveBeenCalledWith('github.com/repo:acme/app')
   })
 
+  it('keeps the Todo shortcut visible with a zero count and opens the project filter', () => {
+    const onOpenProjectTodos = vi.fn()
+    render(<ProjectDetail project={project()} selectedWorkId="issue:7" projectTodoCount={0} onSelectWork={vi.fn()} onOpenProjectTodos={onOpenProjectTodos} onStatus={vi.fn()} />)
+    expect(screen.getByText('할 일 0개')).toBeInTheDocument()
+    expect(screen.getByText('· 보기')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '할 일 보기' }))
+    expect(onOpenProjectTodos).toHaveBeenCalledWith('github.com/repo:acme/app')
+  })
+
+  it('keeps the Todo shortcut uncounted before the global cache is available', () => {
+    render(<ProjectDetail project={project()} selectedWorkId="issue:7" projectTodoCount={null} onSelectWork={vi.fn()} onOpenProjectTodos={vi.fn()} onStatus={vi.fn()} />)
+    expect(screen.getByRole('button', { name: '할 일 보기' })).toHaveTextContent('할 일 보기')
+    expect(screen.queryByText(/할 일 0개/)).not.toBeInTheDocument()
+  })
+
   it('does not render a GitHub action for an unsafe work URL', () => {
     const unsafe = project({ workItems: [{ ...project().workItems[0], links: [{ kind: 'issue', label: 'Unsafe', url: 'javascript:alert(1)' }], github: { kind: 'issue', number: 7, url: 'javascript:alert(1)', state: 'OPEN', checks: [] } }] })
     render(<ProjectDetail project={unsafe} selectedWorkId="issue:7" projectTodoCount={0} onSelectWork={vi.fn()} onOpenProjectTodos={vi.fn()} onStatus={vi.fn()} />)
