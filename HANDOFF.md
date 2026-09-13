@@ -2,6 +2,8 @@
 
 ## 현재 작업: compact Monitor와 전역 Toolbox
 
+2026-09-14 사용자 리뷰 보완 중: conflict/낯선 Herdr 상태의 정상 오표시, legacy 합산200 migration 차단, Todo0개 진입점을 수정한다. PR92는 Draft 유지. 아래95tests/Windows953 근거는 수정 전 기준이며 새 코드 검증은 최종 ledger/verification에서 별도로 갱신한다. PR에 새로 추가됐던 task report10개는 추적만 해제하고 로컬/Git 이력을 보존했다.
+
 - PR90은 사용자 지시로 main `611bd6aec528ed63106bd3ef3167c2f9c95e0d01`에 병합됐다. Issue89와 보드는 완료다. 아래 엔진 정리의 미병합 표현은 이전 게시 시점 기록이다.
 - 요청 branch `agent/compact-monitor-toolbox`의 기존03df312 이력을 보존하고 main을 merge한 `4c52f64`에서 시작했다. 독립 worktree는 `.worktrees/compact-monitor-toolbox`이며 초기 tree는 main과 동일하다.
 - [Issue91](https://github.com/Middleages/thread-dock/issues/91), [지정 설계](docs/superpowers/specs/2026-09-11-compact-monitor-and-global-toolbox-design.md), [지정 계획](docs/superpowers/plans/2026-09-11-compact-monitor-and-global-toolbox.md), [새 ledger](docs/operator/2026-09-12-compact-monitor-ledger.md)를 따른다.

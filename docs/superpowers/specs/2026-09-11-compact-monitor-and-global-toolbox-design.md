@@ -78,7 +78,7 @@ ThreadDock Monitor의 고정 좌우 사이드바를 제거해 GitHub 업무와 I
 
 프로젝트 자료는 기존 `%APPDATA%\ThreadDock\projects.json`을 사용한다.
 
-프로젝트별 Todo를 별도 데이터로 중복 저장하지 않는다. 프로젝트 상세에는 해당 프로젝트에 연결된 미완료 Todo 개수와 `보기` 진입점만 노출할 수 있다. `보기`를 누르면 같은 전역 Toolbox Drawer를 해당 프로젝트 필터가 선택된 상태로 연다.
+프로젝트별 Todo를 별도 데이터로 중복 저장하지 않는다. 프로젝트 상세에는 미완료 Todo가 0개여도 `보기` 진입점을 유지한다. `보기`를 누르면 같은 전역 Toolbox Drawer의 할 일 탭과 해당 프로젝트 필터를 연다. 아직 전역 데이터를 읽지 못했다면 숫자 0으로 꾸미지 않고 개수 없는 진입점을 제공한다.
 
 ## 4. Global Toolbox drawer
 
@@ -221,9 +221,11 @@ MVP에서는 SQLite를 도입하지 않고 현재 JSON 저장 방식을 유지�
 
 현재 버전의 `projects.json`에는 프로젝트별 `references`, `commands`, `checklist`가 들어갈 수 있다. 업데이트 후 사용자가 저장한 항목이 사라져 보이면 안 된다.
 
-전역 `toolbox.json`이 아직 없을 때 한 번만 migration한다.
+`projects.json`이 v1이면 migration한다.
 
-부분 완료 재개: global 저장 후 project rewrite가 실패할 수 있으므로 실제 재개 판정은 `projects.json`의 v1 여부다. global이 이미 있어도 v1 project가 남으면 기존 global과 idempotent merge 후 rewrite를 재시도한다. 잘못된/미지원 파일과 합산 limit 초과는 원본을 덮어쓰거나 잘라내지 않고 명시적 오류로 남긴다.
+부분 완료 재개: global 저장 후 project rewrite가 실패할 수 있으므로 실제 재개 판정은 `projects.json`의 v1 여부다. global이 이미 있어도 v1 project가 남으면 기존 global과 idempotent merge 후 rewrite를 재시도한다. 잘못된/미지원 파일과 유효하지 않은 항목은 원본을 덮어쓰거나 잘라내지 않고 명시적 오류로 남긴다.
+
+2026-09-14 리뷰 정정: legacy의 프로젝트별 200개 제한을 전역 합산에 재사용하지 않는다. 유효한 legacy migration과 global 읽기는 합산 개수로 거부하지 않는다. 새 global 저장은 commands/Todos 각각 별도 `maxGlobalToolboxItems = 10000` 기준을 적용하되, 이미 초과한 데이터의 편집·완료·삭제는 허용하고 해당 종류의 개수가 더 늘어날 때만 거부한다. v1 최초 put도 existing+legacy를 canonical merge한 baseline 대비 caller의 증가만 검사한다. 참조/legacy 프로젝트별 제한과 항목별 id·길이·경로 검증은 유지한다.
 
 1. `projects.json`을 읽는다.
 2. 모든 프로젝트의 command를 전역 commands로 모은다.
@@ -261,7 +263,7 @@ Summary에 우선 표시할 정보:
 - unconnected agents
 - notices
 
-기본 상태는 collapsed다. `blocked`, `offline`, `stale`, `unverified`처럼 사용자 판단이 필요한 상태일 때는 summary 문구로 분명히 드러내되 자동 확장하지 않는다.
+기본 상태는 collapsed다. `conflict`, `blocked`, `offline`, `stale`, `unverified`, `degraded`, `setup_required`, `cached`, `disabled` 등 사용자 판단이 필요한 상태는 summary 문구와 attention 표시로 드러내되 자동 확장하지 않는다. 모든 선택 연결과 각 connection/agent 상태를 함께 비교한다. 명시적으로 정상인 상태만 정상 순위를 가지며 낯선 상태 문자열은 정상으로 취급하지 않는다. 없는 optional 필드는 별도 이상 상태를 만들어내지 않는다.
 
 ## 7. Responsive behavior
 
@@ -302,6 +304,8 @@ Summary에 우선 표시할 정보:
 - project references store no longer persists new commands/checklist
 - Todo의 `projectKey` 0개/1개 저장과 validation
 - migration preserves project association for existing checklist items
+- valid per-project 101+101 command/checklist items migrate completely and project references remain accessible
+- oversized migrated data remains readable/editable while new count growth is guarded independently
 - migration deduplicates commands and same-project duplicate Todo
 - migration does not collapse same-text Todo from different projects
 - failed global write leaves old project file intact
@@ -317,8 +321,10 @@ Summary에 우선 표시할 정보:
 - Todo can be created as common or linked to one project
 - Todo filter supports all/common/project and incomplete/completed modes
 - project Todo shortcut opens the drawer with that project filter
+- zero/completed-only projects retain the shortcut; an unloaded cache is not displayed as a known zero
 - commands offer copy but no execute action
 - Herdr detail is collapsed initially and expands explicitly
+- connected + conflict shows 불일치 with attention while collapsed; unfamiliar states never become healthy
 - existing open/all polling and Markdown tests remain passing
 
 ## 11. Non-goals

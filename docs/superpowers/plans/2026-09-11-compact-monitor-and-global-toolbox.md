@@ -12,6 +12,8 @@
 
 ## Global Constraints
 
+2026-09-14 사용자 리뷰 보완이 아래 초기 실행 기록보다 우선한다. Herdr는 explicit-healthy 상태만 rank0, conflict와 새로운 상태는 warning 이상으로 취급한다. Migration/read는 유효 legacy 합산 개수를 거부하지 않고, 새 global count 증가는 종류별10000/현재 보존 개수 기준으로 제한한다. Todo0개도 진입점을 유지하되 미조회 count는 null로 구분한다. 현재 Task packet/결과는 최종 ledger에 합친다. 이 PR의 중간 report10개는 추적 해제하며 [67b4759의 Git 이력](https://github.com/Middleages/thread-dock/tree/67b4759725dc33a94639d1f4ffac63e551b8ef62/.superpowers/sdd/2026-09-11-compact-monitor-and-global-toolbox)에서 확인한다.
+
 - ThreadDock remains a Monitor + Skills product; this change must not add a scheduler, task execution engine, shell runner, or Agent prompt injection.
 - GitHub remains the durable work source and Herdr remains the top-level execution lifecycle source.
 - Toolbox content is human-only and is never automatically read by Coordinator, Feature Leader, or project Skills.
@@ -32,12 +34,12 @@
 지정 설계를 기준으로 아래 충돌과 데이터 보존 경계를 고정했다. 원래 Task 1→6 순서는 유지한다.
 
 - common Todo는 Go string/omitempty와 TS optional string을 사용한다. missing/null/empty/공백 입력은 common으로 정규화하고 출력은 projectKey를 생략한다.
-- migration 재개 기준은 projects.json의 version1이다. global 파일이 이미 있어도 legacy project가 남으면 유효한 기존 global과 merge하고 global 저장→project v2 rewrite 순서로 재시도한다. 잘못된 파일·미지원 version·합산200개 초과는 쓰기 전 오류로 보존하며 truncation하지 않는다.
+- migration 재개 기준은 projects.json의 version1이다. global 파일이 이미 있어도 legacy project가 남으면 유효한 기존 global과 merge하고 global 저장→project v2 rewrite 순서로 재시도한다. 잘못된 파일·미지원 version·유효하지 않은 항목은 쓰기 전 오류로 보존하며 truncation하지 않는다. 합산200개 거부 정책은 사용자 리뷰로 폐기했다.
 - refs 쓰기는 legacy를 migration 없이 덮어쓰지 않는다. store putReferences는 legacy에 migration-required 오류로 fail closed하고 Task2의 모든 Toolbox App 호출은 전용 mutex 아래 migration을 선행한다.
 - 첫 global put이 v1 migration을 동반하면 기존 global·legacy·호출자 항목을 함께 보존한 canonical merge를 저장/반환한다. project가 absent/v2인 정상 put만 전체 교체다. 모든 put은 기존 global의 유효성도 확인해 malformed/unsupported 파일을 덮지 않는다. App SaveGlobalToolbox는 mutex 아래 migration-aware put에 직접 위임하고 별도 ensure 호출로 v1 여부를 먼저 지우지 않는다.
 - migration은 project key 정렬로 결정적이며 semantic dedupe와 ID 충돌을 구분한다. 서로 다른 항목의 중복 ID는 결정적으로 재키하고 기존 global 항목을 우선 보존한다.
 - 설계대로 Todo는 미완료 기본/완료 포함 toggle을 제공한다. unknown project는 `알 수 없는 프로젝트 (<raw key>)`로 표시하고 common/현재 프로젝트로 재지정할 수 있다. 프로젝트 Todo shortcut은 Todo 탭과 해당 필터를 함께 연다.
-- App이 global Toolbox load/cache/save를 한 곳에서 소유한다. 최초 load 성공 전과 save 중에는 mutation을 막고, 실패 시 입력과 마지막 확정 값을 유지한다. Drawer는 아래 controlled props를 추가로 받는다: `toolbox: GlobalToolbox | null`, `loadError?: string`, `loading: boolean`, `saving: boolean`, `onReload: () => void`, `onSave: (next: GlobalToolbox) => Promise<GlobalToolbox>`. App은 초기 한 번 load해 count를 계산하며 오류 후 명시적 reload/reopen에서 재시도한다. ProjectDetail은 계획의 `projectTodoCount: number`를 사용하고 양수일 때 shortcut을 표시한다.
+- App이 global Toolbox load/cache/save를 한 곳에서 소유한다. 최초 load 성공 전과 save 중에는 mutation을 막고, 실패 시 입력과 마지막 확정 값을 유지한다. Drawer는 아래 controlled props를 추가로 받는다: `toolbox: GlobalToolbox | null`, `loadError?: string`, `loading: boolean`, `saving: boolean`, `onReload: () => void`, `onSave: (next: GlobalToolbox) => Promise<GlobalToolbox>`. App은 초기 한 번 load해 count를 계산하며 오류 후 명시적 reload/reopen에서 재시도한다. ProjectDetail은 `projectTodoCount: number | null`을 사용하고 항상 shortcut을 표시한다. null은 미조회이며 실제0으로 표시하지 않는다.
 - compile-valid 중간 전이를 위해 Task1 legacy Go types/get/put, Task2 old Wails/TS contracts, Task3 old ProjectToolbox 파일은 마지막 consumer 교체까지 임시 유지한다. Task4에서 App 교체 후 기존 component/test/CSS·old bindings/methods·legacy get/put을 제거한다. legacy 디스크 decoder 타입은 private로 남길 수 있다. v2에 대한 legacy write는 거절해 schema downgrade를 막는다.
 - Task2에는 project-key helper 추출만 위한 App.tsx 소유권을 추가한다. Task4에는 old API 제거를 위한 toolbox.go/toolbox_test.go/app.go/app_test.go/bindings.ts/bindings.test.ts 및 old ProjectToolbox 세 파일 소유권을 추가한다. 이 공유 경로는 직렬 작업한다.
 - Task6의 사전 전체 Go/UI/build 묶음은 이미 실행한 focused 증거와 중복되므로 추가 full suite로 실행하지 않는다. 변경 영향 검증과 마지막 make check 한 번을 구분한다. Windows/native smoke는 별도 실제 근거가 없으면 not run이다.
@@ -87,7 +89,7 @@ Task packet·검증·결정 근거는 [진행 ledger](../../operator/2026-09-12-
 ### Task 1: Split Toolbox persistence and add idempotent migration
 
 **실행 결과:** 완료. 수정 후보 `b3b9919` fresh review ACCEPT, 통합 `5dc0abb`.
-실행 순서·정확 명령·검증 제한은 task-1-report와 tracked ledger가 원본이다.
+현재 결정·최종 결과는 tracked ledger/verification이 원본이다. 이전 Task 보고서는 위 Git 이력 링크에 보존했다.
 아래 원안의 RED 실행 시점은 historical path 미기록 제한이 있으므로 사후에 증거를 만들지 않는다.
 
 **Execution packet (2026-09-12):**
@@ -103,7 +105,7 @@ Task packet·검증·결정 근거는 [진행 ledger](../../operator/2026-09-12-
 - tests: planned focused RED/GREEN commands with Go1.27.0 and unique TMPDIR under /dev/shm; retain relevant existing Toolbox/reference validation coverage. Do not isolate GOPATH/GOCACHE unnecessarily or run full suite. Record actual command/exit and runtime paths; await tool session completion rather than losing its session ID.
 - result: changedFiles includes code/tests plus report, implementation commitSHA is explicit, final review candidate is pinned externally by root. Include RED/GREEN executedCommands/outcomes, self-review, unverified(actual runtime model/effort/native), blockers.
 
-**Additional concrete cases from the data-preservation review:** existing valid global + legacy v1 retry; malformed/unsupported project/global leaves both files unchanged; project rewrite failure leaves legacy bytes intact and global data complete; same semantic Todo with done conflict keeps false; different items with colliding IDs remain independently addressable; merged >200 commands/Todos errors before writes; reference save without migration cannot drop legacy fields. Composite dedupe keys must not ambiguously concatenate arbitrary text. Keep existing reference/command field limits, and Todo text max2000.
+**Additional concrete cases from the data-preservation review:** existing valid global + legacy v1 retry; malformed/unsupported project/global leaves both files unchanged; project rewrite failure leaves legacy bytes intact and global data complete; same semantic Todo with done conflict keeps false; different items with colliding IDs remain independently addressable; valid aggregate >200 migrates without loss, including App reference access; new-write growth guard preserves already-oversized data; reference save without migration cannot drop legacy fields. Composite dedupe keys must not ambiguously concatenate arbitrary text. Keep existing reference/command field limits, and Todo text max2000.
 
 **Files:**
 - Modify: `monitor/toolbox.go`
@@ -202,8 +204,8 @@ In `monitor/toolbox.go`:
 4. Use the same atomic temp-file + rename pattern for both stores.
 5. Keep limits:
    - references: max `maxToolboxItems` per project
-   - global commands: max `maxToolboxItems`
-   - global Todos: max `maxToolboxItems`
+   - global commands/Todos: read/migration has no aggregate cap; new writes guard growth above `maxGlobalToolboxItems = 10000` per kind
+   - already oversized global data: preserve read/edit/delete; reject only further count growth per kind
    - command/reference text limits as today
    - Todo text max 2000
    - Todo project key: empty or valid via `validateToolboxProjectKey`
@@ -294,7 +296,7 @@ git commit -m "feat: split project references and global toolbox storage"
 
 **실행 결과:** 완료. App 경계 테스트 보강 후보 `b7af8e3` scoped review ACCEPT, 통합 `894f512`.
 새 네 API와 helper는 사용 가능하다. 아래 Step5의 old API 제거만 사전 결정대로 Task4에 이관했다.
-실제 focused 명령·exit·리뷰 근거는 task-2-report와 tracked ledger를 따른다.
+실제 focused 명령·exit·리뷰 근거는 최종 verification/ledger와 위 Git 이력의 이전 보고서를 따른다.
 
 **Execution packet (2026-09-12):**
 - taskId: `compact-toolbox-bindings`
@@ -624,7 +626,7 @@ Assert:
 To avoid loading all Todo data independently inside every project row, let `ProjectDetail` receive a project Todo count from `App` if implementation finds that cleaner. If so, use this exact alternate prop instead of a second store fetch:
 
 ```ts
-projectTodoCount: number
+projectTodoCount: number | null
 ```
 
 and keep `onOpenProjectTodos(projectKey)` unchanged.
