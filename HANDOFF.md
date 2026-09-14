@@ -5,6 +5,7 @@
 - [Issue #93](https://github.com/Middleages/thread-dock/issues/93): `agent/opencode-support`에서 OpenCode primary agent 두 개와 [프로젝트·전역 설치 안내](docs/operator/github-first-quickstart.md)를 추가한다. Codex TOML과 공용 `.agents/skills`는 그대로 보존한다. 모델·권한 override와 사용자 전역 설치는 수행하지 않는다.
 - 구현 `eed7904`(통합 `2a12c57`)의 frontmatter/기존 prompt 비교 및 격리된 OpenCode `1.18.30 --pure agent list`에서 두 primary 역할 인식을 확인했다. 문서 로컬 링크와 `git diff --check`도 통과했다. 기존 `make template-check`는 Codex·공용 Skill 검사이며 새 OpenCode 검사의 대체 근거가 아니다.
 - 문서·설정 전용 diff이므로 전체 `make check`와 Windows build는 재실행하지 않는다. 실제 모델/effort identity, 모델 호출·Herdr 배정·GitHub 업무 수행과 Windows 실행은 새 검증 범위가 아니다. 지정 Luna high 구현 뒤 fresh Sol medium 고정 SHA 리뷰를 진행하며 실제 runtime identity는 unverified다.
+- 최종 fresh Sol 리뷰는 `385131f8b8ccb9b8c7ec2474ed5e1e77d72c8426`에서 ACCEPT, finding 없음이다. 동일 템플릿과 공용 Skill을 `/tmp/td-opencode.XtPoc2/project`에 복사하고 `XDG_CONFIG_HOME=/tmp/td-opencode.XtPoc2/config opencode --pure debug skill`의 경로·이름을 검사해 canonical 6개와 shim 4개 인식을 확인했다. 첫 원문 출력 잘림 이후 이름만 추린 확인은 exit 0이었다. 이 절 이후 변경은 검증 기록뿐이며 전역 설치나 모델 실행 결과로 확대하지 않는다.
 - PR #92는 사용자 지시로 main `8f03ba6c376f27d1110075297cf21484b059f3d2`에 병합됐다. 아래 Draft 표현은 병합 전 기록이다. Issue #91의 실제 native 검증은 별도로 남는다.
 
 ## 이전 작업: compact Monitor와 전역 Toolbox
