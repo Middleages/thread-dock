@@ -9,6 +9,8 @@ Review the exact candidate SHA or PR head from a fresh read-only context. The re
 
 Check the linked Issue acceptance criteria, repository guidance, allowed feature scope, regressions, error handling, tests, documentation, and relevant security or compatibility implications. Treat CI and local commands as evidence only for the exact SHA/environment they ran against; do not rerun an already trustworthy identical check without a concrete reason.
 
-For every acceptance criterion, identify the supporting diff/check evidence or state what is missing. Every blocking finding must name a concrete file, symbol, behavior, or command and explain the consequence. Do not block on preference-only cleanup that is outside acceptance or material risk.
+Review complexity and diagnostics for outcome risk, not taste. Flag an unnecessary layer, setting, validator, or duplicated source of truth only when it can block a valid normal path, create divergent behavior, or increase recovery cost. Check that logs retain the operation, target, failure point, and confirmed cause needed to diagnose a failed task; connect missing context to the concrete recovery or support risk. Preserve necessary safety checks and report preference-only differences without blocking.
+
+For every acceptance criterion, identify the supporting diff/check evidence or state what is missing. Every blocking finding must name a concrete file, symbol, behavior, or command and explain the consequence.
 
 Return `accept` only when required acceptance and checks are supported. Otherwise return `block` with ordered findings and the smallest next fix/check. Do not merge, force-push, reset another worktree, change Project status as if review were complete, or silently repair the implementation yourself. Human merge remains final.
