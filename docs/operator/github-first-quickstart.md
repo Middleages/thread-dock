@@ -33,6 +33,20 @@ Canonical Skill은 여섯 개다.
 
 `plan-work`, `open-agent-session`, `implement-task`, `record-work`는 기존 프롬프트 호환을 위한 짧은 migration shim으로만 남긴다.
 
+Herdr를 조작할 때는 공용 보조 Skill `herdr-local`을 함께 사용한다. 여섯 업무 Skill의 역할을 바꾸지 않고, 폐쇄망의 로컬 CLI 조작 경계만 담당한다.
+
+### 폐쇄망 Herdr 사용
+
+`project-template/.agents/skills/herdr-local/`을 다른 공용 Skill과 함께 복사한다. Codex와 OpenCode가 같은 파일을 사용하며, 전역 설치도 아래 공용 경로를 따른다.
+
+- 설치된 `herdr --help`와 `herdr --skill`을 문법 근거로 사용한다. 웹 문서 조회·업데이트·다운로드는 하지 않는다.
+- 관리 pane 안에서 확인한 실제 ID로 로컬 상태·출력을 조회한다. 세션·pane 생성과 Agent 입력은 승인된 대상·작업에 한정한다. `HERDR_ENV`를 임의로 설정하거나 관리 pane 밖에서 대상 세션을 추측해 조작하지 않는다.
+- 외부 SSH·URL 접근·업로드·원격 전송과 shell/helper/Agent를 통한 우회는 제외한다. 본 Skill은 내부 SSH 원격 운영도 제공하지 않으며 로컬 Herdr만 다룬다.
+- 로컬 CLI라고 모델 통신까지 로컬인 것은 아니다. Agent 시작·prompt 전송·실행을 유발하는 입력 전에는 provider, fallback, plugin/MCP 등 관련 통신 경로가 승인된 내부 자원만 사용하는지 확인한다. 불명확하면 실행하지 않고 필요한 확인 사항을 남긴다. 사설 IP·localhost·내부처럼 보이는 이름만으로는 충분하지 않다.
+- GitHub 기록은 기존 업무 Skill의 책임이지만 이 흐름에서 외부 GitHub.com으로 이어가지 않는다. 승인된 내부 GitHub 서비스가 없으면 기록할 handoff를 로컬에 남기고 미게시로 표시한다.
+
+이 Skill은 행동 지침이며 방화벽·네트워크 격리를 설치하거나 보장하지 않는다. 운영 환경의 외부 통신 차단은 별도 정책으로 유지한다. Monitor의 기존 Windows→WSL 읽기 경로를 변경하는 기능도 아니다.
+
 ### 전역 설치를 선택할 때
 
 프로젝트별 설치 대신 모든 프로젝트에서 사용하려면 아래 대상으로 개별 파일·스킬 폴더를 복사한다. 전역 설치와 프로젝트 설치를 중복 유지하면 같은 이름의 지침이 달라질 수 있으므로 한 범위를 선택한다.
