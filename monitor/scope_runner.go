@@ -29,6 +29,10 @@ func (r openOnlyCommandRunner) Run(ctx context.Context, cwd, executable string, 
 	return r.base.Run(ctx, cwd, executable, copyArgs...)
 }
 
+func (r openOnlyCommandRunner) SupportsConcurrentRuns() bool {
+	return supportsConcurrentRuns(r.base)
+}
+
 func isGitHubWorkListCommand(executable string, args []string) bool {
 	tokens := append([]string{executable}, args...)
 	for index := 0; index+2 < len(tokens); index++ {

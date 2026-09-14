@@ -93,3 +93,18 @@ func TestWSLCommandRunnerRedactsStderrOnNonZeroExit(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestWSLCommandRunnerIncludesClassifiedGitHubDiagnosticWithoutRawStderr(t *testing.T) {
+	fake := &recordingRunner{
+		result: runner.Result{ExitCode: 1, Stderr: "error: your authentication token is missing required scopes [project]\nTo request it, run: gh auth refresh -s project\n"},
+		err:    errors.New("process failed"),
+	}
+	adapter := newWSLCommandRunner(fake, "Ubuntu", time.Second)
+	_, err := adapter.run(context.Background(), "gh", "project", "item-list", "4")
+	if err == nil || !strings.Contains(err.Error(), "GitHub 인증 scope가 부족합니다: project") {
+		t.Fatalf("err=%v", err)
+	}
+	if strings.Contains(err.Error(), "authentication token") || strings.Contains(err.Error(), "gh auth refresh") {
+		t.Fatalf("raw stderr must not be exposed: %v", err)
+	}
+}

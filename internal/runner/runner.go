@@ -35,6 +35,11 @@ func (OSRunner) Run(ctx context.Context, cwd, executable string, args ...string)
 	return Result{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode(err)}, err
 }
 
+// SupportsConcurrentRuns advertises that independent OS processes may be
+// started concurrently. It is intentionally optional and is not part of
+// Runner so simple test doubles keep their existing serial semantics.
+func (OSRunner) SupportsConcurrentRuns() bool { return true }
+
 func exitCode(err error) int {
 	if err == nil {
 		return 0
