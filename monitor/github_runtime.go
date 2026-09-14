@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,32 +16,133 @@ const maxConcurrentGitHubTargets = 4
 
 type githubCommandDiagnosticCollector struct {
 	mu       sync.Mutex
-	messages []string
+	messages []githubDiagnosticNotice
+}
+
+type githubDiagnosticNotice struct {
+	targets []string
+	rank    int
+	message string
 }
 
 func (c *githubCommandDiagnosticCollector) add(message string) {
+	c.addNotice("", 2, message)
+}
+
+func (c *githubCommandDiagnosticCollector) addCommand(executable string, args []string, message string) {
+	if c == nil {
+		return
+	}
+	tokens := append([]string{executable}, args...)
+	c.addNotice(githubDiagnosticTarget(tokens), githubDiagnosticCommandRank(executable, args), message)
+}
+
+func (c *githubCommandDiagnosticCollector) addNotice(target string, rank int, message string) {
 	if c == nil || strings.TrimSpace(message) == "" {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, existing := range c.messages {
-		if existing == message {
+	for index, existing := range c.messages {
+		if existing.message == message {
+			seenTarget := false
+			for _, existingTarget := range existing.targets {
+				if existingTarget == target {
+					seenTarget = true
+					break
+				}
+			}
+			if !seenTarget {
+				c.messages[index].targets = append(c.messages[index].targets, target)
+			}
+			if rank < c.messages[index].rank {
+				c.messages[index].rank = rank
+			}
 			return
 		}
 	}
-	c.messages = append(c.messages, message)
+	c.messages = append(c.messages, githubDiagnosticNotice{targets: []string{target}, rank: rank, message: message})
 }
 
-func (c *githubCommandDiagnosticCollector) drain() []string {
+func (c *githubCommandDiagnosticCollector) drain(snapshot Snapshot) []string {
 	if c == nil {
 		return nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	messages := append([]string(nil), c.messages...)
+	notices := append([]githubDiagnosticNotice(nil), c.messages...)
 	c.messages = nil
+	targetOrder := make(map[string]int, len(snapshot.Projects))
+	for index, project := range snapshot.Projects {
+		targetOrder[project.ProjectID] = index
+	}
+	sort.SliceStable(notices, func(left, right int) bool {
+		leftOrder, leftKnown := diagnosticNoticeOrder(notices[left], targetOrder)
+		rightOrder, rightKnown := diagnosticNoticeOrder(notices[right], targetOrder)
+		if leftKnown != rightKnown {
+			return leftKnown
+		}
+		if leftKnown && leftOrder != rightOrder {
+			return leftOrder < rightOrder
+		}
+		if notices[left].rank != notices[right].rank {
+			return notices[left].rank < notices[right].rank
+		}
+		return notices[left].message < notices[right].message
+	})
+	messages := make([]string, 0, len(notices))
+	for _, notice := range notices {
+		messages = append(messages, notice.message)
+	}
 	return messages
+}
+
+func diagnosticNoticeOrder(notice githubDiagnosticNotice, targetOrder map[string]int) (int, bool) {
+	best := 0
+	known := false
+	for _, target := range notice.targets {
+		order, ok := targetOrder[target]
+		if !ok || (known && order >= best) {
+			continue
+		}
+		best = order
+		known = true
+	}
+	return best, known
+}
+
+func githubDiagnosticCommandRank(executable string, args []string) int {
+	label := githubCommandLabel(executable, args)
+	switch label {
+	case "GitHub Issue":
+		return 0
+	case "GitHub PR":
+		return 1
+	case "GitHub Project":
+		return 0
+	default:
+		return 2
+	}
+}
+
+func githubDiagnosticTarget(tokens []string) string {
+	for index := 0; index+1 < len(tokens); index++ {
+		if tokens[index] == "--repo" {
+			return "repo:" + tokens[index+1]
+		}
+	}
+	for index := 0; index+1 < len(tokens); index++ {
+		if tokens[index] != "project" || tokens[index+1] != "item-list" || index+2 >= len(tokens) {
+			continue
+		}
+		number := tokens[index+2]
+		for option := index + 3; option+1 < len(tokens); option++ {
+			if tokens[option] == "--owner" {
+				return "board:" + tokens[option+1] + "/" + number
+			}
+		}
+	}
+	return ""
 }
 
 type githubDiagnosticRunner struct {
@@ -55,7 +157,7 @@ func (r *githubDiagnosticRunner) Run(ctx context.Context, cwd, executable string
 	result, err := r.base.Run(ctx, cwd, executable, args...)
 	if err != nil || result.ExitCode != 0 {
 		if diagnostic := safeGitHubCommandDiagnostic(result.Stderr); diagnostic != "" {
-			r.collector.add(fmt.Sprintf("%s 조회 실패: %s", githubCommandLabel(executable, args), diagnostic))
+			r.collector.addCommand(executable, args, fmt.Sprintf("%s 조회 실패: %s", githubCommandLabel(executable, args), diagnostic))
 		}
 	}
 	return result, err
@@ -93,7 +195,7 @@ func (s *githubDiagnosticSource) FetchAll(ctx context.Context) (Snapshot, error)
 		return Snapshot{}, errors.New("github diagnostic source is unavailable")
 	}
 	snapshot, err := s.inner.FetchAll(ctx)
-	diagnostics := s.collector.drain()
+	diagnostics := s.collector.drain(snapshot)
 	if err != nil {
 		return snapshot, err
 	}

@@ -108,3 +108,16 @@ func TestWSLCommandRunnerIncludesClassifiedGitHubDiagnosticWithoutRawStderr(t *t
 		t.Fatalf("raw stderr must not be exposed: %v", err)
 	}
 }
+
+func TestWSLCommandRunnerUsesGenericDiagnosticForUnrecognizedScopeTokens(t *testing.T) {
+	secret := "ghp_SECRET123"
+	fake := &recordingRunner{
+		result: runner.Result{ExitCode: 1, Stderr: "error: missing required scopes [project " + secret + "]"},
+		err:    errors.New("process failed"),
+	}
+	adapter := newWSLCommandRunner(fake, "Ubuntu", time.Second)
+	_, err := adapter.run(context.Background(), "gh", "project", "item-list", "4")
+	if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "GitHub 인증 scope가 부족합니다:") || !strings.Contains(err.Error(), "GitHub 인증에 필요한 권한(scope)이 없습니다") {
+		t.Fatalf("err=%v", err)
+	}
+}
