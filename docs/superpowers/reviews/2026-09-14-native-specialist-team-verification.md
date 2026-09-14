@@ -65,3 +65,5 @@
 fresh native_team_final_review는0bf44611557a3ea8dc0dcd1edc52e35e7593c0f2에서 ACCEPT, blocking/non-blocking finding 없음으로 판정했다. source diff22파일의 범위, 두 harness 정의, 짧은 shared Skill, 원문 전달, 실패/재확인 구분과 실제 native metadata를 읽었다. 기존 checks/model 실행을 재실행하지 않았다.
 
 같은 후보에서 root의 최종 make template-check와 TOML/YAML의 paired6역할/권한/새leaf model미지정/Skill참조 확인도 통과했다. 이후 변경은 검토·게시 metadata뿐이다. 이 승인은 제한된 구현의 코드/문서 검토이며 모든 모델과 실서비스에서의 완전한 행동 보장이 아니다.
+
+[PR98](https://github.com/Middleages/thread-dock/pull/98)으로 게시했다. main 병합과 전역 설치는 수행하지 않았고 branch/worktree 및 로컬 probe 원문을 보존한다.

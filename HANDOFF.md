@@ -2,6 +2,8 @@
 
 ## 현재 작업: OMO 없는 native 전문가 팀
 
+- [PR98](https://github.com/Middleages/thread-dock/pull/98)을 agent/native-specialist-team → main으로 게시했다. Issue97/Project1은 사람 병합 대기이며 main을 병합하지 않았다. worktree와 동작 probe의 실패·성공 근거를 보존한다.
+
 - [Issue97](https://github.com/Middleages/thread-dock/issues/97), [설계](docs/superpowers/specs/2026-09-14-native-specialist-team-design.md), [계획](docs/superpowers/plans/2026-09-14-native-specialist-team.md)에 따라 Codex/OpenCode leaf4개와 공용 helper2개를 추가한다. 두 primary와 canonical6개를 유지한다.
 - Task 구현7f5e2a 및 review-change 보강adf1a58, 통합점검의 tdd 단순성/Quickstart 권한 설명 수정d1b826e는 각각 focused 검증과 fresh Sol scoped 리뷰를 통과했다. 통합 코드 a2b2d91. OMO·외부tool·전역설정·Go/React는 추가/변경하지 않았다.
 - 실제 OpenCode1.18.30 --pure에서 primary2/leaf4/Skill 참조와 permission을 확인했다. 새 leaf는 model/effort 미지정. Codex는 TOML/schema 근거이며 실제 Codex 모델 실행은 별도 미검증이다.
