@@ -46,6 +46,7 @@ Canonical Skill은 여섯 개다.
 `~`는 도구를 실행하는 사용자의 홈이다. WSL에서 실행하면 Linux 홈(예: `/home/appuser`), Windows에서 직접 실행하면 그 Windows 사용자의 홈을 기준으로 한다. OpenCode의 XDG 설정이나 Codex의 설정 디렉터리를 바꿨다면 실제 경로를 따른다. 기존 전역 파일은 먼저 백업·비교하고, `AGENTS.md`와 `CONTEXT.md`는 전역 규칙으로 복사하지 않는다.
 
 OpenCode는 공용 `~/.agents/skills`와 `.agents/skills`를 공식 지원한다. OpenCode 전용 `~/.config/opencode/skills`에도 설치할 수 있지만 두 도구를 함께 쓸 때는 공용 경로 하나를 권장한다. [OpenCode Skill 경로](https://opencode.ai/docs/skills/)
+Codex도 같은 공용 Skill 경로를 읽으며, custom agent는 별도 TOML을 읽는다. [Codex Skill 경로](https://learn.chatgpt.com/docs/build-skills), [Codex custom agent](https://learn.chatgpt.com/docs/agent-configuration/subagents)
 
 ## 2. 도구별 Agent 설정
 
