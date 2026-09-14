@@ -102,7 +102,7 @@ native leaf 정의도 함께 복사한다: `td_explorer`, `td_docs_editor`, `td_
 
 `td_coordinator.md`와 `td_feature_leader.md`는 둘 다 `mode: primary`다. `td_explorer`, `td_docs_editor`, `td_implementer`, `td_reviewer`는 `mode: subagent`인 세부 역할이다. 대상 저장소에서 OpenCode를 열고 primary를 선택한다. Feature Leader는 독립 feature의 Herdr 세션에서 사용하고, 필요한 세부 작업만 native subagent로 분배한다.
 
-Markdown 에이전트는 기존 Codex TOML과 별개 형식이다. OpenCode 템플릿은 `model`·effort·권한 override를 넣지 않아 사용자의 기존 설정을 따른다. primary agent의 모델을 생략하면 전역 모델을 사용한다. [OpenCode Agent 설정](https://opencode.ai/docs/agents/)
+Markdown 에이전트는 기존 Codex TOML과 별개 형식이다. 두 primary 정의는 `model`·effort·권한 override를 넣지 않아 사용자의 기존 설정을 따른다. 네 leaf 정의도 model/effort는 생략해 상속하지만, native 위임을 막는 `task: deny`를 명시하고 explorer/reviewer에는 `edit: deny`를 추가한다. 이는 도구 권한 설정이며 OS 격리를 보장한다는 뜻이 아니다. [OpenCode Agent 설정](https://opencode.ai/docs/agents/)
 
 설치 후 대상 저장소에서 다음으로 인식 여부를 확인한다.
 
