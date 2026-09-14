@@ -1,6 +1,14 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
-## 현재 작업: 폐쇄망 Herdr 보조 Skill
+## 현재 작업: PR #94·#95·#96 병합
+
+- 사용자 지시로 #94(OpenCode 지원)를 `cad7df16ce4134bf80b0a69820cf0ac0cfa7b005`, #96(Herdr 로컬 Skill)을 `33fc281fb399e2c7454f34151285909d60a54229`에 병합했다. 아래 미게시/미병합 표현은 당시 기록이다. 실제 전역 설치는 수행하지 않았다.
+- #95의 원래 head `6f9059d`는 fresh Sol 리뷰에서 BLOCK이었다: stderr scope 문자열 반향, 병렬 진단 순서 비결정성, 옛 TopBar 문구를 찾는 통합 테스트 실패. 첫 `make check`는 Go3 통과 후 UI113/114에서 실패했고 build 단계에는 도달하지 않았다. 원본 로컬 로그는 `/tmp/pr95-merge-make-check.log`, [GitHub 기록](https://github.com/Middleages/thread-dock/pull/95#issuecomment-5658233513)을 따른다.
+- Luna test-only 수정 `df9873a`는 GitHub 정상과 Herdr 주의를 각각 확인하고 focused24개를 통과했다. backend `b8deff9`는 안전한 scope allowlist/일반 오류 fallback과 configured target·command 순서의 진단 집계를 적용하고 focused/race 검사를 통과했다. `agent/pr95-merge-check`에 main과 두 수정을 통합했다.
+- 최종 코드 `977cde2044c2ce97fa95e599139ab8bb31d18459`에서 `make check`가 Go3 packages·UI14파일114tests·TypeScript/Vite build까지 PASS(exit0)했다. Linux Go1.27.0/Node26.8.1, `VITEST_MAX_WORKERS=1` 환경이며 로그는 `/tmp/pr95-merge-final-make-check.log`다. 원래 실패 tuple은 테스트/backend 수정으로 무효화되어 이 최종 gate를 실행했다. 같은 SHA의 scoped 독립 재리뷰는 ACCEPT, blocker 없음이다. 이후 변경은 이 기록뿐이며 사용자 승인에 따라 PR #95 병합을 진행한다. 실제 병합 SHA는 GitHub PR 기록이 원본이다.
+- Windows build/native·live GitHub/GHES/Herdr는 이번 변경에서 미검증이며 과거 #92 검증 결과로 승격하지 않는다. 실제 runtime model/effort identity는 unverified다. 기존 worktree·중단 실험·Windows staging은 보존한다.
+
+## 이전 작업: 폐쇄망 Herdr 보조 Skill
 
 - 승인된 `herdr-local`을 공용 `.agents/skills`에 추가했다. 여섯 canonical workflow는 유지하고 `coordinate-work`·`develop-feature`에서 Herdr CLI가 필요할 때 먼저 호출한다. 설치는 [Quickstart의 폐쇄망 절](docs/operator/github-first-quickstart.md)을 따른다. 사용자 전역 파일은 변경하지 않았다.
 - 기준은 OpenCode 지원 branch의 `739d082`이며 독립 branch는 `agent/herdr-local-skill`이다. 구현 `621b0d7`을 `073f7a4`로 통합했다. Monitor·Go/TS·도구별 Agent 모델 설정은 불변이다.
