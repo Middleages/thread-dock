@@ -6,7 +6,7 @@
 - Task 구현7f5e2a 및 review-change 보강adf1a58, 통합점검의 tdd 단순성/Quickstart 권한 설명 수정d1b826e는 각각 focused 검증과 fresh Sol scoped 리뷰를 통과했다. 통합 코드 a2b2d91. OMO·외부tool·전역설정·Go/React는 추가/변경하지 않았다.
 - 실제 OpenCode1.18.30 --pure에서 primary2/leaf4/Skill 참조와 permission을 확인했다. 새 leaf는 model/effort 미지정. Codex는 TOML/schema 근거이며 실제 Codex 모델 실행은 별도 미검증이다.
 - [동작 검증](docs/superpowers/reviews/2026-09-14-native-specialist-team-verification.md)은 /tmp/threaddock-native-team.pJWGKz의 독립 fixture에서 수행했다. 네 named leaf 호출과 문서/탐색/제안 검토를 확인했으나 최초 구현은 parent가 header-only 조건을 바꿔 FAIL이었다. 원문 packet 전달을 복원한f4220cf(scopedACCEPT, 통합2781c09)와 더 명확한 원본 fixture에서 구현8tests/fresh code review accept를 확인했다. setup 오류와 초기 잘못된7PASS를 보존한다.
-- whole-branch 리뷰·PR 게시 전 단계다. 제품 Go/React·전역설정·현재세션registry는 바꾸지 않았다. 기존 main dirty 문서/중단된 사용자 실험은 보존하고 main 병합은 사람이 수행한다.
+- whole-branch native_team_final_review는0bf4461에서 ACCEPT, finding 없음이다. 최종 template-check/paired6역할parse도 PASS. 제품 Go/React·전역설정·현재세션registry는 바꾸지 않았다. 기존 main dirty 문서/중단된 사용자 실험은 보존하고 main 병합은 사람이 수행한다.
 
 ## 현재 작업: PR #94·#95·#96 병합
 
