@@ -7,6 +7,8 @@ description: Use when a Feature Leader owns one approved GitHub Issue or indepen
 
 Own one feature from accepted scope to reviewed PR readiness. GitHub is the durable record; the Feature Leader coordinates native subagents inside one Herdr top-level session.
 
+If this workflow needs any Herdr CLI operation, use **REQUIRED SUB-SKILL:** `herdr-local` first and satisfy its local-only gate before session, layout, pane, or Agent discovery/control. If the gate cannot be satisfied, leave the operation pending and report the blocker.
+
 1. Read the Issue, acceptance criteria, repository instructions, dependencies, and shared-interface warnings.
 2. If requirements are materially ambiguous, assumption-heavy, or cross interfaces, use `grill-plan`. Skip it for small, well-specified work.
 3. Split only implementation tasks that can write independently. Prefer 1-3 workers; never create workers just to fill capacity.

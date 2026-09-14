@@ -4,6 +4,7 @@ GO_FILES := $(shell find internal monitor -name '*.go' -print)
 FRONTEND_DIR := monitor/frontend
 FRONTEND_TESTS := src/bindings.test.ts src/project-key.test.ts src/monitor.test.tsx src/WorkTable.test.tsx src/AppScope.test.tsx src/AppRefresh.test.tsx src/MarkdownBody.test.tsx src/ProjectReferences.test.tsx src/GlobalToolboxDrawer.test.tsx src/TopBar.test.tsx src/ProjectDetail.test.tsx src/HerdrSummary.test.tsx src/SettingsShell.test.tsx src/monitor-presentation.test.ts
 CANONICAL_SKILLS := coordinate-work develop-feature grill-plan tdd-task review-change publish-work
+HELPER_SKILLS := herdr-local
 
 help:
 	@echo 'make check                         Run the repository-wide verification gate'
@@ -33,6 +34,9 @@ template-check:
 	@for skill in $(CANONICAL_SKILLS); do \
 		test -f "project-template/.agents/skills/$$skill/SKILL.md" || { echo "missing skill: $$skill" >&2; exit 1; }; \
 		grep -q '^description: Use when' "project-template/.agents/skills/$$skill/SKILL.md" || { echo "invalid skill description: $$skill" >&2; exit 1; }; \
+	done
+	@for skill in $(HELPER_SKILLS); do \
+		test -f "project-template/.agents/skills/$$skill/SKILL.md" || { echo "missing helper skill: $$skill" >&2; exit 1; }; \
 	done
 
 check: template-check

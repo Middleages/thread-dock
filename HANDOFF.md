@@ -1,6 +1,23 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
-## 현재 작업: compact Monitor와 전역 Toolbox
+## 현재 작업: 폐쇄망 Herdr 보조 Skill
+
+- 승인된 `herdr-local`을 공용 `.agents/skills`에 추가했다. 여섯 canonical workflow는 유지하고 `coordinate-work`·`develop-feature`에서 Herdr CLI가 필요할 때 먼저 호출한다. 설치는 [Quickstart의 폐쇄망 절](docs/operator/github-first-quickstart.md)을 따른다. 사용자 전역 파일은 변경하지 않았다.
+- 기준은 OpenCode 지원 branch의 `739d082`이며 독립 branch는 `agent/herdr-local-skill`이다. 구현 `621b0d7`을 `073f7a4`로 통합했다. Monitor·Go/TS·도구별 Agent 모델 설정은 불변이다.
+- 검증: helper 생성 전 `make template-check`의 missing-helper 실패(RED), 생성 후 PASS(GREEN), frontmatter·라우팅·gate 순서·canonical/helper 분리 정적 검사 PASS. Quickstart 로컬 링크도 PASS다. 문서·템플릿 검사 변경에 필요한 focused 범위만 실행했고 전체 `make check`·Windows build는 반복하지 않았다.
+- 기존 지침만 읽은 7개 dry-run은 대체로 보수적이었다. 이를 행동 실패나 새 스킬의 개선 효과로 주장하지 않는다. 새 스킬은 내장 `--skill` 사용법과 업데이트·원격 운영 제외 범위를 명문화한다. 실제 Herdr state/control·provider 호출·방화벽/egress·Windows 실행은 미검증이다.
+- fresh Sol 고정 SHA 리뷰 `073f7a4829ad88ba10b00f965fff7d47e35f91e6`는 ACCEPT, finding 없음이다. 독립 텍스트 적용 8건에서 위험/불명확 요청 6건 차단, 근거 있는 조회·작업 2건 허용을 확인했다. 이후 변경은 이 handoff 기록뿐이다.
+- 외부 접속 CLI 없이 로컬 작성·검증만 수행했다. GitHub 게시와 전역 설치는 미수행이며 main은 변경하지 않았다. 지정 Luna high 구현·fresh Sol medium 리뷰의 실제 runtime identity는 unverified다.
+
+## 이전 작업: Codex·OpenCode 템플릿 병행 지원
+
+- [Issue #93](https://github.com/Middleages/thread-dock/issues/93): `agent/opencode-support`에서 OpenCode primary agent 두 개와 [프로젝트·전역 설치 안내](docs/operator/github-first-quickstart.md)를 추가한다. Codex TOML과 공용 `.agents/skills`는 그대로 보존한다. 모델·권한 override와 사용자 전역 설치는 수행하지 않는다.
+- 구현 `eed7904`(통합 `2a12c57`)의 frontmatter/기존 prompt 비교 및 격리된 OpenCode `1.18.30 --pure agent list`에서 두 primary 역할 인식을 확인했다. 문서 로컬 링크와 `git diff --check`도 통과했다. 기존 `make template-check`는 Codex·공용 Skill 검사이며 새 OpenCode 검사의 대체 근거가 아니다.
+- 문서·설정 전용 diff이므로 전체 `make check`와 Windows build는 재실행하지 않는다. 실제 모델/effort identity, 모델 호출·Herdr 배정·GitHub 업무 수행과 Windows 실행은 새 검증 범위가 아니다. 지정 Luna high 구현 뒤 fresh Sol medium 고정 SHA 리뷰를 진행하며 실제 runtime identity는 unverified다.
+- 최종 fresh Sol 리뷰는 `385131f8b8ccb9b8c7ec2474ed5e1e77d72c8426`에서 ACCEPT, finding 없음이다. 동일 템플릿과 공용 Skill을 `/tmp/td-opencode.XtPoc2/project`에 복사하고 `XDG_CONFIG_HOME=/tmp/td-opencode.XtPoc2/config opencode --pure debug skill`의 경로·이름을 검사해 canonical 6개와 shim 4개 인식을 확인했다. 첫 원문 출력 잘림 이후 이름만 추린 확인은 exit 0이었다. 이 절 이후 변경은 검증 기록뿐이며 전역 설치나 모델 실행 결과로 확대하지 않는다.
+- PR #92는 사용자 지시로 main `8f03ba6c376f27d1110075297cf21484b059f3d2`에 병합됐다. 아래 Draft 표현은 병합 전 기록이다. Issue #91의 실제 native 검증은 별도로 남는다.
+
+## 이전 작업: compact Monitor와 전역 Toolbox
 
 2026-09-14 사용자 리뷰 보완: conflict/낯선 Herdr 상태 오표시, legacy 합산200 migration 차단, Todo0개 진입점을 수정했다. 코드e1fe17f에서 새 gate(Go3/UI111/build)와 Windows Wails build/임시 파일 storage tests가 통과했고, 후속 최종 리뷰d6aff6b는 ACCEPT다. PR92는 Draft 유지. 아래95tests/Windows953 근거는 이전 기준이며 현재 결과는 최종 ledger/verification의 최신 절을 따른다. 중간 report10개는 추적만 해제하고 로컬/Git 이력을 보존했다.
 
