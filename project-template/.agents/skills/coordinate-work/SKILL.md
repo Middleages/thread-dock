@@ -7,6 +7,8 @@ description: Use when a project coordinator must turn GitHub work into one or mo
 
 Use GitHub Issue, PR, and Projects as durable work truth. Herdr owns execution lifecycle; ThreadDock only connects GitHub evidence to top-level session state.
 
+If this workflow needs any Herdr CLI operation, use **REQUIRED SUB-SKILL:** `herdr-local` first and satisfy its local-only gate before discovery, state inspection, or control. If the gate cannot be satisfied, leave the operation pending and report the blocker.
+
 Read repository guidance and the relevant open GitHub work first. Split only independently deliverable features, keep dependencies explicit, and serialize the narrow shared interface or file boundary when features would otherwise collide.
 
 Before starting anything new, inspect `~/.threaddock/sessions.json` and the actual Herdr state. Reuse an exact live Feature Leader session when its Issue/repository/worktree locator matches. Never guess session, workspace, tab, pane, Agent name, or cwd values; use values returned by the installed Herdr tool.
