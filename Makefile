@@ -4,7 +4,8 @@ GO_FILES := $(shell find internal monitor -name '*.go' -print)
 FRONTEND_DIR := monitor/frontend
 FRONTEND_TESTS := src/bindings.test.ts src/project-key.test.ts src/monitor.test.tsx src/WorkTable.test.tsx src/AppScope.test.tsx src/AppRefresh.test.tsx src/MarkdownBody.test.tsx src/ProjectReferences.test.tsx src/GlobalToolboxDrawer.test.tsx src/TopBar.test.tsx src/ProjectDetail.test.tsx src/HerdrSummary.test.tsx src/SettingsShell.test.tsx src/monitor-presentation.test.ts
 CANONICAL_SKILLS := coordinate-work develop-feature grill-plan tdd-task review-change publish-work
-HELPER_SKILLS := herdr-local
+HELPER_SKILLS := herdr-local explore-codebase write-project-docs
+SPECIALIST_AGENTS := td_explorer td_docs_editor td_implementer td_reviewer
 
 help:
 	@echo 'make check                         Run the repository-wide verification gate'
@@ -31,12 +32,17 @@ vet-focused:
 template-check:
 	@test -f project-template/.codex/agents/td_coordinator.toml
 	@test -f project-template/.codex/agents/td_feature_leader.toml
+	@for agent in $(SPECIALIST_AGENTS); do \
+		test -f "project-template/.codex/agents/$$agent.toml" || { echo "missing Codex agent: $$agent" >&2; exit 1; }; \
+		test -f "project-template/.opencode/agents/$$agent.md" || { echo "missing OpenCode agent: $$agent" >&2; exit 1; }; \
+	done
 	@for skill in $(CANONICAL_SKILLS); do \
 		test -f "project-template/.agents/skills/$$skill/SKILL.md" || { echo "missing skill: $$skill" >&2; exit 1; }; \
 		grep -q '^description: Use when' "project-template/.agents/skills/$$skill/SKILL.md" || { echo "invalid skill description: $$skill" >&2; exit 1; }; \
 	done
 	@for skill in $(HELPER_SKILLS); do \
 		test -f "project-template/.agents/skills/$$skill/SKILL.md" || { echo "missing helper skill: $$skill" >&2; exit 1; }; \
+		grep -q '^description: Use when' "project-template/.agents/skills/$$skill/SKILL.md" || { echo "invalid helper description: $$skill" >&2; exit 1; }; \
 	done
 
 check: template-check

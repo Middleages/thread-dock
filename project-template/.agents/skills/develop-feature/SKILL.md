@@ -11,8 +11,8 @@ If this workflow needs any Herdr CLI operation, use **REQUIRED SUB-SKILL:** `her
 
 1. Read the Issue, acceptance criteria, repository instructions, dependencies, and shared-interface warnings.
 2. If requirements are materially ambiguous, assumption-heavy, or cross interfaces, use `grill-plan`. Skip it for small, well-specified work.
-3. Split only implementation tasks that can write independently. Prefer 1-3 workers; never create workers just to fill capacity.
-4. Dispatch implementation subagents with bounded paths, acceptance criteria, dependency inputs, and **REQUIRED SUB-SKILL:** `tdd-task`.
+3. Split only implementation tasks that can write independently. Prefer 1-3 workers; never create workers just to fill capacity. For each task, preserve the source Issue/request link, original acceptance criteria, and edge-case output or failure meaning. Include only its bounded owned paths, feature worktree/branch, dependency inputs, and shared-interface warnings.
+4. Dispatch each packet with the matching Skill and named native leaf when the harness supports it: `td_explorer` with `explore-codebase`, `td_docs_editor` with `write-project-docs`, `td_implementer` with `tdd-task`, and `td_reviewer` with `review-change`. If a harness has no named leaf, pass that same Skill, packet, and bounded scope to an allowed native agent; do not reinterpret the request, bypass a permission denial, add a fallback model, or turn a helper into a top-level session. Use exploration or documentation helpers only when the feature needs them; this is not a fixed pipeline.
 5. Integrate returned changes in the feature worktree and run only affected focused verification. Preserve exact commands, outcomes, and candidate SHA.
 6. Dispatch a fresh implementation-independent reviewer with **REQUIRED SUB-SKILL:** `review-change` against the exact candidate SHA/diff and acceptance evidence.
 7. If review blocks, assign the smallest bounded fix and re-review the new SHA. If the same root cause repeats twice, replan instead of blindly retrying.
