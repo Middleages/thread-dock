@@ -17,9 +17,10 @@ ThreadDock checkout의 다음 폴더를 대상 저장소에 복사한다.
 ```text
 project-template/.agents/skills  -> <target>/.agents/skills
 project-template/.codex/agents  -> <target>/.codex/agents   # Codex 사용 시
+project-template/.opencode/agents -> <target>/.opencode/agents # OpenCode 사용 시
 ```
 
-기존 `.agents/skills`나 `.codex/agents`에 같은 이름의 사용자 수정이 있으면 통째로 덮어쓰지 말고 차이를 확인한다. 루트 `AGENTS.md`, 기존 모델 설정, CI 파일은 ThreadDock 템플릿 때문에 덮어쓰지 않는다.
+Codex와 OpenCode를 함께 쓰면 세 경로를 모두 넣는다. 스킬 원본은 `.agents/skills` 하나이며 도구별로 복제할 필요가 없다. 기존 같은 이름의 파일은 통째로 덮어쓰지 말고 차이를 확인한다. 루트 `AGENTS.md`, 기존 모델 설정, CI 파일은 ThreadDock 템플릿 때문에 덮어쓰지 않는다.
 
 Canonical Skill은 여섯 개다.
 
@@ -32,7 +33,24 @@ Canonical Skill은 여섯 개다.
 
 `plan-work`, `open-agent-session`, `implement-task`, `record-work`는 기존 프롬프트 호환을 위한 짧은 migration shim으로만 남긴다.
 
-## 2. Codex subagent 활성화
+### 전역 설치를 선택할 때
+
+프로젝트별 설치 대신 모든 프로젝트에서 사용하려면 아래 대상으로 개별 파일·스킬 폴더를 복사한다. 전역 설치와 프로젝트 설치를 중복 유지하면 같은 이름의 지침이 달라질 수 있으므로 한 범위를 선택한다.
+
+| 원본 | 전역 대상 |
+|---|---|
+| `project-template/.agents/skills/<skill>/` | `~/.agents/skills/<skill>/` (공용) |
+| `project-template/.codex/agents/td_*.toml` | `~/.codex/agents/` (Codex) |
+| `project-template/.opencode/agents/td_*.md` | `~/.config/opencode/agents/` (OpenCode) |
+
+`~`는 도구를 실행하는 사용자의 홈이다. WSL에서 실행하면 Linux 홈(예: `/home/appuser`), Windows에서 직접 실행하면 그 Windows 사용자의 홈을 기준으로 한다. OpenCode의 XDG 설정이나 Codex의 설정 디렉터리를 바꿨다면 실제 경로를 따른다. 기존 전역 파일은 먼저 백업·비교하고, `AGENTS.md`와 `CONTEXT.md`는 전역 규칙으로 복사하지 않는다.
+
+OpenCode는 공용 `~/.agents/skills`와 `.agents/skills`를 공식 지원한다. OpenCode 전용 `~/.config/opencode/skills`에도 설치할 수 있지만 두 도구를 함께 쓸 때는 공용 경로 하나를 권장한다. [OpenCode Skill 경로](https://opencode.ai/docs/skills/)
+Codex도 같은 공용 Skill 경로를 읽으며, custom agent는 별도 TOML을 읽는다. [Codex Skill 경로](https://learn.chatgpt.com/docs/build-skills), [Codex custom agent](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+
+## 2. 도구별 Agent 설정
+
+### Codex
 
 대상 저장소의 `.codex/config.toml`에 이미 `[agents]` 설정이 있으면 그대로 사용한다. 없다면 기존 설정을 보존하면서 다음 stanza만 병합한다.
 
@@ -52,6 +70,23 @@ td_feature_leader
 ```
 
 기본 역할은 Coordinator/Feature Leader가 Sol medium, 구현 subagent가 Luna high 같은 구현 중심 모델을 우선하는 구조다. 실제 Codex 설치에서 모델 이름이나 custom agent 기능이 지원되지 않으면 임의 대체를 성공으로 보고하지 않는다.
+
+위 모델 값은 저장소의 Codex 예시다. 이미 선택한 모델을 자동으로 바꾸는 설치 지시가 아니다. 배포된 TOML에도 모델 값이 있으므로 복사 전에 대상 환경의 지원 모델·정책에 맞는지 확인한다.
+
+### OpenCode
+
+`td_coordinator.md`와 `td_feature_leader.md`는 둘 다 `mode: primary`다. 대상 저장소에서 OpenCode를 열고 Tab으로 역할을 선택한다. Feature Leader는 독립 feature의 Herdr 세션에서 사용하고, 내부 구현·리뷰만 native subagent로 분배한다. 내부 subagent를 별도 Herdr pane이나 locator 항목으로 만들지 않는다.
+
+Markdown 에이전트는 기존 Codex TOML과 별개 형식이다. OpenCode 템플릿은 `model`·effort·권한 override를 넣지 않아 사용자의 기존 설정을 따른다. primary agent의 모델을 생략하면 전역 모델을 사용한다. [OpenCode Agent 설정](https://opencode.ai/docs/agents/)
+
+설치 후 대상 저장소에서 다음으로 인식 여부를 확인한다.
+
+```bash
+opencode agent list
+opencode debug skill
+```
+
+두 역할과 여섯 canonical Skill이 보이는지 확인한다. Skill 또는 native task 권한이 제한됐다면 해당 기능은 사용할 수 없다. Codex 설정 stanza를 OpenCode에 복사하거나 권한을 자동 완화하지 말고 실제 설치의 설정을 확인한다. 목록 조회 성공은 모델 호출·Herdr session 생성·GitHub 쓰기 성공의 근거가 아니다.
 
 ## 3. 전역 sessions 파일 한 번만 만들기
 

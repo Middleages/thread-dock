@@ -21,6 +21,10 @@ ThreadDock이 scheduler, lease/recovery engine, 자체 task DB, 별도 execution
 
 ## Agent 구조
 
+Codex와 OpenCode를 함께 사용할 수 있습니다. 도구별 Agent는 `project-template/.codex/agents`와
+`project-template/.opencode/agents`, 공용 Skill은 `project-template/.agents/skills`에 있습니다.
+프로젝트·전역 설치 경로와 모델 설정 주의사항은 [운영 Quickstart](docs/operator/github-first-quickstart.md)를 따르세요.
+
 프로젝트에서 기억할 top-level Agent는 두 개뿐입니다.
 
 ```text
