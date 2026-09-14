@@ -2,13 +2,13 @@
 
 ThreadDock은 실행 엔진이 아니다. GitHub Issue/PR/Projects를 업무 원본으로 사용하고, Herdr가 top-level session/worktree/Agent lifecycle을 맡는다. ThreadDock은 프로젝트별 Coordinator와 feature별 Feature Leader의 상태를 GitHub 업무와 한 화면에 연결한다.
 
-새 프로젝트에서 기억할 역할은 두 개뿐이다.
+새 프로젝트에서 상주 역할은 두 개다. 세부 작업은 필요할 때만 Feature Leader가 native leaf에 맡긴다.
 
 ```text
 Coordinator -> Herdr Feature Leader -> transient planner/implementer/reviewer -> PR/handoff
 ```
 
-Monitor와 `~/.threaddock/sessions.json`에는 Coordinator와 Feature Leader만 top-level 연결로 기록한다. 내부 native subagent는 기록하지 않는다.
+Monitor와 `~/.threaddock/sessions.json`에는 Coordinator와 Feature Leader만 top-level 연결로 기록한다. 내부 native subagent는 별도 Herdr pane이나 locator 항목으로 만들지 않는다.
 
 ## 1. 프로젝트에 ThreadDock 템플릿 넣기
 
@@ -34,6 +34,17 @@ Canonical Skill은 여섯 개다.
 `plan-work`, `open-agent-session`, `implement-task`, `record-work`는 기존 프롬프트 호환을 위한 짧은 migration shim으로만 남긴다.
 
 Herdr를 조작할 때는 공용 보조 Skill `herdr-local`을 함께 사용한다. 여섯 업무 Skill의 역할을 바꾸지 않고, 폐쇄망의 로컬 CLI 조작 경계만 담당한다.
+
+필요한 세부 작업에는 다음 native leaf와 공용 Skill을 대응시킨다.
+
+| native leaf | 공용 Skill | 책임 |
+|---|---|---|
+| `td_explorer` | `explore-codebase` | 코드 흐름·재사용 지점·영향 테스트 탐색 |
+| `td_docs_editor` | `write-project-docs` | 독자·목적에 맞는 문서 편집과 근거 보존 |
+| `td_implementer` | `tdd-task` | 직접 구현·focused test·진단 가능한 로그 |
+| `td_reviewer` | `review-change` | exact SHA 독립 검토 |
+
+이 leaf들은 고정 pipeline이 아니다. 필요한 경우에만 선택하며, 대상 도구가 named leaf를 지원하지 않으면 같은 Skill과 범위를 허용된 native agent에 전달한다. 권한 거부를 우회하거나 모델 fallback을 추가하지 않는다.
 
 ### 폐쇄망 Herdr 사용
 
@@ -76,20 +87,20 @@ default_subagent_model = "gpt-5.6-sol"
 default_subagent_reasoning_effort = "medium"
 ```
 
-Agent 정의는 다음 두 개다.
+상주 Agent 정의는 다음 두 개다.
 
 ```text
 td_coordinator
 td_feature_leader
 ```
 
-기본 역할은 Coordinator/Feature Leader가 Sol medium, 구현 subagent가 Luna high 같은 구현 중심 모델을 우선하는 구조다. 실제 Codex 설치에서 모델 이름이나 custom agent 기능이 지원되지 않으면 임의 대체를 성공으로 보고하지 않는다.
+native leaf 정의도 함께 복사한다: `td_explorer`, `td_docs_editor`, `td_implementer`, `td_reviewer`. leaf는 model/effort를 고정하지 않고 대상 Codex 설정과 권한·인증·sandbox를 상속한다. 실제 Codex 설치에서 모델 이름이나 custom agent 기능이 지원되지 않으면 임의 대체를 성공으로 보고하지 않는다.
 
 위 모델 값은 저장소의 Codex 예시다. 이미 선택한 모델을 자동으로 바꾸는 설치 지시가 아니다. 배포된 TOML에도 모델 값이 있으므로 복사 전에 대상 환경의 지원 모델·정책에 맞는지 확인한다.
 
 ### OpenCode
 
-`td_coordinator.md`와 `td_feature_leader.md`는 둘 다 `mode: primary`다. 대상 저장소에서 OpenCode를 열고 Tab으로 역할을 선택한다. Feature Leader는 독립 feature의 Herdr 세션에서 사용하고, 내부 구현·리뷰만 native subagent로 분배한다. 내부 subagent를 별도 Herdr pane이나 locator 항목으로 만들지 않는다.
+`td_coordinator.md`와 `td_feature_leader.md`는 둘 다 `mode: primary`다. `td_explorer`, `td_docs_editor`, `td_implementer`, `td_reviewer`는 `mode: subagent`인 세부 역할이다. 대상 저장소에서 OpenCode를 열고 primary를 선택한다. Feature Leader는 독립 feature의 Herdr 세션에서 사용하고, 필요한 세부 작업만 native subagent로 분배한다.
 
 Markdown 에이전트는 기존 Codex TOML과 별개 형식이다. OpenCode 템플릿은 `model`·effort·권한 override를 넣지 않아 사용자의 기존 설정을 따른다. primary agent의 모델을 생략하면 전역 모델을 사용한다. [OpenCode Agent 설정](https://opencode.ai/docs/agents/)
 
@@ -100,7 +111,7 @@ opencode agent list
 opencode debug skill
 ```
 
-두 역할과 여섯 canonical Skill이 보이는지 확인한다. Skill 또는 native task 권한이 제한됐다면 해당 기능은 사용할 수 없다. Codex 설정 stanza를 OpenCode에 복사하거나 권한을 자동 완화하지 말고 실제 설치의 설정을 확인한다. 목록 조회 성공은 모델 호출·Herdr session 생성·GitHub 쓰기 성공의 근거가 아니다.
+두 primary, 네 leaf, 여섯 canonical Skill과 세 helper Skill(`herdr-local`, `explore-codebase`, `write-project-docs`)이 보이는지 확인한다. leaf는 task 위임을 하지 않으며 explorer/reviewer는 edit가 거부된다. Skill 또는 native task 권한이 제한됐다면 해당 기능은 사용할 수 없다. Codex 설정 stanza를 OpenCode에 복사하거나 권한을 자동 완화하지 말고 실제 설치의 설정을 확인한다. 목록 조회 성공은 모델 호출·Herdr session 생성·GitHub 쓰기 성공의 근거가 아니다.
 
 ## 3. 전역 sessions 파일 한 번만 만들기
 
