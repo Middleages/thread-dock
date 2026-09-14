@@ -4,7 +4,7 @@ import { getGlobalToolbox, getMonitorSnapshot, getMonitorSnapshotAll, saveGlobal
 import { GlobalToolboxDrawer } from './GlobalToolboxDrawer'
 import { HerdrSummary } from './HerdrSummary'
 import { ProjectDetail } from './ProjectDetail'
-import { TopBar } from './TopBar'
+import { TopBar, type ConnectionStatus } from './TopBar'
 import { dateFor, labelFor } from './monitor-presentation'
 import { toolboxKeyFor } from './project-key'
 import './styles.css'
@@ -42,7 +42,7 @@ function ProjectList({ projects, selected, onSelect }: { projects: Project[]; se
 }
 
 type WorkScope = 'open' | 'all'
-const degradedConnectionStates = new Set(['stale', 'offline', 'degraded', 'setup_required', 'disabled', 'unverified', 'unknown', 'failed'])
+const degradedConnectionStates = new Set(['stale', 'offline', 'degraded', 'setup_required', 'unverified', 'unknown', 'failed'])
 const hasDegradedConnectionState = (...states: Array<string | undefined>) => states.some((state) => state !== undefined && degradedConnectionStates.has(state))
 
 export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = getMonitorSnapshotAll, pollIntervalMs = 4000, onOpenSettings = () => undefined }: { snapshotSource?: SnapshotSource; allSnapshotSource?: SnapshotSource; pollIntervalMs?: number; onOpenSettings?: () => void }) {
@@ -53,6 +53,7 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState('')
   const [workScope, setWorkScope] = useState<WorkScope>('open')
+  const [manualRefreshing, setManualRefreshing] = useState(false)
   const inFlight = useRef(false)
   const [toolbox, setToolbox] = useState<GlobalToolbox | null>(null)
   const [toolboxOpen, setToolboxOpen] = useState(false)
@@ -65,9 +66,10 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
   const toolboxSaveInFlight = useRef(false)
   const toolboxOperationRevision = useRef(0)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (manual = false) => {
     if (inFlight.current) return
     inFlight.current = true
+    if (manual) setManualRefreshing(true)
     try {
       const next = await (workScope === 'all' ? allSnapshotSource : snapshotSource)()
       setSnapshot(next)
@@ -80,6 +82,7 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error('unknown monitor error'))
     } finally {
+      if (manual) setManualRefreshing(false)
       setLoading(false)
       inFlight.current = false
     }
@@ -118,9 +121,9 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
   }, [])
 
   useEffect(() => {
-    void refresh()
+    void refresh(false)
     if (workScope === 'all') return
-    const timer = window.setInterval(() => void refresh(), pollIntervalMs)
+    const timer = window.setInterval(() => void refresh(false), pollIntervalMs)
     return () => window.clearInterval(timer)
   }, [refresh, pollIntervalMs, workScope])
 
@@ -135,19 +138,20 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
   const isGithub = snapshot?.source === 'github'
   const isDegraded = snapshot?.freshness.state === 'stale' || snapshot?.syncStatus === 'offline' || snapshot?.syncStatus === 'degraded' || snapshot?.syncStatus === 'setup_required'
   const isHerdrDegraded = snapshot?.herdr ? hasDegradedConnectionState(snapshot.herdr.status, snapshot.herdr.state, snapshot.herdr.syncStatus, snapshot.herdr.freshness.state, snapshot.herdr.freshness.syncStatus) : false
-  const isLocalConnectionDegraded = isDegraded || isHerdrDegraded
+  const githubStatus: ConnectionStatus = !snapshot ? 'checking' : isDegraded ? 'attention' : 'healthy'
+  const herdrStatus: ConnectionStatus = !snapshot ? 'checking' : !snapshot.herdr || snapshot.herdr.status === 'disabled' ? 'disabled' : isHerdrDegraded ? 'attention' : 'healthy'
   const projectTodoCount: number | null = selected && toolbox ? toolbox.todos.filter((todo) => !todo.done && todo.projectKey === toolboxKeyFor(selected)).length : null
   const openToolbox = () => { if (toolboxLoadError && !toolboxLoadInFlight.current) void loadToolbox(); setToolboxProjectFilter(undefined); setToolboxOpen(true) }
   const openProjectTodos = (projectKey: string) => { if (toolboxLoadError && !toolboxLoadInFlight.current) void loadToolbox(); setToolboxProjectFilter(projectKey); setToolboxOpen(true) }
 
   return <div className="monitor-shell">
-    <TopBar connectionDegraded={isLocalConnectionDegraded} onOpenToolbox={openToolbox} onOpenSettings={onOpenSettings} />
+    <TopBar githubStatus={githubStatus} herdrStatus={herdrStatus} onOpenToolbox={openToolbox} onOpenSettings={onOpenSettings} />
     <main className="main-content">
-      {loading && !snapshot ? <LoadingState /> : error && (!snapshot || snapshot.projects.length === 0) ? <section className="state-panel error-state" role="alert"><h1>상태를 불러오지 못했습니다.</h1><p>{isGithub ? 'GitHub Monitor 연결을 확인하고 잠시 후 다시 시도하세요.' : 'Windows Wails Monitor 설정과 연결을 확인하고 잠시 후 다시 시도하세요.'}</p><button type="button" className="secondary-action" onClick={() => void refresh()}>다시 시도</button></section> : snapshot && <>
+      {loading && !snapshot ? <LoadingState /> : error && (!snapshot || snapshot.projects.length === 0) ? <section className="state-panel error-state" role="alert"><h1>상태를 불러오지 못했습니다.</h1><p>{isGithub ? 'GitHub Monitor 연결을 확인하고 잠시 후 다시 시도하세요.' : 'Windows Wails Monitor 설정과 연결을 확인하고 잠시 후 다시 시도하세요.'}</p><button type="button" className="secondary-action" onClick={() => void refresh(true)}>다시 시도</button></section> : snapshot && <>
         {isDegraded && <div className="degraded-banner" role="status"><strong>{isGithub ? 'GitHub 조회 결과 일부가 오래되었습니다.' : '오래된 상태를 표시하고 있습니다.'}</strong><span><strong>{isGithub ? 'GitHub 연결 확인 필요' : 'WSL 연결 오프라인'}</strong> · 마지막 관찰 {dateFor(snapshot.observedAt)}{snapshot.freshness.lastSyncedAt ? ` · 마지막 성공 ${dateFor(snapshot.freshness.lastSyncedAt)}` : ''}</span></div>}
         {snapshot.notices && snapshot.notices.length > 0 && <section className="monitor-notices" aria-label="GitHub Monitor 안내">{snapshot.notices.map((notice, index) => <p key={`${notice}-${index}`}>{notice}</p>)}</section>}
-        <div className="monitor-toolbar">{isGithub && <><div className="work-scope" aria-label="업무 조회 범위"><button type="button" className={`scope-action${workScope === 'open' ? ' active' : ''}`} aria-pressed={workScope === 'open'} onClick={() => setWorkScope('open')}>열린 항목</button><button type="button" className={`scope-action${workScope === 'all' ? ' active' : ''}`} aria-pressed={workScope === 'all'} onClick={() => setWorkScope('all')}>전체 보기</button></div><button type="button" className="secondary-action refresh-action" onClick={() => void refresh()}>GitHub 새로고침</button></>}</div>
-        {projects.length === 0 ? <section className="state-panel empty-state"><h1>{isGithub && snapshot.syncStatus === 'setup_required' ? 'GitHub Monitor 설정이 필요합니다.' : '표시할 프로젝트가 없습니다.'}</h1><p>{isGithub ? 'Windows Wails Monitor 설정에서 저장소·Projects URL·WSL 배포판을 지정하면 Issue, PR, Project 정보를 표시합니다.' : 'Windows Wails Monitor가 관찰 결과를 반환하면 이곳에 프로젝트와 작업이 표시됩니다.'}</p>{isGithub && <button type="button" className="secondary-action" onClick={() => void refresh()}>다시 확인</button>}</section> : <><ProjectList projects={projects} selected={selectedProjectId} onSelect={(id) => { setSelectedProjectId(id); setSelectedWorkId(projects.find((project) => project.projectId === id)?.workItems[0]?.workId ?? null) }} />{selected && <ProjectDetail project={selected} selectedWorkId={selectedWorkId} herdr={snapshot.herdr} projectTodoCount={projectTodoCount} onSelectWork={setSelectedWorkId} onOpenProjectTodos={openProjectTodos} onStatus={setStatusMessage} />}</>}
+        <div className="monitor-toolbar">{isGithub && <><div className="work-scope" aria-label="업무 조회 범위"><button type="button" className={`scope-action${workScope === 'open' ? ' active' : ''}`} aria-pressed={workScope === 'open'} onClick={() => setWorkScope('open')}>열린 항목</button><button type="button" className={`scope-action${workScope === 'all' ? ' active' : ''}`} aria-pressed={workScope === 'all'} onClick={() => setWorkScope('all')}>전체 보기</button></div><button type="button" className="secondary-action refresh-action" disabled={manualRefreshing} onClick={() => void refresh(true)}>{manualRefreshing ? '새로고침 중...' : 'GitHub 새로고침'}</button></>}</div>
+        {projects.length === 0 ? <section className="state-panel empty-state"><h1>{isGithub && snapshot.syncStatus === 'setup_required' ? 'GitHub Monitor 설정이 필요합니다.' : '표시할 프로젝트가 없습니다.'}</h1><p>{isGithub ? 'Windows Wails Monitor 설정에서 저장소·Projects URL·WSL 배포판을 지정하면 Issue, PR, Project 정보를 표시합니다.' : 'Windows Wails Monitor가 관찰 결과를 반환하면 이곳에 프로젝트와 작업이 표시됩니다.'}</p>{isGithub && <button type="button" className="secondary-action" onClick={() => void refresh(true)}>다시 확인</button>}</section> : <><ProjectList projects={projects} selected={selectedProjectId} onSelect={(id) => { setSelectedProjectId(id); setSelectedWorkId(projects.find((project) => project.projectId === id)?.workItems[0]?.workId ?? null) }} />{selected && <ProjectDetail project={selected} selectedWorkId={selectedWorkId} herdr={snapshot.herdr} projectTodoCount={projectTodoCount} onSelectWork={setSelectedWorkId} onOpenProjectTodos={openProjectTodos} onStatus={setStatusMessage} />}</>}
         {snapshot.herdr && !selected && <HerdrSummary herdr={snapshot.herdr} />}
       </>}
     </main>

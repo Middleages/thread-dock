@@ -331,13 +331,15 @@ describe('monitor list and detail', () => {
     expect(browserWriteText).not.toHaveBeenCalled()
   })
 
-  it('marks the local connection as degraded when nested Herdr freshness is stale', async () => {
+  it('marks Herdr as degraded without masking healthy GitHub status when nested Herdr freshness is stale', async () => {
     const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'offline', syncStatus: 'offline', freshness: { state: 'stale', syncStatus: 'offline' }, notices: [], sessions: [], connections: [], unconnectedAgents: [] }
     render(<App snapshotSource={vi.fn(async () => snapshot([project()], { herdr }))} />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     const topBar = screen.getByRole('banner')
-    expect(within(topBar).getByText(/로컬 연결 확인 필요/)).toBeInTheDocument()
-    expect(topBar.querySelector('.status-mark')).toHaveClass('attention')
+    expect(within(topBar).getByText('GitHub 정상')).toBeInTheDocument()
+    expect(within(topBar).getByText('Herdr 확인 필요')).toBeInTheDocument()
+    expect(within(topBar).getByLabelText('GitHub 상태')).toHaveClass('success')
+    expect(within(topBar).getByLabelText('Herdr 상태')).toHaveClass('attention')
   })
 
   it('keeps only the product identity in the top navigation and omits forbidden runtime identifiers', async () => {

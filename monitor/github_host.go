@@ -76,7 +76,15 @@ func NewHostedGitHubMonitor(env map[string]string, process CommandRunner, timeou
 		return &hostConfigErrorSource{err: err}
 	}
 	proxy := &hostedCommandRunner{base: process, host: host}
-	return &hostedGitHubMonitor{inner: NewGitHubMonitor(normalized, proxy, timeout), host: host}
+	collector := &githubCommandDiagnosticCollector{}
+	diagnosticProcess := &githubDiagnosticRunner{base: proxy, collector: collector}
+	monitor := NewGitHubMonitor(normalized, diagnosticProcess, timeout)
+	var source SnapshotSource = monitor
+	if supportsConcurrentRuns(process) {
+		source = &concurrentGitHubSource{monitor: monitor}
+	}
+	source = &githubDiagnosticSource{inner: source, collector: collector}
+	return &hostedGitHubMonitor{inner: source, host: host}
 }
 
 func NewHostedHerdrMonitor(env map[string]string, process CommandRunner, timeout time.Duration) HerdrSnapshotSource {
