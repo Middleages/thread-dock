@@ -1,6 +1,13 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
-## 현재 작업: compact Monitor와 전역 Toolbox
+## 현재 작업: Codex·OpenCode 템플릿 병행 지원
+
+- [Issue #93](https://github.com/Middleages/thread-dock/issues/93): `agent/opencode-support`에서 OpenCode primary agent 두 개와 [프로젝트·전역 설치 안내](docs/operator/github-first-quickstart.md)를 추가한다. Codex TOML과 공용 `.agents/skills`는 그대로 보존한다. 모델·권한 override와 사용자 전역 설치는 수행하지 않는다.
+- 구현 `eed7904`(통합 `2a12c57`)의 frontmatter/기존 prompt 비교 및 격리된 OpenCode `1.18.30 --pure agent list`에서 두 primary 역할 인식을 확인했다. 문서 로컬 링크와 `git diff --check`도 통과했다. 기존 `make template-check`는 Codex·공용 Skill 검사이며 새 OpenCode 검사의 대체 근거가 아니다.
+- 문서·설정 전용 diff이므로 전체 `make check`와 Windows build는 재실행하지 않는다. 실제 모델/effort identity, 모델 호출·Herdr 배정·GitHub 업무 수행과 Windows 실행은 새 검증 범위가 아니다. 지정 Luna high 구현 뒤 fresh Sol medium 고정 SHA 리뷰를 진행하며 실제 runtime identity는 unverified다.
+- PR #92는 사용자 지시로 main `8f03ba6c376f27d1110075297cf21484b059f3d2`에 병합됐다. 아래 Draft 표현은 병합 전 기록이다. Issue #91의 실제 native 검증은 별도로 남는다.
+
+## 이전 작업: compact Monitor와 전역 Toolbox
 
 2026-09-14 사용자 리뷰 보완: conflict/낯선 Herdr 상태 오표시, legacy 합산200 migration 차단, Todo0개 진입점을 수정했다. 코드e1fe17f에서 새 gate(Go3/UI111/build)와 Windows Wails build/임시 파일 storage tests가 통과했고, 후속 최종 리뷰d6aff6b는 ACCEPT다. PR92는 Draft 유지. 아래95tests/Windows953 근거는 이전 기준이며 현재 결과는 최종 ledger/verification의 최신 절을 따른다. 중간 report10개는 추적만 해제하고 로컬/Git 이력을 보존했다.
 
