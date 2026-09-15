@@ -47,6 +47,14 @@ func herdrList(agents ...map[string]any) string {
 	return string(data)
 }
 
+func herdrWorkspaceList(workspaces ...map[string]any) string {
+	if workspaces == nil {
+		workspaces = []map[string]any{}
+	}
+	data, _ := json.Marshal(map[string]any{"result": map[string]any{"type": "workspace_list", "workspaces": workspaces}})
+	return string(data)
+}
+
 func TestHerdrMonitorValidatesConfigAndNormalizesV082Rows(t *testing.T) {
 	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
 		if len(args) >= 5 && args[4] == "/bin/cat" {
@@ -72,12 +80,102 @@ func TestHerdrMonitorValidatesConfigAndNormalizesV082Rows(t *testing.T) {
 	}
 	process.mu.Lock()
 	defer process.mu.Unlock()
-	if len(process.calls) != 2 {
+	if len(process.calls) != 3 {
 		t.Fatalf("calls=%#v", process.calls)
 	}
 	wantHerdrArgs := []string{"wsl.exe", "--distribution", "Ubuntu", "--exec", "/bin/sh", "-c", `exec "$HOME/.local/bin/herdr" "$@"`, "threaddock-herdr", "--session", "feature", "agent", "list"}
 	if strings.Join(process.calls[1], "\x00") != strings.Join(wantHerdrArgs, "\x00") {
 		t.Fatalf("herdr args=%#v want=%#v", process.calls[1], wantHerdrArgs)
+	}
+}
+
+func TestHerdrMonitorEnrichesAgentsFromWorkspaceListOncePerSession(t *testing.T) {
+	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
+		if args[4] == "/bin/cat" {
+			return runner.Result{Stdout: herdrConfigJSON(
+				map[string]any{"repository": "github.com/acme/app", "session": "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna", "role": "coordinator"},
+			)}, nil
+		}
+		if args[len(args)-2] == "agent" {
+			return runner.Result{Stdout: herdrList(
+				herdrAgent("Luna", "working", "w1", "t1", "p1", "/repo/src"),
+				herdrAgent("", "idle", "w1", "t1", "p2", "/repo/tools"),
+			)}, nil
+		}
+		return runner.Result{Stdout: herdrWorkspaceList(map[string]any{"workspace_id": "w1", "label": "앱 작업"})}, nil
+	}}
+	monitor := NewHerdrMonitor(map[string]string{"THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, process, time.Second)
+	snapshot, err := monitor.FetchHerdr(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != "fresh" || len(snapshot.Sessions) != 1 || len(snapshot.Sessions[0].Agents) != 2 {
+		t.Fatalf("snapshot=%#v", snapshot)
+	}
+	if got := snapshot.Sessions[0].Agents[0].WorkspaceLabel; got != "앱 작업" {
+		t.Fatalf("named workspace label=%q", got)
+	}
+	if got := snapshot.Sessions[0].Agents[1].WorkspaceLabel; got != "앱 작업" {
+		t.Fatalf("unnamed workspace label=%q", got)
+	}
+	process.mu.Lock()
+	defer process.mu.Unlock()
+	if len(process.calls) != 3 {
+		t.Fatalf("calls=%#v", process.calls)
+	}
+	wantWorkspaceArgs := []string{"wsl.exe", "--distribution", "Ubuntu", "--exec", "/bin/sh", "-c", `exec "$HOME/.local/bin/herdr" "$@"`, "threaddock-herdr", "--session", "feature", "workspace", "list"}
+	if strings.Join(process.calls[2], "\x00") != strings.Join(wantWorkspaceArgs, "\x00") {
+		t.Fatalf("workspace args=%#v want=%#v", process.calls[2], wantWorkspaceArgs)
+	}
+}
+
+func TestHerdrMonitorKeepsFreshAgentsWhenWorkspaceMetadataFails(t *testing.T) {
+	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
+		if args[4] == "/bin/cat" {
+			return runner.Result{Stdout: herdrConfigJSON(map[string]any{"repository": "github.com/acme/app", "session": "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna", "role": "coordinator"})}, nil
+		}
+		if args[len(args)-2] == "agent" {
+			return runner.Result{Stdout: herdrList(herdrAgent("Luna", "working", "w1", "t1", "p1", "/repo/src"))}, nil
+		}
+		return runner.Result{}, errors.New("workspace socket unavailable")
+	}}
+	monitor := NewHerdrMonitor(map[string]string{"THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, process, time.Second)
+	snapshot, err := monitor.FetchHerdr(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != "fresh" || len(snapshot.Sessions) != 1 || len(snapshot.Sessions[0].Agents) != 1 || snapshot.Connections[0].Status != "connected" {
+		t.Fatalf("workspace failure degraded fresh observation: %#v", snapshot)
+	}
+	if got := snapshot.Sessions[0].Agents[0].WorkspaceLabel; got != "" {
+		t.Fatalf("workspace label=%q", got)
+	}
+	notices := strings.Join(snapshot.Notices, " ")
+	if !strings.Contains(notices, "feature") || !strings.Contains(notices, "workspace list") {
+		t.Fatalf("notices=%#v", snapshot.Notices)
+	}
+}
+
+func TestHerdrMonitorKeepsFreshAgentsWhenWorkspaceMetadataIsMalformed(t *testing.T) {
+	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
+		if args[4] == "/bin/cat" {
+			return runner.Result{Stdout: herdrConfigJSON(map[string]any{"repository": "github.com/acme/app", "session": "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna", "role": "coordinator"})}, nil
+		}
+		if args[len(args)-2] == "agent" {
+			return runner.Result{Stdout: herdrList(herdrAgent("Luna", "working", "w1", "t1", "p1", "/repo/src"))}, nil
+		}
+		return runner.Result{Stdout: `{"result":{"type":"workspace_list","workspaces":[{"workspace_id":42,"label":"broken"}]}}`}, nil
+	}}
+	monitor := NewHerdrMonitor(map[string]string{"THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}, process, time.Second)
+	snapshot, err := monitor.FetchHerdr(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != "fresh" || len(snapshot.Sessions) != 1 || len(snapshot.Sessions[0].Agents) != 1 || snapshot.Connections[0].Status != "connected" {
+		t.Fatalf("malformed workspace metadata degraded fresh observation: %#v", snapshot)
+	}
+	if !strings.Contains(strings.Join(snapshot.Notices, " "), "workspace list") {
+		t.Fatalf("notices=%#v", snapshot.Notices)
 	}
 }
 

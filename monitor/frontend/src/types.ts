@@ -76,6 +76,7 @@ export type HerdrAgent = {
   name?: string
   agent_status?: string
   workspace_id?: string
+  workspace_label?: string
   tab_id?: string
   pane_id?: string
   cwd?: string
