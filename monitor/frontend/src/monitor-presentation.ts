@@ -1,4 +1,4 @@
-import type { HerdrConnection, HerdrSnapshot, Link, Project, WorkItem } from './types'
+import type { HerdrAgent, HerdrConnection, HerdrSnapshot, Link, Project, WorkItem } from './types'
 
 const stateLabel: Record<string, string> = {
   needs_operator: '판단 필요', running: '정상', completed: '완료', verified: '검증 완료',
@@ -12,6 +12,17 @@ const stateLabel: Record<string, string> = {
 
 export const labelFor = (value: string) => Object.prototype.hasOwnProperty.call(stateLabel, value) ? stateLabel[value] : value.replaceAll('_', ' ')
 export const dateFor = (value?: string) => value ? new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '시각 없음'
+
+export function herdrAgentDisplayName(agent: HerdrAgent) {
+  const explicitName = agent.name?.trim()
+  if (explicitName) return explicitName
+  const workspaceLabel = agent.workspace_label?.trim()
+  if (workspaceLabel) return workspaceLabel
+  const cwd = agent.cwd?.trim() || agent.foreground_cwd?.trim() || ''
+  const trimmedCWD = cwd.replace(/\/+$/, '')
+  const basename = trimmedCWD.split('/').pop()?.trim() ?? ''
+  return basename || '이름 없음'
+}
 
 function repositoryFor(url?: string) {
   if (!url) return undefined

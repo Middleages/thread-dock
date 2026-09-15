@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { HerdrConnection, HerdrSnapshot, Project, WorkItem } from './types'
-import { connectionsForWork, dateFor, herdrGuidance, labelFor } from './monitor-presentation'
+import { connectionsForWork, dateFor, herdrAgentDisplayName, herdrGuidance, labelFor } from './monitor-presentation'
 import './herdr-summary.css'
 
 const severity: Record<string, number> = {
@@ -51,7 +51,7 @@ export function HerdrSummary({ herdr, project, work }: { herdr: HerdrSnapshot; p
       {herdr.notices.length > 0 && <div className="herdr-summary-notices" role="note">{herdr.notices.map((notice, index) => <p key={`${notice}-${index}`}>{notice}</p>)}</div>}
       {(selected.length > 0 || work) && <section aria-labelledby="herdr-selected-title"><h3 id="herdr-selected-title">선택 업무 위치</h3><div className="ruled-list">{selected.length === 0 ? <p className="muted">선택한 업무에 명시된 Herdr 연결이 없습니다.</p> : selected.map((connection, index) => <div className="evidence-row" key={`${connection.session}-${connection.paneId ?? index}`}><div><strong>{connection.session}</strong><small>{locationText(connection)}{connection.observedAt ? ` · 관찰 ${dateFor(connection.observedAt)}` : ''}</small></div><span>{labelFor(connection.status || 'unknown')}{connection.agentStatus ? ` · ${labelFor(connection.agentStatus)}` : ''}<small>{herdrGuidance(connection)}</small></span></div>)}</div></section>}
       <section aria-labelledby="herdr-sessions-title"><h3 id="herdr-sessions-title">관찰한 세션</h3><div className="ruled-list">{herdr.sessions.length === 0 ? <p className="muted">관찰한 세션이 없습니다.</p> : herdr.sessions.map((session) => <div className="evidence-row" key={session.session}><div><strong>{session.session}</strong><small>{session.observedAt ? `관찰 ${dateFor(session.observedAt)}` : '관찰 시각 없음'}</small></div><span>{labelFor(session.status || 'unknown')} · {session.agents.length}개 Agent</span></div>)}</div></section>
-      {herdr.unconnectedAgents.length > 0 && <section aria-labelledby="herdr-unconnected-title"><h3 id="herdr-unconnected-title">연결되지 않은 Agent</h3><div className="ruled-list">{herdr.unconnectedAgents.map((agent, index) => <div className="evidence-row" key={`${agent.session}-${agent.pane_id ?? index}`}><div><strong>{agent.name || '이름 없음'}</strong><small>세션 {agent.session}{agent.pane_id ? ` · pane ${agent.pane_id}` : ''}{agent.cwd ? ` · cwd ${agent.cwd}` : ''}</small></div><span>{labelFor(agent.agent_status || 'unknown')}</span></div>)}</div></section>}
+      {herdr.unconnectedAgents.length > 0 && <section aria-labelledby="herdr-unconnected-title"><h3 id="herdr-unconnected-title">연결되지 않은 Agent</h3><div className="ruled-list">{herdr.unconnectedAgents.map((agent, index) => <div className="evidence-row" key={`${agent.session}-${agent.pane_id ?? index}`}><div><strong>{herdrAgentDisplayName(agent)}</strong><small>세션 {agent.session}{agent.pane_id ? ` · pane ${agent.pane_id}` : ''}{agent.cwd ? ` · cwd ${agent.cwd}` : ''}</small></div><span>{labelFor(agent.agent_status || 'unknown')}</span></div>)}</div></section>}
     </div>}
   </section>
 }

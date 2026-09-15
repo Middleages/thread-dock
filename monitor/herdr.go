@@ -43,13 +43,14 @@ type HerdrSnapshot struct {
 }
 
 type HerdrAgent struct {
-	Name          string `json:"name,omitempty"`
-	AgentStatus   string `json:"agent_status,omitempty"`
-	WorkspaceID   string `json:"workspace_id,omitempty"`
-	TabID         string `json:"tab_id,omitempty"`
-	PaneID        string `json:"pane_id,omitempty"`
-	CWD           string `json:"cwd,omitempty"`
-	ForegroundCWD string `json:"foreground_cwd,omitempty"`
+	Name           string `json:"name,omitempty"`
+	AgentStatus    string `json:"agent_status,omitempty"`
+	WorkspaceID    string `json:"workspace_id,omitempty"`
+	WorkspaceLabel string `json:"workspace_label,omitempty"`
+	TabID          string `json:"tab_id,omitempty"`
+	PaneID         string `json:"pane_id,omitempty"`
+	CWD            string `json:"cwd,omitempty"`
+	ForegroundCWD  string `json:"foreground_cwd,omitempty"`
 }
 
 type HerdrObservedAgent struct {
@@ -261,6 +262,11 @@ type herdrSessionResult struct {
 	status     string
 }
 
+type herdrWorkspace struct {
+	id    string
+	label string
+}
+
 func (m *HerdrMonitor) observeSession(ctx context.Context, session string, now time.Time, notices *[]string) herdrSessionResult {
 	m.mu.Lock()
 	cached, ok := m.cache[session]
@@ -276,6 +282,17 @@ func (m *HerdrMonitor) observeSession(ctx context.Context, session string, now t
 		agents, decodeErr := normalizeHerdrAgents(string(output))
 		err = decodeErr
 		if err == nil {
+			workspaceOutput, workspaceErr := m.runHerdr(ctx, "--session", session, "workspace", "list")
+			if workspaceErr == nil {
+				workspaces, decodeWorkspaceErr := normalizeHerdrWorkspaces(string(workspaceOutput))
+				if decodeWorkspaceErr == nil {
+					agents = enrichHerdrAgents(agents, workspaces)
+				} else {
+					*notices = append(*notices, herdrWorkspaceNotice(session))
+				}
+			} else {
+				*notices = append(*notices, herdrWorkspaceNotice(session))
+			}
 			entry := herdrCachedSession{agents: agents, observedAt: now, nextAttemptAt: now.Add(herdrTTL), status: "fresh", hasData: true}
 			m.mu.Lock()
 			m.cache[session] = entry
@@ -553,6 +570,54 @@ func normalizeHerdrAgents(raw string) ([]HerdrAgent, error) {
 	return agents, nil
 }
 
+func normalizeHerdrWorkspaces(raw string) ([]herdrWorkspace, error) {
+	var payload struct {
+		Result struct {
+			Type       string            `json:"type"`
+			Workspaces []json.RawMessage `json:"workspaces"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload.Result.Type != "workspace_list" || payload.Result.Workspaces == nil {
+		return nil, errors.New("Unexpected Herdr workspace response")
+	}
+	workspaces := make([]herdrWorkspace, 0, len(payload.Result.Workspaces))
+	for _, rawWorkspace := range payload.Result.Workspaces {
+		var row map[string]any
+		if len(rawWorkspace) == 0 || string(rawWorkspace) == "null" || json.Unmarshal(rawWorkspace, &row) != nil || row == nil {
+			return nil, errors.New("Unexpected Herdr workspace response")
+		}
+		workspaceID, err := herdrAgentField(row, "workspace_id", true)
+		if err != nil {
+			return nil, err
+		}
+		label, err := optionalHerdrText(row, "label")
+		if err != nil {
+			return nil, err
+		}
+		workspaces = append(workspaces, herdrWorkspace{id: workspaceID, label: label})
+	}
+	return workspaces, nil
+}
+
+func enrichHerdrAgents(agents []HerdrAgent, workspaces []herdrWorkspace) []HerdrAgent {
+	labels := make(map[string]string, len(workspaces))
+	for _, workspace := range workspaces {
+		if workspace.label != "" {
+			labels[workspace.id] = workspace.label
+		}
+	}
+	for index := range agents {
+		if label := labels[agents[index].WorkspaceID]; label != "" {
+			agents[index].WorkspaceLabel = label
+		}
+	}
+	return agents
+}
+
+func herdrWorkspaceNotice(session string) string {
+	return fmt.Sprintf("Herdr 세션 %s의 workspace list 조회에 실패했습니다. Agent 관찰은 유지했으며 세션과 Herdr 연결을 다시 확인하세요.", session)
+}
+
 func herdrAgentField(row map[string]any, name string, required bool) (string, error) {
 	value, present := row[name]
 	if !present {
@@ -573,6 +638,18 @@ func herdrAgentField(row map[string]any, name string, required bool) (string, er
 		return "", errors.New("Unexpected Herdr agent response")
 	}
 	return textValue, nil
+}
+
+func optionalHerdrText(row map[string]any, name string) (string, error) {
+	value, present := row[name]
+	if !present || value == nil {
+		return "", nil
+	}
+	textValue, ok := value.(string)
+	if !ok {
+		return "", errors.New("Unexpected Herdr workspace response")
+	}
+	return strings.TrimSpace(textValue), nil
 }
 
 func (m *HerdrMonitor) runHerdr(ctx context.Context, args ...string) ([]byte, error) {

@@ -105,14 +105,22 @@ describe('HerdrSummary', () => {
   })
 
   it('reveals notices, observed sessions, and unconnected agents only on expand', () => {
-    const herdr = baseHerdr({ notices: ['Herdr 연결을 확인하세요'], unconnectedAgents: [{ session: 'feature-123', name: 'Reviewer', agent_status: 'idle', pane_id: 'pane-9' }] })
+    const herdr = baseHerdr({ notices: ['Herdr 연결을 확인하세요'], unconnectedAgents: [{ session: 'feature-123', workspace_label: 'JMJ T16', agent_status: 'idle', pane_id: 'pane-9' }] })
     render(<HerdrSummary herdr={herdr} project={project} work={work} />)
     expect(screen.queryByText('Herdr 연결을 확인하세요')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '자세히' }))
     expect(screen.getByText('Herdr 연결을 확인하세요')).toBeInTheDocument()
     expect(screen.getByText('관찰한 세션')).toBeInTheDocument()
     expect(screen.getByText('연결되지 않은 Agent')).toBeInTheDocument()
+    expect(screen.getByText('JMJ T16')).toBeInTheDocument()
+  })
+
+  it('keeps an explicit agent name ahead of workspace metadata', () => {
+    const herdr = baseHerdr({ unconnectedAgents: [{ session: 'feature-123', name: 'Reviewer', workspace_label: 'JMJ T16', cwd: '/repo/reviewer/', agent_status: 'idle', pane_id: 'pane-9' }] })
+    render(<HerdrSummary herdr={herdr} project={project} work={work} />)
+    fireEvent.click(screen.getByRole('button', { name: '자세히' }))
     expect(screen.getByText('Reviewer')).toBeInTheDocument()
+    expect(screen.queryByText('JMJ T16')).not.toBeInTheDocument()
   })
 
   it('keeps local Herdr status visible without a GitHub project or matching work', () => {
