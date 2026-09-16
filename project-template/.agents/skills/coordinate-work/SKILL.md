@@ -15,6 +15,8 @@ Before starting anything new, inspect `~/.threaddock/sessions.json` and the actu
 
 For a new feature, create a bounded top-level Feature Leader session with only the Issue URL, repository/target branch, feature goal and acceptance criteria, worktree, dependencies, and shared-boundary warnings. Planner/implementer/reviewer helpers belong inside that session as native subagents and are not top-level ThreadDock bindings.
 
+When one or more bound Feature Leader sessions are still working and the coordinator has no immediate routing action, use **REQUIRED SUB-SKILL:** `agent-wait`. Periodically inspect only the bound top-level Herdr sessions and corresponding GitHub evidence. Do not inspect Feature Leader leaf agents, busy-poll, or create a separate scheduler.
+
 Maintain the shared locator under one user-level exclusive lock such as `~/.threaddock/sessions.lock`: acquire lock, re-read the full JSON, mutate only the exact coordinator/feature binding, write a temporary file, then atomically rename it over `sessions.json`. Preserve every unrelated repository/project binding. If locking is unsafe or ambiguous, leave the file unchanged and report locator update pending.
 
 Do not remove a feature binding for `idle`, `done`, or a temporary observation failure. Cleanup requires all three: Issue closed, related PR work finished, and top-level Herdr feature session absent.
