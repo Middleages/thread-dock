@@ -4,10 +4,10 @@
 
 ## 사용자 전달 프롬프트
 
-아래 `<branch 또는 tag>`를 전달받은 ref로 바꿔 다른 컴퓨터의 Agent에게 보낸다. ref를 따로 지정하지 않았다면 `main`을 사용한다. 아직 main에 병합되지 않은 변경을 설치할 때는 제공된 작업 branch를 명시한다.
+아래 문구를 다른 컴퓨터의 Agent에게 보내면 `main` 기준으로 설치한다. 특정 버전을 설치하려는 경우에만 `main`을 전달받은 branch 또는 tag로 바꾼다.
 
 ```text
-https://github.com/Middleages/thread-dock 의 <branch 또는 tag>를 새 폴더에 받아
+https://github.com/Middleages/thread-dock 의 main 브랜치를 새 폴더에 받아
 docs/operator/global-agent-setup.md를 읽고 이 컴퓨터의 현재 사용자에 전역 Skill과 Agent를 설치해줘.
 설치된 Codex/OpenCode를 확인해 사용하는 도구에 적용하고, 둘 다 있으면 둘 다 적용해줘.
 기존 설정·모델·provider·권한은 보존하고 같은 이름의 파일은 백업·비교 후 병합해줘.
