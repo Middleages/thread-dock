@@ -72,4 +72,6 @@ fresh `td_reviewer`의 `/root/astra_workflow/workflow_final_review`는 기준 `b
 
 통합 검증은 `make template-check`, `git diff --check`, `python /tmp/threaddock-workflow-20261015.N8ggRr/validate-integration.py`를 실행해 PASS했다. 실제 tracked source의 Skill 15개 creator/frontmatter, Codex/OpenCode 역할 6쌍 parse와 model/permission metadata 보존, leaf 8개 및 brainstorm-design/agent-wait 원본 byte 보존, 모든 Skill reference·설치/빠른 시작 링크, root 개발 역할과 PRODUCT/CONTEXT 보존을 확인했다. 새 primary 지침에도 brainstorm/wait 경로가 남아 있다. Codex/OpenCode의 현재 `--help`와 공식 설정/Skill/Agent 문서로 설치 지침의 경로·발견 설명을 교차 확인했다.
 
-이전 행동 평가를 반복하지 않았고 전체 `make check`도 실행하지 않았다. 새 설치 안내와 최신 main 통합 diff는 고정 candidate commit의 fresh 독립 리뷰로 마무리한다. 원래 dirty checkout과 기존 Linux globals는 이번 commit에 포함하거나 변경하지 않는다.
+이전 행동 평가를 반복하지 않았고 전체 `make check`도 실행하지 않았다. fresh `td_reviewer`의 `publication_integration_review`는 `c52ac8b3bd9282ba72d3ae7a462d3d22b0a2bb85` → `6bd454fe576bf57f96f5fa4cb5d519b2c2db2da1`의 20개 docs/config 파일을 검토해 **ACCEPT**, blocking finding 없음으로 판정했다. 최신 brainstorm/wait 경로 보존, 설치 안내의 모델·권한·개인 상태 경계와 discovery/실행 구분, 기존 품질 정책의 의미 보존을 확인했다. 이후 변경은 HANDOFF와 이 문서의 결과 기록뿐이다.
+
+원래 dirty checkout과 기존 Linux globals는 이번 commit에 포함하거나 변경하지 않았다. branch push는 사용자 승인 범위로 root가 수행하며, PR 생성·main 병합은 이번 작업에 포함하지 않는다. 다른 컴퓨터/Windows에 실제 설치한 검증이나 실제 OpenCode provider/native task/vision 결과로 이 문서 검사를 확대하지 않는다.
