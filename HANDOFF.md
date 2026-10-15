@@ -1,5 +1,12 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-16: 업무 품질 기준 통합·다른 컴퓨터 설치 지침
+
+- 사용자 승인에 따라 `origin/main`의 `c52ac8b`에서 branch `agent/workflow-quality-global-setup`, worktree `.worktrees/workflow-quality-global-setup`을 만들었다. 기존 dirty checkout과 중단 실험은 그대로 보존하고 이번 Skill/Agent 품질 기준만 의미 단위로 통합했다. 최신 `brainstorm-design`·`agent-wait`, native 역할 6개와 기존 leaf/helper 개선을 유지했다. model-profile/OMO 설계는 실행 설정으로 적용하지 않았다.
+- Herdr의 undefined internal-only gate 제거, 중요한 계획의 독립 반대 검토·중립 판정, UI 문구 후보·익명 비교·실제 이미지/동작 검사, 공통 개발 기준과 완료 설명을 기존 workflow에 연결했다. root AGENTS에도 조건부 포인터를 넣어 로컬 역할이 전역 역할을 가리는 이 저장소에서 기준이 적용되게 했다. 기존 모델·권한과 제품 코드는 변경하지 않았다.
+- 다른 컴퓨터의 Agent에게 저장소 URL/ref와 [전역 설치 지침](docs/operator/global-agent-setup.md)을 주면 tracked template에서 Skill 전체와 역할을 설치할 수 있다. 기존 모델·provider·권한을 보존하며 backup/compare/merge, 실제 사용자 홈·custom 설정 경로, 프로젝트 override, 설치/실행 검증 구분을 설명한다. 이번 후속 작업에서 현재 호스트의 전역 설치를 다시 변경하지 않았다.
+- [이전 실제 행동 평가와 이번 통합 근거](docs/superpowers/reviews/2026-10-15-workflow-skills-verification.md)를 구분한다. 기존 Codex 행동/UI fixture 평가를 반복하지 않고 최신 main 통합·설치 안내의 focused 검사와 fresh 고정 리뷰를 수행한다. branch push는 root가 담당하고 main 병합은 사람에게 남긴다.
+
 ## 현재 작업: OMO 없는 native 전문가 팀
 
 - [PR98](https://github.com/Middleages/thread-dock/pull/98)을 agent/native-specialist-team → main으로 게시했다. Issue97/Project1은 사람 병합 대기이며 main을 병합하지 않았다. worktree와 동작 probe의 실패·성공 근거를 보존한다.

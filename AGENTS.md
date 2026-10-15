@@ -21,6 +21,13 @@
 - Sol은 제품 코드·테스트·충돌 수정의 소유자가 아니다. Luna가 구현하고, 사람은 main 병합을 수행한다.
 - reviewer의 읽기 전용은 역할 지침이다. sandbox·승인·인증 정책은 기존 실행 환경을 상속하며, 이 설정이 OS 수준의 쓰기 차단을 보장한다고 주장하지 않는다.
 
+## 공용 작업 기준
+
+- 계획·구현·리뷰는 [개발 공통 기준](project-template/.agents/skills/develop-feature/references/development-stance.md)을 읽고 관련 기준을 최초 Task packet부터 공유한다. 현재 구조와 실제 책임을 기준으로 단순하게 구현한다.
+- 공유 interface·영속 상태·migration 등 중요한 계획은 [grill-plan](project-template/.agents/skills/grill-plan/SKILL.md)의 작성자 → fresh 반대 검토자 → 별도 중립 판정과 채택·기각 근거를 적용한다. 작은 명확한 작업은 짧게 처리한다.
+- UI 변경은 [UI quality](project-template/.agents/skills/develop-feature/references/ui-quality.md)를 따른다. 중요한 문구·화면 후보의 독립 제안/평가 배정은 조정자가 맡고, 구현자·리뷰어는 기존 재위임 경계를 유지한다. 실제 screenshot 이미지 열람과 관련 동작 검증을 요구하며, 도구가 없으면 해당 검증을 미검증으로 남긴다. 브라우저 fixture와 실제 Wails 근거를 구분한다.
+- 완료·대기·차단 보고에는 [publish-work](project-template/.agents/skills/publish-work/SKILL.md)의 문제/요청, 사용자 관점 변화, 선택 이유, 실제 검증·한계 설명을 적용한다. 외부 쓰기는 기존 승인 범위를 따른다.
+
 ## 계획·분배
 
 - 최초 public interfaces와 shared types는 직렬로 먼저 합의한다. 그 뒤 의존성이 없는 Task를 병렬화한다.

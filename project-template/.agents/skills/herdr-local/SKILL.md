@@ -5,9 +5,9 @@ description: Use when coordinating or developing work requires inspecting or con
 
 # Herdr local
 
-This is a local-only policy reference for the installed Herdr executable (Herdr 0.8.2 is the observed baseline). It is a helper for the six canonical workflows, not a seventh workflow. Read it before every Herdr CLI operation.
+Use the installed Herdr executable to inspect or control local sessions. This helper supports the six canonical workflows; it does not set a network policy for GitHub or model providers. Read it before using Herdr in a workflow and reuse still-valid observations within that session.
 
-## Gate every operation
+## Local operation
 
 1. Establish local syntax before any live access with the installed executable's `--help` and `--skill` output:
 
@@ -19,11 +19,14 @@ This is a local-only policy reference for the installed Herdr executable (Herdr 
    Do not use bare `herdr` for discovery, call a mutating subcommand without arguments as help, or fetch external documentation. If local help is insufficient, use checked-in template guidance or installed man, completion, or source documentation; otherwise stop and report syntax unavailable.
 2. Before state or control, test whether the managed pane actually reports `HERDR_ENV=1`. Never export or inject it. If it is absent or unavailable, report Herdr state as unknown and stop.
 3. Establish identity from a successful local read-only result with actual JSON. Use only exact session, workspace, tab, pane, and Agent IDs returned there; use returned cwd and worktree paths as paths, not guessed IDs. Cached locators and guessed values are not identity.
-4. Default to read-only inspection. A session, layout, or Agent action requires an explicit approved operation, exact IDs, bounded arguments, and evidence that it preserves unrelated sessions, worktrees, and the shared locator. Keep native subagents inside the feature session; do not create Herdr panes or registry entries for them.
-5. Treat an executable on the local PATH as insufficient egress evidence. Agent start or prompt, session-start hooks, pane run, and send-keys execution require evidence that the provider, fallback, plugin, MCP, and tool path are approved internal-only. A localhost or private hostname alone is not proof. Unknown means stop; do not probe endpoints or contact them to test.
+4. Inspect read-only first. Perform session, layout, or Agent actions within the user's already-authorized task using exact existing target IDs and bounded arguments. Creation returns new IDs; read them back before subsequent control. Preserve unrelated sessions, worktrees, and locator entries. Keep native subagents inside the feature session.
 
-## Closed-network boundary
+## Network constraints
 
-This local-only scope excludes update, download, install, remote SSH (including internal SSH), external URLs, uploads, remote transfers, and equivalent work hidden behind a shell, helper, or Agent. Do not bypass policy or select models automatically, and never disclose credentials. GitHub publication remains the responsibility of the other skills, but this boundary carries through delegation: use an approved internal path only; otherwise leave the work pending for handoff. Policy guidance is not proof that a firewall prevents egress.
+Use the user's and environment's actual network restrictions. Ordinary authorized work may use the configured GitHub service and model provider; local Herdr operation does not require an internal-only certification or renewed permission for an already-authorized action. Herdr's local executable does not imply that its Agents communicate locally.
 
-After any permitted observation or action, record the exact command, IDs, sanitized relevant output, and evidence boundary. Remove credentials and other secrets from recorded output. If any gate is missing, report the blocker instead of testing by contact or filling gaps from memory.
+When an explicit offline, internal-only, or approved-endpoint restriction applies, carry that restriction into delegated work. Check the relevant configured route only as needed for the proposed action (including hooks or tools it will invoke). If that route is unknown or conflicts with the restriction, leave that action pending with the specific missing fact; continue independent permitted work. A private hostname alone does not establish compliance. Do not test a prohibited endpoint by contact or bypass a restriction via another tool, shell, or Agent.
+
+This helper does not install/update Herdr, operate remote SSH sessions, change providers/models/permissions, or establish a firewall. GitHub publication belongs to the calling workflow under its existing authorization.
+
+Record commands, actual IDs, sanitized relevant output, and limitations. Report unavailable syntax, managed context, or target identity for the affected operation rather than guessing or exposing credentials.
