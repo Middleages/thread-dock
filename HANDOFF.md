@@ -5,6 +5,7 @@
 - 사용자 정정에 따라 이전 절의 필수 Coordinator 전체계획/삼자 검토는 superseded다. Coordinator는 문맥을 읽어 제품 모호함·사실 미확인·구현 재량·가역 가정을 구분하고 dispatch-ready brief를 넘긴다. Feature Leader가 기능 계획을 소유하며 합의된 계획은 재작성/재승인 없이 인수·재사용한다.
 - 중요한 새 계획/실질적 위험은 독립 반대 검토 후 owner가 근거로 해결하고, 중요한 이견이 남을 때만 다른 중립 판정을 한 번 사용한다. reviewer의 plan/adjudication/code mode를 분리했다. 계획-only 권한과 기존 독립 업무·세션을 유지한다.
 - `b04cf2a` 기준 branch `agent/coordinator-ambiguity-brief`에서 문서/지침만 수정했다. 현재 WSL Skill4/role6을 백업 후 반영하고 root dirty에는 허용된 AGENTS 한 줄·reviewer mode 지침만 맞췄다. 모델·권한·제품 코드·locator는 보존했다. [행동 평가와 검증 기록](docs/superpowers/reviews/2026-10-16-ambiguity-brief-verification.md)을 따르며 이번 작업은 원격 게시 없이 로컬 commit으로 마무리한다.
+- 모호함 triage·계획 재사용/합의·조건부 중립 판정의 세 행동 묶음을 실행했다. 기술 선택을 사용자에게 전가한 초기 실패를 좁게 수정하고 두 소유권 사례만 재검사해 PASS했다. Skill/role parse·metadata/전역 일치·link/template 검사가 PASS했고 fresh 리뷰는 `fb3b0eb4606531ff0300204bcc2b12c2f10125de`에서 ACCEPT, blocker 없음이다. 이후 변경은 결과 기록뿐이며 전체/UI suite는 반복하지 않았다.
 
 ## 2026-10-16: Coordinator 전체계획을 기능 분배 전에 검토
 

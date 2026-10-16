@@ -38,4 +38,6 @@ WSL 변경 대상만 `/tmp/threaddock-ambiguity.r7xROw/before`에 백업했다. 
 
 ## 최종 검토와 한계
 
-고정 candidate의 fresh scoped 리뷰 결과를 후속 기록한다. 행동 평가는 명시적으로 전달한 후보 지침을 읽은 native Agent의 격리된 계획 작업이다. 현재 열린 모든 세션의 registry가 갱신됐다는 증거는 아니며 실제 Herdr 배정/OpenCode provider/Windows 설치/제품 UI 실행은 별도 미검증이다. 외부 세션 메시지·GitHub 게시·push·PR·merge는 수행하지 않는다.
+fresh `td_reviewer`의 `ambiguity_final_review`는 base `b04cf2a3c04bbf0036230025707948003fc83d65` → candidate `fb3b0eb4606531ff0300204bcc2b12c2f10125de`의 16파일 고정 diff·평가 근거·전역 적용을 검토해 **ACCEPT**, blocking finding 없음으로 판정했다. 이후 변경은 이 결과와 HANDOFF 기록뿐이다.
+
+행동 평가는 명시적으로 전달한 후보 지침을 읽은 native Agent의 격리된 계획 작업이다. 현재 열린 모든 세션의 registry가 갱신됐다는 증거는 아니며 실제 Herdr 배정/OpenCode provider/Windows 설치/제품 UI 실행은 별도 미검증이다. 외부 세션 메시지·GitHub 게시·push·PR·merge는 수행하지 않았다.
