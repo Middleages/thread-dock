@@ -1,6 +1,6 @@
 # Shared development stance
 
-Apply these criteria while planning, implementing, and reviewing; include task-relevant constraints in the first packet.
+Aim for simple architecture. Apply these criteria while planning, implementing, and reviewing; include task-relevant constraints in the first packet.
 
 - Solve the stated behavior in the current architecture. Reuse existing names, interfaces, and sources of truth before adding a mechanism.
 - When new structure is needed, prefer the project's conventional layers such as model/schema, service, repository, and UI over introducing feature folders. Create only layers with actual responsibilities; a small change need not acquire every layer. Preserve an established feature-based structure unless reorganization is part of the task.
