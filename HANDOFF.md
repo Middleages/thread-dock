@@ -1,5 +1,10 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-16: Coordinator 전체계획을 기능 분배 전에 검토
+
+- `f080fa9`에서 독립 branch `agent/coordinator-plan-first`를 만들고 기존 Skill3·primary4·template AGENTS·quickstart에 전체계획 선행과 Feature Leader 상세계획의 경계를 명시했다. 중요한 전체계획의 독립 반대 검토/중립 판정, 기존 검토본 재사용, plan revision/계약 인계와 영향분 환류를 요구한다. 계획만 요청한 작업은 구현/세션 시작/외부 쓰기 허가로 확대하지 않는다.
+- 기존 세션·초안·승인된 독립 업무를 유지하고 기존 root dirty 파일과 제품 코드를 보존했다. 현재 WSL 전역 Skill3/primary4를 백업 후 좁게 반영했으며 모델·권한 metadata는 유지했다. 근거와 실제 평가·한계는 [검증 기록](docs/superpowers/reviews/2026-10-16-coordinator-plan-first-verification.md)을 따른다.
+
 ## 2026-10-16: 업무 품질 기준 통합·다른 컴퓨터 설치 지침
 
 - 사용자 승인에 따라 `origin/main`의 `c52ac8b`에서 branch `agent/workflow-quality-global-setup`, worktree `.worktrees/workflow-quality-global-setup`을 만들었다. 기존 dirty checkout과 중단 실험은 그대로 보존하고 이번 Skill/Agent 품질 기준만 의미 단위로 통합했다. 최신 `brainstorm-design`·`agent-wait`, native 역할 6개와 기존 leaf/helper 개선을 유지했다. model-profile/OMO 설계는 실행 설정으로 적용하지 않았다.

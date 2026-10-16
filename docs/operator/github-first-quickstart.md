@@ -181,6 +181,7 @@ GitHub Issue/Project를 업무 원본으로 사용하고 coordinate-work로 열�
 Coordinator는 다음을 맡는다.
 
 - 열린 Issue/PR/Project 상태 확인
+- 기능 분배 전 전체계획 작성 또는 기존 검토본 재사용
 - 독립 feature와 dependency 구분
 - 이미 존재하는 exact Feature Leader session 재사용
 - 필요한 feature만 새 Herdr top-level session/worktree로 배정
@@ -190,6 +191,10 @@ Coordinator는 다음을 맡는다.
 
 Coordinator는 일반적인 제품 구현자가 아니다. 작은 docs/config 변경처럼 feature session 비용이 더 큰 경우를 제외하면 구현은 Feature Leader에 맡긴다.
 
+기능을 배정하기 전에 `coordinate-work`로 전체계획을 먼저 준비한다. 목표·비목표, 현재 구조 근거와 선택, 기능 경계·공유 계약, 의존성·실행 순서·직렬화 경계, 기능별 완료 근거, 미결정을 담는다. 중요한 계획은 `grill-plan`의 작성자 → fresh 반대 검토자 → 별도 중립 판정을 거쳐 채택·기각 이유를 반영한 뒤 그 결정에 의존하는 기능을 분배한다.
+
+작은 명확한 일은 짧은 계획으로 충분하고, 범위·계약·가정이 같은 기존 검토본은 재검토 없이 참조한다. 미결정에 영향받는 기능만 기다리고 이미 승인된 독립 업무와 기존 세션·초안은 유지한다. 계획 검토를 끝냈다는 이유로 승인된 구현을 재승인받지 않는다. 반대로 사용자가 계획만 요청했다면 구현·새 Feature Leader 세션·GitHub 쓰기를 시작할 허가는 아니다.
+
 ## 6. Feature Leader 흐름
 
 Coordinator가 Feature Leader에게 넘기는 packet은 최소한 다음만 포함한다.
@@ -197,6 +202,8 @@ Coordinator가 Feature Leader에게 넘기는 packet은 최소한 다음만 포�
 ```text
 Issue URL
 repository / target branch
+전체계획 reference / revision
+해당 기능의 결정 / shared contracts
 feature 목적과 acceptance criteria
 feature worktree
 선행 dependency
@@ -204,6 +211,8 @@ shared interface/file 주의사항
 ```
 
 Feature Leader는 `develop-feature`를 entrypoint로 사용한다.
+
+전체계획의 결정을 재사용해 해당 기능의 파일·Task·테스트를 구체화한다. Coordinator가 모든 leaf 상세계획을 대신 쓰지 않는다. 다른 기능 경계·공유 계약·의존성·전체 가정을 바꿔야 하면 Coordinator에 되돌려 영향받는 부분만 재계획하고 packet을 갱신한다. 계획만 맡았다면 상세계획 결과까지만 전달한다.
 
 ```text
 Issue -> develop-feature
