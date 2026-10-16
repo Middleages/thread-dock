@@ -5,7 +5,7 @@
 - [전체 아키텍처와 개선 검토](docs/architecture/agent-workflow.md)에 자연어 진입, Coordinator/Feature Leader 소유권, native leaf, GitHub·Herdr·Go/Wails의 책임과 실제 검증 근거를 정리했다. 원격 main `b04cf2a`와 로컬 현행 구성 `9622d0e`, 전역 설치·이미 열린 session의 차이를 구분한다.
 - [Codex](docs/superpowers/reviews/2026-10-16-codex-model-behavior.md)와 [OpenCode](docs/superpowers/reviews/2026-10-16-opencode-natural-entry-behavior.md)의 실제 행동 보고서를 함께 보존했다. 자동 feature 진입과 명시적 위임은 확인됐지만 자동 계획 검토는 두 fixture에서 미수행이었다. 미완성 초안 종료를 거짓 ready 선언이나 특정 Skill의 인과적 결함으로 확대하지 않는다.
 - 개선안은 FL의 계획-only/명시적 초안/검토 완료/구현 준비 구분을 먼저 명확히 하고, 기존 결과에 최소 검토 근거를 연결하는 방향이다. hook·도구는 반복 누락이나 반복 수집 비용이 확인될 때 후속 검토한다. 이번에는 문서만 작성했으며 workflow·전역 설정·모델·권한·실사용 세션을 변경하지 않았다.
-- 로컬 링크와 diff 검사를 통과했다. 제품 코드 변경이 없어 전체 suite와 모델 행동 시험을 반복하지 않았다. 커밋·리뷰 상태는 해당 문서화 branch 기록을 따른다.
+- 로컬 링크와 diff 검사를 통과했고, 고정 후보 `47dc5a208f998a1b4c53e7b2d32b80ddafe9b99d`의 문서 5개를 fresh `td_reviewer`가 ACCEPT했다. blocking finding은 없으며 reviewer runtime model/effort는 미검증이다. 제품 코드 변경이 없어 전체 suite와 모델 행동 시험을 반복하지 않았다. 로컬 문서화 branch에만 저장했으며 푸시·병합은 하지 않았다.
 
 ## 2026-10-16: 자연어 요청의 짧은 자동 진입
 
