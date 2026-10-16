@@ -36,4 +36,6 @@ root의 별도 관찰 전달에 따르면 사용자 승인으로 기존 작업 �
 
 ## 최종 검토/남은 한계
 
-고정 candidate의 fresh scoped 리뷰 결과를 후속 기록한다. 행동 평가는 격리된 native Agent 계획/packet 작업이며 실제 기능 세션 배정·GitHub 게시·제품 실행을 검증한 결과가 아니다. 다른 호스트/Windows 설치, 실제 OpenCode provider 동작과 runtime model identity는 미검증이다. push와 main 병합은 자동 수행하지 않는다.
+fresh `td_reviewer`의 `plan_first_final_review`는 base `f080fa999c0aafe91d06f58083cc15ba502a7d44` → candidate `a5b25129825d080713a3ca2c7aec9f4eb971c679`의 11파일 diff와 전역 7파일 적용을 검토해 **ACCEPT**, blocking finding 없음으로 판정했다. 현재 global 7파일의 candidate 일치와 백업 7파일의 base 일치도 독립적으로 확인했다. 이후 변경은 이 판정과 HANDOFF 결과 기록뿐이다.
+
+행동 평가는 격리된 native Agent 계획/packet 작업이며 실제 기능 세션 배정·GitHub 게시·제품 실행을 검증한 결과가 아니다. 다른 호스트/Windows 설치, 실제 OpenCode provider 동작과 runtime model identity는 미검증이다. push와 main 병합은 수행하지 않았다.

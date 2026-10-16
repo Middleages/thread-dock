@@ -4,6 +4,7 @@
 
 - `f080fa9`에서 독립 branch `agent/coordinator-plan-first`를 만들고 기존 Skill3·primary4·template AGENTS·quickstart에 전체계획 선행과 Feature Leader 상세계획의 경계를 명시했다. 중요한 전체계획의 독립 반대 검토/중립 판정, 기존 검토본 재사용, plan revision/계약 인계와 영향분 환류를 요구한다. 계획만 요청한 작업은 구현/세션 시작/외부 쓰기 허가로 확대하지 않는다.
 - 기존 세션·초안·승인된 독립 업무를 유지하고 기존 root dirty 파일과 제품 코드를 보존했다. 현재 WSL 전역 Skill3/primary4를 백업 후 좁게 반영했으며 모델·권한 metadata는 유지했다. 근거와 실제 평가·한계는 [검증 기록](docs/superpowers/reviews/2026-10-16-coordinator-plan-first-verification.md)을 따른다.
+- focused Skill/role parse·link·설치본/백업 비교와 template 검사가 PASS했다. 실제 독립 계획-only 및 기존 검토본 재사용 평가를 완료했고, fresh `td_reviewer`는 candidate `a5b25129825d080713a3ca2c7aec9f4eb971c679`의 11파일·global7 적용을 ACCEPT했다. 이후 변경은 결과 기록뿐이며 기존 UI/전체 suite는 반복하지 않았다. 현재는 로컬 commit 상태로 push/main 병합하지 않았다.
 
 ## 2026-10-16: 업무 품질 기준 통합·다른 컴퓨터 설치 지침
 
