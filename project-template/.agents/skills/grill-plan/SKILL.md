@@ -9,7 +9,9 @@ Turn ambiguity into an implementation-ready decision record. Do not create a sec
 
 Read [the shared development stance](../develop-feature/references/development-stance.md). A bounded local fix, typo, or routine docs/config edit with clear acceptance needs only a short plan; skip the independent planning cycle below. Significant plans change public/shared interfaces, persistent data or migrations, cross-module ownership, security/external side effects, or a consequential unresolved tradeoff. A clear desired outcome does not by itself make these small.
 
-Interrogate the request until the Feature Leader can state:
+Support either planning level: the Coordinator's overall feature/contracts/dependency plan before dependent feature dispatch, or the Feature Leader's files/tasks/tests plan within one feature. Reuse matching reviewed decisions and examine only new or materially changed assumptions. A planning-only request authorizes these planning/review steps, not implementation sessions or publication.
+
+Resolve the request until the responsible Coordinator or Feature Leader can state:
 
 - problem and why it matters;
 - explicit non-goals;
@@ -18,7 +20,7 @@ Interrogate the request until the Feature Leader can state:
 - edge cases and failure/recovery behavior;
 - interfaces, shared files, data/state transitions, and compatibility constraints;
 - dependencies and prerequisites;
-- tasks that can truly run in parallel;
+- features or tasks that can truly run in parallel at the current planning level;
 - boundaries that must stay serialized;
 - unresolved decisions that require the human rather than agent guessing.
 
@@ -35,4 +37,4 @@ The coordinating author owns the following native-agent dispatch; an assigned le
 
 Sequential dispatch is sufficient; independence means separate contexts, not concurrency or model diversity. Use existing allowed roles/models, never automatic escalation. If independent dispatch is unavailable, state which review is missing and continue only work that does not depend on the unresolved decision; do not relabel self-review as independent.
 
-Return a compact plan to the Feature Leader with task boundaries, ownership, acceptance evidence, and remaining human decisions. The output is planning input for `develop-feature`, not durable execution state by itself.
+Return a compact plan to the responsible Coordinator or Feature Leader with a reference/revision, decisions and review rationale, boundaries, ownership, acceptance evidence, and remaining human decisions. It feeds `coordinate-work` feature packets or `develop-feature` task packets at the corresponding level, not a second execution-state store. Report cross-feature contract/dependency changes to the Coordinator rather than deciding them inside one feature.
