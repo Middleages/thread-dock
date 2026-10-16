@@ -62,15 +62,18 @@ Herdr를 조작할 때는 공용 보조 Skill `herdr-local`을 함께 사용한�
 
 다른 컴퓨터의 Agent에게 설치를 맡길 때는 [전역 Agent 설치 지침](global-agent-setup.md)을 전달한다. 설치 원본 ref, 백업·병합, 운영체제별 실제 경로와 설치 후 확인을 함께 다룬다.
 
+자연어 요청에서 매번 Skill 이름이나 primary 역할을 먼저 지정하지 않아도 되도록, tracked 자동 진입 원본 `project-template/global/AGENTS.md`도 함께 설치한다. 이 짧은 지침은 프로젝트 조정 요청을 `coordinate-work`, 배정된 단일 기능을 `develop-feature`로 연결하되, 작은 명확 작업과 일반 질문은 가볍게 유지한다. 모든 root session을 Coordinator로 고정하거나 runtime model·권한을 바꾸지 않으며, 더 가까운 프로젝트 `AGENTS.md`와 명시 역할이 우선한다.
+
 프로젝트별 설치 대신 모든 프로젝트에서 사용하려면 아래 대상으로 개별 파일·스킬 폴더를 복사한다. 전역 설치와 프로젝트 설치를 중복 유지하면 같은 이름의 지침이 달라질 수 있으므로 한 범위를 선택한다.
 
 | 원본 | 전역 대상 |
 |---|---|
+| `project-template/global/AGENTS.md` | Codex: `~/.codex/AGENTS.md`, OpenCode: `~/.config/opencode/AGENTS.md` (실제 custom home/config 사용 시 그 경로) |
 | `project-template/.agents/skills/<skill>/` | `~/.agents/skills/<skill>/` (공용) |
 | `project-template/.codex/agents/td_*.toml` | `~/.codex/agents/` (Codex) |
 | `project-template/.opencode/agents/td_*.md` | `~/.config/opencode/agents/` (OpenCode) |
 
-`~`는 도구를 실행하는 사용자의 홈이다. WSL에서 실행하면 Linux 홈(예: `/home/appuser`), Windows에서 직접 실행하면 그 Windows 사용자의 홈을 기준으로 한다. OpenCode의 XDG 설정이나 Codex의 설정 디렉터리를 바꿨다면 실제 경로를 따른다. 기존 전역 파일은 먼저 백업·비교하고, `AGENTS.md`와 `CONTEXT.md`는 전역 규칙으로 복사하지 않는다.
+`~`는 도구를 실행하는 사용자의 홈이다. WSL에서 실행하면 Linux 홈(예: `/home/appuser`), Windows에서 직접 실행하면 그 Windows 사용자의 홈을 기준으로 한다. OpenCode의 XDG 설정이나 Codex의 설정 디렉터리를 바꿨다면 실제 경로를 따른다. 기존 전역 파일은 먼저 백업·비교한다. 저장소 root나 `project-template/AGENTS.md`를 전역으로 복사하지 말고 위의 짧은 global 원본만 사용하며, `CONTEXT.md`는 전역 규칙으로 복사하지 않는다.
 
 OpenCode는 공용 `~/.agents/skills`와 `.agents/skills`를 공식 지원한다. OpenCode 전용 `~/.config/opencode/skills`에도 설치할 수 있지만 두 도구를 함께 쓸 때는 공용 경로 하나를 권장한다. [OpenCode Skill 경로](https://opencode.ai/docs/skills/)
 Codex도 같은 공용 Skill 경로를 읽으며, custom agent는 별도 TOML을 읽는다. [Codex Skill 경로](https://learn.chatgpt.com/docs/build-skills), [Codex custom agent](https://learn.chatgpt.com/docs/agent-configuration/subagents)

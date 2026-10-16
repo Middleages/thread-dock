@@ -2,7 +2,7 @@
 
 ## 착수와 범위
 
-- 먼저 HANDOFF.md, PRODUCT.md, CONTEXT.md, docs/operator/github-first-quickstart.md와 현재 2026-09-10 설계·계획을 읽는다.
+- 개발·조정 작업 착수 시 HANDOFF.md의 최신 현재 절과 PRODUCT.md의 제품 목적을 먼저 읽는다. 용어·운영 흐름·Go/Wails 구현 범위가 실제 요청에 관련될 때만 CONTEXT.md, docs/operator/github-first-quickstart.md와 현재 2026-09-10 설계·계획을 추가로 읽으며, 일반 질문·읽기 보고는 필요한 원본만 확인한다.
 - 중앙 관제·기능별 Herdr 세션·native subagent·GitHub 기록이 기본 사용 흐름이다. 제품은 Go/Wails 모니터와 기존 React 화면이다. Go 백엔드에서 GitHub·Herdr를 조회·결합한다.
 - 과거 2026-09-07 spec/준비 계획과 초기 herdr-first-01-status-wire는 신규 구현의 지침이 아니다. PR #69의 Go/Wails 이식과 현재 트리의 옛 실행 엔진 제거를 반복하지 않는다. 남은 Go package는 monitor, internal/runner, internal/projecttemplate다. 검증·병합 상태는 HANDOFF.md와 docs/operator/2026-09-12-engine-retirement-completion-ledger.md를 따른다. 브라우저 전용 실행 지침은 폐기한다.
 - Vite는 화면 개발·빌드만 담당한다. 별도 Node 조회 서버·HTTP bridge·새 실행 엔진을 추가하지 않는다.
