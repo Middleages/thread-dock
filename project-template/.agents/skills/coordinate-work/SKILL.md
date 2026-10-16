@@ -26,6 +26,8 @@ Words such as "better", "faster", or "automate" are not by themselves a reason t
 
 The brief preserves the original request and source, confirmed desired behavior/acceptance/non-goals, facts versus assumptions and open product decisions, priority, dependencies/shared constraints, authority scope, and feature owner. Add repository/branch, Issue/worktree when applicable, and any already-agreed plan reference/revision. Hold only dispatch that depends on an unresolved product choice; continue useful independent authorized work and preserve active sessions/drafts. Do not require a new approval merely to pass an already-authorized brief.
 
+For user-facing work, one sentence can connect a representative action to visible success, for example: "An operator refreshes the work list and sees updated rows with the chosen filter preserved." Use facts already established in context. This is an illustration, not a required form or a reason to ask extra questions for backend/internal work.
+
 If the user already agreed a plan, hand it over as the starting plan. The Feature Leader checks intake/feasibility and reuses it without rewriting or repeating approval/review of unchanged decisions. It may revise implementation details with reasons; cross-feature contracts/dependencies return to the Coordinator for narrow coordination, while an undelegated change to user-decided product scope or behavior returns to the user.
 
 ## Assign and observe
