@@ -1,5 +1,10 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-16: 작은 책임·brief·검증 기록 보완
+
+- `3518798`에서 UI 후보 제안/평가 배정을 Feature Leader로 명확히 하고, 사용자 행동+보이는 성공의 선택적 brief 예시와 상세 검증의 현재 주기록 한 곳(PR, 없으면 Issue/요청, 미허가 외부 쓰기는 local/conversation)을 추가했다. 다른 기록은 요약·참조만 남긴다. UI 절차·hook/router·모델·권한은 변경하지 않았다.
+- global Skill2를 `/tmp/threaddock-small-guidance.vJp0Rj/before`에 백업 후 반영했고 frontmatter/parse/link/parity/UI 불변·diff 검사는 PASS다. 상세 근거는 이번 요청 기록을 따른다. fresh `td_reviewer`는 동일 모델로 두 번 모두 capacity 오류로 실행 전 실패했으므로 이 작은 delta의 독립 리뷰는 미검증이다. 임의 모델 대체·자기검토 통과 처리는 하지 않았고 원격 게시도 하지 않았다.
+
 ## 2026-10-16: 전체계획 gate를 목표 brief·FL 단일 계획 소유로 정정
 
 - 사용자 정정에 따라 이전 절의 필수 Coordinator 전체계획/삼자 검토는 superseded다. Coordinator는 문맥을 읽어 제품 모호함·사실 미확인·구현 재량·가역 가정을 구분하고 dispatch-ready brief를 넘긴다. Feature Leader가 기능 계획을 소유하며 합의된 계획은 재작성/재승인 없이 인수·재사용한다.
