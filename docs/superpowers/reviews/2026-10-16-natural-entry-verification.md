@@ -56,3 +56,7 @@ make template-check
 - OpenCode fresh model 행동, Windows/native startup, 실제 GitHub/Herdr 동작은 이번 범위에서 실행하지 않았다.
 - 제품 코드/UI 변경이 없어 `make check`, browser fixture, Wails 검증은 실행하지 않았다.
 - fresh `td_reviewer`가 최종 고정 SHA와 `d3b2b1e` 이후 범위를 독립 검토한 결과를 아래에 기록한다.
+
+### 독립 리뷰 결과
+
+fresh `td_reviewer`는 고정 SHA `b02b1d099857acdb9cd9917f3c251c894cf4141c`와 `d3b2b1e..b02b1d0` 범위를 검토해 **ACCEPT**했고 blocking/non-blocking finding은 없었다. source 우선순위, `coordinate-work`/`develop-feature` 분기, Feature Leader 계획 소유권, 모호함·planning-only·외부 쓰기 경계, 조건부 root startup, 설치/backup/override 안내, 검증의 한계를 acceptance와 대조했다. 기존 parity/template/root case 근거를 채택했으며 같은 실행은 반복하지 않았다. reviewer의 실제 runtime model과 reasoning effort는 직접 관찰할 telemetry가 없어 둘 다 `unverified`다. 이 절 추가 이후 변경은 리뷰 결과 기록뿐이다.

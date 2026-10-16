@@ -4,7 +4,7 @@
 
 - `07ceb8455faa28884b379dc428c4c31baadc674d`에서 `project-template/global/AGENTS.md`를 canonical source로 추가하고 Codex/OpenCode 전역 시작 경로와 다른 컴퓨터 설치 안내를 연결했다. 모든 root를 Coordinator로 고정하지 않으며, 자연스러운 조정 요청은 `coordinate-work`, 배정된 단일 기능은 `develop-feature`, 작은 명확 작업과 일반 질문은 가벼운 경로를 사용한다. root의 무조건적 장문 시작 읽기도 관련성 기반으로 좁혔다.
 - 현재 WSL의 신규 `/home/appuser/.codex/AGENTS.md`와 `/home/appuser/.config/opencode/AGENTS.md`는 source와 동일하다. 기존 파일이 없어 backup은 없고 Skill·role·model/provider/permission·hook은 보존했다. 이는 routing 지침 설치이며 runtime 모델/역할 변경이 아니다.
-- [검증 기록](docs/superpowers/reviews/2026-10-16-natural-entry-verification.md)의 이름 없는 fresh Codex root 4건에서 일반 질문과 typo는 lightweight, 다중 우선순위는 `coordinate-work`, 단일 migration planning은 `develop-feature`로 처리됐다. 실제 OpenCode model 실행과 runtime model/effort identity는 미검증이다. 반복 기계 작업이 없어 helper/hook은 추가하지 않았다. 최종 독립 리뷰 상태는 같은 검증 기록을 따른다.
+- [검증 기록](docs/superpowers/reviews/2026-10-16-natural-entry-verification.md)의 이름 없는 fresh Codex root 4건에서 일반 질문과 typo는 lightweight, 다중 우선순위는 `coordinate-work`, 단일 migration planning은 `develop-feature`로 처리됐다. 실제 OpenCode model 실행과 runtime model/effort identity는 미검증이다. 반복 기계 작업이 없어 helper/hook은 추가하지 않았다. fresh `td_reviewer`는 `b02b1d099857acdb9cd9917f3c251c894cf4141c`의 `d3b2b1e` 이후 범위를 ACCEPT했고 finding은 없었다. 이후 변경은 이 리뷰 결과 기록뿐이다.
 
 ## 2026-10-16: 작은 책임·brief·검증 기록 보완
 
