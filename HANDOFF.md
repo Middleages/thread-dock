@@ -1,5 +1,11 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-16: 자연어 요청의 짧은 자동 진입
+
+- `07ceb8455faa28884b379dc428c4c31baadc674d`에서 `project-template/global/AGENTS.md`를 canonical source로 추가하고 Codex/OpenCode 전역 시작 경로와 다른 컴퓨터 설치 안내를 연결했다. 모든 root를 Coordinator로 고정하지 않으며, 자연스러운 조정 요청은 `coordinate-work`, 배정된 단일 기능은 `develop-feature`, 작은 명확 작업과 일반 질문은 가벼운 경로를 사용한다. root의 무조건적 장문 시작 읽기도 관련성 기반으로 좁혔다.
+- 현재 WSL의 신규 `/home/appuser/.codex/AGENTS.md`와 `/home/appuser/.config/opencode/AGENTS.md`는 source와 동일하다. 기존 파일이 없어 backup은 없고 Skill·role·model/provider/permission·hook은 보존했다. 이는 routing 지침 설치이며 runtime 모델/역할 변경이 아니다.
+- [검증 기록](docs/superpowers/reviews/2026-10-16-natural-entry-verification.md)의 이름 없는 fresh Codex root 4건에서 일반 질문과 typo는 lightweight, 다중 우선순위는 `coordinate-work`, 단일 migration planning은 `develop-feature`로 처리됐다. 실제 OpenCode model 실행과 runtime model/effort identity는 미검증이다. 반복 기계 작업이 없어 helper/hook은 추가하지 않았다. 최종 독립 리뷰 상태는 같은 검증 기록을 따른다.
+
 ## 2026-10-16: 작은 책임·brief·검증 기록 보완
 
 - `3518798`에서 UI 후보 제안/평가 배정을 Feature Leader로 명확히 하고, 사용자 행동+보이는 성공의 선택적 brief 예시와 상세 검증의 현재 주기록 한 곳(PR, 없으면 Issue/요청, 미허가 외부 쓰기는 local/conversation)을 추가했다. 다른 기록은 요약·참조만 남긴다. UI 절차·hook/router·모델·권한은 변경하지 않았다.
