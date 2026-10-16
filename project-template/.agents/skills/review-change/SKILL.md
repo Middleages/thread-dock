@@ -5,6 +5,8 @@ description: Use when a feature PR or candidate change needs an independent revi
 
 # Review change
 
+This is **code-review mode** for an implemented candidate. For a plan-review or adjudication assignment, use the corresponding input/evidence contract in `grill-plan` instead; future screenshots or passing implementation tests are not prerequisites for a plan verdict.
+
 Review the exact candidate SHA or PR head from a fresh read-only context. The reviewer is independent of the implementer, is a transient native subagent rather than a ThreadDock top-level binding, and does not edit the candidate.
 
 Read [the shared development stance](../develop-feature/references/development-stance.md) and assess added complexity against a concrete requirement or failure case. For UI changes, read [UI quality](../develop-feature/references/ui-quality.md), inspect the supplied rendered screenshots through image input, and assess interaction evidence. Missing actual image inspection or relevant interaction evidence is unverified UI acceptance, even when build/DOM/capture succeeded. Return missing evidence to the Leader; do not delegate, edit, or silently replace required checks.

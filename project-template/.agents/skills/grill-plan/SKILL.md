@@ -1,40 +1,30 @@
 ---
 name: grill-plan
-description: Use when a development plan changes shared interfaces, persistent state, cross-module ownership, or consequential assumptions, or needs ambiguity resolved before implementation.
+description: Use when a Feature Leader's significant plan needs independent challenge or an unresolved material design disagreement needs adjudication.
 ---
 
 # Grill plan
 
-Turn ambiguity into an implementation-ready decision record. Do not create a second task database, workflow engine, or orchestration state.
+The Feature Leader owns one feature plan. Goal/product ambiguity is refined by the Coordinator with `coordinate-work`; missing implementation detail alone is not a reason to question the user. Read [the shared development stance](../develop-feature/references/development-stance.md).
 
-Read [the shared development stance](../develop-feature/references/development-stance.md). A bounded local fix, typo, or routine docs/config edit with clear acceptance needs only a short plan; skip the independent planning cycle below. Significant plans change public/shared interfaces, persistent data or migrations, cross-module ownership, security/external side effects, or a consequential unresolved tradeoff. A clear desired outcome does not by itself make these small.
+Accept an already-agreed plan as the starting point: check feasibility and supporting facts, reuse valid decisions/review evidence, and avoid rewriting or reopening approval of unchanged choices. The owner may revise implementation details with rationale. Route cross-feature contracts/dependencies to the Coordinator and undelegated changes to user-decided product scope/behavior to the user.
 
-Support either planning level: the Coordinator's overall feature/contracts/dependency plan before dependent feature dispatch, or the Feature Leader's files/tasks/tests plan within one feature. Reuse matching reviewed decisions and examine only new or materially changed assumptions. A planning-only request authorizes these planning/review steps, not implementation sessions or publication.
+A small clear fix needs only a short implementation approach. For a significant new plan or substantive changed risk (shared/public interface, persistent data/migration, cross-module ownership, security/external effects), make scope, evidence/assumptions, interfaces, dependencies, failure/recovery, tasks/ownership and acceptance verification concrete. Complexity or risk warrants this review even when product intent is already clear. A planning-only assignment stays planning-only.
 
-Resolve the request until the responsible Coordinator or Feature Leader can state:
+## Review the plan, not future implementation results
 
-- problem and why it matters;
-- explicit non-goals;
-- testable acceptance criteria;
-- hidden assumptions and which are verified versus provisional;
-- edge cases and failure/recovery behavior;
-- interfaces, shared files, data/state transitions, and compatibility constraints;
-- dependencies and prerequisites;
-- features or tasks that can truly run in parallel at the current planning level;
-- boundaries that must stay serialized;
-- unresolved decisions that require the human rather than agent guessing.
+1. Freeze a plan revision and send it, the original brief, and relevant raw facts to one fresh independent adversarial reviewer in **plan-review mode**. Ask for concrete feasibility/failure cases and simpler alternatives with consequences, not a quota of objections. The reviewer returns findings without editing or delegating.
+2. The plan owner resolves evidence-backed findings: adopt the necessary correction or explain a rejection with source evidence. If owner and reviewer agree, finalize the plan with those decisions; do not dispatch a neutral adjudicator. Recheck only a changed substantive risk or genuinely unresolved finding, not the whole plan or a preference-only difference.
+3. Only if a material disagreement remains after that resolution, send the fixed plan, disputed findings, the author's response, and shared evidence to one different fresh reviewer in **adjudication mode**. It records accepted/rejected reasoning and the smallest supported resolution, preserving user authority. One adjudication is enough for that dispute. If it still cannot resolve a material decision, identify the specific missing fact or human choice, hold only dependent work, and continue independent authorized work; do not restart an endless review/debate cycle.
 
-Prefer the smallest question or repository/GitHub inspection that removes a meaningful ambiguity. Do not expand a clear task merely to produce a longer plan.
+The coordinating plan owner dispatches these bounded reviews. Reviewers/adjudicators consume the supplied fixed plan and return their mode-specific result; they do not become new plan owners or recursively run this workflow. Use existing allowed roles/models without escalation. Unavailable required review is explicitly unverified, not replaced by self-review.
 
-## Independent review for significant plans
+Distinguish a missing technical fact from a user decision when resolving a dispute. If alternatives preserve agreed behavior, compatibility and external effects, the Feature Leader owns the technical choice, including protocol or data-format choices. Missing evidence returns as a concrete fact to obtain with its owner/limit, not a request for the user to choose an implementation. Escalation to the user must identify the undelegated change to product scope, acceptance, behavior or authority that needs their choice; an API-related disagreement alone does not establish one.
 
-The coordinating author owns the following native-agent dispatch; an assigned leaf reviewer returns its result without delegating.
+## Review inputs and evidence
 
-1. Author a concrete plan with source facts, assumptions, alternatives, ownership, and acceptance evidence. Freeze a revision so every review refers to the same plan.
-2. Dispatch a fresh adversarial reviewer with that plan and the raw relevant evidence. Ask for concrete failure scenarios, overlooked dependencies, and simpler alternatives with consequences; no quota of objections. Unsupported preferences and invented problems are not blockers. The reviewer did not author the plan and returns findings without changing it.
-3. Dispatch a different fresh neutral adjudicator with the same plan/evidence and the adversarial findings. It records each accepted or rejected finding and its reason, the smallest justified revision, and any unresolved human decision. It does not rubber-stamp either side, broaden scope, or decide a product preference the user has not delegated.
-4. The author applies accepted changes and records the final plan with the rationale for rejected findings. Re-review only changed material or unresolved concrete risks. Use this plan for implementation packets.
+- **plan-review:** original brief/acceptance, plan reference/revision, relevant source facts and proposed verification. Judge feasibility, scope, dependencies and missing source evidence. Identify a real unknown as such; do not require passing tests, screenshots, or a code SHA for an implementation that does not exist yet.
+- **adjudication:** the same plan/evidence plus the specific material disagreement and both positions. Resolve only that dispute, or identify the bounded missing decision.
+- **code-review:** a completed candidate's SHA/diff and actual acceptance/check evidence belongs to `review-change`. Its rendered-UI and executed-test requirements still apply at that stage.
 
-Sequential dispatch is sufficient; independence means separate contexts, not concurrency or model diversity. Use existing allowed roles/models, never automatic escalation. If independent dispatch is unavailable, state which review is missing and continue only work that does not depend on the unresolved decision; do not relabel self-review as independent.
-
-Return a compact plan to the responsible Coordinator or Feature Leader with a reference/revision, decisions and review rationale, boundaries, ownership, acceptance evidence, and remaining human decisions. It feeds `coordinate-work` feature packets or `develop-feature` task packets at the corresponding level, not a second execution-state store. Report cross-feature contract/dependency changes to the Coordinator rather than deciding them inside one feature.
+Return the feature plan reference/revision, resolved findings with rationale, any remaining material decision, ownership and verification approach to `develop-feature`. This is planning input, not a second execution-state store.

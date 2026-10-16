@@ -24,7 +24,7 @@
 ## 공용 작업 기준
 
 - 계획·구현·리뷰는 [개발 공통 기준](project-template/.agents/skills/develop-feature/references/development-stance.md)을 읽고 관련 기준을 최초 Task packet부터 공유한다. 현재 구조와 실제 책임을 기준으로 단순하게 구현한다.
-- 공유 interface·영속 상태·migration 등 중요한 계획은 [grill-plan](project-template/.agents/skills/grill-plan/SKILL.md)의 작성자 → fresh 반대 검토자 → 별도 중립 판정과 채택·기각 근거를 적용한다. 작은 명확한 작업은 짧게 처리한다.
+- Coordinator는 [coordinate-work](project-template/.agents/skills/coordinate-work/SKILL.md)로 목표의 모호함·범위·의존성을 정리한 brief를 넘기며, 기능 계획은 Feature Leader 한 명이 소유한다. 중요한 새 계획/실질적 변경은 [grill-plan](project-template/.agents/skills/grill-plan/SKILL.md)의 독립 반대 검토 후 작성자가 근거로 해결하고, 중요한 이견이 남을 때만 별도 중립 판정을 한 번 사용한다. 합의된 계획은 인수·실행가능성 확인 후 재사용하며 작은 명확한 일은 직접 처리한다.
 - UI 변경은 [UI quality](project-template/.agents/skills/develop-feature/references/ui-quality.md)를 따른다. 중요한 문구·화면 후보의 독립 제안/평가 배정은 조정자가 맡고, 구현자·리뷰어는 기존 재위임 경계를 유지한다. 실제 screenshot 이미지 열람과 관련 동작 검증을 요구하며, 도구가 없으면 해당 검증을 미검증으로 남긴다. 브라우저 fixture와 실제 Wails 근거를 구분한다.
 - 완료·대기·차단 보고에는 [publish-work](project-template/.agents/skills/publish-work/SKILL.md)의 문제/요청, 사용자 관점 변화, 선택 이유, 실제 검증·한계 설명을 적용한다. 외부 쓰기는 기존 승인 범위를 따른다.
 
