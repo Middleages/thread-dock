@@ -2,6 +2,8 @@
 
 ThreadDock은 실행 엔진이 아니다. GitHub Issue/PR/Projects를 업무 원본으로 사용하고, Herdr가 top-level session/worktree/Agent lifecycle을 맡는다. ThreadDock은 프로젝트별 Coordinator와 feature별 Feature Leader의 상태를 GitHub 업무와 한 화면에 연결한다.
 
+역할 소유권, 요청별 lifecycle, 근거 경계와 현재 개선 검토는 [Agent workflow 아키텍처](../architecture/agent-workflow.md)를 함께 본다.
+
 새 프로젝트에서 상주 역할은 두 개다. 세부 작업은 필요할 때만 Feature Leader가 native leaf에 맡긴다.
 
 ```text

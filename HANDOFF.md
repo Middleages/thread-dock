@@ -1,5 +1,12 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-17: 전체 Agent workflow 아키텍처와 개선안 문서화
+
+- [전체 아키텍처와 개선 검토](docs/architecture/agent-workflow.md)에 자연어 진입, Coordinator/Feature Leader 소유권, native leaf, GitHub·Herdr·Go/Wails의 책임과 실제 검증 근거를 정리했다. 원격 main `b04cf2a`와 로컬 현행 구성 `9622d0e`, 전역 설치·이미 열린 session의 차이를 구분한다.
+- [Codex](docs/superpowers/reviews/2026-10-16-codex-model-behavior.md)와 [OpenCode](docs/superpowers/reviews/2026-10-16-opencode-natural-entry-behavior.md)의 실제 행동 보고서를 함께 보존했다. 자동 feature 진입과 명시적 위임은 확인됐지만 자동 계획 검토는 두 fixture에서 미수행이었다. 미완성 초안 종료를 거짓 ready 선언이나 특정 Skill의 인과적 결함으로 확대하지 않는다.
+- 개선안은 FL의 계획-only/명시적 초안/검토 완료/구현 준비 구분을 먼저 명확히 하고, 기존 결과에 최소 검토 근거를 연결하는 방향이다. hook·도구는 반복 누락이나 반복 수집 비용이 확인될 때 후속 검토한다. 이번에는 문서만 작성했으며 workflow·전역 설정·모델·권한·실사용 세션을 변경하지 않았다.
+- 로컬 링크와 diff 검사를 통과했다. 제품 코드 변경이 없어 전체 suite와 모델 행동 시험을 반복하지 않았다. 커밋·리뷰 상태는 해당 문서화 branch 기록을 따른다.
+
 ## 2026-10-16: 자연어 요청의 짧은 자동 진입
 
 - `07ceb8455faa28884b379dc428c4c31baadc674d`에서 `project-template/global/AGENTS.md`를 canonical source로 추가하고 Codex/OpenCode 전역 시작 경로와 다른 컴퓨터 설치 안내를 연결했다. 모든 root를 Coordinator로 고정하지 않으며, 자연스러운 조정 요청은 `coordinate-work`, 배정된 단일 기능은 `develop-feature`, 작은 명확 작업과 일반 질문은 가벼운 경로를 사용한다. root의 무조건적 장문 시작 읽기도 관련성 기반으로 좁혔다.
