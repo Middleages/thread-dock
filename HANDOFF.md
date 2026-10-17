@@ -1,5 +1,49 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-17: 새 top-level 세션의 실행 정책 보존
+
+- `d4f9aad`에서 `herdr-local`에 새 Herdr top-level 프로세스와 native subagent의 상속 차이를 명시하고 `coordinate-work`의 생성 단계에 연결했다. 실제 승인 정책과 sandbox를 각각 명시적으로 전달하고 생성 후 적용값을 확인한다. `never`는 sandbox 완화가 아니며 target의 경로·네트워크·managed 제한도 보존한다. 불명확·불일치는 보고하고 임의 기본값·우회·실행 중 세션 재시작으로 해결하지 않는다.
+- 두 Skill의 `quick_validate`와 `git diff --check`가 통과했고 fresh `td_reviewer`가 고정 SHA `d4f9aad1c54c245d9928ad6a9ad669edac316ca9`를 ACCEPT했다. WSL 공용 `~/.agents/skills`의 두 파일을 `/tmp/threaddock-session-policy.3E3p29`에 백업 후 적용했고 `cmp`로 원본과 일치를 확인했다.
+- 실제 새 Herdr 세션 생성 행동은 시험하지 않았다. 기존 세션·승인 dialog·global runtime 설정·모델·제품 코드는 변경하지 않았고 앱 재빌드는 필요 없다. 로컬 `agent/session-policy-preservation` branch 변경이며 push·PR·병합은 하지 않았다.
+
+## 2026-10-17: 선택적 native review receipt 수집기
+
+- Pi 연구의 typed native receipt 원리를 작은 read-only helper로 적용했다. `review-change/scripts/summarize_review_evidence.py`는 user-supplied Codex/OpenCode artifact 한 파일에서 explicit parent/child/`td_reviewer`/lifecycle/result field 위치만 stdout JSON으로 요약한다. DB·network·model·spawn·write·recursive scan이 없고 review quality/readiness/revision을 판정하지 않는다. Skill 본문은 반복 수집 때만 쓰는 optional collector로 연결한다.
+- Luna 구현 후 독립 리뷰에서 실제 형식·최신 상태 선택·잘못된 입력·fallback 근거 위치를 보완했다. 최종 source `9c715df`는 14 focused tests 근거와 scoped 독립 ACCEPT를 확보했다. 실제 OpenCode completed task artifact는 sufficient receipt, actual Codex raw CLI는 serialized role/spawn이 없어 partial/unverified로 반환했다. Linux global `review-change`는 `/tmp/threaddock-review-evidence.WhfO4x/before`에 백업 후 pointer/reference/script만 설치했고 최종 source와 일치한다. 상세 실패·수정·검증은 [검증 기록](docs/superpowers/reviews/2026-10-17-review-evidence-helper-verification.md)을 따른다.
+- 사용자 요청에 따라 root가 Codex Superpowers plugin을 local config에서 비활성화하고 backup·parse/equality를 확인했다. 격리 prompt input catalogue와 일반 root 요청에서는 빠졌지만, 중요한 fresh root의 runtime host catalogue에는 15개 항목이 남아 모델이 설치 cache의 두 Superpowers 문서를 직접 읽었다. 따라서 local config off는 완료됐으나 이 runtime의 완전한 지침 미사용은 보장하지 않는다. uninstall/cache 삭제/다른 설정 변경은 하지 않았다.
+
+## 2026-10-17: 중요한 계획의 완료 계약 A·B 적용
+
+- `ae11350405657ac705a33b781dfce77999396e09`에서 `develop-feature`·`grill-plan`과 두 harness의 Feature Leader 역할을 좁게 보강했다. planning-only는 구현/게시를 막지만 중요한 계획의 실제 독립 review와 owner resolution은 완료한다. 명시적 ideas/draft, 작은 명확 작업, 유효한 기존 review는 가볍게 유지한다. `reviewed`와 `implementation-ready`를 분리하고 기존 response/handoff 한 줄에 revision·실제 reviewer result/verdict·남은 중요 항목·readiness만 남긴다.
+- Linux global Skill 2개와 Feature Leader role 2개는 `/tmp/threaddock-plan-contract.0AHAIa/before`에 백업 후 tracked source와 parity를 맞췄다. model/provider/permission/hook, Go/Wails·React, GitHub/Herdr 상태는 변경하지 않았다. 새 helper·DB·schema·scheduler는 없다.
+- [행동 검증](docs/superpowers/reviews/2026-10-17-plan-completion-contract-verification.md)의 이름 없는 Codex root 3건은 충분한 중요 계획의 실제 child review+owner resolution, 명시적 small draft의 review 생략, source가 부족한 중요 계획의 assumptions/options review와 reviewed/not-ready 분리를 확인했다. OpenCode는 자동 skill 선택과 reviewer child 시작까지 확인했지만 제한 시간 내 result 회수/parent final이 없어 incomplete다. 성공으로 꾸미거나 모델을 바꾸지 않았다.
+- [Pi 연구](docs/research/2026-10-17-pi-agent-harness.md)는 현재 공식 source에서 작은 core·progressive context·typed event receipt를 참고 원리로 확인했다. Pi 설치/이식, Durable runtime, hook 도입은 하지 않았다. fresh `td_reviewer`는 고정 SHA `322a72ec27a5fd28e8f8751fe2e9343eaa53e40d`를 ACCEPT했고 finding은 없었다. 이후 변경은 이 review 결과 기록뿐이다.
+
+## 2026-10-17: 전체 Agent workflow 아키텍처와 개선안 문서화
+
+- [전체 아키텍처와 개선 검토](docs/architecture/agent-workflow.md)에 자연어 진입, Coordinator/Feature Leader 소유권, native leaf, GitHub·Herdr·Go/Wails의 책임과 실제 검증 근거를 정리했다. 원격 main `b04cf2a`와 로컬 현행 구성 `9622d0e`, 전역 설치·이미 열린 session의 차이를 구분한다.
+- [Codex](docs/superpowers/reviews/2026-10-16-codex-model-behavior.md)와 [OpenCode](docs/superpowers/reviews/2026-10-16-opencode-natural-entry-behavior.md)의 실제 행동 보고서를 함께 보존했다. 자동 feature 진입과 명시적 위임은 확인됐지만 자동 계획 검토는 두 fixture에서 미수행이었다. 미완성 초안 종료를 거짓 ready 선언이나 특정 Skill의 인과적 결함으로 확대하지 않는다.
+- 개선안은 FL의 계획-only/명시적 초안/검토 완료/구현 준비 구분을 먼저 명확히 하고, 기존 결과에 최소 검토 근거를 연결하는 방향이다. hook·도구는 반복 누락이나 반복 수집 비용이 확인될 때 후속 검토한다. 이번에는 문서만 작성했으며 workflow·전역 설정·모델·권한·실사용 세션을 변경하지 않았다.
+- 로컬 링크와 diff 검사를 통과했고, 고정 후보 `47dc5a208f998a1b4c53e7b2d32b80ddafe9b99d`의 문서 5개를 fresh `td_reviewer`가 ACCEPT했다. blocking finding은 없으며 reviewer runtime model/effort는 미검증이다. 제품 코드 변경이 없어 전체 suite와 모델 행동 시험을 반복하지 않았다. 로컬 문서화 branch에만 저장했으며 푸시·병합은 하지 않았다.
+
+## 2026-10-16: 자연어 요청의 짧은 자동 진입
+
+- `07ceb8455faa28884b379dc428c4c31baadc674d`에서 `project-template/global/AGENTS.md`를 canonical source로 추가하고 Codex/OpenCode 전역 시작 경로와 다른 컴퓨터 설치 안내를 연결했다. 모든 root를 Coordinator로 고정하지 않으며, 자연스러운 조정 요청은 `coordinate-work`, 배정된 단일 기능은 `develop-feature`, 작은 명확 작업과 일반 질문은 가벼운 경로를 사용한다. root의 무조건적 장문 시작 읽기도 관련성 기반으로 좁혔다.
+- 현재 WSL의 신규 `/home/appuser/.codex/AGENTS.md`와 `/home/appuser/.config/opencode/AGENTS.md`는 source와 동일하다. 기존 파일이 없어 backup은 없고 Skill·role·model/provider/permission·hook은 보존했다. 이는 routing 지침 설치이며 runtime 모델/역할 변경이 아니다.
+- [검증 기록](docs/superpowers/reviews/2026-10-16-natural-entry-verification.md)의 이름 없는 fresh Codex root 4건에서 일반 질문과 typo는 lightweight, 다중 우선순위는 `coordinate-work`, 단일 migration planning은 `develop-feature`로 처리됐다. 실제 OpenCode model 실행과 runtime model/effort identity는 미검증이다. 반복 기계 작업이 없어 helper/hook은 추가하지 않았다. fresh `td_reviewer`는 `b02b1d099857acdb9cd9917f3c251c894cf4141c`의 `d3b2b1e` 이후 범위를 ACCEPT했고 finding은 없었다. 이후 변경은 이 리뷰 결과 기록뿐이다.
+
+## 2026-10-16: 작은 책임·brief·검증 기록 보완
+
+- `3518798`에서 UI 후보 제안/평가 배정을 Feature Leader로 명확히 하고, 사용자 행동+보이는 성공의 선택적 brief 예시와 상세 검증의 현재 주기록 한 곳(PR, 없으면 Issue/요청, 미허가 외부 쓰기는 local/conversation)을 추가했다. 다른 기록은 요약·참조만 남긴다. UI 절차·hook/router·모델·권한은 변경하지 않았다.
+- global Skill2를 `/tmp/threaddock-small-guidance.vJp0Rj/before`에 백업 후 반영했고 frontmatter/parse/link/parity/UI 불변·diff 검사는 PASS다. 상세 근거는 이번 요청 기록을 따른다. fresh `td_reviewer`는 동일 모델로 두 번 모두 capacity 오류로 실행 전 실패했으므로 이 작은 delta의 독립 리뷰는 미검증이다. 임의 모델 대체·자기검토 통과 처리는 하지 않았고 원격 게시도 하지 않았다.
+
+## 2026-10-16: 전체계획 gate를 목표 brief·FL 단일 계획 소유로 정정
+
+- 사용자 정정에 따라 이전 절의 필수 Coordinator 전체계획/삼자 검토는 superseded다. Coordinator는 문맥을 읽어 제품 모호함·사실 미확인·구현 재량·가역 가정을 구분하고 dispatch-ready brief를 넘긴다. Feature Leader가 기능 계획을 소유하며 합의된 계획은 재작성/재승인 없이 인수·재사용한다.
+- 중요한 새 계획/실질적 위험은 독립 반대 검토 후 owner가 근거로 해결하고, 중요한 이견이 남을 때만 다른 중립 판정을 한 번 사용한다. reviewer의 plan/adjudication/code mode를 분리했다. 계획-only 권한과 기존 독립 업무·세션을 유지한다.
+- `b04cf2a` 기준 branch `agent/coordinator-ambiguity-brief`에서 문서/지침만 수정했다. 현재 WSL Skill4/role6을 백업 후 반영하고 root dirty에는 허용된 AGENTS 한 줄·reviewer mode 지침만 맞췄다. 모델·권한·제품 코드·locator는 보존했다. [행동 평가와 검증 기록](docs/superpowers/reviews/2026-10-16-ambiguity-brief-verification.md)을 따르며 이번 작업은 원격 게시 없이 로컬 commit으로 마무리한다.
+- 모호함 triage·계획 재사용/합의·조건부 중립 판정의 세 행동 묶음을 실행했다. 기술 선택을 사용자에게 전가한 초기 실패를 좁게 수정하고 두 소유권 사례만 재검사해 PASS했다. Skill/role parse·metadata/전역 일치·link/template 검사가 PASS했고 fresh 리뷰는 `fb3b0eb4606531ff0300204bcc2b12c2f10125de`에서 ACCEPT, blocker 없음이다. 이후 변경은 결과 기록뿐이며 전체/UI suite는 반복하지 않았다.
+
 ## 2026-10-16: Coordinator 전체계획을 기능 분배 전에 검토
 
 - `f080fa9`에서 독립 branch `agent/coordinator-plan-first`를 만들고 기존 Skill3·primary4·template AGENTS·quickstart에 전체계획 선행과 Feature Leader 상세계획의 경계를 명시했다. 중요한 전체계획의 독립 반대 검토/중립 판정, 기존 검토본 재사용, plan revision/계약 인계와 영향분 환류를 요구한다. 계획만 요청한 작업은 구현/세션 시작/외부 쓰기 허가로 확대하지 않는다.

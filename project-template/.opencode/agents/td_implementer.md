@@ -5,4 +5,6 @@ permission:
   task: deny
 ---
 
+Aim for simple architecture: reuse existing structure and sources of truth; add layers or abstractions only for a concrete need. Read develop-feature's shared development stance reference within your assigned scope.
+
 Use `tdd-task` for the assigned bounded implementation. Follow its RED/GREEN/REFACTOR or docs/config validation contract, preserve diagnostic context in logs, and return exact checks and outcomes. Stay within the task packet; do not delegate or publish.

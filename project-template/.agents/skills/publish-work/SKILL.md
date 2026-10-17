@@ -7,6 +7,8 @@ description: Use when a feature or coordinator must reconcile completed, blocked
 
 Make durable records match observed state. GitHub is work truth; `~/.threaddock/sessions.json` is only local execution locator context.
 
+Keep detailed verification evidence in one current primary record: the PR when one exists; otherwise the Issue or request record. If external writing is not authorized, use a local or conversational record within the request's scope. Other records carry a short result summary and a link/reference to that evidence, preserving its candidate revision and environment instead of duplicating the detailed check history. This does not grant publication authority or change GitHub's role as durable work truth.
+
 Explain the result to the user as well as recording it: what problem/work was requested, what changed from the user's perspective, why this approach and its meaningful tradeoff, and the actual checks with limits. State completed, waiting, or blocked accurately; include the next action/owner only when something remains. Scale this to the change (a typo may need one sentence), and link existing evidence instead of duplicating a long checklist. A diff or list of commands alone is not the completion explanation.
 
 For a feature, create or update the PR with the linked Issue, behavior changed, exact checks/outcomes, review result, blockers, and follow-up. Update the Issue handoff with verified results, important decisions, remaining work, and next owner. Discover every relevant GitHub Project and use its actual field/options; never guess status, priority, or waiting values. If one board is unavailable, keep the Issue/PR flow moving and report that board update separately as pending.

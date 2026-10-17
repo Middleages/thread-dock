@@ -2,6 +2,8 @@
 
 ThreadDock은 실행 엔진이 아니다. GitHub Issue/PR/Projects를 업무 원본으로 사용하고, Herdr가 top-level session/worktree/Agent lifecycle을 맡는다. ThreadDock은 프로젝트별 Coordinator와 feature별 Feature Leader의 상태를 GitHub 업무와 한 화면에 연결한다.
 
+역할 소유권, 요청별 lifecycle, 근거 경계와 현재 개선 검토는 [Agent workflow 아키텍처](../architecture/agent-workflow.md)를 함께 본다.
+
 새 프로젝트에서 상주 역할은 두 개다. 세부 작업은 필요할 때만 Feature Leader가 native leaf에 맡긴다.
 
 ```text
@@ -26,7 +28,7 @@ Canonical Skill은 여섯 개다.
 
 - `coordinate-work`: Coordinator의 GitHub 업무 분해, Herdr feature session 배정, 전역 locator 관리
 - `develop-feature`: Feature Leader의 feature 전체 lifecycle
-- `grill-plan`: 모호한 요청 구체화와 중요한 계획의 독립 반대 검토·중립 판정
+- `grill-plan`: 중요한 기능 계획의 독립 반대 검토와 남은 중요 이견의 조건부 중립 판정
 - `tdd-task`: bounded implementation subagent용 leaf 구현
 - `review-change`: fresh independent reviewer용 read-only 검토
 - `publish-work`: PR/Issue/Project/Wiki/locator 정리
@@ -62,15 +64,18 @@ Herdr를 조작할 때는 공용 보조 Skill `herdr-local`을 함께 사용한�
 
 다른 컴퓨터의 Agent에게 설치를 맡길 때는 [전역 Agent 설치 지침](global-agent-setup.md)을 전달한다. 설치 원본 ref, 백업·병합, 운영체제별 실제 경로와 설치 후 확인을 함께 다룬다.
 
+자연어 요청에서 매번 Skill 이름이나 primary 역할을 먼저 지정하지 않아도 되도록, tracked 자동 진입 원본 `project-template/global/AGENTS.md`도 함께 설치한다. 이 짧은 지침은 프로젝트 조정 요청을 `coordinate-work`, 배정된 단일 기능을 `develop-feature`로 연결하되, 작은 명확 작업과 일반 질문은 가볍게 유지한다. 모든 root session을 Coordinator로 고정하거나 runtime model·권한을 바꾸지 않으며, 더 가까운 프로젝트 `AGENTS.md`와 명시 역할이 우선한다.
+
 프로젝트별 설치 대신 모든 프로젝트에서 사용하려면 아래 대상으로 개별 파일·스킬 폴더를 복사한다. 전역 설치와 프로젝트 설치를 중복 유지하면 같은 이름의 지침이 달라질 수 있으므로 한 범위를 선택한다.
 
 | 원본 | 전역 대상 |
 |---|---|
+| `project-template/global/AGENTS.md` | Codex: `~/.codex/AGENTS.md`, OpenCode: `~/.config/opencode/AGENTS.md` (실제 custom home/config 사용 시 그 경로) |
 | `project-template/.agents/skills/<skill>/` | `~/.agents/skills/<skill>/` (공용) |
 | `project-template/.codex/agents/td_*.toml` | `~/.codex/agents/` (Codex) |
 | `project-template/.opencode/agents/td_*.md` | `~/.config/opencode/agents/` (OpenCode) |
 
-`~`는 도구를 실행하는 사용자의 홈이다. WSL에서 실행하면 Linux 홈(예: `/home/appuser`), Windows에서 직접 실행하면 그 Windows 사용자의 홈을 기준으로 한다. OpenCode의 XDG 설정이나 Codex의 설정 디렉터리를 바꿨다면 실제 경로를 따른다. 기존 전역 파일은 먼저 백업·비교하고, `AGENTS.md`와 `CONTEXT.md`는 전역 규칙으로 복사하지 않는다.
+`~`는 도구를 실행하는 사용자의 홈이다. WSL에서 실행하면 Linux 홈(예: `/home/appuser`), Windows에서 직접 실행하면 그 Windows 사용자의 홈을 기준으로 한다. OpenCode의 XDG 설정이나 Codex의 설정 디렉터리를 바꿨다면 실제 경로를 따른다. 기존 전역 파일은 먼저 백업·비교한다. 저장소 root나 `project-template/AGENTS.md`를 전역으로 복사하지 말고 위의 짧은 global 원본만 사용하며, `CONTEXT.md`는 전역 규칙으로 복사하지 않는다.
 
 OpenCode는 공용 `~/.agents/skills`와 `.agents/skills`를 공식 지원한다. OpenCode 전용 `~/.config/opencode/skills`에도 설치할 수 있지만 두 도구를 함께 쓸 때는 공용 경로 하나를 권장한다. [OpenCode Skill 경로](https://opencode.ai/docs/skills/)
 Codex도 같은 공용 Skill 경로를 읽으며, custom agent는 별도 TOML을 읽는다. [Codex Skill 경로](https://learn.chatgpt.com/docs/build-skills), [Codex custom agent](https://learn.chatgpt.com/docs/agent-configuration/subagents)
@@ -181,7 +186,7 @@ GitHub Issue/Project를 업무 원본으로 사용하고 coordinate-work로 열�
 Coordinator는 다음을 맡는다.
 
 - 열린 Issue/PR/Project 상태 확인
-- 기능 분배 전 전체계획 작성 또는 기존 검토본 재사용
+- 목표의 모호함·범위·우선순위·의존성을 정리한 brief 인계
 - 독립 feature와 dependency 구분
 - 이미 존재하는 exact Feature Leader session 재사용
 - 필요한 feature만 새 Herdr top-level session/worktree로 배정
@@ -191,9 +196,11 @@ Coordinator는 다음을 맡는다.
 
 Coordinator는 일반적인 제품 구현자가 아니다. 작은 docs/config 변경처럼 feature session 비용이 더 큰 경우를 제외하면 구현은 Feature Leader에 맡긴다.
 
-기능을 배정하기 전에 `coordinate-work`로 전체계획을 먼저 준비한다. 목표·비목표, 현재 구조 근거와 선택, 기능 경계·공유 계약, 의존성·실행 순서·직렬화 경계, 기능별 완료 근거, 미결정을 담는다. 중요한 계획은 `grill-plan`의 작성자 → fresh 반대 검토자 → 별도 중립 판정을 거쳐 채택·기각 이유를 반영한 뒤 그 결정에 의존하는 기능을 분배한다.
+Coordinator는 `coordinate-work`로 목표·범위·우선순위·의존성·공유 제약을 정리한 brief를 넘긴다. 완성된 아키텍처 전체계획을 먼저 수렴시키는 gate는 없다. 기능 계획의 단일 소유자는 Feature Leader다.
 
-작은 명확한 일은 짧은 계획으로 충분하고, 범위·계약·가정이 같은 기존 검토본은 재검토 없이 참조한다. 미결정에 영향받는 기능만 기다리고 이미 승인된 독립 업무와 기존 세션·초안은 유지한다. 계획 검토를 끝냈다는 이유로 승인된 구현을 재승인받지 않는다. 반대로 사용자가 계획만 요청했다면 구현·새 Feature Leader 세션·GitHub 쓰기를 시작할 허가는 아니다.
+질문 전에 원본 요청·Issue·문서·코드의 관련 근거를 읽는다. 사용자/흐름/범위/화면 의미/완료조건/데이터 손실/외부 효과가 달라지는 제품 선택만 구체적 선택지와 영향으로 묻는다. 자료로 확인 가능한 사실은 직접 조사하고, 구조·파일·테스트 내부는 Feature Leader에게 맡기며, 무해하고 되돌릴 수 있는 가정은 밝히고 진행한다. ‘좋게·빠르게·자동화’도 문맥이 뜻을 정할 수 있으며, 숫자 목표가 없다는 이유로 질문하거나 임의 수치를 만들지 않는다. 위험도와 모호함은 별개다.
+
+작은 명확한 수정은 직접 brief로 넘긴다. 사용자가 이미 합의한 계획은 Feature Leader가 인수·실행가능성을 확인해 재사용하며 재작성·재승인을 반복하지 않는다. 미결정에 의존하는 배정만 기다리고 독립 승인 업무·기존 세션·초안은 유지한다. 계획-only 요청은 구현·새 기능 세션·GitHub 쓰기 허가가 아니다.
 
 ## 6. Feature Leader 흐름
 
@@ -202,9 +209,10 @@ Coordinator가 Feature Leader에게 넘기는 packet은 최소한 다음만 포�
 ```text
 Issue URL
 repository / target branch
-전체계획 reference / revision
-해당 기능의 결정 / shared contracts
-feature 목적과 acceptance criteria
+원본 요청 / 확인된 목표·acceptance·non-goals
+사실 / 가정 / 열린 제품 결정
+이미 합의한 계획 reference / revision (있을 때)
+권한 범위 / 담당 Feature Leader / shared constraints
 feature worktree
 선행 dependency
 shared interface/file 주의사항
@@ -212,12 +220,12 @@ shared interface/file 주의사항
 
 Feature Leader는 `develop-feature`를 entrypoint로 사용한다.
 
-전체계획의 결정을 재사용해 해당 기능의 파일·Task·테스트를 구체화한다. Coordinator가 모든 leaf 상세계획을 대신 쓰지 않는다. 다른 기능 경계·공유 계약·의존성·전체 가정을 바꿔야 하면 Coordinator에 되돌려 영향받는 부분만 재계획하고 packet을 갱신한다. 계획만 맡았다면 상세계획 결과까지만 전달한다.
+Feature Leader가 기능 계획과 파일·Task·테스트를 소유한다. 합의된 계획의 유효한 결정/검토 근거는 재사용하고 구현 세부는 이유를 남겨 조정할 수 있다. 기능 간 계약·의존성은 Coordinator가 영향분만 조정하며, 위임받지 않은 제품 범위/동작 변경은 사용자에게 선택을 돌린다. 계획만 맡았다면 구현·게시 없이 계획 결과까지만 전달하되, 중요한 계획에 필요한 독립 plan review와 owner resolution은 완료한다. 명시적 아이디어/초안 요청만 `unreviewed draft`로 끝낼 수 있다.
 
 ```text
 Issue -> develop-feature
       -> 대안 탐색이 필요하면 brainstorm-design
-      -> 중요한 계획/모호한 요구는 grill-plan
+      -> 중요한 새 기능 계획/실질적 위험 변경은 grill-plan
       -> 독립 task별 tdd-task implementation subagent
       -> 통합 / focused verification
       -> fresh review-change reviewer
@@ -233,7 +241,7 @@ Reviewer는 구현자의 자기평가를 대신하는 Agent가 아니다. exact 
 
 공통 개발 기준은 [development-stance](../../project-template/.agents/skills/develop-feature/references/development-stance.md)에 있다. 현재 구조를 존중하고 필요한 책임만 계층으로 나누며, 빈 계층·중복 상태·근거 없는 추상화와 gate를 추가하지 않는다. 이 기준을 계획·구현 packet부터 공유한다.
 
-공유 interface·영속 상태·migration·여러 module 소유권·중요한 미확정 가정이 바뀌는 계획은 `grill-plan`에서 작성자 → fresh 반대 검토자 → 별도 중립 판정자 순으로 검토한다. 반대 검토는 구체적 실패 사례와 근거를 제시하고, 중립 판정은 채택·기각 이유를 남긴다. 작은 명확한 수정에는 이 절차를 늘리지 않는다.
+중요한 새 기능 계획이나 실질적 위험 변경은 `grill-plan`에서 고정 revision의 독립 반대 검토 한 번을 실제 native reviewer에게 받고 작성자가 근거로 해결한다. 합의되면 중립 판정 없이 끝낸다. 중요한 이견이 남을 때만 다른 판정자를 한 번 호출하며, 그래도 미해결이면 구체적 근거 부족/사람의 선택을 명시하고 의존 작업만 기다린다. 계획 검토는 실행가능성과 source 근거를 평가하며 아직 구현하지 않은 screenshot·성공 tests를 요구하지 않는다. 실제 코드 리뷰의 UI/테스트 근거 요구는 그대로 유지한다. 작은 수정과 변하지 않은 합의는 절차를 반복하지 않는다. 계획 응답/handoff의 한 줄에는 plan revision, 실제 reviewer 결과 참조와 verdict, 남은 중요 항목, implementation readiness를 남기며 별도 상태 저장소를 만들지 않는다.
 
 UI는 [UI quality](../../project-template/.agents/skills/develop-feature/references/ui-quality.md)를 따른다. 중요한 문구·화면/flow 변경은 신규 사용자·반복 작업자·편집/접근성 관점의 독립 제안을 비교하고, 작성자를 가린 평가와 한 방향의 최종 편집을 거친다. 오타 수준은 직접 수정한다. 모든 UI 변경은 실제 렌더링 screenshot을 이미지 입력 가능한 Agent가 열어 시각 검사하고 관련 동작을 실행해야 한다. screenshot 저장이나 DOM snapshot만으로 시각 검토를 통과시키지 않는다.
 
