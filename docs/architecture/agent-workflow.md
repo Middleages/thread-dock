@@ -129,13 +129,13 @@ locator overwrite/schema/GHES 문제는 별도 backlog이며 이번 workflow 준
 
 | 범위 | 관찰된 상태 |
 |---|---|
-| 원격 `origin/main` | `b04cf2a`: 이전 Coordinator plan-first 기준이 게시된 상태 |
-| 이 로컬 문서 기준 | `ae11350`: 기존 구조에 A·B plan completion contract와 최소 evidence line 적용 |
+| PR #103 생성 직전 원격 `origin/main` | `b04cf2a`: 이전 Coordinator plan-first 기준. 이후 병합 여부·최종 SHA는 [PR #103](https://github.com/Middleages/thread-dock/pull/103)의 실제 상태를 따른다 |
+| 이 통합 변경 기준 | A·B 계약에 선택적 read-only receipt 수집기(`9c715df`)와 새 세션 실행 정책 보존(`d4f9aad`)을 추가 |
 | 현재 WSL 전역 설치 | tracked natural-entry와 Skill/role의 현행판을 설치했다는 HANDOFF 기록이 있음 |
 | 이미 열린 session | 시작 시 읽은 지침·역할을 계속 쓸 수 있어 새 파일 적용 여부를 별도 확인해야 함 |
 
 따라서 로컬 지침을 설명하면서 원격 main에도 이미 배포됐다고 말하거나, 설치 성공을 실제 lifecycle 준수 성공으로 확대하면 안 된다.
-향후 게시 후에는 commit/PR을 근거로 이 표를 갱신한다.
+게시·병합 결과는 위 PR의 최종 commit과 상태를 근거로 확인한다.
 
 ## 2026-10-16 행동 시험이 보여준 간극
 
@@ -165,6 +165,7 @@ generic planning Skill 사용이 검토 누락의 원인이라고 입증되지 �
 | C. 선택적 harness hook | **보류**: A·B 뒤에도 충분한 입력에서 누락이 반복될 때만 검토 | 명백한 누락을 일찍 노출할 수 있음 | 신뢰·설치 drift·오탐 비용, Stop continuation loop 위험 |
 
 이번 구현은 A·B만 적용하고 이름 없는 targeted fixture로 확인한다.
+후속 개선으로 `review-change`의 선택적 [receipt 수집기](../../project-template/.agents/skills/review-change/references/review-evidence-receipts.md)도 구현·WSL 전역 설치했다. 사용자가 지정한 Codex/OpenCode artifact 한 파일의 명시적 metadata를 읽어 stdout으로 요약할 뿐, 검토 품질·판정·readiness를 증명하거나 단계를 강제하지 않는다. [검증 기록](../superpowers/reviews/2026-10-17-review-evidence-helper-verification.md)을 참고한다. C의 harness hook은 여전히 보류다.
 generic planning Skill은 작성 helper일 수 있지만 별도 lifecycle owner는 아니다.
 적용되는 사용자 요청·프로젝트 지침을 존중하면서 선택된 ThreadDock 단계와 결과 계약을 대체하지 못하게 한다.
 B는 A와 함께 기존 결과 형식의 최소 필드로 시작하고, 독립 검토를 흉내 내거나 새 실행 엔진·SQLite schema가 되어서는 안 된다.
@@ -201,10 +202,10 @@ regex intent classifier, 모든 작업의 고정 3-Agent cycle, 자동 spawn/sto
 ## 열린 결정과 비범위
 
 - A의 완료 계약은 기존 `develop-feature`·`grill-plan`과 Feature Leader 역할에 구현했다.
-- B의 한 줄 결과는 기존 response/handoff에만 남긴다. 별도 helper·artifact는 만들지 않았으며 이후 반복 비용이 실제로 확인될 때만 재검토한다.
+- B의 한 줄 결과는 기존 response/handoff에 남긴다. 반복 metadata 수집을 돕는 선택적 read-only receipt helper는 구현됐지만 별도 업무 상태 저장소나 자동 검토 판정은 만들지 않았다.
 - C의 hook 종류·지원 harness·신뢰 정책은 실제 누락과 loop 방지안을 근거로 후속 검토한다. 새 실행 권한이나 trust 변경이 필요하면 기존 정책을 따른다.
 - OpenCode vision 지원 모델을 운영 기본으로 선택할지는 capability, provider, 비용·정책을 포함한 사용자 결정이다.
-- 원격 main 게시와 열린 session 재시작은 이 구현 범위가 아니다. 현재 Linux 전역 설치는 tracked source와 별도로 parity를 검증한다.
+- 원격 게시·병합은 사용자가 별도로 요청한 PR #103에서 진행한다. 열린 session 재시작은 포함하지 않는다. 현재 Linux 전역 설치는 tracked source와 별도로 parity를 검증한다.
 
 운영 절차는 [GitHub-first 빠른 시작](../operator/github-first-quickstart.md), 설치 경계는
 [전역 Skill·Agent 설치](../operator/global-agent-setup.md), 제품 목적과 현재 구현 범위는 [PRODUCT](../../PRODUCT.md)를 따른다.
