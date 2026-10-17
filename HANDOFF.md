@@ -1,5 +1,11 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-17: 새 top-level 세션의 실행 정책 보존
+
+- `d4f9aad`에서 `herdr-local`에 새 Herdr top-level 프로세스와 native subagent의 상속 차이를 명시하고 `coordinate-work`의 생성 단계에 연결했다. 실제 승인 정책과 sandbox를 각각 명시적으로 전달하고 생성 후 적용값을 확인한다. `never`는 sandbox 완화가 아니며 target의 경로·네트워크·managed 제한도 보존한다. 불명확·불일치는 보고하고 임의 기본값·우회·실행 중 세션 재시작으로 해결하지 않는다.
+- 두 Skill의 `quick_validate`와 `git diff --check`가 통과했고 fresh `td_reviewer`가 고정 SHA `d4f9aad1c54c245d9928ad6a9ad669edac316ca9`를 ACCEPT했다. WSL 공용 `~/.agents/skills`의 두 파일을 `/tmp/threaddock-session-policy.3E3p29`에 백업 후 적용했고 `cmp`로 원본과 일치를 확인했다.
+- 실제 새 Herdr 세션 생성 행동은 시험하지 않았다. 기존 세션·승인 dialog·global runtime 설정·모델·제품 코드는 변경하지 않았고 앱 재빌드는 필요 없다. 로컬 `agent/session-policy-preservation` branch 변경이며 push·PR·병합은 하지 않았다.
+
 ## 2026-10-17: 선택적 native review receipt 수집기
 
 - Pi 연구의 typed native receipt 원리를 작은 read-only helper로 적용했다. `review-change/scripts/summarize_review_evidence.py`는 user-supplied Codex/OpenCode artifact 한 파일에서 explicit parent/child/`td_reviewer`/lifecycle/result field 위치만 stdout JSON으로 요약한다. DB·network·model·spawn·write·recursive scan이 없고 review quality/readiness/revision을 판정하지 않는다. Skill 본문은 반복 수집 때만 쓰는 optional collector로 연결한다.
