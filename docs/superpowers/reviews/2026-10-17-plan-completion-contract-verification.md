@@ -48,4 +48,4 @@ Codex 두 중요 case에서 수작업 receipt 수집 비용은 실제로 컸지�
 
 ## 독립 리뷰
 
-최종 고정 SHA의 source, Pi 문서 통합, 실제 trace와 한계를 fresh `td_reviewer`가 검토한 결과를 여기에 기록한다.
+fresh `td_reviewer`는 고정 SHA `322a72ec27a5fd28e8f8751fe2e9343eaa53e40d`를 **ACCEPT**했고 blocking finding은 없었다. A·B source의 완료 조건과 예외, FL 단일 소유권, generic helper 경계, reviewed/readiness 분리, Codex P1/R1 review→P2/R2 owner 반영 trace, OpenCode incomplete 표기, Pi 1차 출처와 비채택 경계를 대조했다. 동일 tuple의 parity/static command는 재실행하지 않았다. reviewer runtime model/effort는 직접 관찰 가능한 metadata가 없어 `unverified`다. 이후 변경은 이 결과 기록뿐이다.
