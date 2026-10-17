@@ -1,5 +1,11 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-17: 선택적 native review receipt 수집기
+
+- Pi 연구의 typed native receipt 원리를 작은 read-only helper로 적용했다. `review-change/scripts/summarize_review_evidence.py`는 user-supplied Codex/OpenCode artifact 한 파일에서 explicit parent/child/`td_reviewer`/lifecycle/result field 위치만 stdout JSON으로 요약한다. DB·network·model·spawn·write·recursive scan이 없고 review quality/readiness/revision을 판정하지 않는다. Skill 본문은 반복 수집 때만 쓰는 optional collector로 연결한다.
+- Luna 구현과 focused 10 tests 뒤 실제 OpenCode completed task artifact는 sufficient receipt, actual Codex raw CLI 두 건은 serialized role/spawn이 없어 partial/unverified로 반환했다. Linux global `review-change`는 `/tmp/threaddock-review-evidence.WhfO4x/before`에 백업 후 pointer/reference/script만 설치했다. 상세 명령·결과와 final review는 [검증 기록](docs/superpowers/reviews/2026-10-17-review-evidence-helper-verification.md)을 따른다.
+- 사용자 요청에 따라 root가 Codex Superpowers plugin을 local config에서 비활성화하고 backup·parse/equality를 확인했다. 격리 prompt input catalogue와 일반 root 요청에서는 빠졌지만, 중요한 fresh root의 runtime host catalogue에는 15개 항목이 남아 모델이 설치 cache의 두 Superpowers 문서를 직접 읽었다. 따라서 local config off는 완료됐으나 이 runtime의 완전한 지침 미사용은 보장하지 않는다. uninstall/cache 삭제/다른 설정 변경은 하지 않았다.
+
 ## 2026-10-17: 중요한 계획의 완료 계약 A·B 적용
 
 - `ae11350405657ac705a33b781dfce77999396e09`에서 `develop-feature`·`grill-plan`과 두 harness의 Feature Leader 역할을 좁게 보강했다. planning-only는 구현/게시를 막지만 중요한 계획의 실제 독립 review와 owner resolution은 완료한다. 명시적 ideas/draft, 작은 명확 작업, 유효한 기존 review는 가볍게 유지한다. `reviewed`와 `implementation-ready`를 분리하고 기존 response/handoff 한 줄에 revision·실제 reviewer result/verdict·남은 중요 항목·readiness만 남긴다.

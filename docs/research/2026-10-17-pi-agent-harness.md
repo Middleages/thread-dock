@@ -22,6 +22,8 @@
 
 후속 적용에서 ThreadDock의 A·B 계약은 기존 Skill/role과 response/handoff evidence 한 줄로 구현했다. [행동 검증](../superpowers/reviews/2026-10-17-plan-completion-contract-verification.md)은 Codex의 실제 child receipt와 OpenCode의 제한 시간 내 incomplete 결과를 구분한다. 이 연구를 근거로 Pi, hook 또는 새 receipt 저장소를 설치하지 않았다.
 
+반복된 수동 receipt 추출에는 [선택적 review evidence helper](../superpowers/reviews/2026-10-17-review-evidence-helper-verification.md)를 후속 적용했다. supplied native event artifact의 명시 metadata만 요약하며 substantive review나 authenticated attestation을 대신하지 않는다. Pi runtime·hook·DB는 여전히 도입하지 않았다.
+
 Pi Durable의 task/storage runtime은 현재 ThreadDock에는 과하다. GitHub가 업무 원본이고 Herdr가 실행 lifecycle을 이미 맡으므로,
 새 scheduler·SQLite·재실행 엔진을 들이면 제거한 책임을 되살린다.
 
