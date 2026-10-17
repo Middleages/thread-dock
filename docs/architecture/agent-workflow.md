@@ -13,7 +13,7 @@
 - 작은 작업은 작게 처리하고, 중요한 위험에만 독립 검토와 추가 근거를 요구한다.
 
 이 문서는 제거된 Go 실행 엔진, Contract v2, Invocation/Artifact, Task Gate/Publisher를 복원하거나 대체하지 않는다.
-또한 아래 개선안은 검토 결과이지 구현 승인이나 설정 변경 지시가 아니다.
+아래 A·B 개선은 2026-10-17 로컬 지침에 구현했다. 선택적 harness hook인 C와 모델 선택은 여전히 제안/사용자 결정이며 이번 변경에 포함하지 않는다.
 
 ## 전체 구조
 
@@ -156,20 +156,20 @@ locator overwrite/schema/GHES 문제는 별도 backlog이며 이번 workflow 준
 generic planning Skill 사용이 검토 누락의 원인이라고 입증되지 않았고, 이미 정리된 reviewer mode 경계를 현재 결함으로 다시 세지 않는다.
 현재 문서와 Skill은 instruction-level expectation이며, 단계 실행을 기계적으로 강제하는 scheduler나 state machine은 없다.
 
-## 최소 개선 대안과 권고
+## 최소 개선의 구현 상태
 
 | 대안 | 내용 | 장점 | 비용·위험 |
 |---|---|---|---|
-| A. Feature Leader 계약 강화 | 단계와 출력에 `draft/review pending/reviewed/implementation-ready`, 고정 plan revision, 독립 검토 receipt, 조건부 adjudication을 명시 | 현재 구조만 고쳐 핵심 누락을 직접 다룸 | 지침만으로 100% 기계 강제되지는 않음 |
-| B. 최소 evidence record | 기존 응답에 plan revision, native reviewer 결과 참조·verdict, 남은 중요 항목을 한 줄로 남김 | 반복적인 근거 수집과 누락 판별이 쉬움 | 새 DB·파일이나 가짜 reviewer로 확장하지 않게 제한 필요 |
-| C. 선택적 harness hook | 충분한 입력·명확한 단계에서도 누락이 반복될 때 Stop/PreTool 경고만 추가 | 명백한 누락을 일찍 노출 가능 | 신뢰·설치 drift·오탐 비용, Stop continuation loop 위험 |
+| A. Feature Leader 계약 강화 | **구현**: `develop-feature`, `grill-plan`, Feature Leader 역할에 고정 revision, 실제 독립 검토, owner resolution, reviewed/readiness 분리를 명시 | 현재 구조만 고쳐 핵심 누락을 직접 다룸 | 지침만으로 100% 기계 강제되지는 않음 |
+| B. 최소 evidence record | **구현**: 기존 응답/handoff 한 줄에 plan revision, native reviewer 결과 참조·verdict, 남은 중요 항목, readiness를 남김 | 반복적인 근거 수집과 누락 판별이 쉬움 | 새 DB·파일·identifier schema는 만들지 않음 |
+| C. 선택적 harness hook | **보류**: A·B 뒤에도 충분한 입력에서 누락이 반복될 때만 검토 | 명백한 누락을 일찍 노출할 수 있음 | 신뢰·설치 drift·오탐 비용, Stop continuation loop 위험 |
 
-권고는 A를 먼저 적용하고 이름 없는 targeted fixture로 다시 확인하는 것이다.
+이번 구현은 A·B만 적용하고 이름 없는 targeted fixture로 확인한다.
 generic planning Skill은 작성 helper일 수 있지만 별도 lifecycle owner는 아니다.
 적용되는 사용자 요청·프로젝트 지침을 존중하면서 선택된 ThreadDock 단계와 결과 계약을 대체하지 못하게 한다.
 B는 A와 함께 기존 결과 형식의 최소 필드로 시작하고, 독립 검토를 흉내 내거나 새 실행 엔진·SQLite schema가 되어서는 안 된다.
 C는 A·B 뒤에도 충분한 입력의 명확한 단계에서 검토 누락이 실제로 반복될 때만 검토한다.
-독립 검토 의견도 이 순서와 “reviewed와 ready의 분리”를 지지했으며, 이 문서는 이를 제안으로 반영했을 뿐 설치하지 않았다.
+독립 검토 의견도 이 순서와 “reviewed와 ready의 분리”를 지지했다. 현재 tracked source와 Linux 전역 설치를 맞추되 이미 열린 session의 재로딩을 주장하지 않는다.
 
 A의 제안 계약에서는 자료가 충분한 일반적인 중요 계획을 owner가 고정하고 한 번 독립 검토한 뒤 finding을 해결한다.
 계획-only는 구현 금지 범위이지 필요한 계획 검토의 자동 생략 사유가 아니다.
@@ -198,11 +198,11 @@ regex intent classifier, 모든 작업의 고정 3-Agent cycle, 자동 spawn/sto
 
 ## 열린 결정과 비범위
 
-- A의 정확한 문구와 결과 schema는 구현 시 기존 `develop-feature`·`grill-plan` source 한곳에 최소 delta로 정해야 한다.
-- B의 한 줄 결과 필드는 A와 함께 적용하고, 별도 helper·artifact가 필요한지는 이후 반복 비용을 관찰해 결정한다.
+- A의 완료 계약은 기존 `develop-feature`·`grill-plan`과 Feature Leader 역할에 구현했다.
+- B의 한 줄 결과는 기존 response/handoff에만 남긴다. 별도 helper·artifact는 만들지 않았으며 이후 반복 비용이 실제로 확인될 때만 재검토한다.
 - C의 hook 종류·지원 harness·신뢰 정책은 실제 누락과 loop 방지안을 근거로 후속 검토한다. 새 실행 권한이나 trust 변경이 필요하면 기존 정책을 따른다.
 - OpenCode vision 지원 모델을 운영 기본으로 선택할지는 capability, provider, 비용·정책을 포함한 사용자 결정이다.
-- 원격 main 게시, 현재 전역 설치 갱신, 열린 session 재시작은 이 문서 작성 범위가 아니다.
+- 원격 main 게시와 열린 session 재시작은 이 구현 범위가 아니다. 현재 Linux 전역 설치는 tracked source와 별도로 parity를 검증한다.
 
 운영 절차는 [GitHub-first 빠른 시작](../operator/github-first-quickstart.md), 설치 경계는
 [전역 Skill·Agent 설치](../operator/global-agent-setup.md), 제품 목적과 현재 구현 범위는 [PRODUCT](../../PRODUCT.md)를 따른다.

@@ -220,7 +220,7 @@ shared interface/file 주의사항
 
 Feature Leader는 `develop-feature`를 entrypoint로 사용한다.
 
-Feature Leader가 기능 계획과 파일·Task·테스트를 소유한다. 합의된 계획의 유효한 결정/검토 근거는 재사용하고 구현 세부는 이유를 남겨 조정할 수 있다. 기능 간 계약·의존성은 Coordinator가 영향분만 조정하며, 위임받지 않은 제품 범위/동작 변경은 사용자에게 선택을 돌린다. 계획만 맡았다면 계획 결과까지만 전달한다.
+Feature Leader가 기능 계획과 파일·Task·테스트를 소유한다. 합의된 계획의 유효한 결정/검토 근거는 재사용하고 구현 세부는 이유를 남겨 조정할 수 있다. 기능 간 계약·의존성은 Coordinator가 영향분만 조정하며, 위임받지 않은 제품 범위/동작 변경은 사용자에게 선택을 돌린다. 계획만 맡았다면 구현·게시 없이 계획 결과까지만 전달하되, 중요한 계획에 필요한 독립 plan review와 owner resolution은 완료한다. 명시적 아이디어/초안 요청만 `unreviewed draft`로 끝낼 수 있다.
 
 ```text
 Issue -> develop-feature
@@ -241,7 +241,7 @@ Reviewer는 구현자의 자기평가를 대신하는 Agent가 아니다. exact 
 
 공통 개발 기준은 [development-stance](../../project-template/.agents/skills/develop-feature/references/development-stance.md)에 있다. 현재 구조를 존중하고 필요한 책임만 계층으로 나누며, 빈 계층·중복 상태·근거 없는 추상화와 gate를 추가하지 않는다. 이 기준을 계획·구현 packet부터 공유한다.
 
-중요한 새 기능 계획이나 실질적 위험 변경은 `grill-plan`에서 독립 반대 검토 한 번을 받고 작성자가 근거로 해결한다. 합의되면 중립 판정 없이 끝낸다. 중요한 이견이 남을 때만 다른 판정자를 한 번 호출하며, 그래도 미해결이면 구체적 근거 부족/사람의 선택을 명시하고 의존 작업만 기다린다. 계획 검토는 실행가능성과 source 근거를 평가하며 아직 구현하지 않은 screenshot·성공 tests를 요구하지 않는다. 실제 코드 리뷰의 UI/테스트 근거 요구는 그대로 유지한다. 작은 수정과 변하지 않은 합의는 절차를 반복하지 않는다.
+중요한 새 기능 계획이나 실질적 위험 변경은 `grill-plan`에서 고정 revision의 독립 반대 검토 한 번을 실제 native reviewer에게 받고 작성자가 근거로 해결한다. 합의되면 중립 판정 없이 끝낸다. 중요한 이견이 남을 때만 다른 판정자를 한 번 호출하며, 그래도 미해결이면 구체적 근거 부족/사람의 선택을 명시하고 의존 작업만 기다린다. 계획 검토는 실행가능성과 source 근거를 평가하며 아직 구현하지 않은 screenshot·성공 tests를 요구하지 않는다. 실제 코드 리뷰의 UI/테스트 근거 요구는 그대로 유지한다. 작은 수정과 변하지 않은 합의는 절차를 반복하지 않는다. 계획 응답/handoff의 한 줄에는 plan revision, 실제 reviewer 결과 참조와 verdict, 남은 중요 항목, implementation readiness를 남기며 별도 상태 저장소를 만들지 않는다.
 
 UI는 [UI quality](../../project-template/.agents/skills/develop-feature/references/ui-quality.md)를 따른다. 중요한 문구·화면/flow 변경은 신규 사용자·반복 작업자·편집/접근성 관점의 독립 제안을 비교하고, 작성자를 가린 평가와 한 방향의 최종 편집을 거친다. 오타 수준은 직접 수정한다. 모든 UI 변경은 실제 렌더링 screenshot을 이미지 입력 가능한 Agent가 열어 시각 검사하고 관련 동작을 실행해야 한다. screenshot 저장이나 DOM snapshot만으로 시각 검토를 통과시키지 않는다.
 
