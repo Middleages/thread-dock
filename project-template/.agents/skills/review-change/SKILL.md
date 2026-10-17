@@ -17,4 +17,6 @@ Review complexity and diagnostics for outcome risk, not taste. Flag an unnecessa
 
 For every acceptance criterion, identify the supporting diff/check evidence or state what is missing. Every blocking finding must name a concrete file, symbol, behavior, or command and explain the consequence.
 
+When native review receipts are spread across a supplied Codex/OpenCode event artifact and manual extraction is repeating, the optional read-only collector in [review evidence receipts](references/review-evidence-receipts.md) can summarize explicit child metadata. Its output is observation evidence only: it never establishes review quality, acceptance, readiness, or the revision actually reviewed. Read the reference only for that collection task.
+
 Return `accept` only when required acceptance and checks are supported. Otherwise return `block` with ordered findings and the smallest next fix/check. Do not merge, force-push, reset another worktree, change Project status as if review were complete, or silently repair the implementation yourself. Human merge remains final.
