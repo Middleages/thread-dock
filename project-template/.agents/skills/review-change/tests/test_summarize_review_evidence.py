@@ -22,20 +22,17 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
             self.assertTrue(completed.stdout, completed.stderr)
             return completed, json.loads(completed.stdout)
 
+    @staticmethod
+    def codex_item(event_type, tool, **fields):
+        return {"type": event_type, "item": {"type": "collab_tool_call", "tool": tool, **fields}}
+
     def test_codex_completed_reviewer_requires_spawn_and_result_location(self):
         completed, summary = self.run_helper(
             "\n".join(
                 [
-                    json.dumps({"type": "collab.spawn", "child_id": "child-1", "role": "td_reviewer"}),
-                    json.dumps(
-                        {
-                            "type": "collab.wait",
-                            "child_id": "child-1",
-                            "role": "td_reviewer",
-                            "status": "completed",
-                            "result_location": "artifacts/review.json",
-                        }
-                    ),
+                    json.dumps({"type": "thread.started", "thread_id": "parent-1"}),
+                    json.dumps(self.codex_item("item.started", "spawn_agent", agent_type="td_reviewer", receiver_thread_ids=["child-1"])),
+                    json.dumps(self.codex_item("item.completed", "wait_agent", agent_type="td_reviewer", receiver_thread_ids=["child-1"], status="completed", result_location="artifacts/review.json")),
                     json.dumps({"type": "turn.completed"}),
                 ]
             )
@@ -45,13 +42,14 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["parse_status"], "ok")
         self.assertEqual(summary["format"], "codex-jsonl")
         self.assertEqual(summary["outer_status"], "completed")
+        self.assertEqual(summary["parent"], {"parent_id": "parent-1", "lifecycle_status": "unknown", "evidence_offsets": [1]})
         self.assertEqual(summary["data_sufficiency"], "sufficient")
         self.assertEqual(
             summary["review_receipts"],
             [
                 {
                     "child_id": "child-1",
-                    "evidence_offsets": [1, 2],
+                    "evidence_offsets": [2, 3],
                     "explicit_role": "td_reviewer",
                     "lifecycle_status": "completed",
                     "result_location": "artifacts/review.json",
@@ -80,22 +78,24 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
             "\n".join(
                 [
                     "",
-                    json.dumps({"type": "collab.spawn", "child_id": "child-1", "role": "td_reviewer"}),
-                    json.dumps({"type": "collab.wait", "child_id": "child-1", "status": "completed", "result_location": "review.json"}),
+                    json.dumps({"type": "thread.started", "thread_id": "parent-1"}),
+                    json.dumps(self.codex_item("item.started", "spawn_agent", agent_type="td_reviewer", receiver_thread_ids=["child-1"])),
+                    json.dumps(self.codex_item("item.completed", "wait_agent", agent_type="td_reviewer", receiver_thread_ids=["child-1"], status="completed", result_location="review.json")),
                 ]
             )
             + "\n"
         )
-        self.assertEqual(summary["review_receipts"][0]["evidence_offsets"], [2, 3])
+        self.assertEqual(summary["review_receipts"][0]["evidence_offsets"], [3, 4])
 
     def test_codex_missing_child_role_and_empty_wait_are_not_receipts(self):
         _, summary = self.run_helper(
             "\n".join(
                 [
-                    json.dumps({"type": "collab.spawn", "role": "td_reviewer"}),
-                    json.dumps({"type": "collab.wait", "status": "completed", "role": "td_reviewer"}),
-                    json.dumps({"type": "collab.spawn", "child_id": "child-2"}),
-                    json.dumps({"type": "collab.wait", "child_id": "child-2", "status": "completed"}),
+                    json.dumps({"type": "thread.started", "thread_id": "parent-1"}),
+                    json.dumps(self.codex_item("item.started", "spawn_agent", agent_type="td_reviewer")),
+                    json.dumps(self.codex_item("item.completed", "wait_agent", agent_type="td_reviewer", status="completed")),
+                    json.dumps(self.codex_item("item.started", "spawn_agent", receiver_thread_ids=["child-2"])),
+                    json.dumps(self.codex_item("item.completed", "wait_agent", receiver_thread_ids=["child-2"], status="completed")),
                 ]
             )
             + "\n"
@@ -107,10 +107,11 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         _, summary = self.run_helper(
             "\n".join(
                 [
-                    json.dumps({"type": "collab.spawn", "child_id": "failed", "role": "td_reviewer"}),
-                    json.dumps({"type": "collab.wait", "child_id": "failed", "role": "td_reviewer", "status": "failed"}),
-                    json.dumps({"type": "collab.spawn", "child_id": "running", "role": "td_reviewer"}),
-                    json.dumps({"type": "collab.wait", "child_id": "running", "role": "td_reviewer", "status": "running"}),
+                    json.dumps({"type": "thread.started", "thread_id": "parent-1"}),
+                    json.dumps(self.codex_item("item.started", "spawn_agent", agent_type="td_reviewer", receiver_thread_ids=["failed"])),
+                    json.dumps(self.codex_item("item.completed", "wait_agent", agent_type="td_reviewer", receiver_thread_ids=["failed"], status="failed")),
+                    json.dumps(self.codex_item("item.started", "spawn_agent", agent_type="td_reviewer", receiver_thread_ids=["running"])),
+                    json.dumps(self.codex_item("item.completed", "wait_agent", agent_type="td_reviewer", receiver_thread_ids=["running"], status="running")),
                 ]
             )
             + "\n"
@@ -123,8 +124,9 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         _, summary = self.run_helper(
             "\n".join(
                 [
-                    json.dumps({"type": "collab.spawn", "child_id": "builder", "role": "td_implementer"}),
-                    json.dumps({"type": "collab.wait", "child_id": "builder", "role": "td_implementer", "status": "completed", "result_location": "x"}),
+                    json.dumps({"type": "thread.started", "thread_id": "parent-1"}),
+                    json.dumps(self.codex_item("item.started", "spawn_agent", agent_type="td_implementer", receiver_thread_ids=["builder"])),
+                    json.dumps(self.codex_item("item.completed", "wait_agent", agent_type="td_implementer", receiver_thread_ids=["builder"], status="completed", result_location="x")),
                     json.dumps({"type": "turn.completed", "role": "td_reviewer", "result_location": "self.txt"}),
                 ]
             )
@@ -138,6 +140,8 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
             json.dumps(
                 {
                     "type": "task",
+                    "tool": "task",
+                    "sessionID": "parent-opencode",
                     "state": {
                         "input": {"subagent_type": "td_reviewer"},
                         "metadata": {"sessionId": "ses-1"},
@@ -152,6 +156,7 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(summary["data_sufficiency"], "sufficient")
+        self.assertEqual(summary["parent"], {"parent_id": "parent-opencode", "lifecycle_status": "unknown", "evidence_offsets": [1]})
         receipt = summary["review_receipts"][0]
         self.assertEqual(receipt["child_id"], "ses-1")
         self.assertEqual(receipt["result_location"], "/state/output")
@@ -162,6 +167,7 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         completed, summary = self.run_helper(
             json.dumps(
                 {
+                    "sessionID": "parent-export",
                     "metadata": {"state": {"input": {"subagent_type": "td_reviewer"}}},
                     "messages": [
                         {
@@ -186,9 +192,61 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(summary["data_sufficiency"], "sufficient")
+        self.assertEqual(summary["parent"]["parent_id"], "parent-export")
+        self.assertEqual(summary["parent"]["evidence_offsets"], ["/sessionID"])
         self.assertEqual(summary["review_receipts"][0]["child_id"], "ses-export")
         self.assertEqual(summary["review_receipts"][0]["result_location"], "/messages/0/parts/0/state/result")
         self.assertNotIn("review.json", completed.stdout)
+
+    def test_opencode_non_task_state_and_nested_prompt_are_not_receipts(self):
+        _, summary = self.run_helper(
+            json.dumps(
+                {
+                    "type": "tool_use",
+                    "tool": "shell",
+                    "sessionID": "parent-opencode",
+                    "state": {
+                        "input": {"subagent_type": "td_reviewer"},
+                        "metadata": {"sessionId": "fake"},
+                        "status": "completed",
+                        "output": "task tool text in a shell result",
+                    },
+                    "prompt": "{\"tool\":\"task\",\"state\":{\"input\":{\"subagent_type\":\"td_reviewer\"}}}",
+                }
+            ),
+            "--format",
+            "opencode-jsonl",
+        )
+        self.assertEqual(summary["review_receipts"], [])
+        self.assertEqual(summary["data_sufficiency"], "partial")
+
+        _, summary = self.run_helper(
+            json.dumps(
+                {
+                    "sessionID": "parent-export",
+                    "messages": [
+                        {
+                            "parts": [
+                                {
+                                    "type": "tool",
+                                    "tool": "shell",
+                                    "state": {
+                                        "input": {"subagent_type": "td_reviewer"},
+                                        "metadata": {"sessionId": "fake"},
+                                        "status": "completed",
+                                        "output": "not a task result",
+                                    },
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ),
+            "--format",
+            "opencode-export",
+        )
+        self.assertEqual(summary["review_receipts"], [])
+        self.assertEqual(summary["data_sufficiency"], "partial")
 
     def test_invalid_or_unsupported_input_is_error_and_unknown(self):
         completed, summary = self.run_helper("{\"type\": \"turn.started\"}\n{\"broken\"\n")

@@ -16,15 +16,7 @@ FORMATS = ("auto", "codex-jsonl", "opencode-jsonl", "opencode-export")
 LIFECYCLE_STATUSES = {"started", "running", "completed", "failed", "unknown"}
 REVIEW_ROLE = "td_reviewer"
 
-CODEX_SPAWN_TYPES = {"collab.spawn", "collaboration.spawn", "task.spawn", "child.spawn"}
-CODEX_WAIT_TYPES = {
-    "collab.wait",
-    "collaboration.wait",
-    "collab.completed",
-    "collaboration.completed",
-    "task.completed",
-    "child.completed",
-}
+CODEX_ITEM_TYPES = {"item.started", "item.completed"}
 
 
 def _json_pointer(path: list[str | int]) -> str:
@@ -42,7 +34,7 @@ def _status(value: Any, default: str = "unknown") -> str:
 
 
 def _role(event: dict[str, Any]) -> str | None:
-    for key in ("explicit_role", "role", "agent_role"):
+    for key in ("agent_type", "explicit_role", "role", "agent_role"):
         value = event.get(key)
         if isinstance(value, str):
             return value
@@ -50,11 +42,19 @@ def _role(event: dict[str, Any]) -> str | None:
 
 
 def _child_id(event: dict[str, Any]) -> str | None:
-    for key in ("child_id", "childId", "child"):
+    for key in ("child_id", "childId", "child", "receiver_thread_id"):
         value = event.get(key)
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _receiver_ids(event: dict[str, Any]) -> list[str]:
+    receiver_ids = event.get("receiver_thread_ids")
+    if isinstance(receiver_ids, list):
+        return [value for value in receiver_ids if isinstance(value, str) and value]
+    child_id = _child_id(event)
+    return [child_id] if child_id is not None else []
 
 
 def _result_location(event: dict[str, Any]) -> str | None:
@@ -65,29 +65,13 @@ def _result_location(event: dict[str, Any]) -> str | None:
     return None
 
 
-def _codex_event_type(event: dict[str, Any]) -> str | None:
-    event_type = event.get("type")
-    if not isinstance(event_type, str):
-        return None
-    event_type = event_type.lower()
-    if event_type in CODEX_SPAWN_TYPES | CODEX_WAIT_TYPES or event_type.startswith("turn."):
-        return event_type
-    if event_type in {"collab", "collaboration"}:
-        action = event.get("action") or event.get("event")
-        if isinstance(action, str):
-            candidate = f"{event_type}.{action.lower()}"
-            if candidate in CODEX_SPAWN_TYPES | CODEX_WAIT_TYPES:
-                return candidate
-    return event_type
-
-
 def _base_summary(source_file: str, format_name: str) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "source_file": source_file,
         "format": format_name,
         "parse_status": "ok",
-        "parent": {"lifecycle_status": "unknown", "evidence_offsets": []},
+        "parent": {"parent_id": None, "lifecycle_status": "unknown", "evidence_offsets": []},
         "review_receipts": [],
         "outer_status": "unknown",
         "data_sufficiency": "unknown",
@@ -132,63 +116,56 @@ def _codex_summary(source_file: str, events: list[dict[str, Any]], format_name: 
     records: dict[str, dict[str, Any]] = {}
 
     for line_number, event in enumerate(events, start=1):
-        lowered_type = _codex_event_type(event)
-        if lowered_type is None:
+        event_type = event.get("type")
+        if event_type == "thread.started":
+            parent_id = event.get("thread_id")
+            if isinstance(parent_id, str) and parent_id:
+                summary["parent"]["parent_id"] = parent_id
+                summary["parent"]["evidence_offsets"].append(line_number)
+            else:
+                limitations.add("parent_id_not_observed")
             continue
-        if lowered_type == "turn.started":
-            summary["outer_status"] = "started"
-            summary["parent"]["lifecycle_status"] = "started"
-            summary["parent"]["evidence_offsets"].append(line_number)
-        elif lowered_type == "turn.running":
-            summary["outer_status"] = "running"
-            summary["parent"]["lifecycle_status"] = "running"
-            summary["parent"]["evidence_offsets"].append(line_number)
-        elif lowered_type == "turn.completed":
-            summary["outer_status"] = "completed"
-            summary["parent"]["lifecycle_status"] = "completed"
-            summary["parent"]["evidence_offsets"].append(line_number)
-        elif lowered_type == "turn.failed":
-            summary["outer_status"] = "failed"
-            summary["parent"]["lifecycle_status"] = "failed"
-            summary["parent"]["evidence_offsets"].append(line_number)
-
-        if lowered_type in CODEX_SPAWN_TYPES:
-            child_id = _child_id(event)
-            role = _role(event)
-            if child_id is None:
-                limitations.add("child_id_not_observed")
-                continue
-            if role != REVIEW_ROLE:
-                if role is None:
-                    limitations.add("reviewer_role_not_observed")
-                else:
-                    limitations.add("non_review_task_observed")
-                continue
-            records[child_id] = {
-                "child_id": child_id,
-                "explicit_role": REVIEW_ROLE,
-                "lifecycle_status": _status(event.get("status"), "started"),
-                "result_location": None,
-                "evidence_offsets": [line_number],
-            }
+        if event_type in {"turn.started", "turn.running", "turn.completed", "turn.failed"}:
+            summary["outer_status"] = event_type.removeprefix("turn.")
+            continue
+        if event_type not in CODEX_ITEM_TYPES:
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "collab_tool_call":
+            continue
+        tool = item.get("tool")
+        if tool not in {"spawn_agent", "wait_agent"}:
+            continue
+        role = _role(item)
+        receiver_ids = _receiver_ids(item)
+        if not receiver_ids:
+            limitations.add("child_id_not_observed")
+            if tool == "wait_agent":
+                limitations.add("empty_receiver_wait")
+            continue
+        if role != REVIEW_ROLE:
+            limitations.add("reviewer_role_not_observed" if role is None else "non_review_task_observed")
             continue
 
-        if lowered_type in CODEX_WAIT_TYPES:
-            child_id = _child_id(event)
-            role = _role(event)
-            if child_id is None:
-                limitations.add("child_id_not_observed")
+        lifecycle = _status(item.get("status"), "started" if tool == "spawn_agent" else "unknown")
+        if event_type == "item.completed" and tool == "wait_agent" and "status" not in item:
+            lifecycle = "completed"
+        location = _result_location(item)
+        for child_id in receiver_ids:
+            if tool == "spawn_agent":
+                records[child_id] = {
+                    "child_id": child_id,
+                    "explicit_role": REVIEW_ROLE,
+                    "lifecycle_status": lifecycle,
+                    "result_location": None,
+                    "evidence_offsets": [line_number],
+                }
                 continue
             if child_id not in records:
                 limitations.add("serialized_spawn_not_observed")
                 continue
-            if role is not None and role != REVIEW_ROLE:
-                limitations.add("non_review_task_observed")
-                continue
             record = records[child_id]
             record["evidence_offsets"].append(line_number)
-            lifecycle = _status(event.get("status"))
-            location = _result_location(event)
             if lifecycle == "completed" and location is None:
                 record["lifecycle_status"] = "unknown"
                 limitations.add("result_location_not_observed")
@@ -201,18 +178,18 @@ def _codex_summary(source_file: str, events: list[dict[str, Any]], format_name: 
     summary["review_receipts"] = list(records.values())
     if not records:
         limitations.add("reviewer_receipt_not_observed")
-    if summary["outer_status"] == "completed" and not records:
-        limitations.add("outer_completion_is_not_review_proof")
+    if summary["parent"]["parent_id"] is None:
+        limitations.add("parent_id_not_observed")
     return _finalize(summary, limitations)
 
 
 def _state_from_event(event: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
     states: list[tuple[dict[str, Any], str]] = []
     state = event.get("state")
-    if isinstance(state, dict):
+    if event.get("tool") == "task" and isinstance(state, dict):
         states.append((state, "/state"))
     part = event.get("part")
-    if isinstance(part, dict) and isinstance(part.get("state"), dict):
+    if isinstance(part, dict) and part.get("tool") == "task" and isinstance(part.get("state"), dict):
         states.append((part["state"], "/part/state"))
     return states
 
@@ -270,12 +247,18 @@ def _opencode_summary(
         messages = events[0].get("messages") if events else None
         if not isinstance(messages, list):
             return _error_summary(source_file, format_name, "unsupported_export_structure")
+        parent_id = events[0].get("sessionID")
+        if isinstance(parent_id, str) and parent_id:
+            summary["parent"]["parent_id"] = parent_id
+            summary["parent"]["evidence_offsets"] = ["/sessionID"]
+        else:
+            limitations.add("parent_id_not_observed")
         candidates = []
         for message_index, message in enumerate(messages):
             if not isinstance(message, dict) or not isinstance(message.get("parts"), list):
                 continue
             for part_index, part in enumerate(message["parts"]):
-                if not isinstance(part, dict) or not isinstance(part.get("state"), dict):
+                if part.get("tool") != "task" or not isinstance(part.get("state"), dict):
                     continue
                 candidates.append((part["state"], f"/messages/{message_index}/parts/{part_index}/state", _json_pointer(["messages", message_index, "parts", part_index, "state"])))
         for state, base_pointer, evidence_pointer in candidates:
@@ -288,6 +271,13 @@ def _opencode_summary(
                 receipts[receipt["child_id"]] = receipt
     else:
         for line_number, event in enumerate(events, start=1):
+            session_id = event.get("sessionID")
+            if isinstance(session_id, str) and session_id:
+                if summary["parent"]["parent_id"] is None:
+                    summary["parent"]["parent_id"] = session_id
+                    summary["parent"]["evidence_offsets"].append(line_number)
+                elif summary["parent"]["parent_id"] != session_id:
+                    limitations.add("parent_id_conflict")
             for state, base_pointer in _state_from_event(event):
                 receipt, state_limitations = _opencode_state_receipt(state, base_pointer, line_number)
                 limitations.update(state_limitations)
@@ -300,6 +290,8 @@ def _opencode_summary(
     summary["review_receipts"] = list(receipts.values())
     if not receipts:
         limitations.add("reviewer_receipt_not_observed")
+    if summary["parent"]["parent_id"] is None:
+        limitations.add("parent_id_not_observed")
     return _finalize(summary, limitations)
 
 
@@ -327,8 +319,12 @@ def _parse_jsonl(text: str) -> tuple[list[dict[str, Any]] | None, str | None]:
 
 def _looks_like_codex(events: list[dict[str, Any]]) -> bool:
     return any(
-        _codex_event_type(event) in CODEX_SPAWN_TYPES | CODEX_WAIT_TYPES
-        or (isinstance(event.get("type"), str) and event["type"].lower().startswith("turn."))
+        event.get("type") in {"thread.started", "turn.started", "turn.running", "turn.completed", "turn.failed"}
+        or (
+            event.get("type") in CODEX_ITEM_TYPES
+            and isinstance(event.get("item"), dict)
+            and event["item"].get("type") == "collab_tool_call"
+        )
         for event in events
     )
 
