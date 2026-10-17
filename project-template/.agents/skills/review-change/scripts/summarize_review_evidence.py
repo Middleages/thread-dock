@@ -307,9 +307,12 @@ def _parse_jsonl(text: str) -> tuple[list[dict[str, Any]] | None, str | None]:
     events: list[dict[str, Any]] = []
     if not text.strip():
         return None, "empty_input"
+    saw_event = False
     for raw_line in text.splitlines():
         if not raw_line.strip():
+            events.append({})
             continue
+        saw_event = True
         try:
             value = json.loads(raw_line)
         except json.JSONDecodeError:
@@ -317,7 +320,7 @@ def _parse_jsonl(text: str) -> tuple[list[dict[str, Any]] | None, str | None]:
         if not isinstance(value, dict):
             return None, "unsupported_jsonl_event"
         events.append(value)
-    if not events:
+    if not saw_event:
         return None, "empty_input"
     return events, None
 

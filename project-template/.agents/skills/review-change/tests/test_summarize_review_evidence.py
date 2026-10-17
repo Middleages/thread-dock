@@ -75,6 +75,19 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["review_receipts"], [])
         self.assertEqual(summary["data_sufficiency"], "partial")
 
+    def test_jsonl_offsets_retain_original_line_numbers_across_blank_lines(self):
+        _, summary = self.run_helper(
+            "\n".join(
+                [
+                    "",
+                    json.dumps({"type": "collab.spawn", "child_id": "child-1", "role": "td_reviewer"}),
+                    json.dumps({"type": "collab.wait", "child_id": "child-1", "status": "completed", "result_location": "review.json"}),
+                ]
+            )
+            + "\n"
+        )
+        self.assertEqual(summary["review_receipts"][0]["evidence_offsets"], [2, 3])
+
     def test_codex_missing_child_role_and_empty_wait_are_not_receipts(self):
         _, summary = self.run_helper(
             "\n".join(
