@@ -120,6 +120,22 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         self.assertEqual([receipt["lifecycle_status"] for receipt in summary["review_receipts"]], ["failed", "running"])
         self.assertTrue(all(receipt["result_location"] is None for receipt in summary["review_receipts"]))
 
+    def test_codex_spawn_completion_does_not_promote_and_wait_alias_empty_is_partial(self):
+        _, summary = self.run_helper(
+            "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "parent-1"}),
+                    json.dumps(self.codex_item("item.completed", "spawn_agent", agent_type="td_reviewer", receiver_thread_ids=["child"], status="completed")),
+                    json.dumps(self.codex_item("item.completed", "wait", agent_type="td_reviewer", status="completed", result_location="review.json")),
+                ]
+            )
+            + "\n"
+        )
+        self.assertEqual(summary["data_sufficiency"], "partial")
+        receipt = summary["review_receipts"][0]
+        self.assertEqual(receipt["lifecycle_status"], "started")
+        self.assertIsNone(receipt["result_location"])
+
     def test_non_review_role_and_self_claim_are_not_review_receipts(self):
         _, summary = self.run_helper(
             "\n".join(
@@ -167,7 +183,7 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         completed, summary = self.run_helper(
             json.dumps(
                 {
-                    "sessionID": "parent-export",
+                    "info": {"id": "parent-export"},
                     "metadata": {"state": {"input": {"subagent_type": "td_reviewer"}}},
                     "messages": [
                         {
@@ -193,13 +209,13 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(summary["data_sufficiency"], "sufficient")
         self.assertEqual(summary["parent"]["parent_id"], "parent-export")
-        self.assertEqual(summary["parent"]["evidence_offsets"], ["/sessionID"])
+        self.assertEqual(summary["parent"]["evidence_offsets"], ["/info/id"])
         self.assertEqual(summary["review_receipts"][0]["child_id"], "ses-export")
         self.assertEqual(summary["review_receipts"][0]["result_location"], "/messages/0/parts/0/state/result")
         self.assertNotIn("review.json", completed.stdout)
 
     def test_opencode_non_task_state_and_nested_prompt_are_not_receipts(self):
-        _, summary = self.run_helper(
+        completed, summary = self.run_helper(
             json.dumps(
                 {
                     "type": "tool_use",
@@ -219,6 +235,68 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(summary["review_receipts"], [])
         self.assertEqual(summary["data_sufficiency"], "partial")
+        self.assertEqual(completed.returncode, 0)
+
+    def test_opencode_normal_no_review_events_are_supported_partial(self):
+        content = "\n".join(
+            [
+                json.dumps({"type": "step_start", "sessionID": "parent-opencode"}),
+                json.dumps({"type": "tool_use", "tool": "read", "sessionID": "parent-opencode"}),
+                json.dumps({"type": "step_finish", "sessionID": "parent-opencode"}),
+            ]
+        ) + "\n"
+        completed, summary = self.run_helper(content)
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(summary["format"], "opencode-jsonl")
+        self.assertEqual(summary["data_sufficiency"], "partial")
+        self.assertEqual(summary["review_receipts"], [])
+
+    def test_opencode_export_uses_latest_state_and_requires_nonempty_result(self):
+        messages = []
+        for index in range(11):
+            if index == 2:
+                state = {
+                    "input": {"subagent_type": "td_reviewer"},
+                    "metadata": {"sessionId": "same-child"},
+                    "status": "completed",
+                    "result": {"review": "recorded"},
+                }
+            elif index == 10:
+                state = {
+                    "input": {"subagent_type": "td_reviewer"},
+                    "metadata": {"sessionId": "same-child"},
+                    "status": "failed",
+                }
+            else:
+                state = {"input": {"subagent_type": "td_implementer"}, "metadata": {"sessionId": f"other-{index}"}, "status": "completed", "result": {"ok": True}}
+            messages.append({"parts": [{"type": "tool", "tool": "task", "state": state}]})
+        _, summary = self.run_helper(json.dumps({"info": {"id": "parent-export"}, "messages": messages}), "--format", "opencode-export")
+        self.assertEqual(summary["data_sufficiency"], "partial")
+        self.assertEqual(summary["review_receipts"][0]["lifecycle_status"], "failed")
+
+        for empty_value in (None, "", {}, []):
+            _, summary = self.run_helper(
+                json.dumps(
+                    {
+                        "info": {"id": "parent-export"},
+                        "messages": [{"parts": [{"tool": "task", "state": {"input": {"subagent_type": "td_reviewer"}, "metadata": {"sessionId": "child"}, "status": "completed", "result": empty_value}}]}],
+                    }
+                ),
+                "--format",
+                "opencode-export",
+            )
+            self.assertEqual(summary["data_sufficiency"], "partial")
+            self.assertEqual(summary["review_receipts"][0]["lifecycle_status"], "unknown")
+
+    def test_opencode_export_invalid_part_is_error_without_traceback(self):
+        completed, summary = self.run_helper(
+            json.dumps({"info": {"id": "parent-export"}, "messages": [{"parts": [None]}]}),
+            "--format",
+            "opencode-export",
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(summary["parse_status"], "error")
+        self.assertEqual(summary["data_sufficiency"], "unknown")
 
         _, summary = self.run_helper(
             json.dumps(
@@ -258,6 +336,12 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertEqual(summary["parse_status"], "error")
         self.assertEqual(summary["data_sufficiency"], "unknown")
+
+        for format_name in ("codex-jsonl", "opencode-jsonl"):
+            completed, summary = self.run_helper("{\"hello\": \"world\"}\n", "--format", format_name)
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertEqual(summary["parse_status"], "error")
+            self.assertEqual(summary["data_sufficiency"], "unknown")
 
 
 if __name__ == "__main__":

@@ -65,6 +65,14 @@ def _result_location(event: dict[str, Any]) -> str | None:
     return None
 
 
+def _non_empty_result(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (str, list, dict, tuple, set)) and not value:
+        return False
+    return True
+
+
 def _base_summary(source_file: str, format_name: str) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -134,7 +142,7 @@ def _codex_summary(source_file: str, events: list[dict[str, Any]], format_name: 
         if not isinstance(item, dict) or item.get("type") != "collab_tool_call":
             continue
         tool = item.get("tool")
-        if tool not in {"spawn_agent", "wait_agent"}:
+        if tool not in {"spawn_agent", "wait", "wait_agent"}:
             continue
         role = _role(item)
         receiver_ids = _receiver_ids(item)
@@ -147,8 +155,11 @@ def _codex_summary(source_file: str, events: list[dict[str, Any]], format_name: 
             limitations.add("reviewer_role_not_observed" if role is None else "non_review_task_observed")
             continue
 
-        lifecycle = _status(item.get("status"), "started" if tool == "spawn_agent" else "unknown")
-        if event_type == "item.completed" and tool == "wait_agent" and "status" not in item:
+        if tool == "spawn_agent":
+            lifecycle = "running" if _status(item.get("status")) == "running" else "started"
+        else:
+            lifecycle = _status(item.get("status"), "unknown")
+        if event_type == "item.completed" and tool in {"wait", "wait_agent"} and "status" not in item:
             lifecycle = "completed"
         location = _result_location(item)
         for child_id in receiver_ids:
@@ -213,7 +224,7 @@ def _opencode_state_receipt(
     location = None
     if lifecycle == "completed":
         for key in ("result", "output"):
-            if key in state:
+            if key in state and _non_empty_result(state[key]):
                 location = f"{base_pointer}/{key}"
                 break
         if location is None:
@@ -247,17 +258,22 @@ def _opencode_summary(
         messages = events[0].get("messages") if events else None
         if not isinstance(messages, list):
             return _error_summary(source_file, format_name, "unsupported_export_structure")
-        parent_id = events[0].get("sessionID")
+        info = events[0].get("info")
+        parent_id = info.get("id") if isinstance(info, dict) else None
+        if not isinstance(parent_id, str) or not parent_id:
+            parent_id = events[0].get("sessionID")
         if isinstance(parent_id, str) and parent_id:
             summary["parent"]["parent_id"] = parent_id
-            summary["parent"]["evidence_offsets"] = ["/sessionID"]
+            summary["parent"]["evidence_offsets"] = ["/info/id" if isinstance(info, dict) and info.get("id") else "/sessionID"]
         else:
             limitations.add("parent_id_not_observed")
         candidates = []
         for message_index, message in enumerate(messages):
             if not isinstance(message, dict) or not isinstance(message.get("parts"), list):
-                continue
+                return _error_summary(source_file, format_name, "unsupported_export_structure")
             for part_index, part in enumerate(message["parts"]):
+                if not isinstance(part, dict):
+                    return _error_summary(source_file, format_name, "unsupported_export_structure")
                 if part.get("tool") != "task" or not isinstance(part.get("state"), dict):
                     continue
                 candidates.append((part["state"], f"/messages/{message_index}/parts/{part_index}/state", _json_pointer(["messages", message_index, "parts", part_index, "state"])))
@@ -266,9 +282,7 @@ def _opencode_summary(
             limitations.update(state_limitations)
             if receipt is None:
                 continue
-            existing = receipts.get(receipt["child_id"])
-            if existing is None or receipt["evidence_offsets"][-1] > existing["evidence_offsets"][-1]:
-                receipts[receipt["child_id"]] = receipt
+            receipts[receipt["child_id"]] = receipt
     else:
         for line_number, event in enumerate(events, start=1):
             session_id = event.get("sessionID")
@@ -330,7 +344,16 @@ def _looks_like_codex(events: list[dict[str, Any]]) -> bool:
 
 
 def _looks_like_opencode(events: list[dict[str, Any]]) -> bool:
-    return any(_state_from_event(event) for event in events)
+    known_event_types = {"step_start", "step_finish", "tool_use", "tool_result", "message.updated"}
+    return any(
+        _state_from_event(event)
+        or (
+            event.get("type") in known_event_types
+            and isinstance(event.get("sessionID"), str)
+            and bool(event["sessionID"])
+        )
+        for event in events
+    )
 
 
 def _read_artifact(path: Path) -> tuple[str | None, str | None]:
@@ -360,7 +383,8 @@ def summarize(source_file: str, requested_format: str) -> tuple[dict[str, Any], 
             return _error_summary(source_file, requested_format, "invalid_export_json"), 1
         if not isinstance(document, dict) or not isinstance(document.get("messages"), list):
             return _error_summary(source_file, requested_format, "unsupported_export_structure"), 1
-        return _opencode_summary(source_file, [document], requested_format, export=True), 0
+        summary = _opencode_summary(source_file, [document], requested_format, export=True)
+        return summary, 0 if summary["parse_status"] == "ok" else 1
 
     if requested_format == "auto":
         try:
@@ -368,7 +392,8 @@ def summarize(source_file: str, requested_format: str) -> tuple[dict[str, Any], 
         except json.JSONDecodeError:
             document = None
         if isinstance(document, dict) and isinstance(document.get("messages"), list):
-            return _opencode_summary(source_file, [document], "opencode-export", export=True), 0
+            summary = _opencode_summary(source_file, [document], "opencode-export", export=True)
+            return summary, 0 if summary["parse_status"] == "ok" else 1
 
     events, parse_error = _parse_jsonl(text)
     if requested_format == "auto":
@@ -390,6 +415,10 @@ def summarize(source_file: str, requested_format: str) -> tuple[dict[str, Any], 
 
     if events is None:
         return _error_summary(source_file, format_name, parse_error or "invalid_input"), 1
+    if requested_format == "codex-jsonl" and not _looks_like_codex(events):
+        return _error_summary(source_file, requested_format, "unsupported_native_envelope"), 1
+    if requested_format == "opencode-jsonl" and not _looks_like_opencode(events):
+        return _error_summary(source_file, requested_format, "unsupported_native_envelope"), 1
     if format_name == "codex-jsonl":
         return _codex_summary(source_file, events, format_name), 0
     if format_name == "opencode-jsonl":
