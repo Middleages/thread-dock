@@ -130,7 +130,7 @@ locator overwrite/schema/GHES 문제는 별도 backlog이며 이번 workflow 준
 | 범위 | 관찰된 상태 |
 |---|---|
 | 원격 `origin/main` | `b04cf2a`: 이전 Coordinator plan-first 기준이 게시된 상태 |
-| 이 로컬 문서 기준 | `9622d0e`: Feature Leader 계획 소유, material ambiguity, 조건부 중립 판정, simple architecture, natural router 포함 |
+| 이 로컬 문서 기준 | `ae11350`: 기존 구조에 A·B plan completion contract와 최소 evidence line 적용 |
 | 현재 WSL 전역 설치 | tracked natural-entry와 Skill/role의 현행판을 설치했다는 HANDOFF 기록이 있음 |
 | 이미 열린 session | 시작 시 읽은 지침·역할을 계속 쓸 수 있어 새 파일 적용 여부를 별도 확인해야 함 |
 
@@ -176,6 +176,8 @@ A의 제안 계약에서는 자료가 충분한 일반적인 중요 계획을 ow
 명시적 아이디어·초안 요청은 `unreviewed draft`로 끝낼 수 있지만 무기한 검토 회피에 쓰지 않는다.
 사실이 일부 부족해도 명시한 가정·대안은 검토하고, 불가능할 때만 필요한 자료를 구체적으로 적는다.
 `reviewed`와 `implementation-ready`는 직교한다. 조건부 수용을 받아도 미결 제품 선택이 있으면 ready가 아니다.
+
+실제 적용 결과와 harness별 한계는 [A·B 검증 기록](../superpowers/reviews/2026-10-17-plan-completion-contract-verification.md)에 있다. Codex targeted fixture에서는 실제 reviewer child와 owner resolution을 확인했고, OpenCode는 child 시작 뒤 제한 시간 내 결과 회수가 끝나지 않아 완료 준수는 미검증으로 남겼다.
 
 regex intent classifier, 모든 작업의 고정 3-Agent cycle, 자동 spawn/stop loop, 새 scheduler·DB·상태 기계는 권고하지 않는다.
 안전 승인이나 permission을 우회하는 자동화도 제외한다.

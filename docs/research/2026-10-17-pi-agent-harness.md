@@ -20,6 +20,8 @@
 3. **선택된 기능만 점진적으로 노출한다.** Skill 본문과 큰 tool schema를 필요할 때 읽게 해 초기 context를 안정화한다. 이는 cache hit 보장이 아니다.
 4. **독립 작업은 별도 context와 구조화 결과로 증명한다.** “reviewer에게 물었다”는 문구가 아니라 child identity, 입력 revision, verdict/result를 연결한다.
 
+후속 적용에서 ThreadDock의 A·B 계약은 기존 Skill/role과 response/handoff evidence 한 줄로 구현했다. [행동 검증](../superpowers/reviews/2026-10-17-plan-completion-contract-verification.md)은 Codex의 실제 child receipt와 OpenCode의 제한 시간 내 incomplete 결과를 구분한다. 이 연구를 근거로 Pi, hook 또는 새 receipt 저장소를 설치하지 않았다.
+
 Pi Durable의 task/storage runtime은 현재 ThreadDock에는 과하다. GitHub가 업무 원본이고 Herdr가 실행 lifecycle을 이미 맡으므로,
 새 scheduler·SQLite·재실행 엔진을 들이면 제거한 책임을 되살린다.
 
@@ -201,7 +203,7 @@ Monitor는 observer여야 한다. Pi Durable 채택은 새 JS runtime, scheduler
 | 업무·실행 원본 | GitHub work truth, Herdr top-level session | Pi JSONL session tree | 원본 교체 금지; ID 연결만 참고 |
 | 제품 관찰 | Go/Wails Monitor, Go가 GitHub·Herdr를 결합 | JSON/RPC/SDK event surface | 특정 harness adapter는 조건부 |
 | 안전 | 기존 permission/sandbox/승인 상속 | core sandbox/permission 없음 | 자동 권한·모델 변경 금지 유지 |
-| 완료 표현 | 현재 A: draft/reviewed/ready 분리, B: 한 줄 evidence 보강 중 | settled event와 structured child result | A·B와 직접 정합 |
+| 완료 표현 | A: draft/reviewed/ready 분리, B: 기존 response/handoff 한 줄 evidence 구현 | settled event와 structured child result | A·B와 직접 정합 |
 
 현재 [Agent workflow 문서](../architecture/agent-workflow.md)의 핵심 흐름은 Pi보다 더 구체적이다.
 짧은 routing → Coordinator brief → FL 계획 소유 → 중요한 경우 독립 반대 검토 → 조건부 neutral 판정 → 구현/검증 → fresh review다.

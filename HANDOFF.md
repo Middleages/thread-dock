@@ -1,5 +1,12 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-17: 중요한 계획의 완료 계약 A·B 적용
+
+- `ae11350405657ac705a33b781dfce77999396e09`에서 `develop-feature`·`grill-plan`과 두 harness의 Feature Leader 역할을 좁게 보강했다. planning-only는 구현/게시를 막지만 중요한 계획의 실제 독립 review와 owner resolution은 완료한다. 명시적 ideas/draft, 작은 명확 작업, 유효한 기존 review는 가볍게 유지한다. `reviewed`와 `implementation-ready`를 분리하고 기존 response/handoff 한 줄에 revision·실제 reviewer result/verdict·남은 중요 항목·readiness만 남긴다.
+- Linux global Skill 2개와 Feature Leader role 2개는 `/tmp/threaddock-plan-contract.0AHAIa/before`에 백업 후 tracked source와 parity를 맞췄다. model/provider/permission/hook, Go/Wails·React, GitHub/Herdr 상태는 변경하지 않았다. 새 helper·DB·schema·scheduler는 없다.
+- [행동 검증](docs/superpowers/reviews/2026-10-17-plan-completion-contract-verification.md)의 이름 없는 Codex root 3건은 충분한 중요 계획의 실제 child review+owner resolution, 명시적 small draft의 review 생략, source가 부족한 중요 계획의 assumptions/options review와 reviewed/not-ready 분리를 확인했다. OpenCode는 자동 skill 선택과 reviewer child 시작까지 확인했지만 제한 시간 내 result 회수/parent final이 없어 incomplete다. 성공으로 꾸미거나 모델을 바꾸지 않았다.
+- [Pi 연구](docs/research/2026-10-17-pi-agent-harness.md)는 현재 공식 source에서 작은 core·progressive context·typed event receipt를 참고 원리로 확인했다. Pi 설치/이식, Durable runtime, hook 도입은 하지 않았다. 최종 독립 review 상태는 위 행동 검증 문서를 따른다.
+
 ## 2026-10-17: 전체 Agent workflow 아키텍처와 개선안 문서화
 
 - [전체 아키텍처와 개선 검토](docs/architecture/agent-workflow.md)에 자연어 진입, Coordinator/Feature Leader 소유권, native leaf, GitHub·Herdr·Go/Wails의 책임과 실제 검증 근거를 정리했다. 원격 main `b04cf2a`와 로컬 현행 구성 `9622d0e`, 전역 설치·이미 열린 session의 차이를 구분한다.
