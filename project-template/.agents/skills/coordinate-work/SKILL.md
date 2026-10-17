@@ -34,7 +34,7 @@ If the user already agreed a plan, hand it over as the starting plan. The Featur
 
 Before starting anything new, inspect `~/.threaddock/sessions.json` and the actual Herdr state. Reuse an exact live Feature Leader session when its Issue/repository/worktree locator matches. Never guess session, workspace, tab, pane, Agent name, or cwd values; use values returned by the installed Herdr tool.
 
-For an authorized new feature whose goal and dispatch-relevant decisions are clear, create a bounded top-level Feature Leader session with the packet above. Planner/implementer/reviewer helpers belong inside that session as native subagents and are not top-level ThreadDock bindings.
+For an authorized new feature whose goal and dispatch-relevant decisions are clear, create a bounded top-level Feature Leader session with the packet above. Apply [herdr-local's new top-level session settings](../herdr-local/SKILL.md#new-top-level-session-settings): explicitly preserve the authorized approval policy and sandbox at launch and verify the effective values before implementation dispatch. Planner/implementer/reviewer helpers belong inside that session as native subagents and are not top-level ThreadDock bindings.
 
 When one or more bound Feature Leader sessions are still working and the coordinator has no immediate routing action, use **REQUIRED SUB-SKILL:** `agent-wait`. Periodically inspect only the bound top-level Herdr sessions and corresponding GitHub evidence. Do not inspect Feature Leader leaf agents, busy-poll, or create a separate scheduler.
 
