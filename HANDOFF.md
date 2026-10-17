@@ -3,7 +3,7 @@
 ## 2026-10-17: 선택적 native review receipt 수집기
 
 - Pi 연구의 typed native receipt 원리를 작은 read-only helper로 적용했다. `review-change/scripts/summarize_review_evidence.py`는 user-supplied Codex/OpenCode artifact 한 파일에서 explicit parent/child/`td_reviewer`/lifecycle/result field 위치만 stdout JSON으로 요약한다. DB·network·model·spawn·write·recursive scan이 없고 review quality/readiness/revision을 판정하지 않는다. Skill 본문은 반복 수집 때만 쓰는 optional collector로 연결한다.
-- Luna 구현과 focused 10 tests 뒤 실제 OpenCode completed task artifact는 sufficient receipt, actual Codex raw CLI 두 건은 serialized role/spawn이 없어 partial/unverified로 반환했다. Linux global `review-change`는 `/tmp/threaddock-review-evidence.WhfO4x/before`에 백업 후 pointer/reference/script만 설치했다. 상세 명령·결과와 final review는 [검증 기록](docs/superpowers/reviews/2026-10-17-review-evidence-helper-verification.md)을 따른다.
+- Luna 구현 후 독립 리뷰에서 실제 형식·최신 상태 선택·잘못된 입력·fallback 근거 위치를 보완했다. 최종 source `9c715df`는 14 focused tests 근거와 scoped 독립 ACCEPT를 확보했다. 실제 OpenCode completed task artifact는 sufficient receipt, actual Codex raw CLI는 serialized role/spawn이 없어 partial/unverified로 반환했다. Linux global `review-change`는 `/tmp/threaddock-review-evidence.WhfO4x/before`에 백업 후 pointer/reference/script만 설치했고 최종 source와 일치한다. 상세 실패·수정·검증은 [검증 기록](docs/superpowers/reviews/2026-10-17-review-evidence-helper-verification.md)을 따른다.
 - 사용자 요청에 따라 root가 Codex Superpowers plugin을 local config에서 비활성화하고 backup·parse/equality를 확인했다. 격리 prompt input catalogue와 일반 root 요청에서는 빠졌지만, 중요한 fresh root의 runtime host catalogue에는 15개 항목이 남아 모델이 설치 cache의 두 Superpowers 문서를 직접 읽었다. 따라서 local config off는 완료됐으나 이 runtime의 완전한 지침 미사용은 보장하지 않는다. uninstall/cache 삭제/다른 설정 변경은 하지 않았다.
 
 ## 2026-10-17: 중요한 계획의 완료 계약 A·B 적용

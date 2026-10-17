@@ -24,6 +24,8 @@ Linux global `/home/appuser/.agents/skills/review-change`는 기존 `SKILL.md` h
 
 - Luna RED: helper 부재로 8 tests 실패.
 - Luna GREEN: 최초 9 tests 통과, review fix 뒤 10 tests 통과; `py_compile`, diff check PASS.
+- 통합 후보 `7ca5f20`의 독립 리뷰는 export의 문자열 포인터 순서 비교, 명시 format의 envelope 검증 누락, 잘못된 export part 처리로 BLOCK이었다. 추가 실제 형식 근거를 포함한 수정 brief를 같은 Luna에 배정했다.
+- Luna hardening `7ec25d228905678c1f56f94dfa35d8e8deccacf4`는 14 focused tests, `py_compile`, diff 검사를 통과했다. 통합 커밋 `3d6b51d5113879e47de079400330e1a7133496b9`의 두 code/test 파일은 해당 worker SHA와 동일해 검증을 반복하지 않고 채택했다. Codex `wait`와 spawn 완료 의미, 실제 OpenCode `info.id`와 최신 순회 순서, 빈 결과·잘못된 part·무관한 envelope·정상 무리뷰 trace를 보완했다.
 - 통합 후 같은 10 tests가 4.553초에 PASS했고 `py_compile`, `git diff --check`도 PASS했다.
 - 실제 `/tmp/threaddock-opencode-behavior.KN5mJM/delegation-events.jsonl`은 parent `ses_ebb1d3cd7ffe1rSPMBeAkLQ1jP`, child `ses_ebb18dc67ffeC5NfwEnVvwzmrr`, explicit `td_reviewer`, completed, `/part/state/output` at line 6으로 `sufficient`를 반환했다. 이는 supplied artifact metadata sufficiency일 뿐 verdict 진위나 reviewed revision 증명이 아니다.
 - 실제 `/tmp/threaddock-codex-behavior.XnLnZi/delegation-recorded-events.jsonl`과 아래 no-plugin significant JSONL은 parent/outer completion만 보고 `review_receipts=[]`, `partial`, `reviewer_receipt_not_observed`를 반환했다. 실제 child가 다른 state DB에 있어도 raw CLI artifact에 role/spawn receipt가 없으므로 helper는 추측하지 않는다.
@@ -43,4 +45,8 @@ fresh significant planning root `01a149d2-bb14-7ab0-9307-28be8469343b`는 기존
 
 ## 독립 리뷰
 
-최종 고정 SHA의 helper, tests, Skill 경계, 설치/검증 근거와 Superpowers 한계를 fresh `td_reviewer`가 검토한 결과를 여기에 기록한다.
+`7ca5f20`은 BLOCK이며 완료 후보로 사용하지 않는다. 조정자의 사용량 제한으로 작업이 중단된 뒤 root가 통합 상태와 전역 script 일치를 확인하고, 수정된 `3d6b51d`의 scoped 재리뷰를 요청했다. 재리뷰는 이전 세 문제의 해결을 확인했지만, non-string `info.id`에서 `sessionID`로 fallback할 때 evidence pointer가 잘못되는 한 건으로 BLOCK했다. 같은 Luna의 `6acbab3ca56f37173361cb585273c255ea9704ba`가 parent 값과 pointer를 함께 선택하도록 수정하고 해당 회귀를 포함한 14 focused tests, `py_compile`, diff 검사를 통과했다.
+
+통합 고정 SHA `9c715df073f1dbf0ad6fe64e8fdec7160b303d35`를 동일 독립 reviewer가 변경 범위만 재검토해 **ACCEPT**, blocking finding 없음으로 판정했다. 앞선 finding의 해결 판정은 유지하며 새 unrelated 범위 검토나 전체 suite를 반복하지 않았다. 실제 reviewer runtime model/effort는 미검증이다. 전역 script도 최종 source와 byte 일치한다. 생성된 `__pycache__`는 삭제하지 않고 `/tmp/threaddock-review-evidence-cache.xLbPeG`로 옮겨 보존했다.
+
+호스트가 별도로 공급하는 Superpowers 스킬 목록의 제거는 아직 확인되지 않았다. 현재 관리 도구는 uninstall만 지원하므로 disable 요청을 삭제로 바꾸지 않았고, 사용자에게 호스트 플러그인 설정 확인을 요청했다. 로컬 config의 `enabled=false`와 도구 구현 완료를 호스트 전체 비활성 완료로 확대하지 않는다.
