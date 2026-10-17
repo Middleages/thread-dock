@@ -259,12 +259,15 @@ def _opencode_summary(
         if not isinstance(messages, list):
             return _error_summary(source_file, format_name, "unsupported_export_structure")
         info = events[0].get("info")
-        parent_id = info.get("id") if isinstance(info, dict) else None
-        if not isinstance(parent_id, str) or not parent_id:
-            parent_id = events[0].get("sessionID")
+        info_id = info.get("id") if isinstance(info, dict) else None
+        if isinstance(info_id, str) and info_id:
+            parent_id, parent_pointer = info_id, "/info/id"
+        else:
+            session_id = events[0].get("sessionID")
+            parent_id, parent_pointer = (session_id, "/sessionID") if isinstance(session_id, str) and session_id else (None, None)
         if isinstance(parent_id, str) and parent_id:
             summary["parent"]["parent_id"] = parent_id
-            summary["parent"]["evidence_offsets"] = ["/info/id" if isinstance(info, dict) and info.get("id") else "/sessionID"]
+            summary["parent"]["evidence_offsets"] = [parent_pointer]
         else:
             limitations.add("parent_id_not_observed")
         candidates = []

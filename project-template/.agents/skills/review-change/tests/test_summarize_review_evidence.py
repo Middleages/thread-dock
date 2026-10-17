@@ -214,6 +214,14 @@ class SummarizeReviewEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["review_receipts"][0]["result_location"], "/messages/0/parts/0/state/result")
         self.assertNotIn("review.json", completed.stdout)
 
+        _, summary = self.run_helper(
+            json.dumps({"info": {"id": 123}, "sessionID": "fallback-parent", "messages": []}),
+            "--format",
+            "opencode-export",
+        )
+        self.assertEqual(summary["parent"]["parent_id"], "fallback-parent")
+        self.assertEqual(summary["parent"]["evidence_offsets"], ["/sessionID"])
+
     def test_opencode_non_task_state_and_nested_prompt_are_not_receipts(self):
         completed, summary = self.run_helper(
             json.dumps(
