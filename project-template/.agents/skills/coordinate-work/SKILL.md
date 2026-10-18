@@ -36,7 +36,7 @@ Before starting anything new, inspect `~/.threaddock/sessions.json` and the actu
 
 For an authorized new feature whose goal and dispatch-relevant decisions are clear, create a bounded top-level Feature Leader session with the packet above. Apply [herdr-local's new top-level session settings](../herdr-local/SKILL.md#new-top-level-session-settings): explicitly preserve the authorized approval policy and sandbox at launch and verify the effective values before implementation dispatch. Planner/implementer/reviewer helpers belong inside that session as native subagents and are not top-level ThreadDock bindings.
 
-When one or more bound Feature Leader sessions are still working and the coordinator has no immediate routing action, use **REQUIRED SUB-SKILL:** `agent-wait`. Periodically inspect only the bound top-level Herdr sessions and corresponding GitHub evidence. Do not inspect Feature Leader leaf agents, busy-poll, or create a separate scheduler.
+When one or more bound Feature Leader sessions are still working and the coordinator has no immediate routing action, use **REQUIRED SUB-SKILL:** `agent-wait` for exact-target Herdr waiting and scoped GitHub evidence checks. Native child waits belong to their Feature Leader; do not inspect its leaf agents or create a separate scheduler.
 
 Maintain the shared locator under one user-level exclusive lock such as `~/.threaddock/sessions.lock`: acquire lock, re-read the full JSON, mutate only the exact coordinator/feature binding, write a temporary file, then atomically rename it over `sessions.json`. Preserve every unrelated repository/project binding. If locking is unsafe or ambiguous, leave the file unchanged and report locator update pending.
 
