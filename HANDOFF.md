@@ -6,7 +6,7 @@
 - 현재 client/server는 모두 Herdr 0.9.5, protocol 22, endpoint generation 1이며 restart가 필요 없는 상태였다. 이전 0.8.2 조사 뒤 갱신된 환경을 사용했으며 이번 작업에서 update/restart를 수행한 것은 아니다.
 - [snapshot 검증](docs/research/2026-10-18-herdr-snapshot-verification.md): read-only default session의 agent 6개/workspace 8개에서 list와 snapshot의 의미상 projection이 일치했다. raw snapshot 13,002 bytes는 512 KiB 한도 이내다. `agent` 종류와 optional 고유 `name`은 별개이며 alias로 바꾸지 않는다. Go 실행 파일 부재로 기존 Go 실패/캐시 경로와 Wails·다중 session·대규모 payload는 미검증이다. 제품 adapter는 변경하지 않았다.
 - [metadata 판단](docs/research/2026-10-18-herdr-metadata-decision.md): schema와 help는 display-only annotation이며 durability·source 충돌·원자적 binding 근거가 없다. 실제 seq/TTL 동작은 미검증이다. `sessions.json` 유지, 신규 metadata writer 도입 보류로 결론냈다. Codex/OpenCode integration이 새 내장본보다 오래된 것도 관찰했지만 자동 갱신하지 않았다.
-- `make template-check`, 변경 Skill 3개의 `quick_validate`, 관련 링크 존재와 diff 검사가 통과했다. 제품 코드 변경이 없어 full suite·앱 재빌드는 실행하지 않는다. 독립 최종 리뷰와 WSL 전역 적용 결과는 완료 후 이 절에 추가한다. 새 생성·prompt·wait 동작의 live 실행 성공을 주장하지 않는다.
+- `make template-check`, 변경 Skill 3개의 `quick_validate`, 관련 링크 존재와 diff 검사가 통과했다. fresh `td_reviewer`가 고정 SHA `3f8aea0fc7cc1e35a7a40d0eb8d64ea6c8d2568e`를 ACCEPT했고 blocking finding은 없었다. WSL 공용 Skill 3개는 `/tmp/threaddock-herdr-guidance.5AP9vL`에 백업한 뒤 적용했고 source와 `cmp` 일치를 확인했다. 이미 열린 session의 재로딩은 보장하지 않는다. 제품 코드 변경이 없어 full suite·앱 재빌드는 실행하지 않았으며, 새 생성·prompt·wait 동작의 live 실행 성공을 주장하지 않는다. 이번 branch는 로컬 커밋만 했고 push·PR·병합은 하지 않았다.
 
 ## 2026-10-17: 새 top-level 세션의 실행 정책 보존
 
