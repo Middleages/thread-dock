@@ -98,4 +98,25 @@
 | coordinate-work Skill 전체 | 6,366 | 5,551 |
 | UI quality reference 전체 | 4,101 | 3,229 |
 
-동일한 template OpenCode 사본은 위 합계에 중복 산입하지 않았다. 지침 길이는 정적 지표이며 실운영 속도·성공률 개선의 증거로 확대하지 않는다. 제품 코드·테스트 변경이 없어 제품 full suite/앱 빌드를 실행하지 않는다. 변경 지침의 독립 적용 사례와 고정 SHA 리뷰 결과는 후속 기록에 남긴다. 실제 Herdr/Windows/Wails, 설치된 Skill 적용, 실행 중 세션 재로딩은 이번 검증 범위가 아니다.
+동일한 template OpenCode 사본은 위 합계에 중복 산입하지 않았다. 지침 길이는 정적 지표이며 실운영 속도·성공률 개선의 증거로 확대하지 않는다. 제품 코드·테스트 변경이 없어 제품 full suite/앱 빌드를 실행하지 않았다. 실제 Herdr/Windows/Wails, 설치된 Skill 적용, 실행 중 세션 재로딩은 이번 검증 범위가 아니다.
+
+### 변경 지침의 독립 적용과 후보 검토
+
+fresh native `workflow_application`은 운영 지침만 읽고 다음 10개 사례의 실행 계획을 반환했다. 이 검토 문서와 HANDOFF의 결론은 입력에서 제외했다. 아래 결과는 지침의 해석 확인이며 실제 구현·UI 실행·병렬 운영 시험 결과가 아니다.
+
+| 사례 | 반환한 적용 판단 |
+| --- | --- |
+| 지정된 버튼 라벨만 변경 | 짧은 계획, 구현 child, 해당 상태 이미지 열람, exact-SHA 리뷰. 새 디자인 제안·plan review·불변 동작 재실행은 불필요. |
+| 합의된 empty-state 컴포넌트 재사용 | 기존 패턴을 구현하고 영향 상태를 확인. 새 디자인 패널은 불필요. |
+| 두 기능 dispatch 후 API 계약 변경 | 최신 참조·이유·영향 owner를 공유하고 각 Leader의 조정/비영향 근거 전까지 의존 작업만 보류. |
+| 교체 Leader의 handoff보다 최신 Issue 결정 존재 | 최신 계약과 후보를 먼저 대조. 변하지 않은 근거는 재사용하되 낡은 계약의 성공을 현재 완료로 취급하지 않음. |
+| 작은 docs-only 정정 | 직접 편집과 필요한 문서 검사. 새 기능 세션·구현 child·fresh reviewer는 필수가 아님. |
+| recovery가 미해결인 persistent migration | 고정 계획의 독립 검토와 owner resolution. 복구·데이터 보존 기준 미확정이면 implementation-ready 아님. |
+| 자원이 적고 settings 디자인 대안이 남음 | 의미 있는 선택은 비교하되 고정 인원·별도 evaluator는 불필요. 제품 의미를 바꾸는 선택은 사용자 판단. |
+| UI 동작 변경에 이미지 열람·interaction 도구 없음 | 가능한 코드 검토만 수행하고 visual/interaction을 각각 미검증으로 기록. UI acceptance 완료는 보류. |
+| 긴급하지만 구현 child dispatch 거부 | 허용된 대체 native child가 없으면 구현 pending. primary 직접 구현·권한·모델 변경으로 우회하지 않음. |
+| 인수조건 삭제·회귀 assertion 비활성화로만 green | 리뷰 BLOCK. 정당한 범위 변경 근거가 없으면 조건·회귀 검사를 복구하고 새 후보를 검토. |
+
+fresh native `candidate_review`는 로컬 고정 후보 `498ddccc995b8401f6ddb5f787952f996412d32d`의 전체 변경을 **ACCEPT**, blocking finding 없음으로 판정했다. 일반 Git push 인증이 없어 연결된 GitHub 기능으로 게시한 후보는 [`e12f5e6afad6c46b9d704b2161cba306dcdda963`](https://github.com/Middleages/thread-dock/commit/e12f5e6afad6c46b9d704b2161cba306dcdda963)다. reviewer는 두 커밋의 parent와 tree `95edcf1756104743db7d225533b959169cb79ccb`가 같고 상호 diff가 비어 있음을 확인하여 같은 ACCEPT를 원격 후보에 적용했다. 이는 native Agent의 검토 기록이며 GitHub 사용자의 승인 review를 대신하지 않는다.
+
+이후 변경은 이 검증 결과와 HANDOFF 기록뿐이다. main 병합은 사람에게 남긴다.

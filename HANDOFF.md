@@ -5,7 +5,7 @@
 - 기준 main은 [PR #104](https://github.com/Middleages/thread-dock/pull/104)의 병합 SHA `d0af6f432f757312c2cc35551a9e497dc17af645`다. 아래 10월 18일 절의 로컬 커밋·미게시 설명은 병합 전 이력이다.
 - 사용자 요청에 따라 [검토·채택·간소화 기록](docs/research/2026-10-21-harness-review-and-simplification.md)을 작성하고 `agent/harness-simplification-20261021`에서 실제 root 역할과 Codex/OpenCode template의 반복 지침, 고정 UI 평가 인원, 상세 필수 양식을 줄였다. 여섯 canonical Skill, 제품 코드/test child와 fresh 리뷰, 위험한 계획 검토, 기존 모델·권한·사람의 main 병합은 유지한다.
 - 공유 계약 변경의 영향받는 Leader 확인, 재개 시 최신 결정 대조, 원 인수조건별 근거는 기존 GitHub 기록으로 연결한다. Monitor 결정/handoff 조회·PR 연결 수정·실제 CI·두 기능 운영 시험은 후속 범위다. Go/React 제품 코드와 사용자 전역 설치·실행 세션은 변경하지 않았다.
-- 계획의 독립 검토와 owner resolution, template/parse/frontmatter/링크/설정 불변 검사가 통과했다. 변경 지침의 독립 적용 사례와 고정 후보 리뷰를 진행한다. 상세 검증과 현재 PR 상태는 위 기록 및 GitHub PR을 확인하며 제품 live 성공으로 확대하지 않는다.
+- 계획의 독립 검토와 owner resolution, template/parse/frontmatter/링크/설정 불변 검사가 통과했다. 운영 지침만 읽은 fresh Agent의 적용 사례 10개에서 작은 작업의 절차 축소와 위험·미검증 보류를 확인했다. 실제 실행 시험은 아니다. fresh `candidate_review`는 게시 후보 `e12f5e6afad6c46b9d704b2161cba306dcdda963`를 ACCEPT했고 blocking finding은 없었다. 이후 변경은 검증 결과 기록뿐이다. 상세 근거는 위 기록을 따르고 현재 게시·병합 상태는 GitHub branch/PR에서 확인한다. main 병합은 사람에게 남긴다.
 
 ## 2026-10-18: Herdr native 지침 단순화와 snapshot·metadata 검증
 
