@@ -1,5 +1,12 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-21: 하네스 적대적 검토와 지침 간소화
+
+- 기준 main은 [PR #104](https://github.com/Middleages/thread-dock/pull/104)의 병합 SHA `d0af6f432f757312c2cc35551a9e497dc17af645`다. 아래 10월 18일 절의 로컬 커밋·미게시 설명은 병합 전 이력이다.
+- 사용자 요청에 따라 [검토·채택·간소화 기록](docs/research/2026-10-21-harness-review-and-simplification.md)을 작성하고 `agent/harness-simplification-20261021`에서 실제 root 역할과 Codex/OpenCode template의 반복 지침, 고정 UI 평가 인원, 상세 필수 양식을 줄였다. 여섯 canonical Skill, 제품 코드/test child와 fresh 리뷰, 위험한 계획 검토, 기존 모델·권한·사람의 main 병합은 유지한다.
+- 공유 계약 변경의 영향받는 Leader 확인, 재개 시 최신 결정 대조, 원 인수조건별 근거는 기존 GitHub 기록으로 연결한다. Monitor 결정/handoff 조회·PR 연결 수정·실제 CI·두 기능 운영 시험은 후속 범위다. Go/React 제품 코드와 사용자 전역 설치·실행 세션은 변경하지 않았다.
+- 계획의 독립 검토와 owner resolution, template/parse/frontmatter/링크/설정 불변 검사가 통과했다. 변경 지침의 독립 적용 사례와 고정 후보 리뷰를 진행한다. 상세 검증과 현재 PR 상태는 위 기록 및 GitHub PR을 확인하며 제품 live 성공으로 확대하지 않는다.
+
 ## 2026-10-18: Herdr native 지침 단순화와 snapshot·metadata 검증
 
 - PR #103은 main `437d4d2`에 병합됐다. 이번 후속 작업은 그 SHA에서 분리한 `agent/herdr-native-simplification` branch다. `agent-wait`는 native child의 harness 대기와 Herdr top-level의 exact-target 대기를 구분하며 고정 20–25분 규칙을 제거했다. `herdr-local`은 승인된 worktree 공간 생성·재사용에 native create/open, on-demand explain/process-info 진단을 우선하도록 연결한다. 모델·권한·live session·locator는 바꾸지 않는다.

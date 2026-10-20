@@ -7,7 +7,7 @@ description: Use when a project coordinator clarifies a user's goal and prepares
 
 Use GitHub Issue, PR, and Projects as durable work truth. Herdr owns execution lifecycle; ThreadDock only connects GitHub evidence to top-level session state.
 
-For Herdr CLI operations, use **REQUIRED SUB-SKILL:** `herdr-local` for installed syntax, managed context, actual target identity, and any explicit network constraints. Existing authorization carries forward; report only a concrete missing prerequisite for the affected operation.
+For Herdr CLI operations, first use `herdr-local`; preserve existing authorization and report concrete missing prerequisites.
 
 Read repository guidance, the relevant open GitHub work, and [the shared development stance](../develop-feature/references/development-stance.md) first. Keep the user's authorization separate from plan readiness: a planning-only request permits planning/review helpers, not implementation, new Feature Leader sessions, or GitHub writes. Existing authorized independent work may continue; preserve active sessions and drafts rather than stopping or recreating them to adopt this workflow.
 
@@ -22,13 +22,13 @@ Before asking the user, inspect the relevant existing request, Issue, docs, or c
 - **Implementation choice:** architecture, file layout, algorithms, and test internals belong to the Feature Leader. Their absence does not make an otherwise clear goal ambiguous.
 - **Harmless reversible assumption:** state the assumption and proceed within scope; revisit it if evidence changes.
 
-Words such as "better", "faster", or "automate" are not by themselves a reason to start a questionnaire: existing context may already define the desired result. If two plausible readings still imply materially different acceptance or scope, ask a small number of focused questions; otherwise prepare the brief. Do not invent numeric targets or turn a user's example into a universal requirement. Risk and ambiguity are separate: route a clear risky migration to the Feature Leader's independent plan review without another product question or a Coordinator-authored architecture plan. Small clear fixes need a direct brief, not `grill-plan`.
+Ask only when unresolved readings materially change acceptance or scope. Keep clear work moving; a risky migration still needs plan review even when no product question remains. Do not invent targets or turn examples into universal requirements. Small clear fixes need a short brief; ordinary questions and small documentation-only corrections can be handled directly without a new feature session.
 
 The brief preserves the original request and source, confirmed desired behavior/acceptance/non-goals, facts versus assumptions and open product decisions, priority, dependencies/shared constraints, authority scope, and feature owner. Add repository/branch, Issue/worktree when applicable, and any already-agreed plan reference/revision. Hold only dispatch that depends on an unresolved product choice; continue useful independent authorized work and preserve active sessions/drafts. Do not require a new approval merely to pass an already-authorized brief.
 
-For user-facing work, one sentence can connect a representative action to visible success, for example: "An operator refreshes the work list and sees updated rows with the chosen filter preserved." Use facts already established in context. This is an illustration, not a required form or a reason to ask extra questions for backend/internal work.
-
 If the user already agreed a plan, hand it over as the starting plan. The Feature Leader checks intake/feasibility and reuses it without rewriting or repeating approval/review of unchanged decisions. It may revise implementation details with reasons; cross-feature contracts/dependencies return to the Coordinator for narrow coordination, while an undelegated change to user-decided product scope or behavior returns to the user.
+
+When a shared contract changes after dispatch, record the current document/commit reference, reason, affected features and owner in the existing GitHub record. Notify those Feature Leaders within authorization and collect their plan/task adjustment or evidence of no impact. Hold only dependent work until that response arrives; continue independent work. On handoff/resume, point to current decisions and unresolved dependencies. A routine unchanged task needs no new decision log, identifier scheme or acknowledgment round.
 
 ## Assign and observe
 
@@ -38,8 +38,4 @@ For an authorized new feature whose goal and dispatch-relevant decisions are cle
 
 When one or more bound Feature Leader sessions are still working and the coordinator has no immediate routing action, use **REQUIRED SUB-SKILL:** `agent-wait` for exact-target Herdr waiting and scoped GitHub evidence checks. Native child waits belong to their Feature Leader; do not inspect its leaf agents or create a separate scheduler.
 
-Maintain the shared locator under one user-level exclusive lock such as `~/.threaddock/sessions.lock`: acquire lock, re-read the full JSON, mutate only the exact coordinator/feature binding, write a temporary file, then atomically rename it over `sessions.json`. Preserve every unrelated repository/project binding. If locking is unsafe or ambiguous, leave the file unchanged and report locator update pending.
-
-Do not remove a feature binding for `idle`, `done`, or a temporary observation failure. Cleanup requires all three: Issue closed, related PR work finished, and top-level Herdr feature session absent.
-
-**REQUIRED SUB-SKILL:** Use `publish-work` for durable GitHub updates and locator reconciliation within existing write authorization. For planning-only work without publication authorization, return the brief/plan record in the requested local or conversational form instead.
+Use `publish-work` for authorized GitHub updates and locator writes: it owns the exclusive-lock/atomic-write and cleanup rules. Herdr idle/done is not GitHub completion. For planning-only work without publication authorization, return the record in the requested local or conversational form.

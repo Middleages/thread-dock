@@ -1,5 +1,5 @@
 name: Development request
-description: Describe a product change for work interview and planning.
+description: Describe the problem and the observable conditions for success.
 title: "[Development Request] "
 labels: ["development-request"]
 body:
@@ -11,52 +11,19 @@ body:
     validations:
       required: true
   - type: textarea
-    id: desired-outcome
-    attributes:
-      label: Desired outcome
-      description: What observable result will show success?
-    validations:
-      required: true
-  - type: textarea
-    id: excluded-scope
-    attributes:
-      label: Excluded scope
-      description: What is explicitly outside this request?
-    validations:
-      required: true
-  - type: textarea
     id: acceptance-criteria
     attributes:
       label: Acceptance criteria
-      description: List the conditions required to accept the work.
+      description: What observable behavior will show success? Include important failure cases you already know.
     validations:
       required: true
   - type: textarea
-    id: risk
+    id: constraints
     attributes:
-      label: Risk
-      description: Identify data, security, deployment, compatibility, or delivery risks.
-    validations:
-      required: true
+      label: Known constraints or exclusions (optional)
+      description: Existing decisions, dependencies, compatibility, data risks or work outside scope.
   - type: textarea
     id: verification-plan
     attributes:
-      label: Verification plan
-      description: What focused checks and final integration verification should be used? Record the exact SHA, command, environment, outcome, and duration in the evidence.
-    validations:
-      required: true
-  - type: textarea
-    id: audit-record
-    attributes:
-      label: Audit record
-      description: Use Decision, Dispatch, Review, Verification, Blocker, or Integration. Keep summaries and evidence; exclude transcripts, tokens, secrets, and long raw terminal output.
-    validations:
-      required: true
-  - type: input
-    id: repository
-    attributes:
-      label: Repository
-      description: Which owner/repository should receive this work?
-      placeholder: owner/repository
-    validations:
-      required: true
+      label: Known checks or references (optional)
+      description: Existing tests, reproduction steps, screenshots or design links. The feature owner investigates missing technical details.

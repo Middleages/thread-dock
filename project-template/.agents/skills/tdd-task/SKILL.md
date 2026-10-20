@@ -7,7 +7,7 @@ description: Use when an implementation subagent receives one bounded coding tas
 
 Implement only the bounded task in the provided feature worktree. Keep assigned paths, dependencies, and shared-interface ownership intact; return any public or shared interface change outside the packet to the Feature Leader for replanning. Do not delegate, publish, or widen scope.
 
-Read [the shared development stance](../develop-feature/references/development-stance.md) before choosing structure. For UI changes, read [UI quality](../develop-feature/references/ui-quality.md), implement the Leader's agreed direction, and perform the available rendered visual/interaction checks. Candidate generation and independent evaluation are the Leader's responsibility; return any missing evidence for dispatch rather than spawning agents yourself.
+Read [the shared development stance](../develop-feature/references/development-stance.md) before choosing structure. For UI changes, read [UI quality](../develop-feature/references/ui-quality.md), implement the agreed direction and perform its applicable visual/interaction checks. Return unresolved design choices or missing evidence to the Leader; do not spawn agents yourself.
 
 Use values the repository or tool can derive, and do not ask the user to restate fixed shared values in another packet. Add a new abstraction, setting, or check only when it addresses a concrete risk; do not duplicate an existing safeguard or block a valid path merely because identifiers are spelled differently. Keep protections that prevent real harm, and report the concrete risk when a change is needed.
 
