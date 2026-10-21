@@ -36,6 +36,7 @@ type cachedSource struct {
 	nextAttemptAt time.Time
 	stale         bool
 	hasData       bool
+	notice        string
 }
 
 type sourceRead struct {
@@ -43,6 +44,7 @@ type sourceRead struct {
 	observedAt time.Time
 	stale      bool
 	hasData    bool
+	host       string
 }
 
 type aggregateCall struct {
@@ -51,25 +53,37 @@ type aggregateCall struct {
 	err      error
 }
 
+type pullRequestDetailCall struct {
+	done   chan struct{}
+	detail PullRequestDetail
+	err    error
+}
+
 type GitHubMonitor struct {
 	config       monitorConfig
+	host         string
 	sessionsFile string
 	command      *wslCommandRunner
 	timeout      time.Duration
 	now          func() time.Time
 
-	mu       sync.Mutex
-	cache    map[string]cachedSource
-	revision uint64
-	inFlight *aggregateCall
+	mu             sync.Mutex
+	cache          map[string]cachedSource
+	revision       uint64
+	inFlight       *aggregateCall
+	detailInFlight map[string]*pullRequestDetailCall
 }
 
 func NewGitHubMonitor(env map[string]string, process CommandRunner, timeout time.Duration) *GitHubMonitor {
 	config, sessions := parseMonitorConfig(env)
+	host, err := normalizeGitHubHost(env["THREADDOCK_GITHUB_HOST"])
+	if err != nil {
+		host = defaultGitHubHost
+	}
 	return &GitHubMonitor{
-		config: config, sessionsFile: sessions,
+		config: config, host: host, sessionsFile: sessions,
 		command: newWSLCommandRunner(process, env["THREADDOCK_WSL_DISTRIBUTION"], timeout),
-		timeout: timeout, now: time.Now, cache: make(map[string]cachedSource),
+		timeout: timeout, now: time.Now, cache: make(map[string]cachedSource), detailInFlight: make(map[string]*pullRequestDetailCall),
 	}
 }
 
@@ -79,7 +93,7 @@ func parseMonitorConfig(env map[string]string) (monitorConfig, string) {
 	if config.err == nil {
 		config.projects, config.err = parseProjects(env["THREADDOCK_PROJECTS"])
 	}
-	known := map[string]bool{"THREADDOCK_REPOS": true, "THREADDOCK_PROJECTS": true, "THREADDOCK_WSL_DISTRIBUTION": true, "THREADDOCK_SESSIONS_FILE": true}
+	known := map[string]bool{"THREADDOCK_GITHUB_HOST": true, "THREADDOCK_REPOS": true, "THREADDOCK_PROJECTS": true, "THREADDOCK_WSL_DISTRIBUTION": true, "THREADDOCK_SESSIONS_FILE": true}
 	var unknown []string
 	for key := range env {
 		if strings.HasPrefix(key, "THREADDOCK_") && !known[key] {
@@ -215,16 +229,23 @@ func (m *GitHubMonitor) fetchRepository(repo repositoryTarget, notices *[]string
 	prRows, _ := prs.data.([]rawPullRequest)
 	prsByIssue := map[string][]string{}
 	for _, pr := range prRows {
-		prURL := safeGitHubURL(pr.URL)
+		prURL := canonicalItemURL(pr.URL, m.host)
+		if prURL == "" && m.host == defaultGitHubHost {
+			prURL = safeGitHubURL(pr.URL)
+		}
 		for _, ref := range pr.ClosingIssuesReferences {
-			if issueURL := safeGitHubURL(ref.URL); issueURL != "" && prURL != "" {
-				prsByIssue[issueURL] = append(prsByIssue[issueURL], prURL)
+			issueURL := canonicalIssueURL(ref.URL, m.host)
+			if issueURL == "" && m.host == defaultGitHubHost {
+				issueURL = safeGitHubURL(ref.URL)
+			}
+			if issueKey := locatorIdentity(issueURL, m.host); issueKey != "" && prURL != "" {
+				prsByIssue[issueKey] = append(prsByIssue[issueKey], prURL)
 			}
 		}
 	}
 	items := make([]WorkItem, 0, len(issueRows)+len(prRows))
 	for _, issue := range issueRows {
-		items = append(items, mapIssue(key, issue, issues, prsByIssue[safeGitHubURL(issue.URL)]))
+		items = append(items, mapIssue(key, issue, issues, prsByIssue[locatorIdentity(issue.URL, m.host)]))
 	}
 	for _, pr := range prRows {
 		items = append(items, mapPullRequest(key, pr, prs))
@@ -290,10 +311,10 @@ func (m *GitHubMonitor) readSource(key string, args []string, decode func([]byte
 	cached, exists := m.cache[key]
 	m.mu.Unlock()
 	if exists && now.Before(cached.nextAttemptAt) {
-		return sourceRead{data: cached.data, observedAt: cached.observedAt, stale: cached.stale, hasData: cached.hasData}
+		return sourceRead{data: cached.data, observedAt: cached.observedAt, stale: cached.stale, hasData: cached.hasData, host: m.host}
 	}
 	if exists && cached.hasData && now.Sub(cached.observedAt) < githubTTL {
-		return sourceRead{data: cached.data, observedAt: cached.observedAt, hasData: true}
+		return sourceRead{data: cached.data, observedAt: cached.observedAt, hasData: true, host: m.host}
 	}
 	output, err := m.command.run(context.Background(), args[0], args[1:]...)
 	var data any
@@ -305,7 +326,7 @@ func (m *GitHubMonitor) readSource(key string, args []string, decode func([]byte
 		m.mu.Lock()
 		m.cache[key] = entry
 		m.mu.Unlock()
-		return sourceRead{data: data, observedAt: now, hasData: true}
+		return sourceRead{data: data, observedAt: now, hasData: true, host: m.host}
 	}
 	*notices = append(*notices, key+" 조회에 실패했습니다. 마지막 성공 시각이 있으면 보존된 데이터를 표시합니다.")
 	cached.nextAttemptAt = now.Add(githubTTL)
@@ -313,7 +334,7 @@ func (m *GitHubMonitor) readSource(key string, args []string, decode func([]byte
 	m.mu.Lock()
 	m.cache[key] = cached
 	m.mu.Unlock()
-	return sourceRead{data: cached.data, observedAt: cached.observedAt, stale: true, hasData: cached.hasData}
+	return sourceRead{data: cached.data, observedAt: cached.observedAt, stale: true, hasData: cached.hasData, host: m.host}
 }
 
 type rawIssue struct {
@@ -515,16 +536,34 @@ func validateProjectItems(items []any) error {
 }
 
 func mapIssue(repo string, issue rawIssue, source sourceRead, related []string) WorkItem {
-	url := safeGitHubURL(issue.URL)
+	host := source.host
+	if host == "" {
+		host = defaultGitHubHost
+	}
+	url := canonicalItemURL(issue.URL, host)
+	if url == "" && host == defaultGitHubHost {
+		url = safeGitHubURL(issue.URL)
+	}
 	github := &GitHubWork{Kind: "issue", Number: issue.Number, URL: url, State: issue.State, RelatedIssueURLs: []string{}, RelatedPullRequestURLs: uniqueStrings(related), Checks: []GitHubCheck{}, Fields: map[string]string{}, ContentAvailable: true, Author: issue.Author.Login, ObservedAt: source.observedAtPtr(), Stale: source.stale}
 	return baseWork("issue", urlOrFallback(url, repo+"#"+numberText(issue.Number)), issue.Title, issue.Body, issue.UpdatedAt, github, source)
 }
 
 func mapPullRequest(repo string, pr rawPullRequest, source sourceRead) WorkItem {
-	url := safeGitHubURL(pr.URL)
+	host := source.host
+	if host == "" {
+		host = defaultGitHubHost
+	}
+	url := canonicalItemURL(pr.URL, host)
+	if url == "" && host == defaultGitHubHost {
+		url = safeGitHubURL(pr.URL)
+	}
 	related := []string{}
 	for _, ref := range pr.ClosingIssuesReferences {
-		if value := safeGitHubURL(ref.URL); value != "" {
+		value := canonicalIssueURL(ref.URL, host)
+		if value == "" && host == defaultGitHubHost {
+			value = safeGitHubURL(ref.URL)
+		}
+		if value != "" {
 			related = append(related, value)
 		}
 	}
@@ -535,7 +574,13 @@ func mapPullRequest(repo string, pr rawPullRequest, source sourceRead) WorkItem 
 func mapProjectItem(value any, board projectTarget, index int, source sourceRead) WorkItem {
 	item, _ := value.(map[string]any)
 	content, _ := item["content"].(map[string]any)
-	url := safeGitHubURL(textValue(content["url"]))
+	contentURL := textValue(content["url"])
+	url := safeGitHubURL(contentURL)
+	if source.host != "" {
+		url = canonicalItemURL(contentURL, source.host)
+	} else if boardHost := projectURLHost(board.url); boardHost != "" {
+		url = canonicalItemURL(contentURL, boardHost)
+	}
 	number := intPointer(content["number"])
 	identity := urlOrFallback(url, textValue(item["id"]))
 	if identity == "" {
@@ -549,8 +594,79 @@ func mapProjectItem(value any, board projectTarget, index int, source sourceRead
 		title = "GitHub project item (content unavailable)"
 	}
 	state := textValue(content["state"])
-	github := &GitHubWork{Kind: "project_item", Number: number, URL: url, State: state, RelatedIssueURLs: []string{}, RelatedPullRequestURLs: []string{}, Checks: []GitHubCheck{}, Fields: projectFields(item), ContentAvailable: content != nil, ObservedAt: source.observedAtPtr(), Stale: source.stale}
-	return baseWork("project-item", board.owner+"/"+board.number+":"+identity, title, textValue(content["body"]), textValue(content["updatedAt"]), github, source)
+	kind, workKind, contentAvailable := projectContentKind(content, url)
+	github := &GitHubWork{Kind: kind, Number: number, URL: url, State: state, RelatedIssueURLs: []string{}, RelatedPullRequestURLs: []string{}, Checks: []GitHubCheck{}, Fields: projectFields(item), ContentAvailable: content != nil && contentAvailable, ObservedAt: source.observedAtPtr(), Stale: source.stale}
+	return baseWork(workKind, board.owner+"/"+board.number+":"+identity, title, textValue(content["body"]), textValue(content["updatedAt"]), github, source)
+}
+
+func projectURLHost(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return ""
+	}
+	return strings.ToLower(parsed.Host)
+}
+
+func canonicalItemURL(value, host string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "https" || strings.ToLower(parsed.Host) != strings.ToLower(host) || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) != 4 || !repoPattern.MatchString(parts[0]+"/"+parts[1]) {
+		return ""
+	}
+	number, err := strconv.Atoi(parts[3])
+	if err != nil || number <= 0 {
+		return ""
+	}
+	switch parts[2] {
+	case "issues":
+		return fmt.Sprintf("https://%s/%s/%s/issues/%d", host, parts[0], parts[1], number)
+	case "pull", "pulls":
+		return fmt.Sprintf("https://%s/%s/%s/pull/%d", host, parts[0], parts[1], number)
+	default:
+		return ""
+	}
+}
+
+func projectContentKind(content map[string]any, itemURL string) (string, string, bool) {
+	if content == nil {
+		return "project_item", "project-item", false
+	}
+	routeKind := ""
+	if parsed, err := url.Parse(itemURL); err == nil {
+		parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+		if len(parts) == 4 {
+			switch parts[2] {
+			case "issues":
+				routeKind = "issue"
+			case "pull":
+				routeKind = "pull_request"
+			}
+		}
+	}
+	typeKind := strings.ToLower(strings.TrimSpace(textValue(content["type"])))
+	if typeKind == "pullrequest" || typeKind == "pull_request" {
+		typeKind = "pull_request"
+	} else if typeKind == "issue" {
+		typeKind = "issue"
+	} else {
+		typeKind = ""
+	}
+	if typeKind != "" && routeKind == "" {
+		return "project_item", "project-item", false
+	}
+	if routeKind != "" && typeKind != "" && routeKind != typeKind {
+		return "project_item", "project-item", false
+	}
+	if routeKind == "pull_request" {
+		return routeKind, "pr", true
+	}
+	if routeKind == "issue" {
+		return routeKind, "issue", true
+	}
+	return "project_item", "project-item", true
 }
 
 func baseWork(kind, identity, title, body, updated string, github *GitHubWork, source sourceRead) WorkItem {

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -123,6 +125,7 @@ type herdrCall struct {
 
 type HerdrMonitor struct {
 	env          map[string]string
+	host         string
 	process      CommandRunner
 	distribution string
 	timeout      time.Duration
@@ -136,8 +139,13 @@ type HerdrMonitor struct {
 }
 
 func NewHerdrMonitor(env map[string]string, process CommandRunner, timeout time.Duration) *HerdrMonitor {
+	host, err := normalizeGitHubHost(env["THREADDOCK_GITHUB_HOST"])
+	if err != nil {
+		host = defaultGitHubHost
+	}
 	return &HerdrMonitor{
 		env:          cloneStringMap(env),
+		host:         host,
 		process:      process,
 		distribution: strings.TrimSpace(env["THREADDOCK_WSL_DISTRIBUTION"]),
 		timeout:      timeout,
@@ -192,7 +200,7 @@ func (m *HerdrMonitor) load(ctx context.Context) (HerdrSnapshot, error) {
 	if err != nil {
 		return m.statusSnapshot(now, "unverified", "setup_required", "needs_operator", "configure", []string{"Herdr 연결 파일을 읽지 못했습니다. WSL 경로와 권한을 확인하세요."}), nil
 	}
-	config, err := parseHerdrConfig(string(raw))
+	config, err := parseHerdrConfig(string(raw), m.host)
 	if err != nil {
 		return m.statusSnapshot(now, "unverified", "setup_required", "needs_operator", "configure", []string{err.Error()}), nil
 	}
@@ -467,7 +475,8 @@ func (m *HerdrMonitor) snapshot(now time.Time, snapshot HerdrSnapshot) HerdrSnap
 	return snapshot
 }
 
-func parseHerdrConfig(raw string) (parsedHerdrConfig, error) {
+func parseHerdrConfig(raw string, hosts ...string) (parsedHerdrConfig, error) {
+	host := herdrConfiguredHost(hosts...)
 	var value struct {
 		Version  int               `json:"version"`
 		Bindings []json.RawMessage `json:"bindings"`
@@ -485,7 +494,7 @@ func parseHerdrConfig(raw string) (parsedHerdrConfig, error) {
 		if err := json.Unmarshal(rawBinding, &input); err != nil || input == nil {
 			return parsedHerdrConfig{}, errors.New("각 Herdr binding은 객체여야 합니다.")
 		}
-		binding, err := parseHerdrBinding(input)
+		binding, err := parseHerdrBinding(input, host)
 		if err != nil {
 			return parsedHerdrConfig{}, err
 		}
@@ -498,8 +507,9 @@ func parseHerdrConfig(raw string) (parsedHerdrConfig, error) {
 	return config, nil
 }
 
-func parseHerdrBinding(value map[string]any) (herdrBinding, error) {
-	binding := herdrBinding{IssueURL: optionalString(value["issueUrl"]), ProjectURL: optionalString(value["projectUrl"]), Repository: optionalRepository(value["repository"]), Worktree: optionalString(value["worktree"]), Session: strings.TrimSpace(optionalString(value["session"])), WorkspaceID: optionalString(value["workspaceId"]), TabID: optionalString(value["tabId"]), PaneID: optionalString(value["paneId"]), AgentName: optionalString(value["agentName"]), Role: optionalString(value["role"])}
+func parseHerdrBinding(value map[string]any, hosts ...string) (herdrBinding, error) {
+	host := herdrConfiguredHost(hosts...)
+	binding := herdrBinding{IssueURL: optionalString(value["issueUrl"]), ProjectURL: optionalString(value["projectUrl"]), Repository: optionalRepository(value["repository"], host), Worktree: optionalString(value["worktree"]), Session: strings.TrimSpace(optionalString(value["session"])), WorkspaceID: optionalString(value["workspaceId"]), TabID: optionalString(value["tabId"]), PaneID: optionalString(value["paneId"]), AgentName: optionalString(value["agentName"]), Role: optionalString(value["role"])}
 	if !herdrSessionPattern.MatchString(binding.Session) || binding.Session == "." || binding.Session == ".." {
 		return herdrBinding{}, errors.New("Each binding requires an ASCII session name of 1-64 characters.")
 	}
@@ -507,15 +517,15 @@ func parseHerdrBinding(value map[string]any) (herdrBinding, error) {
 		return herdrBinding{}, errors.New("Each Herdr binding requires issueUrl, projectUrl, or repository.")
 	}
 	if value["repository"] != nil && binding.Repository == "" {
-		return herdrBinding{}, errors.New("repository must look like github.com/OWNER/REPO.")
+		return herdrBinding{}, fmt.Errorf("repository must look like %s/OWNER/REPO.", host)
 	}
-	if binding.IssueURL != "" && !isGitHubURL(binding.IssueURL) {
+	if binding.IssueURL != "" && !isHerdrIssueURL(binding.IssueURL, host) {
 		return herdrBinding{}, errors.New("issueUrl must be a complete GitHub URL.")
 	}
-	if binding.ProjectURL != "" && !isGitHubURL(binding.ProjectURL) {
+	if binding.ProjectURL != "" && !isHerdrProjectURL(binding.ProjectURL, host) {
 		return herdrBinding{}, errors.New("projectUrl must be a complete GitHub URL.")
 	}
-	if issueRepo := issueRepositoryKey(binding.IssueURL); issueRepo != "" && binding.Repository != "" && issueRepo != binding.Repository {
+	if issueRepo := issueRepositoryKey(binding.IssueURL, host); issueRepo != "" && binding.Repository != "" && !strings.EqualFold(issueRepo, binding.Repository) {
 		binding.Conflict = "issueUrl and repository refer to different repositories."
 	}
 	return binding, nil
@@ -737,29 +747,83 @@ func optionalString(value any) string {
 	}
 	return strings.TrimSpace(valueString)
 }
-func optionalRepository(value any) string {
+func herdrConfiguredHost(hosts ...string) string {
+	if len(hosts) > 0 {
+		if host, err := normalizeGitHubHost(hosts[0]); err == nil {
+			return host
+		}
+	}
+	return defaultGitHubHost
+}
+
+func herdrURLParts(value, host string) ([]string, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "https" || strings.ToLower(parsed.Host) != strings.ToLower(host) || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 2 || !repoPattern.MatchString(parts[0]+"/"+parts[1]) {
+		return nil, false
+	}
+	return parts, true
+}
+
+func herdrNumber(value string) bool {
+	number, err := strconv.Atoi(value)
+	return err == nil && number > 0
+}
+
+func isHerdrIssueURL(value, host string) bool {
+	parts, ok := herdrURLParts(value, host)
+	return isGitHubURL(value, host) && ok && len(parts) == 4 && parts[2] == "issues" && herdrNumber(parts[3])
+}
+
+func isHerdrProjectURL(value, host string) bool {
+	parts, ok := herdrURLParts(value, host)
+	return isGitHubURL(value, host) && ok && len(parts) == 4 && (parts[0] == "users" || parts[0] == "orgs") && parts[2] == "projects" && herdrNumber(parts[3])
+}
+
+func optionalRepository(value any, hosts ...string) string {
+	host := herdrConfiguredHost(hosts...)
 	candidate := strings.TrimSpace(optionalString(value))
-	candidate = strings.TrimPrefix(strings.TrimPrefix(candidate, "https://"), "http://")
-	candidate = strings.TrimPrefix(candidate, "github.com/")
-	candidate = strings.Trim(candidate, "/")
-	if strings.HasSuffix(candidate, ".git") {
-		candidate = strings.TrimSuffix(candidate, ".git")
-	}
-	parts := strings.Split(candidate, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if candidate == "" {
 		return ""
 	}
-	return "github.com/" + parts[0] + "/" + parts[1]
-}
-func isGitHubURL(value string) bool {
-	return strings.HasPrefix(value, "https://github.com/") && !strings.Contains(value, " ")
-}
-func issueRepositoryKey(value string) string {
-	parts := strings.Split(strings.Trim(strings.TrimPrefix(value, "https://github.com/"), "/"), "/")
-	if len(parts) < 2 {
+	if !strings.Contains(candidate, "://") {
+		parts := strings.Split(strings.Trim(candidate, "/"), "/")
+		if len(parts) == 2 {
+			parts[1] = strings.TrimSuffix(parts[1], ".git")
+		}
+		if len(parts) == 2 && repoPattern.MatchString(parts[0]+"/"+parts[1]) {
+			return host + "/" + parts[0] + "/" + parts[1]
+		}
+		candidate = "https://" + candidate
+	}
+	parsed, err := url.Parse(candidate)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || strings.ToLower(parsed.Host) != strings.ToLower(host) || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return ""
 	}
-	return "github.com/" + parts[0] + "/" + parts[1]
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) == 2 {
+		parts[1] = strings.TrimSuffix(parts[1], ".git")
+	}
+	if len(parts) != 2 || !repoPattern.MatchString(parts[0]+"/"+parts[1]) {
+		return ""
+	}
+	return host + "/" + parts[0] + "/" + parts[1]
+}
+
+func isGitHubURL(value string, hosts ...string) bool {
+	_, ok := herdrURLParts(value, herdrConfiguredHost(hosts...))
+	return ok
+}
+
+func issueRepositoryKey(value string, hosts ...string) string {
+	parts, ok := herdrURLParts(value, herdrConfiguredHost(hosts...))
+	if !ok {
+		return ""
+	}
+	return herdrConfiguredHost(hosts...) + "/" + parts[0] + "/" + parts[1]
 }
 func cloneStringMap(value map[string]string) map[string]string {
 	clone := make(map[string]string, len(value))
@@ -786,6 +850,17 @@ type combinedMonitor struct {
 	herdr    HerdrSnapshotSource
 	mu       sync.Mutex
 	inFlight *combinedCall
+}
+
+func (m *combinedMonitor) GetPullRequestDetail(ctx context.Context, rawURL string) (PullRequestDetail, error) {
+	if m == nil || m.github == nil {
+		return PullRequestDetail{}, errors.New("pull request detail source is unavailable")
+	}
+	source, ok := m.github.(PullRequestDetailSource)
+	if !ok || source == nil {
+		return PullRequestDetail{}, errors.New("pull request detail source is unavailable")
+	}
+	return source.GetPullRequestDetail(ctx, rawURL)
 }
 
 type combinedCall struct {

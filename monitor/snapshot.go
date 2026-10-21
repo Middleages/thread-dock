@@ -12,6 +12,13 @@ type SnapshotSource interface {
 	FetchAll(context.Context) (Snapshot, error)
 }
 
+// PullRequestDetailSource is the narrow read-only seam for a selected PR.
+// It deliberately lives beside SnapshotSource so the UI can request one
+// detail without changing the aggregate snapshot contract.
+type PullRequestDetailSource interface {
+	GetPullRequestDetail(context.Context, string) (PullRequestDetail, error)
+}
+
 // CommandRunner is the process seam used by the GitHub adapter and later
 // read-only sources. Implementations must preserve argument boundaries.
 type CommandRunner interface {
@@ -112,4 +119,10 @@ type GitHubWork struct {
 	Author                 string            `json:"author,omitempty"`
 	ObservedAt             *time.Time        `json:"observedAt,omitempty"`
 	Stale                  bool              `json:"stale,omitempty"`
+}
+
+type PullRequestDetail struct {
+	URL    string      `json:"url"`
+	GitHub *GitHubWork `json:"github,omitempty"`
+	Notice string      `json:"notice,omitempty"`
 }

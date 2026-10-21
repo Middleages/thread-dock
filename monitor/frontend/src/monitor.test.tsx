@@ -114,6 +114,108 @@ describe('monitor list and detail', () => {
     expect(screen.getByRole('link', { name: 'Wiki' })).toHaveAttribute('href', 'https://github.com/acme/app/wiki')
   })
 
+  it('loads selected PR detail and feeds related sessions to both summary and copy', async () => {
+    const pr = { ...project().workItems[0], workId: 'pr:7', title: 'Review PR', links: [{ kind: 'pull_request', label: 'Pull request', url: 'https://ghe.example:8443/acme/app/pull/7' }], github: { kind: 'pull_request', number: 7, url: 'https://ghe.example:8443/acme/app/pull/7', state: 'OPEN', checks: [], fields: {}, contentAvailable: true } }
+    const related = 'https://ghe.example:8443/acme/app/issues/2'
+    const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'fresh', syncStatus: 'synced', freshness: { state: 'fresh', syncStatus: 'synced' }, notices: [], sessions: [], connections: [{ issueUrl: related, repository: 'ghe.example:8443/acme/app', session: 'feature-pr', role: 'feature', status: 'connected', agentStatus: 'working', nextAction: 'observe', handoff: 'PR session' }], unconnectedAgents: [] }
+    const detail = vi.fn(async () => ({ url: 'https://ghe.example:8443/acme/app/pull/7', github: { kind: 'pull_request' as const, number: 7, url: 'https://ghe.example:8443/acme/app/pull/7', state: 'OPEN', relatedIssueUrls: [related], checks: [], fields: {}, contentAvailable: true } }))
+    ;(window as Window & { go?: unknown }).go = { main: { App: { GetPullRequestDetail: detail } } }
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    render(<App snapshotSource={vi.fn(async () => snapshot([project({ workItems: [pr] })], { herdr }))} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(detail).toHaveBeenCalledWith('https://ghe.example:8443/acme/app/pull/7')
+    fireEvent.click(screen.getByRole('button', { name: '자세히' }))
+    expect(screen.getAllByText('feature-pr').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole('button', { name: '작업 정보 복사' }))
+    await act(async () => { await Promise.resolve() })
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('feature-pr'))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(related))
+  })
+
+  it('keeps the base Project PR visible when selected detail is unavailable', async () => {
+    const pr = { ...project().workItems[0], workId: 'pr:8', title: 'Project PR', github: { kind: 'pull_request', number: 8, url: 'https://github.com/acme/app/pull/8', state: 'OPEN', fields: { Status: 'In progress' }, checks: [], contentAvailable: true } }
+    const detail = vi.fn(async () => ({ url: 'https://github.com/acme/app/pull/8', notice: 'Pull request 조회 실패: GitHub 연결과 권한을 확인하세요.' }))
+    ;(window as Window & { go?: unknown }).go = { main: { App: { GetPullRequestDetail: detail } } }
+    render(<App snapshotSource={vi.fn(async () => snapshot([project({ workItems: [pr] })]))} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByText('Project PR')).toBeInTheDocument()
+    expect(screen.getByText(/Pull request 조회 실패/)).toBeInTheDocument()
+    expect(screen.getByText('In progress')).toBeInTheDocument()
+  })
+
+  it('discards late detail after selection changes and intentionally refetches after manual refresh', async () => {
+    const first = { ...project().workItems[0], workId: 'pr:first', title: 'First PR', github: { kind: 'pull_request', number: 1, url: 'https://github.com/acme/app/pull/1', state: 'OPEN', checks: [], fields: {}, contentAvailable: true } }
+    const second = { ...first, workId: 'pr:second', title: 'Second PR', github: { ...first.github, number: 2, url: 'https://github.com/acme/app/pull/2' } }
+    const source = vi.fn(async () => snapshot([project({ workItems: [first, second] })], { source: 'github' }))
+    const pending: Array<{ url: string; resolve: (value: any) => void }> = []
+    const detail = vi.fn((url: string) => new Promise((resolve) => pending.push({ url, resolve })))
+    ;(window as Window & { go?: unknown }).go = { main: { App: { GetPullRequestDetail: detail } } }
+    render(<App snapshotSource={source} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(detail).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: /#2.*Second PR/ }))
+    await act(async () => { await Promise.resolve() })
+    expect(detail).toHaveBeenCalledTimes(2)
+    pending[0].resolve({ url: pending[0].url, github: { kind: 'pull_request', number: 1, url: pending[0].url, relatedIssueUrls: ['https://github.com/acme/app/issues/late'], checks: [], fields: {} } })
+    pending[1].resolve({ url: pending[1].url, github: { kind: 'pull_request', number: 2, url: pending[1].url, relatedIssueUrls: ['https://github.com/acme/app/issues/current'], checks: [], fields: {} } })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getAllByText('Second PR').length).toBeGreaterThan(0)
+    expect(screen.queryByText('https://github.com/acme/app/issues/late')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'GitHub 새로고침' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(source).toHaveBeenCalledTimes(2)
+    expect(detail).toHaveBeenCalledTimes(3)
+  })
+
+  it('clears the old snapshot and drops late detail when settings are saved', async () => {
+    const oldPR = { ...project().workItems[0], workId: 'pr:old', title: 'Old settings PR', github: { kind: 'pull_request' as const, number: 7, url: 'https://github.com/acme/app/pull/7', state: 'OPEN', checks: [], fields: {}, contentAvailable: true } }
+    const newPR = { ...oldPR, workId: 'pr:new', title: 'New settings PR', github: { ...oldPR.github, number: 8, url: 'https://github.com/acme/app/pull/8' } }
+    let resolveNext!: (value: Snapshot) => void
+    const source = vi.fn()
+      .mockResolvedValueOnce(snapshot([project({ workItems: [oldPR] })]))
+      .mockReturnValueOnce(new Promise<Snapshot>((resolve) => { resolveNext = resolve }))
+    const pending: Array<{ url: string; resolve: (value: any) => void }> = []
+    const detail = vi.fn((url: string) => new Promise((resolve) => pending.push({ url, resolve })))
+    ;(window as Window & { go?: unknown }).go = { main: { App: { GetPullRequestDetail: detail } } }
+    const view = render(<App snapshotSource={source} settingsEpoch={0} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByText('Old settings PR')).toBeInTheDocument()
+    expect(detail).toHaveBeenCalledTimes(1)
+
+    view.rerender(<App snapshotSource={source} settingsEpoch={1} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByText('Old settings PR')).not.toBeInTheDocument()
+    expect(screen.getByText('프로젝트 현황을 불러오는 중입니다.')).toBeInTheDocument()
+    for (const request of pending) request.resolve({ url: request.url, github: { kind: 'pull_request', number: 7, url: request.url, relatedIssueUrls: ['https://github.com/acme/app/issues/late-settings'], checks: [], fields: {} } })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByRole('link', { name: 'Issue' })).not.toBeInTheDocument()
+
+    await act(async () => { resolveNext(snapshot([project({ workItems: [newPR] })])); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByText('New settings PR')).toBeInTheDocument()
+  })
+
+  it('renews selected PR detail when a later snapshot has a new GitHub observation', async () => {
+    const oldURL = 'https://github.com/acme/app/pull/7'
+    const oldPR = { ...project().workItems[0], workId: 'pr:observed', title: 'Observed PR', github: { kind: 'pull_request' as const, number: 7, url: oldURL, state: 'OPEN', observedAt: '2026-09-07T01:00:00Z', relatedIssueUrls: [], checks: [], fields: {}, contentAvailable: true } }
+    const newPR = { ...oldPR, github: { ...oldPR.github, observedAt: '2026-09-07T01:05:00Z' } }
+    let current = snapshot([project({ workItems: [oldPR] })])
+    const source = vi.fn(async () => current)
+    const detail = vi.fn()
+      .mockResolvedValueOnce({ url: oldURL, github: { ...oldPR.github, relatedIssueUrls: ['https://github.com/acme/app/issues/old'] } })
+      .mockResolvedValueOnce({ url: oldURL, github: { ...oldPR.github, relatedIssueUrls: ['https://github.com/acme/app/issues/new'] } })
+    ;(window as Window & { go?: unknown }).go = { main: { App: { GetPullRequestDetail: detail } } }
+    render(<App snapshotSource={source} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(detail).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('link', { name: 'Issue' })).toHaveAttribute('href', 'https://github.com/acme/app/issues/old')
+
+    current = snapshot([project({ workItems: [newPR] })], { revision: 4 })
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(detail).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('link', { name: 'Issue' })).toHaveAttribute('href', 'https://github.com/acme/app/issues/new')
+  })
+
   it('shows the selected work Herdr connection with location guidance and includes it in copied work info', async () => {
     const herdr = { source: 'herdr', schemaVersion: 1, revision: 1, observedAt: '2026-09-10T01:00:00Z', status: 'fresh', syncStatus: 'synced', freshness: { state: 'fresh', syncStatus: 'synced' }, notices: [], sessions: [{ session: 'feature-a', status: 'fresh', observedAt: '2026-09-10T01:00:00Z', agents: [{ name: 'Luna', agent_status: 'working', workspace_id: 'w1', tab_id: 't1', pane_id: 'p1', cwd: '/repo/src' }] }], connections: [{ issueUrl: 'https://github.com/acme/app/issues/1', repository: 'github.com/acme/app', session: 'feature-a', workspaceId: 'w1', tabId: 't1', paneId: 'p1', agentName: 'Luna', status: 'connected', agentStatus: 'working', observedAt: '2026-09-10T01:00:00Z', nextAction: 'observe', handoff: '세션 feature-a · workspace w1 · pane p1 · cwd /repo/src · 관찰 상태 working · 다음 행동: observe', location: { session: 'feature-a', workspaceId: 'w1', tabId: 't1', paneId: 'p1', agentName: 'Luna', cwd: '/repo/src' } }], unconnectedAgents: [{ session: 'feature-a', name: 'Reviewer', agent_status: 'idle', pane_id: 'p2' }] }
     const writeText = vi.fn(async () => undefined)

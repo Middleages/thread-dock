@@ -28,8 +28,9 @@ function buildHandoffText(work?: WorkItem, herdrConnections: HerdrConnection[] =
   if (!work) return ''
   const handoff = work.handoffs?.[0]
   const links = work.links?.filter((link) => isSafeExternalURL(link.url)).map((link) => `${link.label}: ${link.url}`) ?? []
+  const related = work.github?.relatedIssueUrls?.filter(isSafeExternalURL).map((url) => `관련 Issue: ${url}`) ?? []
   const nextAction = work.nextAction && work.nextAction !== 'review' ? `다음 행동: ${labelFor(work.nextAction)}` : ''
-  return [`업무: ${work.title}`, nextAction, handoff ? `handoff: ${handoff.summary}` : '', ...work.evidenceRefs.map((ref) => `근거: ${ref}`), ...links, ...herdrConnections.map((connection) => `Herdr: ${connection.handoff}`)].filter(Boolean).join('\n')
+  return [`업무: ${work.title}`, nextAction, handoff ? `handoff: ${handoff.summary}` : '', ...work.evidenceRefs.map((ref) => `근거: ${ref}`), ...links, ...related, ...herdrConnections.map((connection) => `Herdr: ${connection.session} · ${connection.handoff}`)].filter(Boolean).join('\n')
 }
 
 function GithubEvidence({ work }: { work: WorkItem }) {
@@ -59,10 +60,10 @@ function EvidenceList({ work, project }: { work: WorkItem; project: Project }) {
   </div>
 }
 
-export function ProjectDetail({ project, selectedWorkId, herdr, projectTodoCount, onSelectWork, onOpenProjectTodos, onStatus }: { project: Project; selectedWorkId: string | null; herdr?: HerdrSnapshot; projectTodoCount: number | null; onSelectWork: (id: string) => void; onOpenProjectTodos: (projectKey: string) => void; onStatus: (message: string) => void }) {
+export function ProjectDetail({ project, selectedWorkId, resolvedWork, detailLoading = false, detailNotice = '', herdr, projectTodoCount, onSelectWork, onOpenProjectTodos, onStatus }: { project: Project; selectedWorkId: string | null; resolvedWork?: WorkItem; detailLoading?: boolean; detailNotice?: string; herdr?: HerdrSnapshot; projectTodoCount: number | null; onSelectWork: (id: string) => void; onOpenProjectTodos: (projectKey: string) => void; onStatus: (message: string) => void }) {
   const [tab, setTab] = useState<'work' | 'references'>('work')
   useEffect(() => setTab('work'), [project.projectId])
-  const work = project.workItems.find((item) => item.workId === selectedWorkId) ?? project.workItems[0]
+  const work = resolvedWork ?? project.workItems.find((item) => item.workId === selectedWorkId) ?? project.workItems[0]
   const workURL = work?.links?.find((link) => isSafeExternalURL(link.url))
   const identity = work?.github?.number ? `${work.github.kind === 'pull_request' ? 'PR' : work.github.kind === 'issue' ? 'Issue' : 'Project'} #${work.github.number}` : work ? '작업 선택됨' : '작업 없음'
   const copyHandoff = async () => {
@@ -79,6 +80,9 @@ export function ProjectDetail({ project, selectedWorkId, herdr, projectTodoCount
   return <section className="detail" aria-labelledby="detail-title">
     <div className="detail-heading"><div><h2 id="detail-title">{project.name}</h2><p>최근 동기화 {dateFor(project.updatedAt)} · {labelFor(project.syncStatus)}</p><p className="work-identity">{identity}</p></div>{work && <span className="state-badge"><StatusMark value={work.state} />{labelFor(work.state)}</span>}</div>
     {project.notices && project.notices.length > 0 && <div className="project-notices">{project.notices.map((notice, index) => <p key={`${notice}-${index}`}>{notice}</p>)}</div>}
+    {detailLoading && <p className="project-notices" role="status">선택한 PR 상세를 불러오는 중입니다.</p>}
+    {!detailLoading && detailNotice && <p className="project-notices" role="status">{detailNotice}</p>}
+    {!detailLoading && work?.github?.kind === 'pull_request' && work.github.stale && <p className="project-notices" role="status">선택한 PR은 마지막으로 확인한 캐시를 표시하고 있습니다.</p>}
     <div className="detail-actions"><button type="button" className="primary-action" onClick={() => void copyHandoff()}>작업 정보 복사</button>{workURL && <button type="button" className="secondary-action" onClick={() => openExternalURL(workURL.url)}>GitHub에서 보기</button>}<button type="button" className="todo-shortcut" aria-label="할 일 보기" onClick={() => onOpenProjectTodos(toolboxKeyFor(project))}>{projectTodoCount === null ? <span>할 일 보기</span> : <><strong>할 일 {projectTodoCount}개</strong><span> · 보기</span></>}</button></div>
     <div className="project-detail-tabs" role="tablist" aria-label="프로젝트 상세 보기">
       <button type="button" role="tab" aria-selected={tab === 'work'} onClick={() => setTab('work')}>업무</button>

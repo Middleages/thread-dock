@@ -190,6 +190,17 @@ type githubDiagnosticSource struct {
 	collector *githubCommandDiagnosticCollector
 }
 
+func (s *githubDiagnosticSource) GetPullRequestDetail(ctx context.Context, rawURL string) (PullRequestDetail, error) {
+	if s == nil || s.inner == nil {
+		return PullRequestDetail{}, errors.New("github diagnostic detail source is unavailable")
+	}
+	source, ok := s.inner.(PullRequestDetailSource)
+	if !ok || source == nil {
+		return PullRequestDetail{}, errors.New("github detail source is unavailable")
+	}
+	return source.GetPullRequestDetail(ctx, rawURL)
+}
+
 func (s *githubDiagnosticSource) FetchAll(ctx context.Context) (Snapshot, error) {
 	if s == nil || s.inner == nil {
 		return Snapshot{}, errors.New("github diagnostic source is unavailable")
@@ -205,6 +216,13 @@ func (s *githubDiagnosticSource) FetchAll(ctx context.Context) (Snapshot, error)
 
 type concurrentGitHubSource struct {
 	monitor *GitHubMonitor
+}
+
+func (s *concurrentGitHubSource) GetPullRequestDetail(ctx context.Context, rawURL string) (PullRequestDetail, error) {
+	if s == nil || s.monitor == nil {
+		return PullRequestDetail{}, errors.New("concurrent GitHub detail source is unavailable")
+	}
+	return s.monitor.GetPullRequestDetail(ctx, rawURL)
 }
 
 func (s *concurrentGitHubSource) FetchAll(ctx context.Context) (Snapshot, error) {

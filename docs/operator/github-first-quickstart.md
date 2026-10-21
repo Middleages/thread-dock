@@ -174,6 +174,10 @@ GitHub.com이면 Host는 `github.com`이다. GitHub Enterprise Server는 `https:
 gh auth status --hostname github.samsungds.net
 ```
 
+Monitor에서 PR을 선택하면 GitHub가 반환한 관련 Issue의 명시적인 Feature Leader 연결을 찾는다. 저장소 목록 없이 Projects만 설정한 경우에도 선택한 PR 하나의 상세를 조회한다. 관련 Issue 연결이 없으면 Project, 저장소 Coordinator 순서로 안내하며, 같은 연결 정보를 실행 상태와 `작업 정보 복사`에 사용한다.
+
+상세 조회 실패와 오래된 캐시는 선택한 PR에 별도로 표시한다. `GitHub 새로고침`으로 상세도 다시 확인할 수 있으며, 조회 결과와 실패 안내는 최대 60초 동안 재사용한다. 연결을 복구한 직후에는 이 시간이 지나야 실제 GitHub 재조회가 이루어질 수 있다. 조회 실패가 기본 업무 목록이나 Herdr 관찰을 지우지는 않는다. 본문에 적힌 임의의 링크나 이름으로 기능 세션을 추측하지 않는다.
+
 ## 5. 프로젝트 Coordinator 시작
 
 대상 저장소를 연 Herdr pane에서 `td_coordinator`를 사용한다. 시작 프롬프트는 길게 쓰지 않는다.

@@ -22,6 +22,11 @@ export type GithubWork = {
   observedAt?: string
   stale?: boolean
 }
+export type PullRequestDetail = {
+  url: string
+  github?: GithubWork
+  notice?: string
+}
 export type TaskDetail = {
   taskId: string
   repoKey: string

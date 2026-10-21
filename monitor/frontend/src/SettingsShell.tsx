@@ -21,6 +21,7 @@ export function SettingsShell() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [settingsEpoch, setSettingsEpoch] = useState(0)
 
   const close = useCallback(() => {
     if (saving) return
@@ -80,6 +81,7 @@ export function SettingsShell() {
         repositories: listForEditor(saved.repositories),
         projects: listForEditor(saved.projects),
       })
+      setSettingsEpoch((value) => value + 1)
       setMessage('저장했습니다. Monitor가 새 설정으로 다시 연결됩니다.')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '설정을 저장하지 못했습니다.')
@@ -89,7 +91,7 @@ export function SettingsShell() {
   }
 
   return <>
-    <App onOpenSettings={() => void showSettings()} />
+    <App settingsEpoch={settingsEpoch} onOpenSettings={() => void showSettings()} />
     {open && <div className="settings-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) close() }}>
       <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <header className="settings-header">

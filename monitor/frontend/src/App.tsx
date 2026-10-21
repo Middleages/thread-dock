@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Project, Snapshot, SnapshotSource } from './types'
-import { getGlobalToolbox, getMonitorSnapshot, getMonitorSnapshotAll, saveGlobalToolbox, type GlobalToolbox } from './bindings'
+import type { Project, PullRequestDetail, Snapshot, SnapshotSource, WorkItem } from './types'
+import { getGlobalToolbox, getMonitorSnapshot, getMonitorSnapshotAll, getPullRequestDetail, saveGlobalToolbox, type GlobalToolbox } from './bindings'
 import { GlobalToolboxDrawer } from './GlobalToolboxDrawer'
 import { HerdrSummary } from './HerdrSummary'
 import { ProjectDetail } from './ProjectDetail'
@@ -45,7 +45,7 @@ type WorkScope = 'open' | 'all'
 const degradedConnectionStates = new Set(['stale', 'offline', 'degraded', 'setup_required', 'unverified', 'unknown', 'failed'])
 const hasDegradedConnectionState = (...states: Array<string | undefined>) => states.some((state) => state !== undefined && degradedConnectionStates.has(state))
 
-export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = getMonitorSnapshotAll, pollIntervalMs = 4000, onOpenSettings = () => undefined }: { snapshotSource?: SnapshotSource; allSnapshotSource?: SnapshotSource; pollIntervalMs?: number; onOpenSettings?: () => void }) {
+export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = getMonitorSnapshotAll, pollIntervalMs = 4000, onOpenSettings = () => undefined, settingsEpoch = 0 }: { snapshotSource?: SnapshotSource; allSnapshotSource?: SnapshotSource; pollIntervalMs?: number; onOpenSettings?: () => void; settingsEpoch?: number }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
@@ -54,7 +54,9 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
   const [statusMessage, setStatusMessage] = useState('')
   const [workScope, setWorkScope] = useState<WorkScope>('open')
   const [manualRefreshing, setManualRefreshing] = useState(false)
+  const [detailRefreshToken, setDetailRefreshToken] = useState(0)
   const inFlight = useRef(false)
+  const refreshRevision = useRef(0)
   const [toolbox, setToolbox] = useState<GlobalToolbox | null>(null)
   const [toolboxOpen, setToolboxOpen] = useState(false)
   const [toolboxProjectFilter, setToolboxProjectFilter] = useState<string | undefined>()
@@ -66,25 +68,32 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
   const toolboxSaveInFlight = useRef(false)
   const toolboxOperationRevision = useRef(0)
 
-  const refresh = useCallback(async (manual = false) => {
-    if (inFlight.current) return
+  const refresh = useCallback(async (manual = false, force = false) => {
+    if (inFlight.current && !force) return
+    const revision = ++refreshRevision.current
     inFlight.current = true
     if (manual) setManualRefreshing(true)
+    if (force) setManualRefreshing(false)
     try {
       const next = await (workScope === 'all' ? allSnapshotSource : snapshotSource)()
+      if (revision !== refreshRevision.current) return
       setSnapshot(next)
       setError(null)
+      if (manual) setDetailRefreshToken((value) => value + 1)
       setSelectedProjectId((current) => {
         const selectedProject = next.projects.find((project) => project.projectId === current) ?? sortProjects(next.projects)[0]
         setSelectedWorkId((workId) => selectedProject?.workItems.some((work) => work.workId === workId) ? workId : selectedProject?.workItems[0]?.workId ?? null)
         return selectedProject?.projectId ?? null
       })
     } catch (cause) {
+      if (revision !== refreshRevision.current) return
       setError(cause instanceof Error ? cause : new Error('unknown monitor error'))
     } finally {
-      if (manual) setManualRefreshing(false)
-      setLoading(false)
-      inFlight.current = false
+      if (revision === refreshRevision.current) {
+        if (manual) setManualRefreshing(false)
+        setLoading(false)
+        inFlight.current = false
+      }
     }
   }, [allSnapshotSource, snapshotSource, workScope])
 
@@ -135,6 +144,53 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
 
   const projects = useMemo(() => sortProjects(snapshot?.projects ?? []), [snapshot])
   const selected = projects.find((project) => project.projectId === selectedProjectId)
+  const selectedWork = selected?.workItems.find((work) => work.workId === selectedWorkId) ?? selected?.workItems[0]
+  const detailURL = selectedWork?.github?.kind === 'pull_request' ? selectedWork.github.url : undefined
+  const detailObservation = selectedWork?.github?.observedAt ?? selectedWork?.updatedAt
+  const [pullRequestDetail, setPullRequestDetail] = useState<PullRequestDetail | null>(null)
+  const [pullRequestDetailLoading, setPullRequestDetailLoading] = useState(false)
+  const [pullRequestDetailNotice, setPullRequestDetailNotice] = useState('')
+  const detailRequestRevision = useRef(0)
+
+  useEffect(() => {
+    if (settingsEpoch === 0) return
+    setSnapshot(null)
+    setSelectedProjectId(null)
+    setSelectedWorkId(null)
+    setPullRequestDetail(null)
+    setPullRequestDetailNotice('')
+    setPullRequestDetailLoading(false)
+    setError(null)
+    setLoading(true)
+    void refresh(false, true)
+  }, [refresh, settingsEpoch])
+
+  useEffect(() => {
+    const revision = ++detailRequestRevision.current
+    setPullRequestDetail(null)
+    setPullRequestDetailNotice('')
+    if (!detailURL) {
+      setPullRequestDetailLoading(false)
+      return
+    }
+    setPullRequestDetailLoading(true)
+    void getPullRequestDetail(detailURL).then((detail) => {
+      if (revision !== detailRequestRevision.current) return
+      setPullRequestDetail(detail)
+      setPullRequestDetailNotice(detail.notice ?? '')
+    }).catch((cause) => {
+      if (revision !== detailRequestRevision.current) return
+      setPullRequestDetailNotice(cause instanceof Error ? cause.message : '선택한 PR 상세를 확인하지 못했습니다.')
+    }).finally(() => {
+      if (revision === detailRequestRevision.current) setPullRequestDetailLoading(false)
+    })
+    return () => { detailRequestRevision.current += 1 }
+  }, [detailURL, detailObservation, settingsEpoch, detailRefreshToken])
+
+  const resolvedWork = useMemo<WorkItem | undefined>(() => {
+    if (!selectedWork || !pullRequestDetail || pullRequestDetail.url !== detailURL || !pullRequestDetail.github || !selectedWork.github) return selectedWork
+    return { ...selectedWork, github: { ...selectedWork.github, ...pullRequestDetail.github, fields: { ...selectedWork.github.fields, ...pullRequestDetail.github.fields } } }
+  }, [detailURL, pullRequestDetail, selectedWork])
   const isGithub = snapshot?.source === 'github'
   const isDegraded = snapshot?.freshness.state === 'stale' || snapshot?.syncStatus === 'offline' || snapshot?.syncStatus === 'degraded' || snapshot?.syncStatus === 'setup_required'
   const isHerdrDegraded = snapshot?.herdr ? hasDegradedConnectionState(snapshot.herdr.status, snapshot.herdr.state, snapshot.herdr.syncStatus, snapshot.herdr.freshness.state, snapshot.herdr.freshness.syncStatus) : false
@@ -151,7 +207,7 @@ export function App({ snapshotSource = getMonitorSnapshot, allSnapshotSource = g
         {isDegraded && <div className="degraded-banner" role="status"><strong>{isGithub ? 'GitHub 조회 결과 일부가 오래되었습니다.' : '오래된 상태를 표시하고 있습니다.'}</strong><span><strong>{isGithub ? 'GitHub 연결 확인 필요' : 'WSL 연결 오프라인'}</strong> · 마지막 관찰 {dateFor(snapshot.observedAt)}{snapshot.freshness.lastSyncedAt ? ` · 마지막 성공 ${dateFor(snapshot.freshness.lastSyncedAt)}` : ''}</span></div>}
         {snapshot.notices && snapshot.notices.length > 0 && <section className="monitor-notices" aria-label="GitHub Monitor 안내">{snapshot.notices.map((notice, index) => <p key={`${notice}-${index}`}>{notice}</p>)}</section>}
         <div className="monitor-toolbar">{isGithub && <><div className="work-scope" aria-label="업무 조회 범위"><button type="button" className={`scope-action${workScope === 'open' ? ' active' : ''}`} aria-pressed={workScope === 'open'} onClick={() => setWorkScope('open')}>열린 항목</button><button type="button" className={`scope-action${workScope === 'all' ? ' active' : ''}`} aria-pressed={workScope === 'all'} onClick={() => setWorkScope('all')}>전체 보기</button></div><button type="button" className="secondary-action refresh-action" disabled={manualRefreshing} onClick={() => void refresh(true)}>{manualRefreshing ? '새로고침 중...' : 'GitHub 새로고침'}</button></>}</div>
-        {projects.length === 0 ? <section className="state-panel empty-state"><h1>{isGithub && snapshot.syncStatus === 'setup_required' ? 'GitHub Monitor 설정이 필요합니다.' : '표시할 프로젝트가 없습니다.'}</h1><p>{isGithub ? 'Windows Wails Monitor 설정에서 저장소·Projects URL·WSL 배포판을 지정하면 Issue, PR, Project 정보를 표시합니다.' : 'Windows Wails Monitor가 관찰 결과를 반환하면 이곳에 프로젝트와 작업이 표시됩니다.'}</p>{isGithub && <button type="button" className="secondary-action" onClick={() => void refresh(true)}>다시 확인</button>}</section> : <><ProjectList projects={projects} selected={selectedProjectId} onSelect={(id) => { setSelectedProjectId(id); setSelectedWorkId(projects.find((project) => project.projectId === id)?.workItems[0]?.workId ?? null) }} />{selected && <ProjectDetail project={selected} selectedWorkId={selectedWorkId} herdr={snapshot.herdr} projectTodoCount={projectTodoCount} onSelectWork={setSelectedWorkId} onOpenProjectTodos={openProjectTodos} onStatus={setStatusMessage} />}</>}
+        {projects.length === 0 ? <section className="state-panel empty-state"><h1>{isGithub && snapshot.syncStatus === 'setup_required' ? 'GitHub Monitor 설정이 필요합니다.' : '표시할 프로젝트가 없습니다.'}</h1><p>{isGithub ? 'Windows Wails Monitor 설정에서 저장소·Projects URL·WSL 배포판을 지정하면 Issue, PR, Project 정보를 표시합니다.' : 'Windows Wails Monitor가 관찰 결과를 반환하면 이곳에 프로젝트와 작업이 표시됩니다.'}</p>{isGithub && <button type="button" className="secondary-action" onClick={() => void refresh(true)}>다시 확인</button>}</section> : <><ProjectList projects={projects} selected={selectedProjectId} onSelect={(id) => { setSelectedProjectId(id); setSelectedWorkId(projects.find((project) => project.projectId === id)?.workItems[0]?.workId ?? null) }} />{selected && <ProjectDetail project={selected} selectedWorkId={selectedWorkId} resolvedWork={resolvedWork} detailLoading={pullRequestDetailLoading} detailNotice={pullRequestDetailNotice} herdr={snapshot.herdr} projectTodoCount={projectTodoCount} onSelectWork={setSelectedWorkId} onOpenProjectTodos={openProjectTodos} onStatus={setStatusMessage} />}</>}
         {snapshot.herdr && !selected && <HerdrSummary herdr={snapshot.herdr} />}
       </>}
     </main>

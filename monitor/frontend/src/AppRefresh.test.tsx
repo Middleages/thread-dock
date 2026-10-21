@@ -58,6 +58,28 @@ describe('manual refresh state', () => {
     expect(screen.getByRole('button', { name: 'GitHub 새로고침' })).toBeEnabled()
   })
 
+  it('restores the refresh button when settings supersede an in-flight manual refresh', async () => {
+    let resolveManual!: (value: Snapshot) => void
+    let resolveSettings!: (value: Snapshot) => void
+    const source = vi.fn()
+      .mockResolvedValueOnce(healthySnapshot())
+      .mockImplementationOnce(() => new Promise<Snapshot>((resolve) => { resolveManual = resolve }))
+      .mockImplementationOnce(() => new Promise<Snapshot>((resolve) => { resolveSettings = resolve }))
+    ;(window as Window & { go?: unknown }).go = { main: { App: { GetGlobalToolbox: vi.fn(async () => ({ commands: [], todos: [] })) } } }
+
+    const view = render(<App snapshotSource={source} settingsEpoch={0} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'GitHub 새로고침' }))
+    expect(screen.getByRole('button', { name: '새로고침 중...' })).toBeDisabled()
+
+    view.rerender(<App snapshotSource={source} settingsEpoch={1} pollIntervalMs={60_000} />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    await act(async () => { resolveSettings(healthySnapshot()); await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByRole('button', { name: 'GitHub 새로고침' })).toBeEnabled()
+    await act(async () => { resolveManual(healthySnapshot()); await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByRole('button', { name: 'GitHub 새로고침' })).toBeEnabled()
+  })
+
   it('keeps Herdr healthy when only GitHub is degraded', async () => {
     const snapshot = healthySnapshot()
     snapshot.freshness = { state: 'stale', syncStatus: 'degraded' }

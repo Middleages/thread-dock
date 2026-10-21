@@ -29,12 +29,38 @@ function repositoryFor(url?: string) {
   try {
     const parsed = new URL(url)
     const parts = parsed.pathname.split('/').filter(Boolean)
-    return parsed.protocol === 'https:' && parsed.hostname && parts.length >= 2 ? `${parsed.hostname}/${parts[0]}/${parts[1]}` : undefined
+    return parsed.protocol === 'https:' && parsed.host && !parsed.username && !parsed.password && !parsed.search && !parsed.hash && parts.length >= 2 ? `${parsed.host.toLowerCase()}/${parts[0].toLowerCase()}/${parts[1].toLowerCase()}` : undefined
   } catch { return undefined }
+}
+
+function repositoryKey(value?: string) {
+  if (!value?.trim()) return ''
+  try {
+    const parsed = new URL(/^https:\/\//i.test(value) ? value : `https://${value}`)
+    const parts = parsed.pathname.split('/').filter(Boolean)
+    return parsed.protocol === 'https:' && parsed.host && !parsed.username && !parsed.password && !parsed.search && !parsed.hash && parts.length === 2 ? `${parsed.host.toLowerCase()}/${parts[0].toLowerCase()}/${parts[1].toLowerCase()}` : ''
+  } catch { return '' }
 }
 
 function primaryWorkURL(work: WorkItem) {
   return work.github?.url ?? work.links?.find((link) => ['github', 'issue', 'pull_request', 'project_item'].includes(link.kind))?.url
+}
+
+function locatorKey(value?: string) {
+  if (!value) return ''
+  try {
+    const parsed = new URL(value)
+    if (parsed.protocol !== 'https:' || !parsed.host || parsed.username || parsed.password || parsed.search || parsed.hash) return ''
+    const parts = parsed.pathname.split('/').filter(Boolean)
+    if (parts.length !== 4 || !/^\d+$/.test(parts[3]) || Number(parts[3]) <= 0) return ''
+    const route = parts[2].toLowerCase() === 'pulls' ? 'pull' : parts[2].toLowerCase()
+    if (route === 'projects') {
+      if (!['users', 'orgs'].includes(parts[0].toLowerCase())) return ''
+    } else if (!['issues', 'pull'].includes(route)) {
+      return ''
+    }
+    return `${parsed.protocol}//${parsed.host.toLowerCase()}/${parts[0].toLowerCase()}/${parts[1].toLowerCase()}/${route}/${parts[3]}`
+  } catch { return '' }
 }
 
 function isTrustedProjectLink(link: Link) {
@@ -51,11 +77,15 @@ export function connectionsForWork(work: WorkItem | undefined, project: Project 
   const primaryURL = primaryWorkURL(work)
   const repository = repositoryFor(primaryURL)
   const projectURLs = new Set((project?.links ?? []).filter(isTrustedProjectLink).map((link) => link.url))
-  const issueConnections = herdr.connections.filter((connection) => connection.issueUrl && connection.issueUrl === primaryURL)
-  if (issueConnections.length > 0) return issueConnections
-  const projectConnections = herdr.connections.filter((connection) => connection.projectUrl && projectURLs.has(connection.projectUrl))
+  const primaryIsIssue = work.github?.kind === 'issue' || (!work.github?.kind && Boolean(primaryURL && /\/issues\//.test(primaryURL)))
+  const issueLocators = [primaryIsIssue ? primaryURL : undefined, ...(work.github?.relatedIssueUrls ?? [])].map(locatorKey).filter(Boolean)
+  const issueConnections = herdr.connections.filter((connection) => issueLocators.includes(locatorKey(connection.issueUrl)))
+  if (issueConnections.length > 0) return [...new Map(issueConnections.map((connection) => [
+    [connection.session, connection.workspaceId, connection.tabId, connection.paneId, connection.agentName].join('|'), connection,
+  ])).values()]
+  const projectConnections = herdr.connections.filter((connection) => connection.projectUrl && [...projectURLs].some((url) => locatorKey(url) === locatorKey(connection.projectUrl)))
   if (projectConnections.length > 0) return projectConnections
-  return herdr.connections.filter((connection) => !connection.issueUrl && !connection.projectUrl && connection.role === 'coordinator' && Boolean(repository) && connection.repository === repository)
+  return herdr.connections.filter((connection) => !connection.issueUrl && !connection.projectUrl && connection.role === 'coordinator' && Boolean(repository) && repositoryKey(connection.repository) === repositoryKey(repository))
 }
 
 export function herdrGuidance(connection: HerdrConnection) {
