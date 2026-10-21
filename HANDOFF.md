@@ -1,5 +1,11 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-21: 두 기능 협업 실험 문제와 실행 지침
+
+- 사용자의 요청으로 [진행자 지침](docs/experiments/harness-pilot-runbook.md), [참가자 문제](docs/experiments/harness-pilot-problem.md), [결과 양식](docs/experiments/harness-pilot-record.md)을 작성했다. Python 표준 라이브러리의 목록·집계 기능을 병렬 개발하며 공통 상태 변경, 한 세션 교체, 실제 Monitor 연결과 조건부 실패·정리를 관찰한다.
+- R1/R2 예시 값과 상대 링크 검사가 통과했다. 독립 계획 검토에서 설정 파일 격리 조건을 보완한 `0a38760`은 ACCEPT다. 설정 오류 실험은 실제 분리된 시험 사용자/설정 경로가 확인될 때만 수행하며, 없으면 미검증으로 남긴다. 게시·검토 근거는 [PR #106](https://github.com/Middleages/thread-dock/pull/106)에 연결한다.
+- 이번 산출물은 실험 준비 문서다. 실험용 저장소·Issue·세션 생성, 전역 설치 갱신, native 검증과 실험 문제의 구현은 실행하지 않았다. #43·#48·#91은 각 실제 근거가 확보될 때만 해당 조건을 갱신한다.
+
 ## 2026-10-21: 하네스 후속 구현 — CI와 PR 세션 연결
 
 - 사용자의 구현 요청에 따라 PR #105 기준 `f8d7467`에서 `agent/harness-followups-20261021`을 분리했다. [구현·검증 기록](docs/research/2026-10-21-followup-implementation.md)에 범위·독립 검토·검증 한계를 기록한다. main 병합은 사람에게 남긴다.
