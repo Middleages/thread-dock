@@ -25,13 +25,14 @@
 
 - 계획·구현·리뷰는 [개발 공통 기준](project-template/.agents/skills/develop-feature/references/development-stance.md)을 읽고 관련 기준을 최초 Task packet부터 공유한다. 현재 구조와 실제 책임을 기준으로 단순하게 구현한다.
 - Coordinator는 [coordinate-work](project-template/.agents/skills/coordinate-work/SKILL.md)로 목표의 모호함·범위·의존성을 정리한 brief를 넘기며, 기능 계획은 Feature Leader 한 명이 소유한다. 중요한 새 계획/실질적 변경은 [grill-plan](project-template/.agents/skills/grill-plan/SKILL.md)의 독립 반대 검토 후 작성자가 근거로 해결하고, 중요한 이견이 남을 때만 별도 중립 판정을 한 번 사용한다. 합의된 계획은 인수·실행가능성 확인 후 재사용하며 작은 명확한 일은 직접 처리한다.
-- UI 변경은 [UI quality](project-template/.agents/skills/develop-feature/references/ui-quality.md)를 따른다. 중요한 문구·화면 후보의 독립 제안/평가 배정은 Feature Leader가 맡고, 구현자·리뷰어는 기존 재위임 경계를 유지한다. 실제 screenshot 이미지 열람과 관련 동작 검증을 요구하며, 도구가 없으면 해당 검증을 미검증으로 남긴다. 브라우저 fixture와 실제 Wails 근거를 구분한다.
+- UI 변경은 [UI quality](project-template/.agents/skills/develop-feature/references/ui-quality.md)를 따른다. 미해결 설계 선택에 필요한 독립 제안만 Leader가 배정하며 고정 평가 인원은 요구하지 않는다. 모든 UI 변경은 실제 이미지 열람, 동작 변경은 해당 경로 실행으로 검증한다. 불가능한 검증은 미검증이며 브라우저 fixture와 실제 Wails 근거를 구분한다.
 - 완료·대기·차단 보고에는 [publish-work](project-template/.agents/skills/publish-work/SKILL.md)의 문제/요청, 사용자 관점 변화, 선택 이유, 실제 검증·한계 설명을 적용한다. 외부 쓰기는 기존 승인 범위를 따른다.
 
 ## 계획·분배
 
 - 최초 public interfaces와 shared types는 직렬로 먼저 합의한다. 그 뒤 의존성이 없는 Task를 병렬화한다.
-- 모든 Task packet에 정확한 `taskId`, `baseSHA`, `deps`, `ownedPaths`, `worktree`, `branch`, `forbiddenPaths`, `interface`, `acceptance`, `tests`, `result`를 넣는다. `result`에는 `changedFiles`, `commitSHA`, `executedCommands`, `outcomes`, `unverified`, `blockers`를 포함한다.
+- Task packet은 원 요청·수용 조건, 소유 경로/범위, 실제 의존·공유 계약, 필요한 검증·반환 근거를 전달한다. 쓰기 작업에는 정확한 base revision과 worktree/branch를 지정한다. 이미 제공한 값은 참조하고 무관한 빈 필드는 만들지 않는다. 결과에는 변경 파일·후보 SHA(있을 때)·실행 명령/환경/결과·미검증·blocker를 담는다.
+- 작은 명확한 문서 정정은 담당자가 직접 처리한다. 공유 계약 변경은 기존 GitHub 기록에 최신 참조·이유·영향 기능을 남기고 해당 Leader의 반영/비영향 근거를 확인한 뒤 의존 작업을 재개한다.
 - 구현 worker는 전체 트리 합산 최대 3개인 목표 상한이며, 항상 3개를 실행할 의무는 없다. 예약 ledger에서 관리한다.
 - `agents.max_concurrent_threads_per_session=6`은 주 세션을 제외한 열린 thread 예산이다. root는 대기·종료 thread를 정리하고 필요하면 평탄화해 슬롯을 확보하며, reviewer용 1슬롯 여유를 권장한다.
 - root가 경로·슬롯·범위를 배정한 Sol subcoordinator만 한 번 하위분배할 수 있다: `root→Sol→Luna` 또는 `root→Luna`.

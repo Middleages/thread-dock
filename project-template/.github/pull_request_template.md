@@ -1,33 +1,15 @@
-## Issue links
+## Problem and change
 
-<!-- Link the feature Issue and any actual dependency Issues. -->
+<!-- Link the existing Issue/request; explain the user-visible change and why this approach fits. -->
 
-## Changed scope
+## Acceptance and evidence
 
-<!-- List changed paths and the assigned Task. -->
+<!-- For each original acceptance criterion, link the implementation/check or name the gap.
+Record candidate SHA, command/action, environment, outcome and independent review reference.
+Separate focused checks, final integration and live runtime evidence; mark missing checks unverified.
+Use a short list for small changes and link this primary record from other records. -->
 
-## Excluded scope
+## Remaining work or risk
 
-<!-- List intentionally untouched work. -->
-
-## Checks
-
-<!-- Use focused checks in implementation loops and record command, outcome, and duration. -->
-
-## Verification evidence
-
-<!-- Separate focused checks from final integration verification. Record the exact SHA, command, environment, result, and any unverified scope. -->
-
-## Audit category
-
-<!-- Start each audit comment with one of: Decision, Dispatch, Review, Verification, Blocker, Integration. -->
-
-## Deployment impact
-
-<!-- State impact or “None”. -->
-
-## Recovery
-
-<!-- State the safe recovery action. -->
-
-<!-- Keep summaries and evidence only; do not include transcripts, tokens, secrets, or long raw terminal output. -->
+<!-- Include only applicable blockers, next owner/action, shared-contract impact or deployment/recovery concerns.
+Remove this section when none apply. Keep secrets, transcripts and long raw logs out of the PR. -->

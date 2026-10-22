@@ -241,13 +241,17 @@ Reviewer는 구현자의 자기평가를 대신하는 Agent가 아니다. exact 
 
 공통 개발 기준은 [development-stance](../../project-template/.agents/skills/develop-feature/references/development-stance.md)에 있다. 현재 구조를 존중하고 필요한 책임만 계층으로 나누며, 빈 계층·중복 상태·근거 없는 추상화와 gate를 추가하지 않는다. 이 기준을 계획·구현 packet부터 공유한다.
 
-중요한 새 기능 계획이나 실질적 위험 변경은 `grill-plan`에서 고정 revision의 독립 반대 검토 한 번을 실제 native reviewer에게 받고 작성자가 근거로 해결한다. 합의되면 중립 판정 없이 끝낸다. 중요한 이견이 남을 때만 다른 판정자를 한 번 호출하며, 그래도 미해결이면 구체적 근거 부족/사람의 선택을 명시하고 의존 작업만 기다린다. 계획 검토는 실행가능성과 source 근거를 평가하며 아직 구현하지 않은 screenshot·성공 tests를 요구하지 않는다. 실제 코드 리뷰의 UI/테스트 근거 요구는 그대로 유지한다. 작은 수정과 변하지 않은 합의는 절차를 반복하지 않는다. 계획 응답/handoff의 한 줄에는 plan revision, 실제 reviewer 결과 참조와 verdict, 남은 중요 항목, implementation readiness를 남기며 별도 상태 저장소를 만들지 않는다.
+중요한 새 계획·실질적 위험 변경은 `grill-plan`의 고정 revision 독립 검토와 작성자 해결을 거친다. 중립 판정은 중요한 이견이 남을 때만 한 번 사용한다. 해당 계획의 응답/handoff에 revision, 실제 reviewer 결과, 남은 중요 항목과 implementation readiness를 남긴다. 작은 명확한 수정과 변하지 않은 합의에는 이 절차나 빈 리뷰 영수증을 요구하지 않는다. 계획 리뷰는 미래 구현의 screenshot·성공 tests를 요구하지 않는다.
 
-UI는 [UI quality](../../project-template/.agents/skills/develop-feature/references/ui-quality.md)를 따른다. 중요한 문구·화면/flow 변경은 신규 사용자·반복 작업자·편집/접근성 관점의 독립 제안을 비교하고, 작성자를 가린 평가와 한 방향의 최종 편집을 거친다. 오타 수준은 직접 수정한다. 모든 UI 변경은 실제 렌더링 screenshot을 이미지 입력 가능한 Agent가 열어 시각 검사하고 관련 동작을 실행해야 한다. screenshot 저장이나 DOM snapshot만으로 시각 검토를 통과시키지 않는다.
+UI는 [UI quality](../../project-template/.agents/skills/develop-feature/references/ui-quality.md)를 따른다. 기존 방향·컴포넌트·정확한 문구는 재사용한다. 미해결 사용자 흐름/설계 선택에 필요한 독립 제안만 요청하고 Leader가 이유와 함께 방향을 정한다. 고정 세 관점·익명 평가·별도 평가자는 필수가 아니다. 모든 UI 변경은 실제 screenshot을 열어 시각 검사하며, 동작·상태 전환 변경은 그 경로를 실행한다. 문구·스타일만 바뀌면 해당 상태를 확인한다. 저장된 이미지 경로나 DOM snapshot만으로 시각 검토를 통과시키지 않는다.
 
 Codex는 사용 가능한 browser/image 도구, OpenCode는 기존 Playwright MCP 또는 CLI를 쓰며 설치된 `agent-browser`도 대안이다. 모델을 자동 교체하거나 도구를 중복 설치하지 않는다. 이미지 입력·렌더링·동작 도구가 없으면 해당 검증을 미검증으로 남긴다. 브라우저 React fixture와 실제 packaged Wails 검증은 별개다.
 
 완료·대기·차단 결과는 `publish-work`에서 문제/요청, 사용자에게 달라진 점, 선택 이유와 tradeoff, 실제 검증과 한계, 필요한 다음 행동을 짧게 설명한다. 기존 `impeccable`은 UI 작업, `codebase-design`은 어려운 interface, `domain-modeling`은 용어·상태 의미 충돌, `writing-for-agents`는 Agent 지침 편집 때만 선택해 재사용한다. 새로운 필수 plugin이나 항상 실행할 추가 단계는 아니다.
+
+Task packet은 원 수용 조건·소유 범위·쓰기 위치/기준 revision·관련 의존/계약·검증 근거만 구체화하며 기존 값은 참조한다. 작은 문서 정정은 담당자가 직접 처리할 수 있다. 공유 계약이 바뀌면 Coordinator가 최신 참조·영향 기능을 기존 GitHub 기록에 남기고 해당 Leader의 반영/비영향 근거를 확인한다. 재개 세션은 현재 결정과 handoff를 먼저 대조하고 유효한 검증·리뷰를 재사용한다. PR이 있으면 상세 인수조건별 근거는 그곳에 한 번 남기고 Issue와 다른 기록은 링크한다.
+
+[2026-10-21 하네스 검토](../research/2026-10-21-harness-review-and-simplification.md)에 단순화 이유와 Monitor·CI·실운영 검증 후속 범위를 기록했다.
 
 ## 7. 여러 프로젝트를 동시에 쓸 때
 
