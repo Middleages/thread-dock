@@ -1,5 +1,18 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-10-21: 두 기능 협업 실험 문제와 실행 지침
+
+- 사용자의 요청으로 [진행자 지침](docs/experiments/harness-pilot-runbook.md), [참가자 문제](docs/experiments/harness-pilot-problem.md), [결과 양식](docs/experiments/harness-pilot-record.md)을 작성했다. Python 표준 라이브러리의 목록·집계 기능을 병렬 개발하며 공통 상태 변경, 한 세션 교체, 실제 Monitor 연결과 조건부 실패·정리를 관찰한다.
+- R1/R2 예시 값과 상대 링크 검사가 통과했다. 독립 계획 검토에서 설정 파일 격리 조건을 보완한 `0a38760`은 ACCEPT다. 설정 오류 실험은 실제 분리된 시험 사용자/설정 경로가 확인될 때만 수행하며, 없으면 미검증으로 남긴다. 게시·검토 근거는 [PR #106](https://github.com/Middleages/thread-dock/pull/106)에 연결한다.
+- 이번 산출물은 실험 준비 문서다. 실험용 저장소·Issue·세션 생성, 전역 설치 갱신, native 검증과 실험 문제의 구현은 실행하지 않았다. #43·#48·#91은 각 실제 근거가 확보될 때만 해당 조건을 갱신한다.
+
+## 2026-10-21: 하네스 후속 구현 — CI와 PR 세션 연결
+
+- 사용자의 구현 요청에 따라 PR #105 기준 `f8d7467`에서 `agent/harness-followups-20261021`을 분리했다. [구현·검증 기록](docs/research/2026-10-21-followup-implementation.md)에 범위·독립 검토·검증 한계를 기록한다. main 병합은 사람에게 남긴다.
+- PR/main push의 단일 CI와 역할·Skill 구조 검사를 추가했다. 선택한 PR의 관련 Issue를 통해 기능 세션을 찾도록 Go/Wails 상세 조회와 React 연결·복사 흐름을 구현했다. Projects-only와 GHES, 캐시·실패·선택/설정 전환을 함께 다룬다. 상세는 60초 TTL을 사용하며 새 관찰이나 수동 새로고침에 다시 확인한다.
+- CI Task `ff99a9b`와 PR 연결 Task `95a3ae3`는 각각 독립 ACCEPT다. 오연결·캐시·설정 경합 finding을 해결했다. 통합 후보 `f33c5c9`에서 마지막 `make check`가 통과했다(Go 3 packages, frontend 14 files/124 tests, build). 최종 통합 리뷰·원격 CI 결과와 게시 SHA는 후속 PR에 기록한다.
+- 로컬 브라우저는 소켓 권한으로 실행되지 않았고 권한 확대는 환경 정책상 자동 거절됐다. cloud browser도 로컬 Vite에 접근하지 못했다. 실제 이미지 열람·UI 조작과 Windows/WSL/Herdr 운영은 미검증이다. #43·#48·#91의 별도 운영 완료 조건을 이번 코드 검사로 닫지 않는다.
+
 ## 2026-10-21: 하네스 적대적 검토와 지침 간소화
 
 - 기준 main은 [PR #104](https://github.com/Middleages/thread-dock/pull/104)의 병합 SHA `d0af6f432f757312c2cc35551a9e497dc17af645`다. 아래 10월 18일 절의 로컬 커밋·미게시 설명은 병합 전 이력이다.

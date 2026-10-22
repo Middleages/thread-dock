@@ -2,18 +2,19 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SettingsShell } from './SettingsShell'
 
-const { getSettings, saveSettings } = vi.hoisted(() => ({
+const { appProps, getSettings, saveSettings } = vi.hoisted(() => ({
+  appProps: { settingsEpoch: 0 },
   getSettings: vi.fn(async () => ({ githubHost: 'github.com', repositories: 'acme/app', projects: '', wslDistribution: 'Ubuntu', sessionsFile: '/tmp/sessions.json' })),
   saveSettings: vi.fn(async (value: { githubHost: string; repositories: string; projects: string; wslDistribution: string; sessionsFile: string }) => value),
 }))
 
-vi.mock('./App', () => ({ App: ({ onOpenSettings }: { onOpenSettings: () => void }) => <button type="button" onClick={onOpenSettings}>mock app settings</button> }))
+vi.mock('./App', () => ({ App: ({ onOpenSettings, settingsEpoch }: { onOpenSettings: () => void; settingsEpoch: number }) => { appProps.settingsEpoch = settingsEpoch; return <button type="button" onClick={onOpenSettings}>mock app settings</button> } }))
 vi.mock('./bindings', async () => {
   const actual = await vi.importActual<typeof import('./bindings')>('./bindings')
   return { ...actual, getMonitorSettings: getSettings, saveMonitorSettings: saveSettings }
 })
 
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+afterEach(() => { cleanup(); appProps.settingsEpoch = 0; vi.clearAllMocks() })
 
 describe('SettingsShell', () => {
   it('opens settings from App callback without a floating launcher', async () => {
@@ -33,5 +34,6 @@ describe('SettingsShell', () => {
     fireEvent.click(screen.getByRole('button', { name: '저장' }))
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ repositories: 'acme/app,acme/other', githubHost: 'github.com' }))
+    expect(appProps.settingsEpoch).toBe(1)
   })
 })

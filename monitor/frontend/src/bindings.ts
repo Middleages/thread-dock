@@ -1,4 +1,4 @@
-import type { Snapshot, SnapshotSource } from './types'
+import type { PullRequestDetail, Snapshot, SnapshotSource } from './types'
 
 export interface MonitorSettings {
   githubHost: string
@@ -27,6 +27,7 @@ export interface GlobalToolbox {
 type WailsAppBinding = {
   GetMonitorSnapshot?: () => Promise<Snapshot>
   GetMonitorSnapshotAll?: () => Promise<Snapshot>
+  GetPullRequestDetail?: (url: string) => Promise<PullRequestDetail>
   GetMonitorSettings?: () => Promise<MonitorSettings>
   SaveMonitorSettings?: (settings: MonitorSettings) => Promise<MonitorSettings>
   GetProjectReferences?: (projectKey: string) => Promise<ProjectReferences>
@@ -50,6 +51,12 @@ export const getMonitorSnapshotAll: SnapshotSource = async () => {
   const binding = appBinding()?.GetMonitorSnapshotAll
   if (binding) return binding()
   throw new Error('Wails full monitor binding is unavailable. Run the Windows Monitor application.')
+}
+
+export const getPullRequestDetail = async (url: string): Promise<PullRequestDetail> => {
+  const binding = appBinding()?.GetPullRequestDetail
+  if (binding) return binding(url)
+  throw new Error('Wails pull request detail binding is unavailable. Run the Windows Monitor application.')
 }
 
 export const getMonitorSettings = async (): Promise<MonitorSettings> => {

@@ -82,3 +82,46 @@ func TestGitHubMonitorRejectsProjectURLFromDifferentHost(t *testing.T) {
 		t.Fatal("project URL on a different GitHub host should be rejected")
 	}
 }
+
+func TestHostedHerdrKeepsConfiguredHostAndRejectsDotComLocator(t *testing.T) {
+	const host = "ghe.example:8443"
+	valid := herdrConfigJSON(map[string]any{
+		"issueUrl":   "https://" + host + "/acme/app/issues/7",
+		"projectUrl": "https://" + host + "/orgs/acme/projects/4",
+		"repository": host + "/acme/app",
+		"session":    "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna", "role": "coordinator",
+	})
+	config := valid
+	process := &herdrRunner{fn: func(args []string) (runner.Result, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "/bin/cat"):
+			return runner.Result{Stdout: config}, nil
+		case strings.Contains(joined, "agent list"):
+			return runner.Result{Stdout: herdrList(herdrAgent("Luna", "working", "w1", "t1", "p1", "/repo/src"))}, nil
+		case strings.Contains(joined, "workspace list"):
+			return runner.Result{Stdout: herdrWorkspaceList()}, nil
+		default:
+			return runner.Result{Stdout: `[]`}, nil
+		}
+	}}
+	env := map[string]string{"THREADDOCK_GITHUB_HOST": host, "THREADDOCK_SESSIONS_FILE": "/tmp/sessions.json", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu"}
+	monitor := NewHostedHerdrMonitor(env, process, time.Second)
+	snapshot, err := monitor.FetchHerdr(context.Background())
+	if err != nil || snapshot.Status != "fresh" || len(snapshot.Connections) != 1 {
+		t.Fatalf("valid GHES snapshot=%#v err=%v", snapshot, err)
+	}
+	connection := snapshot.Connections[0]
+	if connection.IssueURL != "https://"+host+"/acme/app/issues/7" || connection.ProjectURL != "https://"+host+"/orgs/acme/projects/4" || connection.Repository != host+"/acme/app" {
+		t.Fatalf("valid GHES locator=%#v", connection)
+	}
+
+	config = herdrConfigJSON(map[string]any{
+		"issueUrl": "https://github.com/acme/app/issues/7",
+		"session":  "feature", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna", "role": "coordinator",
+	})
+	wrong, err := monitor.FetchHerdr(context.Background())
+	if err != nil || wrong.Status != "unverified" || wrong.SyncStatus != "setup_required" || len(wrong.Connections) != 0 {
+		t.Fatalf("wrong-host locator promoted: %#v err=%v", wrong, err)
+	}
+}

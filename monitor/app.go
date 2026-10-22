@@ -73,6 +73,23 @@ func (a *App) GetMonitorSnapshotAll() (Snapshot, error) {
 	return a.fetchSnapshot(true)
 }
 
+// GetPullRequestDetail returns read-only detail for the selected PR. The
+// source validates the configured host and keeps this request independent of
+// the aggregate snapshot so one unavailable PR cannot hide the base view.
+func (a *App) GetPullRequestDetail(rawURL string) (PullRequestDetail, error) {
+	if a == nil {
+		return PullRequestDetail{}, errors.New("monitor app is nil")
+	}
+	a.mu.RLock()
+	source := a.source
+	a.mu.RUnlock()
+	detailSource, ok := source.(PullRequestDetailSource)
+	if !ok || detailSource == nil {
+		return PullRequestDetail{}, errors.New("pull request detail source is unavailable")
+	}
+	return detailSource.GetPullRequestDetail(context.Background(), rawURL)
+}
+
 func (a *App) fetchSnapshot(all bool) (Snapshot, error) {
 	if a == nil {
 		return Snapshot{}, errors.New("monitor snapshot source is nil")

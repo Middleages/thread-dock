@@ -33,4 +33,27 @@ describe('monitor presentation helpers', () => {
     expect(connectionsForWork(work('https://github.com/acme/app/issues/2'), project([{ kind: 'github', label: 'Project', url: boardURL }]), herdr([board, central])).map((item) => item.session)).toEqual(['project'])
     expect(connectionsForWork(work('https://github.com/acme/app/issues/2'), project([{ kind: 'evidence', label: 'Project', url: boardURL }]), herdr([central])).map((item) => item.session)).toEqual(['central'])
   })
+
+  it('returns every distinct related Issue binding before project fallback', () => {
+    const issueA = 'https://GHE.example:8443/Acme/App/issues/1/'
+    const issueB = 'https://ghe.example:8443/acme/app/issues/2'
+    const workItem: WorkItem = { ...work('https://ghe.example:8443/acme/app/pull/7'), github: { kind: 'pull_request', url: 'https://ghe.example:8443/acme/app/pull/7', relatedIssueUrls: [issueA, issueB, issueA] } }
+    const shared = connection('shared', { issueUrl: issueA, repository: 'ghe.example:8443/acme/app', role: 'feature', workspaceId: 'w1', paneId: 'p1' })
+    const duplicate = connection('shared', { issueUrl: issueA, repository: 'ghe.example:8443/acme/app', role: 'feature', workspaceId: 'w1', paneId: 'p1' })
+    const distinctLocation = connection('shared', { issueUrl: issueA, repository: 'ghe.example:8443/acme/app', role: 'feature', workspaceId: 'w2', paneId: 'p2' })
+    const second = connection('second', { issueUrl: issueB, repository: 'ghe.example:8443/acme/app', role: 'feature' })
+    const projectBinding = connection('project', { projectUrl: 'https://ghe.example:8443/orgs/acme/projects/1', role: 'feature' })
+    expect(connectionsForWork(workItem, project([{ kind: 'github', label: 'Project', url: 'https://ghe.example:8443/orgs/acme/projects/1' }]), herdr([shared, duplicate, distinctLocation, second, projectBinding])).map((item) => item.session + ':' + (item.paneId ?? '')).sort()).toEqual(['second:', 'shared:p1', 'shared:p2'])
+  })
+
+  it('keeps configured host port and rejects invalid locator schemes', () => {
+    const pr = { ...work('https://ghe.example:8443/acme/app/pull/7'), github: { kind: 'pull_request' as const, url: 'https://ghe.example:8443/acme/app/pull/7', relatedIssueUrls: [] } }
+    const central = connection('central', { repository: 'ghe.example:8443/acme/app' })
+    const wrongHost = connection('wrong', { issueUrl: 'https://github.com/acme/app/issues/7', repository: 'ghe.example:8443/acme/app', role: 'feature' })
+    expect(connectionsForWork(pr, undefined, herdr([wrongHost, central])).map((item) => item.session)).toEqual(['central'])
+    const invalid = connection('invalid', { issueUrl: 'javascript:alert(1)', repository: 'ghe.example:8443/acme/app', role: 'feature' })
+    expect(connectionsForWork({ ...pr, github: { ...pr.github, relatedIssueUrls: ['javascript:alert(1)'] } }, undefined, herdr([invalid, central])).map((item) => item.session)).toEqual(['central'])
+    const invalidPath = connection('invalid-path', { issueUrl: 'https://ghe.example:8443/acme/app/not-an-issue/7', repository: 'ghe.example:8443/acme/app', role: 'feature' })
+    expect(connectionsForWork({ ...pr, github: { ...pr.github, relatedIssueUrls: ['https://ghe.example:8443/acme/app/not-an-issue/7'] } }, undefined, herdr([invalidPath, central])).map((item) => item.session)).toEqual(['central'])
+  })
 })

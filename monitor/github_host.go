@@ -23,9 +23,24 @@ type hostedGitHubMonitor struct {
 	host  string
 }
 
+func (m *hostedGitHubMonitor) GetPullRequestDetail(ctx context.Context, rawURL string) (PullRequestDetail, error) {
+	if m == nil || m.inner == nil {
+		return PullRequestDetail{}, errors.New("hosted GitHub detail source is unavailable")
+	}
+	source, ok := m.inner.(PullRequestDetailSource)
+	if !ok || source == nil {
+		return PullRequestDetail{}, errors.New("hosted GitHub detail source is unavailable")
+	}
+	detail, err := source.GetPullRequestDetail(ctx, rawURL)
+	if err != nil || m.host == "" || m.host == defaultGitHubHost {
+		return detail, err
+	}
+	rewritePullRequestDetailHost(&detail, m.host)
+	return detail, nil
+}
+
 type hostedHerdrMonitor struct {
 	inner HerdrSnapshotSource
-	host  string
 }
 
 func normalizeGitHubHost(raw string) (string, error) {
@@ -79,6 +94,9 @@ func NewHostedGitHubMonitor(env map[string]string, process CommandRunner, timeou
 	collector := &githubCommandDiagnosticCollector{}
 	diagnosticProcess := &githubDiagnosticRunner{base: proxy, collector: collector}
 	monitor := NewGitHubMonitor(normalized, diagnosticProcess, timeout)
+	// Keep the configured host on the monitor so response URLs retain their
+	// provenance while selected detail validation uses the same source of truth.
+	monitor.host = host
 	var source SnapshotSource = monitor
 	if supportsConcurrentRuns(process) {
 		source = &concurrentGitHubSource{monitor: monitor}
@@ -93,7 +111,7 @@ func NewHostedHerdrMonitor(env map[string]string, process CommandRunner, timeout
 		host = defaultGitHubHost
 	}
 	proxy := &hostedCommandRunner{base: process, host: host}
-	return &hostedHerdrMonitor{inner: NewHerdrMonitor(env, proxy, timeout), host: host}
+	return &hostedHerdrMonitor{inner: NewHerdrMonitor(env, proxy, timeout)}
 }
 
 type hostConfigErrorSource struct{ err error }
@@ -125,10 +143,6 @@ func (r *hostedCommandRunner) Run(ctx context.Context, cwd, executable string, a
 	}
 
 	result, err := r.base.Run(ctx, cwd, executable, adjusted...)
-	if r.host != "" && r.host != defaultGitHubHost && result.Stdout != "" {
-		result.Stdout = strings.ReplaceAll(result.Stdout, "https://"+r.host+"/", "https://"+defaultGitHubHost+"/")
-		result.Stdout = strings.ReplaceAll(result.Stdout, r.host+"/", defaultGitHubHost+"/")
-	}
 	return result, err
 }
 
@@ -148,12 +162,7 @@ func (m *hostedHerdrMonitor) FetchHerdr(ctx context.Context) (HerdrSnapshot, err
 	if m == nil || m.inner == nil {
 		return HerdrSnapshot{}, errors.New("hosted Herdr monitor is unavailable")
 	}
-	snapshot, err := m.inner.FetchHerdr(ctx)
-	if err != nil || m.host == "" || m.host == defaultGitHubHost {
-		return snapshot, err
-	}
-	rewriteHerdrHost(&snapshot, m.host)
-	return snapshot, nil
+	return m.inner.FetchHerdr(ctx)
 }
 
 func rewriteGitHubHost(value, host string) string {
@@ -207,16 +216,18 @@ func rewriteSnapshotHost(snapshot *Snapshot, host string) {
 	}
 }
 
-func rewriteHerdrHost(snapshot *HerdrSnapshot, host string) {
-	if snapshot == nil {
+func rewritePullRequestDetailHost(detail *PullRequestDetail, host string) {
+	if detail == nil {
 		return
 	}
-	rewriteLinks(snapshot.Links, host)
-	for index := range snapshot.Connections {
-		connection := &snapshot.Connections[index]
-		connection.IssueURL = rewriteGitHubHost(connection.IssueURL, host)
-		connection.ProjectURL = rewriteGitHubHost(connection.ProjectURL, host)
-		connection.Repository = rewriteGitHubHost(connection.Repository, host)
-		connection.Handoff = rewriteGitHubHost(connection.Handoff, host)
+	detail.URL = rewriteGitHubHost(detail.URL, host)
+	if detail.GitHub == nil {
+		return
+	}
+	detail.GitHub.URL = rewriteGitHubHost(detail.GitHub.URL, host)
+	rewriteStrings(detail.GitHub.RelatedIssueURLs, host)
+	rewriteStrings(detail.GitHub.RelatedPullRequestURLs, host)
+	for index := range detail.GitHub.Checks {
+		detail.GitHub.Checks[index].URL = rewriteGitHubHost(detail.GitHub.Checks[index].URL, host)
 	}
 }
