@@ -156,3 +156,260 @@ func EvidenceMatchesCandidate(state VerificationState, evidence EvidenceItem) bo
 	}
 	return false
 }
+
+// AgentWorkflow is the canonical additive read model exposing agent execution,
+// lineage, work correlation, and verification state to the Wails UI.
+type AgentWorkflow struct {
+	Agents            []AgentObservation    `json:"agents"`
+	Tasks             []TaskObservation     `json:"tasks"`
+	Results           []TaskResult          `json:"results"`
+	ExecutionState    ExecutionState        `json:"executionState"`
+	GitHubWorkState   string                `json:"githubWorkState,omitempty"`
+	VerificationState VerificationState      `json:"verificationState"`
+	CandidateRevision string                `json:"candidateRevision,omitempty"`
+	EvidenceRefs      []string              `json:"evidenceRefs"`
+	Notices           []string              `json:"notices"`
+	Provenance        ObservationProvenance `json:"provenance"`
+}
+
+func repositoryFromURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	prefix := "https://github.com/"
+	if !strings.HasPrefix(rawURL, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(rawURL, prefix)
+	parts := strings.Split(rest, "/")
+	if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+		if parts[0] == "users" || parts[0] == "orgs" {
+			return ""
+		}
+		repo := strings.TrimSuffix(parts[1], ".git")
+		return parts[0] + "/" + repo
+	}
+	return ""
+}
+
+// CorrelateAgentWorkflow binds Herdr agent observations and GitHub work state into
+// a canonical AgentWorkflow read model. It guarantees that Herdr execution completion
+// does not imply GitHub work completion or verification.
+func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapshot) *AgentWorkflow {
+	if work == nil || herdr == nil {
+		return nil
+	}
+
+	primaryURL := ""
+	if work.GitHub != nil && work.GitHub.URL != "" {
+		primaryURL = work.GitHub.URL
+	} else {
+		for _, link := range work.Links {
+			switch link.Kind {
+			case "github", "issue", "pull_request", "project_item":
+				if link.URL != "" {
+					primaryURL = link.URL
+					break
+				}
+			}
+		}
+	}
+
+	repo := repositoryFromURL(primaryURL)
+	if repo == "" && project != nil {
+		for _, link := range project.Links {
+			if r := repositoryFromURL(link.URL); r != "" {
+				repo = r
+				break
+			}
+		}
+	}
+
+	projectURLs := make(map[string]struct{})
+	if project != nil {
+		for _, link := range project.Links {
+			if link.URL != "" {
+				projectURLs[link.URL] = struct{}{}
+			}
+		}
+	}
+
+	var matched []HerdrConnection
+	var matchType string
+
+	// 1. Issue URL match
+	if primaryURL != "" {
+		for _, conn := range herdr.Connections {
+			if conn.IssueURL != "" && conn.IssueURL == primaryURL {
+				matched = append(matched, conn)
+				matchType = "issue"
+			}
+		}
+	}
+
+	// 2. Project URL match
+	if len(matched) == 0 && len(projectURLs) > 0 {
+		for _, conn := range herdr.Connections {
+			if conn.ProjectURL != "" {
+				if _, ok := projectURLs[conn.ProjectURL]; ok {
+					matched = append(matched, conn)
+					matchType = "project"
+				}
+			}
+		}
+	}
+
+	// 3. Fallback: coordinator connection for repository
+	if len(matched) == 0 && repo != "" {
+		for _, conn := range herdr.Connections {
+			if conn.IssueURL == "" && conn.ProjectURL == "" && conn.Role == "coordinator" && conn.Repository == repo {
+				matched = append(matched, conn)
+				matchType = "coordinator"
+			}
+		}
+	}
+
+	// Legacy / no-Agent fallback
+	if len(matched) == 0 {
+		return nil
+	}
+
+	var notices []string
+
+	// Ambiguity check: multiple distinct sessions matched
+	sessions := make(map[string]struct{})
+	for _, conn := range matched {
+		sessions[conn.Session] = struct{}{}
+	}
+	if len(sessions) > 1 {
+		notices = append(notices, "복수 세션이 동일 작업에 바인딩되어 관찰이 모호합니다.")
+	}
+
+	agents := make([]AgentObservation, 0, len(matched))
+	for _, conn := range matched {
+		agentID := conn.AgentName
+		if agentID == "" {
+			agentID = conn.Session + ":" + conn.PaneID
+		}
+		execState := NormalizeExecutionState(conn.AgentStatus)
+		agents = append(agents, AgentObservation{
+			AgentID:      agentID,
+			Role:         conn.Role,
+			Runtime:      "herdr",
+			ExecutionRef: conn.Session + "/" + conn.PaneID,
+			Execution:    execState,
+			Provenance: ObservationProvenance{
+				Source:     "herdr",
+				ObservedAt: conn.ObservedAt,
+				Scope:      conn.Session,
+			},
+		})
+	}
+
+	overallExecution := ExecutionUnknown
+	hasRunning := false
+	hasWaiting := false
+	hasCompleted := false
+	hasFailed := false
+	for _, a := range agents {
+		switch a.Execution {
+		case ExecutionRunning:
+			hasRunning = true
+		case ExecutionWaiting:
+			hasWaiting = true
+		case ExecutionCompleted:
+			hasCompleted = true
+		case ExecutionFailed:
+			hasFailed = true
+		}
+	}
+	if hasRunning {
+		overallExecution = ExecutionRunning
+	} else if hasWaiting {
+		overallExecution = ExecutionWaiting
+	} else if hasFailed {
+		overallExecution = ExecutionFailed
+	} else if hasCompleted {
+		overallExecution = ExecutionCompleted
+	} else if len(agents) > 0 {
+		overallExecution = agents[0].Execution
+	}
+
+	// GitHub Work State: explicitly preserved from work, never overwritten by Herdr completion
+	ghWorkState := work.State
+	if work.GitHub != nil && work.GitHub.State != "" {
+		ghWorkState = work.GitHub.State
+	}
+
+	candidateSHA := ""
+	if work.GitHub != nil && work.GitHub.Fields != nil {
+		if sha, ok := work.GitHub.Fields["headSha"]; ok && sha != "" {
+			candidateSHA = sha
+		} else if sha, ok := work.GitHub.Fields["sha"]; ok && sha != "" {
+			candidateSHA = sha
+		}
+	}
+
+	vState := VerificationState{
+		Status:    VerificationUnverified,
+		AnchorSHA: candidateSHA,
+	}
+
+	if candidateSHA == "" {
+		vState.Codes = append(vState.Codes, "awaiting_pr")
+		vState.Summary = "PR 생성 대기 중 (로컬 작업 중)"
+	} else {
+		if work.GitHub != nil && len(work.GitHub.Checks) > 0 {
+			ciPending := false
+			ciFailed := false
+			for _, check := range work.GitHub.Checks {
+				conc := strings.ToLower(check.Conclusion)
+				stat := strings.ToLower(check.Status)
+				if conc == "failure" || conc == "timed_out" || conc == "action_required" {
+					ciFailed = true
+				} else if stat == "in_progress" || stat == "queued" || stat == "pending" {
+					ciPending = true
+				}
+			}
+			if ciFailed {
+				vState.Codes = append(vState.Codes, "ci_failed")
+			} else if ciPending {
+				vState.Codes = append(vState.Codes, "ci_pending")
+			}
+		}
+		vState.Codes = append(vState.Codes, "reviewer_missing")
+		vState.Summary = "리뷰어 검증 증거 대기 중"
+	}
+	vState = NormalizeVerificationState(vState)
+
+	observedAt := herdr.ObservedAt
+	workflow := &AgentWorkflow{
+		Agents:            agents,
+		Tasks:             []TaskObservation{},
+		Results:           []TaskResult{},
+		ExecutionState:    overallExecution,
+		GitHubWorkState:   ghWorkState,
+		VerificationState: vState,
+		CandidateRevision: candidateSHA,
+		EvidenceRefs:      append([]string{}, work.EvidenceRefs...),
+		Notices:           notices,
+		Provenance: ObservationProvenance{
+			Source:     "herdr+github",
+			ObservedAt: &observedAt,
+			Scope:      matchType,
+		},
+	}
+	return workflow
+}
+
+func enrichSnapshotWithAgentWorkflow(snapshot *Snapshot, herdr *HerdrSnapshot) {
+	if snapshot == nil || herdr == nil {
+		return
+	}
+	for i := range snapshot.Projects {
+		for j := range snapshot.Projects[i].WorkItems {
+			snapshot.Projects[i].WorkItems[j].AgentWorkflow = CorrelateAgentWorkflow(&snapshot.Projects[i], &snapshot.Projects[i].WorkItems[j], herdr)
+		}
+	}
+}

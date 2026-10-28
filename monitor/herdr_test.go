@@ -385,6 +385,64 @@ func TestCombinedMonitorKeepsSourcesIndependent(t *testing.T) {
 	}
 }
 
+func TestCombinedMonitorEnrichesAgentWorkflow(t *testing.T) {
+	now := time.Now()
+	github := &fakeSnapshotSource{
+		snapshot: Snapshot{
+			SchemaVersion: 2,
+			Projects: []Project{
+				{
+					ProjectID: "repo:acme/app",
+					WorkItems: []WorkItem{
+						{
+							WorkID: "issue:42",
+							State:  "open",
+							GitHub: &GitHubWork{
+								Kind: "issue",
+								URL:  "https://github.com/acme/app/issues/42",
+							},
+						},
+					},
+				},
+			},
+			SyncStatus: "synced",
+		},
+	}
+	herdr := &fakeHerdrSource{
+		snapshot: HerdrSnapshot{
+			Status:     "fresh",
+			SyncStatus: "synced",
+			ObservedAt: now,
+			Connections: []HerdrConnection{
+				{
+					IssueURL:    "https://github.com/acme/app/issues/42",
+					Session:     "feature-42",
+					AgentName:   "Codex",
+					AgentStatus: "working",
+				},
+			},
+		},
+	}
+	source := NewCombinedMonitor(github, herdr)
+	snapshot, err := source.FetchAll(context.Background())
+	if err != nil {
+		t.Fatalf("FetchAll err=%v", err)
+	}
+	if len(snapshot.Projects) != 1 || len(snapshot.Projects[0].WorkItems) != 1 {
+		t.Fatalf("unexpected snapshot structure: %#v", snapshot)
+	}
+	wf := snapshot.Projects[0].WorkItems[0].AgentWorkflow
+	if wf == nil {
+		t.Fatal("expected enriched AgentWorkflow on WorkItem, got nil")
+	}
+	if wf.ExecutionState != ExecutionRunning {
+		t.Fatalf("executionState = %q, want running", wf.ExecutionState)
+	}
+	if wf.Provenance.Scope != "issue" {
+		t.Fatalf("scope = %q, want issue", wf.Provenance.Scope)
+	}
+}
+
 type fakeHerdrSource struct {
 	snapshot HerdrSnapshot
 	err      error
