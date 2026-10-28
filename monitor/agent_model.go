@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// ExecutionState describes runtime execution only. It must not be used as a
-// proxy for GitHub work completion or verification.
 type ExecutionState string
 
 const (
@@ -28,9 +26,6 @@ const (
 	VerificationVerified   VerificationStatus = "verified"
 )
 
-// VerificationState is the canonical verification result exposed to the UI.
-// Codes explain conditions; success is represented by Status=verified rather
-// than a success reason such as fully_verified.
 type VerificationState struct {
 	Status    VerificationStatus `json:"status"`
 	Codes     []string            `json:"codes,omitempty"`
@@ -61,15 +56,15 @@ type AgentObservation struct {
 }
 
 type TaskObservation struct {
-	TaskID         string     `json:"taskId"`
-	ParentTaskID   string     `json:"parentTaskId,omitempty"`
-	AgentID        string     `json:"agentId,omitempty"`
-	Role           string     `json:"role,omitempty"`
-	Objective      string     `json:"objective,omitempty"`
-	InputRevision  string     `json:"inputRevision,omitempty"`
-	Constraints    []string   `json:"constraints,omitempty"`
-	Acceptance     []string   `json:"acceptance,omitempty"`
-	CreatedAt      *time.Time `json:"createdAt,omitempty"`
+	TaskID        string     `json:"taskId"`
+	ParentTaskID  string     `json:"parentTaskId,omitempty"`
+	AgentID       string     `json:"agentId,omitempty"`
+	Role          string     `json:"role,omitempty"`
+	Objective     string     `json:"objective,omitempty"`
+	InputRevision string     `json:"inputRevision,omitempty"`
+	Constraints   []string   `json:"constraints,omitempty"`
+	Acceptance    []string   `json:"acceptance,omitempty"`
+	CreatedAt     *time.Time `json:"createdAt,omitempty"`
 }
 
 type TaskResult struct {
@@ -119,7 +114,6 @@ func NormalizeVerificationState(state VerificationState) VerificationState {
 	default:
 		state.Status = VerificationUnverified
 	}
-
 	codes := make([]string, 0, len(state.Codes))
 	seen := make(map[string]struct{}, len(state.Codes))
 	for _, code := range state.Codes {
@@ -138,9 +132,6 @@ func NormalizeVerificationState(state VerificationState) VerificationState {
 	return state
 }
 
-// EvidenceMatchesCandidate reports whether the evidence revision matches the
-// candidate anchor SHA. It supports exact match or prefix match when both
-// revisions are at least 7 characters long.
 func EvidenceMatchesCandidate(state VerificationState, evidence EvidenceItem) bool {
 	anchor := strings.ToLower(strings.TrimSpace(state.AnchorSHA))
 	revision := strings.ToLower(strings.TrimSpace(evidence.Revision))
@@ -157,8 +148,6 @@ func EvidenceMatchesCandidate(state VerificationState, evidence EvidenceItem) bo
 	return false
 }
 
-// AgentWorkflow is the canonical additive read model exposing agent execution,
-// lineage, work correlation, and verification state to the Wails UI.
 type AgentWorkflow struct {
 	Agents            []AgentObservation    `json:"agents"`
 	Tasks             []TaskObservation     `json:"tasks"`
@@ -181,18 +170,18 @@ func repositoryFromURL(rawURL string) string {
 	if !strings.HasPrefix(rawURL, prefix) {
 		return ""
 	}
-	rest := strings.TrimPrefix(rawURL, prefix)
-	parts := strings.Split(strings.TrimSuffix(rest, "/"), "/")
-	if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
-		if parts[0] == "users" || parts[0] == "orgs" {
-			return ""
-		}
-		return parts[0] + "/" + strings.TrimSuffix(parts[1], ".git")
+	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(rawURL, prefix), "/"), "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" || parts[0] == "users" || parts[0] == "orgs" {
+		return ""
 	}
-	return ""
+	return parts[0] + "/" + strings.TrimSuffix(parts[1], ".git")
 }
 
-func herdrAgentIdentity(conn HerdrConnection) string {
+func herdrAgentIdentity(conn HerdrConnection, duplicate bool) string {
+	name := strings.TrimSpace(conn.AgentName)
+	if name != "" && !duplicate {
+		return name
+	}
 	parts := []string{"herdr", conn.Session, conn.WorkspaceID, conn.TabID, conn.PaneID}
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
@@ -209,9 +198,6 @@ func herdrExecutionRef(conn HerdrConnection) string {
 	return session + "/" + pane
 }
 
-// CorrelateAgentWorkflow binds Herdr agent observations and GitHub work state into
-// a canonical AgentWorkflow read model. It guarantees that Herdr execution completion
-// does not imply GitHub work completion or verification.
 func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapshot) *AgentWorkflow {
 	if work == nil || herdr == nil {
 		return nil
@@ -262,8 +248,6 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 
 	var matched []HerdrConnection
 	matchType := ""
-
-	// 1. Direct work/issue match, then PR -> closing-issue match.
 	for _, conn := range herdr.Connections {
 		if kind, ok := candidateURLs[conn.IssueURL]; ok {
 			matched = append(matched, conn)
@@ -272,8 +256,6 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 			}
 		}
 	}
-
-	// 2. Project URL match.
 	if len(matched) == 0 && len(projectURLs) > 0 {
 		for _, conn := range herdr.Connections {
 			if _, ok := projectURLs[conn.ProjectURL]; ok {
@@ -284,9 +266,6 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 			matchType = "project"
 		}
 	}
-
-	// 3. Repository coordinator fallback. This is deliberately marked as a
-	// fallback/partial observation rather than a direct work binding.
 	if len(matched) == 0 && repo != "" {
 		for _, conn := range herdr.Connections {
 			if conn.IssueURL == "" && conn.ProjectURL == "" && conn.Role == "coordinator" && conn.Repository == repo {
@@ -297,15 +276,18 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 			matchType = "coordinator"
 		}
 	}
-
 	if len(matched) == 0 {
 		return nil
 	}
 
 	notices := []string{}
 	sessions := make(map[string]struct{})
+	agentNames := make(map[string]int)
 	for _, conn := range matched {
 		sessions[conn.Session] = struct{}{}
+		if name := strings.TrimSpace(conn.AgentName); name != "" {
+			agentNames[name]++
+		}
 	}
 	ambiguous := len(sessions) > 1
 	if ambiguous {
@@ -314,13 +296,12 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 
 	agents := make([]AgentObservation, 0, len(matched))
 	for _, conn := range matched {
-		execState := NormalizeExecutionState(conn.AgentStatus)
 		agents = append(agents, AgentObservation{
-			AgentID:      herdrAgentIdentity(conn),
+			AgentID:      herdrAgentIdentity(conn, agentNames[strings.TrimSpace(conn.AgentName)] > 1),
 			Role:         conn.Role,
 			Runtime:      "herdr",
 			ExecutionRef: herdrExecutionRef(conn),
-			Execution:    execState,
+			Execution:    NormalizeExecutionState(conn.AgentStatus),
 			Provenance: ObservationProvenance{
 				Source:     "herdr",
 				ObservedAt: conn.ObservedAt,
@@ -360,7 +341,6 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	if work.GitHub != nil && work.GitHub.State != "" {
 		ghWorkState = work.GitHub.State
 	}
-
 	candidateSHA := ""
 	if work.GitHub != nil && work.GitHub.Fields != nil {
 		candidateSHA = firstNonEmpty(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])
@@ -369,7 +349,7 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	vState := VerificationState{Status: VerificationUnverified, AnchorSHA: candidateSHA}
 	if candidateSHA == "" {
 		vState.Codes = append(vState.Codes, "awaiting_pr")
-		vState.Summary = "후속 PR의 검증 기준 revision 대기 중"
+		vState.Summary = "PR 생성 대기 중 (로컬 작업 중)"
 	} else {
 		ciPending, ciFailed := false, false
 		if work.GitHub != nil {
@@ -391,14 +371,13 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 		vState.Codes = append(vState.Codes, "reviewer_missing")
 		vState.Summary = "리뷰어 검증 증거 대기 중"
 	}
-
 	if ambiguous || matchType == "coordinator" {
 		vState.Status = VerificationPartial
 	}
 	vState = NormalizeVerificationState(vState)
 
 	observedAt := herdr.ObservedAt
-	workflow := &AgentWorkflow{
+	return &AgentWorkflow{
 		Agents:            agents,
 		Tasks:             []TaskObservation{},
 		Results:           []TaskResult{},
@@ -414,10 +393,9 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 			Scope:      matchType,
 			Partial:    ambiguous || matchType == "coordinator",
 			Fallback:   matchType == "coordinator",
-			Notice:     firstNonEmpty(firstNotice(notices), ""),
+			Notice:     firstNotice(notices),
 		},
 	}
-	return workflow
 }
 
 func firstNotice(notices []string) string {
@@ -442,8 +420,7 @@ func enrichSnapshotWithAgentWorkflow(snapshot *Snapshot, herdr *HerdrSnapshot) {
 	}
 	for projectIndex := range snapshot.Projects {
 		for workIndex := range snapshot.Projects[projectIndex].WorkItems {
-			workflow := CorrelateAgentWorkflow(&snapshot.Projects[projectIndex], &snapshot.Projects[projectIndex].WorkItems[workIndex], herdr)
-			snapshot.Projects[projectIndex].WorkItems[workIndex].AgentWorkflow = workflow
+			snapshot.Projects[projectIndex].WorkItems[workIndex].AgentWorkflow = CorrelateAgentWorkflow(&snapshot.Projects[projectIndex], &snapshot.Projects[projectIndex].WorkItems[workIndex], herdr)
 		}
 	}
 }
