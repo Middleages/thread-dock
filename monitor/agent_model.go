@@ -94,7 +94,7 @@ type EvidenceItem struct {
 	Claim      string     `json:"claim,omitempty"`
 }
 
-func normalizeExecutionState(raw string) ExecutionState {
+func NormalizeExecutionState(raw string) ExecutionState {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "queued":
 		return ExecutionQueued
@@ -138,8 +138,21 @@ func NormalizeVerificationState(state VerificationState) VerificationState {
 	return state
 }
 
-func evidenceMatchesCandidate(state VerificationState, evidence EvidenceItem) bool {
-	anchor := strings.TrimSpace(state.AnchorSHA)
-	revision := strings.TrimSpace(evidence.Revision)
-	return anchor != "" && revision != "" && anchor == revision
+// EvidenceMatchesCandidate reports whether the evidence revision matches the
+// candidate anchor SHA. It supports exact match or prefix match when both
+// revisions are at least 7 characters long.
+func EvidenceMatchesCandidate(state VerificationState, evidence EvidenceItem) bool {
+	anchor := strings.ToLower(strings.TrimSpace(state.AnchorSHA))
+	revision := strings.ToLower(strings.TrimSpace(evidence.Revision))
+	if anchor == "" || revision == "" {
+		return false
+	}
+	if anchor == revision {
+		return true
+	}
+	const minSHAPrefix = 7
+	if len(anchor) >= minSHAPrefix && len(revision) >= minSHAPrefix {
+		return strings.HasPrefix(anchor, revision) || strings.HasPrefix(revision, anchor)
+	}
+	return false
 }
