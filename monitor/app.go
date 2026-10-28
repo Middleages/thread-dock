@@ -86,7 +86,14 @@ func (a *App) fetchSnapshot(all bool) (Snapshot, error) {
 	if source == nil {
 		return Snapshot{}, errors.New("monitor snapshot source is nil")
 	}
-	return source.FetchAll(context.Background())
+	snapshot, err := source.FetchAll(context.Background())
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if snapshot.Herdr != nil {
+		enrichSnapshotWithAgentWorkflow(&snapshot, snapshot.Herdr)
+	}
+	return snapshot, nil
 }
 
 // GetMonitorSettings returns the currently effective local monitor settings.
