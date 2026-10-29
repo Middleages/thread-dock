@@ -44,6 +44,43 @@ func enrichAgentCandidateRevisions(snapshot *Snapshot, process CommandRunner, di
 	return uniqueStrings(notices)
 }
 
+// normalizeMissingCandidateRevision prevents an existing PR whose head SHA
+// could not be read from being reported as if PR creation were still pending.
+func normalizeMissingCandidateRevision(snapshot *Snapshot) {
+	if snapshot == nil {
+		return
+	}
+	for projectIndex := range snapshot.Projects {
+		project := &snapshot.Projects[projectIndex]
+		for workIndex := range project.WorkItems {
+			work := &project.WorkItems[workIndex]
+			if work.AgentWorkflow == nil || work.GitHub == nil || work.GitHub.Kind != "pull_request" {
+				continue
+			}
+			if strings.TrimSpace(firstNonEmpty(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])) != "" {
+				continue
+			}
+			state := &work.AgentWorkflow.VerificationState
+			state.Status = VerificationUnverified
+			codes := make([]string, 0, len(state.Codes))
+			for _, code := range state.Codes {
+				if code != "awaiting_pr" {
+					codes = append(codes, code)
+				}
+			}
+			codes = append(codes, "candidate_revision_missing")
+			state.Codes = codes
+			state.Summary = "PR head SHA 확인 대기 중"
+			state = &work.AgentWorkflow.VerificationState
+			*state = NormalizeVerificationState(*state)
+			work.AgentWorkflow.Provenance.Partial = true
+			if work.AgentWorkflow.Provenance.Notice == "" {
+				work.AgentWorkflow.Provenance.Notice = "PR head SHA를 확인하지 못해 검증이 완료되지 않았습니다."
+			}
+		}
+	}
+}
+
 func fetchPullRequestHeadSHA(runner *wslCommandRunner, number int, prURL string) (string, error) {
 	if runner == nil {
 		return "", errors.New("github command runner is unavailable")
