@@ -50,9 +50,6 @@ func TestEnrichAgentCandidateRevisionsUpdatesVerificationAnchor(t *testing.T) {
 	if got := snapshot.Projects[0].WorkItems[0].GitHub.Fields["headSha"]; got != "deadbeef1234567" {
 		t.Fatalf("headSha=%q", got)
 	}
-
-	workflow := CorrelateAgentWorkflow
-	_ = workflow
 }
 
 func TestEnrichAgentCandidateRevisionsLeavesUnresolvedRevisionUnverified(t *testing.T) {
@@ -69,5 +66,14 @@ func TestEnrichAgentCandidateRevisionsLeavesUnresolvedRevisionUnverified(t *test
 	}
 	if got := snapshot.Projects[0].WorkItems[0].GitHub.Fields["headSha"]; got != "" {
 		t.Fatalf("headSha=%q", got)
+	}
+
+	normalizeMissingCandidateRevision(&snapshot)
+	state := snapshot.Projects[0].WorkItems[0].AgentWorkflow.VerificationState
+	if state.Status != VerificationUnverified {
+		t.Fatalf("status=%q", state.Status)
+	}
+	if len(state.Codes) != 1 || state.Codes[0] != "candidate_revision_missing" {
+		t.Fatalf("codes=%v", state.Codes)
 	}
 }
