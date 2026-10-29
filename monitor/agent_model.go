@@ -148,6 +148,24 @@ func EvidenceMatchesCandidate(state VerificationState, evidence EvidenceItem) bo
 	return false
 }
 
+func normalizeReviewerLogins(raw string) string {
+	seen := map[string]bool{}
+	values := []string{}
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(value, "@")))
+		if value != "" && !seen[value] { seen[value] = true; values = append(values, value) }
+	}
+	sort.Strings(values)
+	return strings.Join(values, ",")
+}
+
+func reviewerAllowed(raw, login string) bool {
+	login = strings.ToLower(strings.TrimSpace(login))
+	if login == "" { return false }
+	for _, allowed := range strings.Split(normalizeReviewerLogins(raw), ",") { if allowed == login { return true } }
+	return false
+}
+
 type AgentWorkflow struct {
 	Agents            []AgentObservation    `json:"agents"`
 	Tasks             []TaskObservation     `json:"tasks"`
