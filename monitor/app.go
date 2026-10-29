@@ -93,6 +93,13 @@ func (a *App) fetchSnapshot(all bool) (Snapshot, error) {
 	if snapshot.Herdr != nil {
 		enrichSnapshotWithAgentWorkflow(&snapshot, snapshot.Herdr)
 	}
+	candidateNotices := enrichAgentCandidateRevisions(&snapshot, a.process, a.settings.WSLDistribution, a.timeout)
+	if len(candidateNotices) > 0 {
+		snapshot.Notices = append(snapshot.Notices, candidateNotices...)
+	}
+	if snapshot.Herdr != nil {
+		enrichSnapshotWithAgentWorkflow(&snapshot, snapshot.Herdr)
+	}
 	return snapshot, nil
 }
 
