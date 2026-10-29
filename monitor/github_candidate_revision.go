@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // enrichAgentCandidateRevisions resolves the immutable head revision for PRs
@@ -13,14 +14,11 @@ import (
 // payload currently does not expose headRefOid in the canonical read model, so
 // this is a narrow follow-up read rather than a second source of work state.
 // Failure to resolve a revision is non-fatal: verification remains unverified.
-func enrichAgentCandidateRevisions(snapshot *Snapshot, process CommandRunner, distribution string, timeoutDuration int64) []string {
+func enrichAgentCandidateRevisions(snapshot *Snapshot, process CommandRunner, distribution string, timeout time.Duration) []string {
 	if snapshot == nil || process == nil {
 		return nil
 	}
-	runner := newWSLCommandRunner(process, distribution, durationFromNanos(timeoutDuration))
-	if runner == nil {
-		return nil
-	}
+	runner := newWSLCommandRunner(process, distribution, timeout)
 	notices := []string{}
 	for projectIndex := range snapshot.Projects {
 		project := &snapshot.Projects[projectIndex]
@@ -45,18 +43,6 @@ func enrichAgentCandidateRevisions(snapshot *Snapshot, process CommandRunner, di
 	}
 	return uniqueStrings(notices)
 }
-
-func durationFromNanos(value int64) interface{ } {
-	return durationValue(value)
-}
-
-func durationValue(value int64) timeDuration {
-	return timeDuration(value)
-}
-
-type timeDuration int64
-
-func (d timeDuration) toDuration() interface{} { return d }
 
 func fetchPullRequestHeadSHA(runner *wslCommandRunner, number int, prURL string) (string, error) {
 	if runner == nil {
