@@ -68,7 +68,8 @@ type WorkItem struct {
 	Decisions    []Decision  `json:"decisions"`
 	Handoffs     []Handoff   `json:"handoffs"`
 	Links        []Link      `json:"links"`
-	GitHub       *GitHubWork `json:"github,omitempty"`
+	GitHub        *GitHubWork    `json:"github,omitempty"`
+	AgentWorkflow *AgentWorkflow `json:"agentWorkflow,omitempty"`
 }
 
 type Decision struct {

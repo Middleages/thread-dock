@@ -38,13 +38,13 @@ func NewConfigurableApp(baseEnv map[string]string, process CommandRunner, timeou
 		settings = stored
 	}
 	app := &App{
-		baseEnv:        cloneStringMap(baseEnv),
-		process:        process,
-		timeout:        timeout,
-		store:          store,
-		projectToolbox: defaultProjectToolboxStore(),
-		globalToolbox:  defaultGlobalToolboxStore(),
-		settings:       settings,
+		baseEnv:          cloneStringMap(baseEnv),
+		process:          process,
+		timeout:          timeout,
+		store:            store,
+		projectToolbox:   defaultProjectToolboxStore(),
+		globalToolbox:    defaultGlobalToolboxStore(),
+		settings:         settings,
 	}
 	app.source = app.buildSource(settings, true)
 	app.allSource = app.buildSource(settings, false)
@@ -82,11 +82,29 @@ func (a *App) fetchSnapshot(all bool) (Snapshot, error) {
 	if all {
 		source = a.allSource
 	}
+	process := a.process
+	distribution := a.settings.WSLDistribution
+	timeout := a.timeout
 	a.mu.RUnlock()
 	if source == nil {
 		return Snapshot{}, errors.New("monitor snapshot source is nil")
 	}
-	return source.FetchAll(context.Background())
+	snapshot, err := source.FetchAll(context.Background())
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if snapshot.Herdr != nil {
+		enrichSnapshotWithAgentWorkflow(&snapshot, snapshot.Herdr)
+	}
+	candidateNotices := enrichAgentCandidateRevisions(&snapshot, process, distribution, timeout)
+	if len(candidateNotices) > 0 {
+		snapshot.Notices = append(snapshot.Notices, candidateNotices...)
+	}
+	if snapshot.Herdr != nil {
+		enrichSnapshotWithAgentWorkflow(&snapshot, snapshot.Herdr)
+	}
+	normalizeMissingCandidateRevision(&snapshot)
+	return snapshot, nil
 }
 
 // GetMonitorSettings returns the currently effective local monitor settings.

@@ -864,6 +864,7 @@ func (m *combinedMonitor) loadCombined(ctx context.Context) (Snapshot, error) {
 		herdrValue.snapshot = HerdrSnapshot{Source: "herdr", SchemaVersion: 1, ObservedAt: now, Status: "offline", State: "unknown", SyncStatus: "offline", NextAction: "recheck", Freshness: Freshness{State: "stale", SyncStatus: "offline", ObservedAt: timePtr(now)}, Notices: []string{"Herdr Monitor를 불러오지 못했습니다. 세션과 Herdr 연결을 다시 확인하세요."}, Sessions: []HerdrSession{}, Connections: []HerdrConnection{}, UnconnectedAgents: []HerdrObservedAgent{}, Links: []Link{}}
 	}
 	githubValue.snapshot.Herdr = &herdrValue.snapshot
+	enrichSnapshotWithAgentWorkflow(&githubValue.snapshot, &herdrValue.snapshot)
 	return githubValue.snapshot, nil
 }
 
