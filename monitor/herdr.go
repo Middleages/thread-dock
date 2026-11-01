@@ -90,8 +90,10 @@ type HerdrConnection struct {
 	AgentStatus string        `json:"agentStatus,omitempty"`
 	ObservedAt  *time.Time    `json:"observedAt,omitempty"`
 	NextAction  string        `json:"nextAction"`
-	Handoff     string        `json:"handoff"`
-	Location    HerdrLocation `json:"location"`
+	Handoff         string        `json:"handoff"`
+	ParentAgentName string        `json:"parentAgentName,omitempty"`
+	ParentAgentID   string        `json:"parentAgentId,omitempty"`
+	Location        HerdrLocation `json:"location"`
 }
 
 type herdrBinding struct {

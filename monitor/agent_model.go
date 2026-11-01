@@ -134,20 +134,24 @@ func NormalizeVerificationState(state VerificationState) VerificationState {
 	return state
 }
 
-func EvidenceMatchesCandidate(state VerificationState, evidence EvidenceItem) bool {
-	anchor := strings.ToLower(strings.TrimSpace(state.AnchorSHA))
-	revision := strings.ToLower(strings.TrimSpace(evidence.Revision))
-	if anchor == "" || revision == "" {
+func shaMatches(a, b string) bool {
+	a = strings.ToLower(strings.TrimSpace(a))
+	b = strings.ToLower(strings.TrimSpace(b))
+	if a == "" || b == "" {
 		return false
 	}
-	if anchor == revision {
+	if a == b {
 		return true
 	}
 	const minSHAPrefix = 7
-	if len(anchor) >= minSHAPrefix && len(revision) >= minSHAPrefix {
-		return strings.HasPrefix(anchor, revision) || strings.HasPrefix(revision, anchor)
+	if len(a) >= minSHAPrefix && len(b) >= minSHAPrefix {
+		return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
 	}
 	return false
+}
+
+func EvidenceMatchesCandidate(state VerificationState, evidence EvidenceItem) bool {
+	return shaMatches(state.AnchorSHA, evidence.Revision)
 }
 
 var (
@@ -185,7 +189,7 @@ func ParseEvidenceMarkers(text string) []ReviewerMarker {
 		reviewer := fields["reviewer"]
 		sha := fields["sha"]
 		verdict := strings.ToUpper(fields["verdict"])
-		if reviewer == "" || sha == "" || verdict == "" {
+		if reviewer == "" || sha == "" || (verdict != "ACCEPT" && verdict != "REJECT") {
 			continue
 		}
 		markers = append(markers, ReviewerMarker{
@@ -198,23 +202,35 @@ func ParseEvidenceMarkers(text string) []ReviewerMarker {
 	return markers
 }
 
+var defaultReviewerIdentities = map[string][]string{
+	"reviewer": {"reviewer", "td_reviewer", "code-reviewer"},
+	"security": {"security-reviewer"},
+	"qa":       {"qa-reviewer", "qa-bot"},
+}
+
+func resolveReviewerIdentities(project *Project) map[string][]string {
+	if project != nil && len(project.ReviewerIdentities) > 0 {
+		return project.ReviewerIdentities
+	}
+	return defaultReviewerIdentities
+}
+
 func CorrelateReviewerRole(role string, author string, identityMap map[string][]string) bool {
 	role = strings.ToLower(strings.TrimSpace(role))
 	author = strings.ToLower(strings.TrimSpace(author))
-	if role == "" || author == "" {
+	if role == "" || author == "" || len(identityMap) == 0 {
 		return false
 	}
-	if len(identityMap) > 0 {
-		if allowed, ok := identityMap[role]; ok {
-			for _, id := range allowed {
-				if strings.ToLower(strings.TrimSpace(id)) == author {
-					return true
-				}
-			}
-			return false
+	allowed, ok := identityMap[role]
+	if !ok || len(allowed) == 0 {
+		return false
+	}
+	for _, id := range allowed {
+		if strings.ToLower(strings.TrimSpace(id)) == author {
+			return true
 		}
 	}
-	return author == role || strings.Contains(author, role)
+	return false
 }
 
 func ExtractEvidenceItems(work *WorkItem, candidateSHA string, identityMap map[string][]string) []EvidenceItem {
@@ -238,33 +254,9 @@ func ExtractEvidenceItems(work *WorkItem, candidateSHA string, identityMap map[s
 				Source:     "github:checks",
 				ObservedAt: work.GitHub.ObservedAt,
 				Reference:  ref,
-				Revision:   candidateSHA,
+				Revision:   check.HeadSHA,
 				Claim:      claim,
 			})
-		}
-	}
-
-	if work.Body != "" && work.GitHub != nil {
-		author := work.GitHub.Author
-		markers := ParseEvidenceMarkers(work.Body)
-		for idx, marker := range markers {
-			if CorrelateReviewerRole(marker.Reviewer, author, identityMap) {
-				ref := "body"
-				if work.GitHub.Number != nil {
-					ref = fmt.Sprintf("pr:%d:body", *work.GitHub.Number)
-				}
-				if len(markers) > 1 {
-					ref = fmt.Sprintf("%s:%d", ref, idx)
-				}
-				evidences = append(evidences, EvidenceItem{
-					Type:       "review",
-					Source:     "github:description",
-					ObservedAt: work.GitHub.ObservedAt,
-					Reference:  ref,
-					Revision:   marker.SHA,
-					Claim:      marker.Verdict,
-				})
-			}
 		}
 	}
 
@@ -313,6 +305,9 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 	ciPending := false
 	ciPassCount := 0
 	for _, check := range checks {
+		if check.HeadSHA != "" && candidateSHA != "" && !shaMatches(candidateSHA, check.HeadSHA) {
+			continue
+		}
 		conclusion := strings.ToLower(check.Conclusion)
 		status := strings.ToLower(check.Status)
 		if conclusion == "failure" || conclusion == "timed_out" || conclusion == "action_required" {
@@ -342,14 +337,20 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 			continue
 		}
 		if EvidenceMatchesCandidate(dummyAnchorState, ev) {
-			hasMatchingReview = true
-			if ev.Claim == "ACCEPT" {
+			switch ev.Claim {
+			case "ACCEPT":
+				hasMatchingReview = true
 				hasAcceptedReview = true
-			} else {
+			case "REJECT":
+				hasMatchingReview = true
 				hasRejectedReview = true
+			default:
+				continue
 			}
 		} else {
-			hasStaleReview = true
+			if ev.Claim == "ACCEPT" || ev.Claim == "REJECT" {
+				hasStaleReview = true
+			}
 		}
 	}
 
@@ -561,14 +562,28 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 		notices = append(notices, "복수 세션이 동일 작업에 바인딩되어 관찰이 모호합니다.")
 	}
 
+	agentIDByName := make(map[string]string)
+	for _, conn := range matched {
+		name := strings.TrimSpace(conn.AgentName)
+		if name != "" {
+			agentIDByName[name] = herdrAgentIdentity(conn, agentNames[name] > 1)
+		}
+	}
+
 	agents := make([]AgentObservation, 0, len(matched))
 	for _, conn := range matched {
+		agentID := herdrAgentIdentity(conn, agentNames[strings.TrimSpace(conn.AgentName)] > 1)
+		parentID := strings.TrimSpace(conn.ParentAgentID)
+		if parentID == "" && strings.TrimSpace(conn.ParentAgentName) != "" {
+			parentID = agentIDByName[strings.TrimSpace(conn.ParentAgentName)]
+		}
 		agents = append(agents, AgentObservation{
-			AgentID:      herdrAgentIdentity(conn, agentNames[strings.TrimSpace(conn.AgentName)] > 1),
-			Role:         conn.Role,
-			Runtime:      "herdr",
-			ExecutionRef: herdrExecutionRef(conn),
-			Execution:    NormalizeExecutionState(conn.AgentStatus),
+			AgentID:       agentID,
+			ParentAgentID: parentID,
+			Role:          conn.Role,
+			Runtime:       "herdr",
+			ExecutionRef:  herdrExecutionRef(conn),
+			Execution:     NormalizeExecutionState(conn.AgentStatus),
 			Provenance: ObservationProvenance{
 				Source:     "herdr",
 				ObservedAt: conn.ObservedAt,
@@ -616,13 +631,14 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	hasChildIncomplete := false
 	for _, agent := range agents {
 		if agent.ParentAgentID != "" {
-			if agent.Execution == ExecutionFailed || agent.Execution == ExecutionCancelled || agent.Execution == ExecutionWaiting {
+			if agent.Execution == ExecutionFailed || agent.Execution == ExecutionCancelled || agent.Execution == ExecutionWaiting || agent.Execution == ExecutionRunning || agent.Execution == ExecutionQueued {
 				hasChildIncomplete = true
 			}
 		}
 	}
 
-	evidences := ExtractEvidenceItems(work, candidateSHA, nil)
+	identities := resolveReviewerIdentities(project)
+	evidences := ExtractEvidenceItems(work, candidateSHA, identities)
 	checks := []GitHubCheck{}
 	if work.GitHub != nil {
 		checks = work.GitHub.Checks

@@ -50,9 +50,10 @@ type Project struct {
 	UpdatedAt    *time.Time `json:"updatedAt,omitempty"`
 	ObservedAt   *time.Time `json:"observedAt,omitempty"`
 	WorkItems    []WorkItem `json:"workItems"`
-	Source       string     `json:"source,omitempty"`
-	Notices      []string   `json:"notices"`
-	Links        []Link     `json:"links"`
+	Source       string              `json:"source,omitempty"`
+	Notices      []string            `json:"notices"`
+	Links        []Link              `json:"links"`
+	ReviewerIdentities map[string][]string `json:"reviewerIdentities,omitempty"`
 }
 
 type WorkItem struct {
@@ -97,6 +98,7 @@ type GitHubCheck struct {
 	Status     string `json:"status,omitempty"`
 	Conclusion string `json:"conclusion,omitempty"`
 	URL        string `json:"url,omitempty"`
+	HeadSHA    string `json:"headSha,omitempty"`
 }
 
 type GitHubComment struct {
