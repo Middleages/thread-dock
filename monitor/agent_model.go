@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -146,6 +148,271 @@ func EvidenceMatchesCandidate(state VerificationState, evidence EvidenceItem) bo
 		return strings.HasPrefix(anchor, revision) || strings.HasPrefix(revision, anchor)
 	}
 	return false
+}
+
+var (
+	evidenceMarkerRegex = regexp.MustCompile(`(?i)<!--\s*evidence:\s*(.*?)\s*-->`)
+	markerFieldRegex    = regexp.MustCompile(`([a-zA-Z0-9_-]+)=([^\s]+)`)
+)
+
+type ReviewerMarker struct {
+	Reviewer string `json:"reviewer"`
+	SHA      string `json:"sha"`
+	Verdict  string `json:"verdict"`
+	Raw      string `json:"raw"`
+}
+
+func ParseEvidenceMarkers(text string) []ReviewerMarker {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	matches := evidenceMarkerRegex.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	markers := make([]ReviewerMarker, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		fieldMatches := markerFieldRegex.FindAllStringSubmatch(match[1], -1)
+		fields := make(map[string]string, len(fieldMatches))
+		for _, fm := range fieldMatches {
+			if len(fm) >= 3 {
+				fields[strings.ToLower(fm[1])] = fm[2]
+			}
+		}
+		reviewer := fields["reviewer"]
+		sha := fields["sha"]
+		verdict := strings.ToUpper(fields["verdict"])
+		if reviewer == "" || sha == "" || verdict == "" {
+			continue
+		}
+		markers = append(markers, ReviewerMarker{
+			Reviewer: reviewer,
+			SHA:      sha,
+			Verdict:  verdict,
+			Raw:      match[0],
+		})
+	}
+	return markers
+}
+
+func CorrelateReviewerRole(role string, author string, identityMap map[string][]string) bool {
+	role = strings.ToLower(strings.TrimSpace(role))
+	author = strings.ToLower(strings.TrimSpace(author))
+	if role == "" || author == "" {
+		return false
+	}
+	if len(identityMap) > 0 {
+		if allowed, ok := identityMap[role]; ok {
+			for _, id := range allowed {
+				if strings.ToLower(strings.TrimSpace(id)) == author {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return author == role || strings.Contains(author, role)
+}
+
+func ExtractEvidenceItems(work *WorkItem, candidateSHA string, identityMap map[string][]string) []EvidenceItem {
+	if work == nil {
+		return nil
+	}
+	evidences := make([]EvidenceItem, 0)
+
+	if work.GitHub != nil {
+		for _, check := range work.GitHub.Checks {
+			claim := strings.ToLower(check.Conclusion)
+			if claim == "" {
+				claim = strings.ToLower(check.Status)
+			}
+			ref := check.Name
+			if check.URL != "" {
+				ref = check.URL
+			}
+			evidences = append(evidences, EvidenceItem{
+				Type:       "ci",
+				Source:     "github:checks",
+				ObservedAt: work.GitHub.ObservedAt,
+				Reference:  ref,
+				Revision:   candidateSHA,
+				Claim:      claim,
+			})
+		}
+	}
+
+	if work.Body != "" && work.GitHub != nil {
+		author := work.GitHub.Author
+		markers := ParseEvidenceMarkers(work.Body)
+		for idx, marker := range markers {
+			if CorrelateReviewerRole(marker.Reviewer, author, identityMap) {
+				ref := "body"
+				if work.GitHub.Number != nil {
+					ref = fmt.Sprintf("pr:%d:body", *work.GitHub.Number)
+				}
+				if len(markers) > 1 {
+					ref = fmt.Sprintf("%s:%d", ref, idx)
+				}
+				evidences = append(evidences, EvidenceItem{
+					Type:       "review",
+					Source:     "github:description",
+					ObservedAt: work.GitHub.ObservedAt,
+					Reference:  ref,
+					Revision:   marker.SHA,
+					Claim:      marker.Verdict,
+				})
+			}
+		}
+	}
+
+	if work.GitHub != nil {
+		for cIdx, comment := range work.GitHub.Comments {
+			markers := ParseEvidenceMarkers(comment.Body)
+			for mIdx, marker := range markers {
+				if CorrelateReviewerRole(marker.Reviewer, comment.Author, identityMap) {
+					ref := comment.URL
+					if ref == "" {
+						ref = fmt.Sprintf("comment:%d", cIdx)
+					}
+					if len(markers) > 1 {
+						ref = fmt.Sprintf("%s:%d", ref, mIdx)
+					}
+					evidences = append(evidences, EvidenceItem{
+						Type:       "review",
+						Source:     "github:comment",
+						ObservedAt: comment.ObservedAt,
+						Reference:  ref,
+						Revision:   marker.SHA,
+						Claim:      marker.Verdict,
+					})
+				}
+			}
+		}
+	}
+
+	return evidences
+}
+
+func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, checks []GitHubCheck, ambiguous bool, coordinatorFallback bool, childIncomplete bool) VerificationState {
+	candidateSHA = strings.TrimSpace(candidateSHA)
+	vState := VerificationState{
+		Status:    VerificationUnverified,
+		AnchorSHA: candidateSHA,
+	}
+
+	if candidateSHA == "" {
+		vState.Codes = []string{"awaiting_pr"}
+		vState.Summary = "PR 생성 대기 중 (로컬 작업 중)"
+		return NormalizeVerificationState(vState)
+	}
+
+	ciFailed := false
+	ciPending := false
+	ciPassCount := 0
+	for _, check := range checks {
+		conclusion := strings.ToLower(check.Conclusion)
+		status := strings.ToLower(check.Status)
+		if conclusion == "failure" || conclusion == "timed_out" || conclusion == "action_required" {
+			ciFailed = true
+		} else if status == "in_progress" || status == "queued" || status == "pending" {
+			ciPending = true
+		} else if conclusion == "success" || conclusion == "neutral" {
+			ciPassCount++
+		}
+	}
+	if ciFailed {
+		vState.Codes = append(vState.Codes, "ci_failed")
+	} else if ciPending {
+		vState.Codes = append(vState.Codes, "ci_pending")
+	} else if len(checks) > 0 && ciPassCount > 0 {
+		vState.Codes = append(vState.Codes, "ci_passed")
+	}
+
+	hasMatchingReview := false
+	hasAcceptedReview := false
+	hasRejectedReview := false
+	hasStaleReview := false
+
+	dummyAnchorState := VerificationState{AnchorSHA: candidateSHA}
+	for _, ev := range evidences {
+		if ev.Type != "review" {
+			continue
+		}
+		if EvidenceMatchesCandidate(dummyAnchorState, ev) {
+			hasMatchingReview = true
+			if ev.Claim == "ACCEPT" {
+				hasAcceptedReview = true
+			} else {
+				hasRejectedReview = true
+			}
+		} else {
+			hasStaleReview = true
+		}
+	}
+
+	if hasMatchingReview {
+		if hasAcceptedReview {
+			vState.Codes = append(vState.Codes, "reviewer_accepted")
+		}
+		if hasRejectedReview {
+			vState.Codes = append(vState.Codes, "reviewer_not_accepted")
+		}
+	} else if hasStaleReview {
+		vState.Codes = append(vState.Codes, "stale_sha")
+	} else {
+		vState.Codes = append(vState.Codes, "reviewer_missing")
+	}
+
+	if hasAcceptedReview && !hasRejectedReview && !ciFailed && !ciPending && !ambiguous && !coordinatorFallback && !childIncomplete {
+		vState.Status = VerificationVerified
+		if len(checks) > 0 {
+			vState.Summary = "검증 완료 (리뷰어 승인 및 CI 통과)"
+		} else {
+			vState.Summary = "검증 완료 (리뷰어 승인)"
+		}
+	} else if ambiguous || coordinatorFallback || childIncomplete {
+		vState.Status = VerificationPartial
+		if ambiguous {
+			vState.Summary = "복수 세션 바인딩으로 검증 상태 부분 확인"
+		} else if coordinatorFallback {
+			vState.Summary = "저장소 코디네이터 폴백으로 검증 상태 부분 확인"
+		} else {
+			vState.Summary = "하위 에이전트 작업 미완료로 부분 확인"
+		}
+	} else {
+		vState.Status = VerificationUnverified
+		hasStale := false
+		hasMissing := false
+		hasNotAccepted := false
+		for _, c := range vState.Codes {
+			switch c {
+			case "stale_sha":
+				hasStale = true
+			case "reviewer_missing":
+				hasMissing = true
+			case "reviewer_not_accepted":
+				hasNotAccepted = true
+			}
+		}
+		if hasStale {
+			vState.Summary = "최신 커밋에 대한 리뷰어 증거 대기 중 (이전 커밋 리뷰됨)"
+		} else if ciFailed {
+			vState.Summary = "CI 검증 실패"
+		} else if ciPending {
+			vState.Summary = "CI 검증 진행 중"
+		} else if hasNotAccepted {
+			vState.Summary = "리뷰어 미승인 (REJECT)"
+		} else if hasMissing {
+			vState.Summary = "리뷰어 검증 증거 대기 중"
+		} else {
+			vState.Summary = "검증 대기 중"
+		}
+	}
+
+	return NormalizeVerificationState(vState)
 }
 
 type AgentWorkflow struct {
@@ -346,46 +613,77 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 		candidateSHA = firstNonEmpty(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])
 	}
 
-	vState := VerificationState{Status: VerificationUnverified, AnchorSHA: candidateSHA}
-	if candidateSHA == "" {
-		vState.Codes = append(vState.Codes, "awaiting_pr")
-		vState.Summary = "PR 생성 대기 중 (로컬 작업 중)"
-	} else {
-		ciPending, ciFailed := false, false
-		if work.GitHub != nil {
-			for _, check := range work.GitHub.Checks {
-				conclusion := strings.ToLower(check.Conclusion)
-				status := strings.ToLower(check.Status)
-				if conclusion == "failure" || conclusion == "timed_out" || conclusion == "action_required" {
-					ciFailed = true
-				} else if status == "in_progress" || status == "queued" || status == "pending" {
-					ciPending = true
-				}
+	hasChildIncomplete := false
+	for _, agent := range agents {
+		if agent.ParentAgentID != "" {
+			if agent.Execution == ExecutionFailed || agent.Execution == ExecutionCancelled || agent.Execution == ExecutionWaiting {
+				hasChildIncomplete = true
 			}
 		}
-		if ciFailed {
-			vState.Codes = append(vState.Codes, "ci_failed")
-		} else if ciPending {
-			vState.Codes = append(vState.Codes, "ci_pending")
+	}
+
+	evidences := ExtractEvidenceItems(work, candidateSHA, nil)
+	checks := []GitHubCheck{}
+	if work.GitHub != nil {
+		checks = work.GitHub.Checks
+	}
+
+	vState := DeriveVerificationState(candidateSHA, evidences, checks, ambiguous, matchType == "coordinator", hasChildIncomplete)
+
+	evidenceRefs := append([]string{}, work.EvidenceRefs...)
+	for _, ev := range evidences {
+		if ev.Reference != "" {
+			evidenceRefs = append(evidenceRefs, ev.Reference)
 		}
-		vState.Codes = append(vState.Codes, "reviewer_missing")
-		vState.Summary = "리뷰어 검증 증거 대기 중"
 	}
-	if ambiguous || matchType == "coordinator" {
-		vState.Status = VerificationPartial
+	evidenceRefs = uniqueStrings(evidenceRefs)
+
+	tasks := make([]TaskObservation, 0, len(agents))
+	results := make([]TaskResult, 0, len(agents))
+	for _, agent := range agents {
+		taskID := firstNonEmpty(agent.TaskID, work.WorkID, agent.AgentID+":task")
+		tasks = append(tasks, TaskObservation{
+			TaskID:        taskID,
+			AgentID:       agent.AgentID,
+			Role:          agent.Role,
+			Objective:     work.Title,
+			InputRevision: candidateSHA,
+		})
+
+		if agent.Execution == ExecutionCompleted || agent.Execution == ExecutionFailed || agent.Execution == ExecutionCancelled {
+			summary := "작업 실행 완료"
+			if agent.Execution == ExecutionFailed {
+				summary = "작업 실행 실패"
+			} else if agent.Execution == ExecutionCancelled {
+				summary = "작업 실행 취소"
+			}
+			findings := []string{}
+			if vState.Status == VerificationVerified {
+				findings = append(findings, "리뷰어 승인 검증 완료")
+			}
+			results = append(results, TaskResult{
+				ResultID:       agent.AgentID + ":result",
+				TaskID:         taskID,
+				AgentID:        agent.AgentID,
+				Status:         agent.Execution,
+				OutputRevision: candidateSHA,
+				Summary:        summary,
+				Findings:       findings,
+				Verification:   vState.Status,
+			})
+		}
 	}
-	vState = NormalizeVerificationState(vState)
 
 	observedAt := herdr.ObservedAt
 	return &AgentWorkflow{
 		Agents:            agents,
-		Tasks:             []TaskObservation{},
-		Results:           []TaskResult{},
+		Tasks:             tasks,
+		Results:           results,
 		ExecutionState:    overallExecution,
 		GitHubWorkState:   ghWorkState,
 		VerificationState: vState,
 		CandidateRevision: candidateSHA,
-		EvidenceRefs:      append([]string{}, work.EvidenceRefs...),
+		EvidenceRefs:      evidenceRefs,
 		Notices:           notices,
 		Provenance: ObservationProvenance{
 			Source:     "herdr+github",

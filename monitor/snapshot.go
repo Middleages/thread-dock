@@ -99,6 +99,13 @@ type GitHubCheck struct {
 	URL        string `json:"url,omitempty"`
 }
 
+type GitHubComment struct {
+	Author     string     `json:"author"`
+	Body       string     `json:"body"`
+	URL        string     `json:"url,omitempty"`
+	ObservedAt *time.Time `json:"observedAt,omitempty"`
+}
+
 type GitHubWork struct {
 	Kind                   string            `json:"kind"`
 	Number                 *int              `json:"number,omitempty"`
@@ -106,6 +113,7 @@ type GitHubWork struct {
 	State                  string            `json:"state,omitempty"`
 	ReviewDecision         string            `json:"reviewDecision,omitempty"`
 	Checks                 []GitHubCheck     `json:"checks"`
+	Comments               []GitHubComment   `json:"comments,omitempty"`
 	RelatedIssueURLs       []string          `json:"relatedIssueUrls"`
 	RelatedPullRequestURLs []string          `json:"relatedPullRequestUrls"`
 	Fields                 map[string]string `json:"fields"`
