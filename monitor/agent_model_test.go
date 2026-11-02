@@ -322,7 +322,7 @@ func TestCandidateSHACIPendingAndFailed(t *testing.T) {
 				"headSha": "abcdef1234567890abcdef1234567890abcdef12",
 			},
 			Checks: []GitHubCheck{
-				{Name: "test", Conclusion: "failure"},
+				{Name: "test", HeadSHA: "abcdef1234567890abcdef1234567890abcdef12", Conclusion: "failure"},
 			},
 		},
 	}
@@ -364,7 +364,7 @@ func TestCandidateSHACIPendingAndFailed(t *testing.T) {
 				"headSha": "1234567890abcdef1234567890abcdef12345678",
 			},
 			Checks: []GitHubCheck{
-				{Name: "test", Status: "in_progress"},
+				{Name: "test", HeadSHA: "1234567890abcdef1234567890abcdef12345678", Status: "in_progress"},
 			},
 		},
 	}
@@ -458,6 +458,11 @@ func TestReceiptAsExecutionEvidenceDoesNotVerify(t *testing.T) {
 func TestMatchingReviewEvidenceVerifies(t *testing.T) {
 	now := time.Now()
 	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"security": {"security-reviewer"},
+		},
+	}
 	work := WorkItem{
 		WorkID: "pr:102",
 		Title:  "Implement Task 3",
@@ -469,8 +474,8 @@ func TestMatchingReviewEvidenceVerifies(t *testing.T) {
 				"headSha": headSHA,
 			},
 			Checks: []GitHubCheck{
-				{Name: "ci/build", Conclusion: "success"},
-				{Name: "ci/test", Conclusion: "success"},
+				{Name: "ci/build", HeadSHA: headSHA, Conclusion: "success"},
+				{Name: "ci/test", HeadSHA: headSHA, Conclusion: "success"},
 			},
 			Comments: []GitHubComment{
 				{
@@ -494,7 +499,7 @@ func TestMatchingReviewEvidenceVerifies(t *testing.T) {
 		},
 	}
 
-	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
 	if workflow == nil {
 		t.Fatal("workflow must not be nil")
 	}
@@ -525,6 +530,11 @@ func TestStaleReviewEvidenceProducesStaleSHA(t *testing.T) {
 	now := time.Now()
 	latestHeadSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
 	olderSHA := "a9b64e956dd289df17d2a00cb4f86895ae178167"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"code-reviewer"},
+		},
+	}
 	work := WorkItem{
 		WorkID: "pr:103",
 		GitHub: &GitHubWork{
@@ -535,7 +545,7 @@ func TestStaleReviewEvidenceProducesStaleSHA(t *testing.T) {
 				"headSha": latestHeadSHA,
 			},
 			Checks: []GitHubCheck{
-				{Name: "ci/test", Conclusion: "success"},
+				{Name: "ci/test", HeadSHA: latestHeadSHA, Conclusion: "success"},
 			},
 			Comments: []GitHubComment{
 				{
@@ -559,7 +569,7 @@ func TestStaleReviewEvidenceProducesStaleSHA(t *testing.T) {
 		},
 	}
 
-	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
 	if workflow == nil {
 		t.Fatal("workflow must not be nil")
 	}
@@ -583,6 +593,11 @@ func TestStaleReviewEvidenceProducesStaleSHA(t *testing.T) {
 func TestReviewerVerdictRejectProducesReviewerNotAccepted(t *testing.T) {
 	now := time.Now()
 	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"reviewer"},
+		},
+	}
 	work := WorkItem{
 		WorkID: "pr:104",
 		GitHub: &GitHubWork{
@@ -613,7 +628,7 @@ func TestReviewerVerdictRejectProducesReviewerNotAccepted(t *testing.T) {
 		},
 	}
 
-	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
 	if workflow == nil {
 		t.Fatal("workflow must not be nil")
 	}
@@ -634,6 +649,11 @@ func TestReviewerVerdictRejectProducesReviewerNotAccepted(t *testing.T) {
 func TestReviewerMarkerAuthorMismatchRejected(t *testing.T) {
 	now := time.Now()
 	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"security": {"security-reviewer"},
+		},
+	}
 	work := WorkItem{
 		WorkID: "pr:105",
 		GitHub: &GitHubWork{
@@ -664,7 +684,7 @@ func TestReviewerMarkerAuthorMismatchRejected(t *testing.T) {
 		},
 	}
 
-	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
 	if workflow == nil {
 		t.Fatal("workflow must not be nil")
 	}
@@ -685,6 +705,11 @@ func TestReviewerMarkerAuthorMismatchRejected(t *testing.T) {
 func TestIncompleteChildResultProducesPartialVerification(t *testing.T) {
 	now := time.Now()
 	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"reviewer"},
+		},
+	}
 	work := WorkItem{
 		WorkID: "pr:106",
 		GitHub: &GitHubWork{
@@ -695,7 +720,7 @@ func TestIncompleteChildResultProducesPartialVerification(t *testing.T) {
 				"headSha": headSHA,
 			},
 			Checks: []GitHubCheck{
-				{Name: "ci/test", Conclusion: "success"},
+				{Name: "ci/test", HeadSHA: headSHA, Conclusion: "success"},
 			},
 			Comments: []GitHubComment{
 				{
@@ -727,7 +752,7 @@ func TestIncompleteChildResultProducesPartialVerification(t *testing.T) {
 	}
 
 	// Full integration path: Herdr snapshot -> parent/child correlation -> AgentWorkflow -> verification derivation
-	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
 	if workflow == nil {
 		t.Fatal("workflow must not be nil")
 	}
@@ -827,6 +852,11 @@ func TestReviewerAllowlistExactMatch(t *testing.T) {
 func TestUnknownVerdictIgnoredNotTreatedAsReject(t *testing.T) {
 	now := time.Now()
 	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"reviewer"},
+		},
+	}
 	work := WorkItem{
 		WorkID: "pr:109",
 		GitHub: &GitHubWork{
@@ -857,7 +887,7 @@ func TestUnknownVerdictIgnoredNotTreatedAsReject(t *testing.T) {
 		},
 	}
 
-	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
 	if workflow == nil {
 		t.Fatal("workflow must not be nil")
 	}
@@ -963,5 +993,130 @@ func TestMalformedEvidenceMarkerLeavesProjectObservable(t *testing.T) {
 	}
 	if !hasReviewerMissing {
 		t.Fatalf("codes = %v, want reviewer_missing", workflow.VerificationState.Codes)
+	}
+}
+
+func TestUnconfiguredProjectRejectsReviewerEvidence(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	work := WorkItem{
+		WorkID: "pr:111",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(111),
+			URL:    "https://github.com/acme/app/pull/111",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "reviewer",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=ACCEPT -->", headSHA),
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/111",
+				Session:     "sess-111",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	wfNilProject := CorrelateAgentWorkflow(nil, &work, &herdr)
+	if wfNilProject == nil {
+		t.Fatal("workflow should not be nil")
+	}
+	if wfNilProject.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("status = %q, want unverified when project is nil", wfNilProject.VerificationState.Status)
+	}
+	hasReviewerMissing := false
+	for _, c := range wfNilProject.VerificationState.Codes {
+		if c == "reviewer_missing" {
+			hasReviewerMissing = true
+		}
+	}
+	if !hasReviewerMissing {
+		t.Fatalf("codes = %v, want reviewer_missing without configured identities", wfNilProject.VerificationState.Codes)
+	}
+
+	emptyProject := &Project{}
+	wfEmptyProject := CorrelateAgentWorkflow(emptyProject, &work, &herdr)
+	if wfEmptyProject == nil {
+		t.Fatal("workflow should not be nil")
+	}
+	if wfEmptyProject.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("status = %q, want unverified when project has empty identities", wfEmptyProject.VerificationState.Status)
+	}
+}
+
+func TestUnboundChecksDoNotAddCIPassedPresentation(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"reviewer"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:112",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(112),
+			URL:    "https://github.com/acme/app/pull/112",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Checks: []GitHubCheck{
+				// Checks are present and successful, but have no observed HeadSHA (empty)
+				{Name: "ci/unbound-check", Conclusion: "success"},
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "reviewer",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=ACCEPT -->", headSHA),
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/112",
+				Session:     "sess-112",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	// Reviewer approved, so status is verified
+	if workflow.VerificationState.Status != VerificationVerified {
+		t.Fatalf("status = %q, want verified", workflow.VerificationState.Status)
+	}
+	// But unbound checks must NOT produce ci_passed code
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "ci_passed" {
+			t.Fatalf("unbound checks (HeadSHA == '') must not produce ci_passed code, codes = %v", workflow.VerificationState.Codes)
+		}
+	}
+	// And summary must NOT claim "CI 통과"
+	if strings.Contains(workflow.VerificationState.Summary, "CI 통과") {
+		t.Fatalf("summary = %q, must not contain CI 통과 when checks are unbound", workflow.VerificationState.Summary)
+	}
+	if workflow.VerificationState.Summary != "검증 완료 (리뷰어 승인)" {
+		t.Fatalf("summary = %q, want '검증 완료 (리뷰어 승인)'", workflow.VerificationState.Summary)
 	}
 }

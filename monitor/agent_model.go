@@ -202,17 +202,11 @@ func ParseEvidenceMarkers(text string) []ReviewerMarker {
 	return markers
 }
 
-var defaultReviewerIdentities = map[string][]string{
-	"reviewer": {"reviewer", "td_reviewer", "code-reviewer"},
-	"security": {"security-reviewer"},
-	"qa":       {"qa-reviewer", "qa-bot"},
-}
-
 func resolveReviewerIdentities(project *Project) map[string][]string {
-	if project != nil && len(project.ReviewerIdentities) > 0 {
-		return project.ReviewerIdentities
+	if project == nil || len(project.ReviewerIdentities) == 0 {
+		return nil
 	}
-	return defaultReviewerIdentities
+	return project.ReviewerIdentities
 }
 
 func CorrelateReviewerRole(role string, author string, identityMap map[string][]string) bool {
@@ -305,7 +299,7 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 	ciPending := false
 	ciPassCount := 0
 	for _, check := range checks {
-		if check.HeadSHA != "" && candidateSHA != "" && !shaMatches(candidateSHA, check.HeadSHA) {
+		if check.HeadSHA == "" || candidateSHA == "" || !shaMatches(candidateSHA, check.HeadSHA) {
 			continue
 		}
 		conclusion := strings.ToLower(check.Conclusion)
@@ -322,7 +316,7 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		vState.Codes = append(vState.Codes, "ci_failed")
 	} else if ciPending {
 		vState.Codes = append(vState.Codes, "ci_pending")
-	} else if len(checks) > 0 && ciPassCount > 0 {
+	} else if ciPassCount > 0 {
 		vState.Codes = append(vState.Codes, "ci_passed")
 	}
 
@@ -369,7 +363,7 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 
 	if hasAcceptedReview && !hasRejectedReview && !ciFailed && !ciPending && !ambiguous && !coordinatorFallback && !childIncomplete {
 		vState.Status = VerificationVerified
-		if len(checks) > 0 {
+		if ciPassCount > 0 {
 			vState.Summary = "검증 완료 (리뷰어 승인 및 CI 통과)"
 		} else {
 			vState.Summary = "검증 완료 (리뷰어 승인)"
