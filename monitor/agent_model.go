@@ -89,6 +89,8 @@ type EvidenceItem struct {
 	Reference  string     `json:"reference,omitempty"`
 	Revision   string     `json:"revision,omitempty"`
 	Claim      string     `json:"claim,omitempty"`
+	Role       string     `json:"role,omitempty"`
+	Author     string     `json:"author,omitempty"`
 }
 
 func NormalizeExecutionState(raw string) ExecutionState {
@@ -227,7 +229,7 @@ func CorrelateReviewerRole(role string, author string, identityMap map[string][]
 	return false
 }
 
-func ExtractEvidenceItems(work *WorkItem, candidateSHA string, identityMap map[string][]string) []EvidenceItem {
+func ExtractEvidenceItems(work *WorkItem, identityMap map[string][]string) []EvidenceItem {
 	if work == nil {
 		return nil
 	}
@@ -273,6 +275,8 @@ func ExtractEvidenceItems(work *WorkItem, candidateSHA string, identityMap map[s
 						Reference:  ref,
 						Revision:   marker.SHA,
 						Claim:      marker.Verdict,
+						Role:       strings.ToLower(strings.TrimSpace(marker.Reviewer)),
+						Author:     strings.ToLower(strings.TrimSpace(comment.Author)),
 					})
 				}
 			}
@@ -282,7 +286,7 @@ func ExtractEvidenceItems(work *WorkItem, candidateSHA string, identityMap map[s
 	return evidences
 }
 
-func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, checks []GitHubCheck, ambiguous bool, coordinatorFallback bool, childIncomplete bool) VerificationState {
+func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, checks []GitHubCheck, requiredRoles []string, ambiguous bool, coordinatorFallback bool, childIncomplete bool) VerificationState {
 	candidateSHA = strings.TrimSpace(candidateSHA)
 	vState := VerificationState{
 		Status:    VerificationUnverified,
@@ -320,26 +324,42 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		vState.Codes = append(vState.Codes, "ci_passed")
 	}
 
-	hasMatchingReview := false
-	hasAcceptedReview := false
-	hasRejectedReview := false
+	type reviewerVerdict struct {
+		claim      string
+		observedAt *time.Time
+		index      int
+	}
+	latestVerdicts := make(map[string]reviewerVerdict)
 	hasStaleReview := false
 
 	dummyAnchorState := VerificationState{AnchorSHA: candidateSHA}
-	for _, ev := range evidences {
+	for idx, ev := range evidences {
 		if ev.Type != "review" {
 			continue
 		}
 		if EvidenceMatchesCandidate(dummyAnchorState, ev) {
-			switch ev.Claim {
-			case "ACCEPT":
-				hasMatchingReview = true
-				hasAcceptedReview = true
-			case "REJECT":
-				hasMatchingReview = true
-				hasRejectedReview = true
-			default:
+			if ev.Claim != "ACCEPT" && ev.Claim != "REJECT" {
 				continue
+			}
+			key := ev.Role
+			if key == "" {
+				key = ev.Author
+			}
+			if key == "" {
+				key = ev.Reference
+			}
+
+			prev, exists := latestVerdicts[key]
+			if !exists {
+				latestVerdicts[key] = reviewerVerdict{claim: ev.Claim, observedAt: ev.ObservedAt, index: idx}
+			} else {
+				if prev.observedAt != nil && ev.ObservedAt != nil {
+					if ev.ObservedAt.After(*prev.observedAt) || ev.ObservedAt.Equal(*prev.observedAt) {
+						latestVerdicts[key] = reviewerVerdict{claim: ev.Claim, observedAt: ev.ObservedAt, index: idx}
+					}
+				} else {
+					latestVerdicts[key] = reviewerVerdict{claim: ev.Claim, observedAt: ev.ObservedAt, index: idx}
+				}
 			}
 		} else {
 			if ev.Claim == "ACCEPT" || ev.Claim == "REJECT" {
@@ -348,12 +368,50 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		}
 	}
 
-	if hasMatchingReview {
-		if hasAcceptedReview {
-			vState.Codes = append(vState.Codes, "reviewer_accepted")
+	hasMatchingReview := false
+	hasAcceptedReview := false
+	hasRejectedReview := false
+	hasMissingRoleReview := false
+
+	if len(requiredRoles) > 0 {
+		allRolesAccepted := true
+		anyRoleRejected := false
+		anyRoleReviewed := false
+
+		for _, role := range requiredRoles {
+			normRole := strings.ToLower(strings.TrimSpace(role))
+			v, exists := latestVerdicts[normRole]
+			if !exists {
+				allRolesAccepted = false
+				hasMissingRoleReview = true
+			} else {
+				anyRoleReviewed = true
+				if v.claim == "REJECT" {
+					anyRoleRejected = true
+					allRolesAccepted = false
+				} else if v.claim != "ACCEPT" {
+					allRolesAccepted = false
+				}
+			}
 		}
-		if hasRejectedReview {
+
+		if anyRoleReviewed {
+			hasMatchingReview = true
+		}
+		if anyRoleRejected {
+			hasRejectedReview = true
+		} else if allRolesAccepted {
+			hasAcceptedReview = true
+		}
+	}
+
+	if hasMatchingReview {
+		if hasAcceptedReview && !hasRejectedReview {
+			vState.Codes = append(vState.Codes, "reviewer_accepted")
+		} else if hasRejectedReview {
 			vState.Codes = append(vState.Codes, "reviewer_not_accepted")
+		} else if hasMissingRoleReview {
+			vState.Codes = append(vState.Codes, "reviewer_missing")
 		}
 	} else if hasStaleReview {
 		vState.Codes = append(vState.Codes, "stale_sha")
@@ -401,7 +459,7 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		} else if hasNotAccepted {
 			vState.Summary = "리뷰어 미승인 (REJECT)"
 		} else if hasMissing {
-			vState.Summary = "리뷰어 검증 증거 대기 중"
+			vState.Summary = "리뷰어 승인 대기 중 (검증 미완료)"
 		} else {
 			vState.Summary = "검증 대기 중"
 		}
@@ -632,13 +690,22 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	}
 
 	identities := resolveReviewerIdentities(project)
-	evidences := ExtractEvidenceItems(work, candidateSHA, identities)
+	var requiredRoles []string
+	if project != nil && len(project.ReviewerIdentities) > 0 {
+		requiredRoles = make([]string, 0, len(project.ReviewerIdentities))
+		for r := range project.ReviewerIdentities {
+			requiredRoles = append(requiredRoles, strings.ToLower(strings.TrimSpace(r)))
+		}
+		sort.Strings(requiredRoles)
+	}
+
+	evidences := ExtractEvidenceItems(work, identities)
 	checks := []GitHubCheck{}
 	if work.GitHub != nil {
 		checks = work.GitHub.Checks
 	}
 
-	vState := DeriveVerificationState(candidateSHA, evidences, checks, ambiguous, matchType == "coordinator", hasChildIncomplete)
+	vState := DeriveVerificationState(candidateSHA, evidences, checks, requiredRoles, ambiguous, matchType == "coordinator", hasChildIncomplete)
 
 	evidenceRefs := append([]string{}, work.EvidenceRefs...)
 	for _, ev := range evidences {
