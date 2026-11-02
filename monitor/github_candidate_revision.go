@@ -30,7 +30,7 @@ func enrichAgentCandidateRevisions(snapshot *Snapshot, process CommandRunner, di
 			if work.GitHub.Fields == nil {
 				work.GitHub.Fields = map[string]string{}
 			}
-			if strings.TrimSpace(firstNonEmpty(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])) != "" {
+			if strings.TrimSpace(firstTrimmed(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])) != "" {
 				continue
 			}
 			sha, err := fetchPullRequestHeadSHA(runner, *work.GitHub.Number, work.GitHub.URL)
@@ -57,7 +57,7 @@ func normalizeMissingCandidateRevision(snapshot *Snapshot) {
 			if work.AgentWorkflow == nil || work.GitHub == nil || work.GitHub.Kind != "pull_request" {
 				continue
 			}
-			if strings.TrimSpace(firstNonEmpty(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])) != "" {
+			if strings.TrimSpace(firstTrimmed(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])) != "" {
 				continue
 			}
 			state := &work.AgentWorkflow.VerificationState

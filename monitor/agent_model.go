@@ -677,7 +677,7 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	}
 	candidateSHA := ""
 	if work.GitHub != nil && work.GitHub.Fields != nil {
-		candidateSHA = firstNonEmpty(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])
+		candidateSHA = firstTrimmed(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])
 	}
 
 	hasChildIncomplete := false
@@ -718,7 +718,7 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	tasks := make([]TaskObservation, 0, len(agents))
 	results := make([]TaskResult, 0, len(agents))
 	for _, agent := range agents {
-		taskID := firstNonEmpty(agent.TaskID, work.WorkID, agent.AgentID+":task")
+		taskID := firstTrimmed(agent.TaskID, work.WorkID, agent.AgentID+":task")
 		tasks = append(tasks, TaskObservation{
 			TaskID:        taskID,
 			AgentID:       agent.AgentID,
@@ -780,7 +780,7 @@ func firstNotice(notices []string) string {
 	return notices[0]
 }
 
-func firstNonEmpty(values ...string) string {
+func firstTrimmed(values ...string) string {
 	for _, value := range values {
 		if value = strings.TrimSpace(value); value != "" {
 			return value
