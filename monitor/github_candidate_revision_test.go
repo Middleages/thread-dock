@@ -57,7 +57,7 @@ func TestEnrichAgentCandidateRevisionsLeavesUnresolvedRevisionUnverified(t *test
 	number := 42
 	snapshot := Snapshot{Projects: []Project{{WorkItems: []WorkItem{{
 		GitHub: &GitHubWork{Kind: "pull_request", Number: &number, URL: "https://github.com/acme/app/pull/42", Fields: map[string]string{}},
-		AgentWorkflow: &AgentWorkflow{VerificationState: VerificationState{Status: VerificationUnverified, Codes: []string{"reviewer_missing"}}},
+		AgentWorkflow: &AgentWorkflow{VerificationState: VerificationState{Status: VerificationUnverified, Codes: []string{"awaiting_pr"}}},
 	}}}}}
 
 	notices := enrichAgentCandidateRevisions(&snapshot, fake, "Ubuntu", time.Second)

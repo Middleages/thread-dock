@@ -133,7 +133,7 @@ describe('AgentWorkflow', () => {
 
     // Expand
     fireEvent.click(screen.getByRole('button', { name: '자세히' }))
-    expect(screen.getByText(/PR 생성 대기/)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('PR 생성 대기')
     expect(screen.getByText(/로컬 워크트리에서 구현 중이며/)).toBeInTheDocument()
   })
 
@@ -193,7 +193,7 @@ describe('AgentWorkflow', () => {
   })
 
   it('distinguishes task result verification label from workflow verification', () => {
-    render(
+    const { container } = render(
       <AgentWorkflow
         workflow={baseWorkflow({
           verificationState: {
@@ -208,7 +208,7 @@ describe('AgentWorkflow', () => {
     fireEvent.click(screen.getByRole('button', { name: '자세히' }))
 
     // Top-level workflow says 미확인
-    expect(screen.getByText('미확인')).toBeInTheDocument()
+    expect(container.querySelector('.agent-workflow-badge')).toHaveTextContent('미확인')
     // Result explicitly says '결과 검증: 확인됨'
     expect(screen.getByText(/결과 검증: 확인됨/)).toBeInTheDocument()
   })

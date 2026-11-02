@@ -30,20 +30,20 @@ const (
 
 type VerificationState struct {
 	Status    VerificationStatus `json:"status"`
-	Codes     []string            `json:"codes,omitempty"`
-	Summary   string              `json:"summary,omitempty"`
-	AnchorSHA string              `json:"anchorSha,omitempty"`
+	Codes     []string           `json:"codes,omitempty"`
+	Summary   string             `json:"summary,omitempty"`
+	AnchorSHA string             `json:"anchorSha,omitempty"`
 }
 
 type ObservationProvenance struct {
-	Source      string     `json:"source,omitempty"`
-	ObservedAt  *time.Time `json:"observedAt,omitempty"`
-	CapturedAt  *time.Time `json:"capturedAt,omitempty"`
-	Scope       string     `json:"scope,omitempty"`
-	Stale       bool       `json:"stale,omitempty"`
-	Partial     bool       `json:"partial,omitempty"`
-	Fallback    bool       `json:"fallback,omitempty"`
-	Notice      string     `json:"notice,omitempty"`
+	Source     string     `json:"source,omitempty"`
+	ObservedAt *time.Time `json:"observedAt,omitempty"`
+	CapturedAt *time.Time `json:"capturedAt,omitempty"`
+	Scope      string     `json:"scope,omitempty"`
+	Stale      bool       `json:"stale,omitempty"`
+	Partial    bool       `json:"partial,omitempty"`
+	Fallback   bool       `json:"fallback,omitempty"`
+	Notice     string     `json:"notice,omitempty"`
 }
 
 type AgentObservation struct {
@@ -99,8 +99,12 @@ func NormalizeExecutionState(raw string) ExecutionState {
 		return ExecutionQueued
 	case "running", "working":
 		return ExecutionRunning
-	case "waiting", "blocked", "idle":
+	case "waiting", "blocked":
 		return ExecutionWaiting
+	case "idle":
+		// Herdr idle only says the pane is at rest; it is neither progress nor
+		// completion, so it must not block (or confirm) verification.
+		return ExecutionUnknown
 	case "done", "completed", "complete":
 		return ExecutionCompleted
 	case "failed", "failure", "error":
@@ -308,9 +312,9 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		}
 		conclusion := strings.ToLower(check.Conclusion)
 		status := strings.ToLower(check.Status)
-		if conclusion == "failure" || conclusion == "timed_out" || conclusion == "action_required" {
+		if conclusion == "failure" || conclusion == "timed_out" || conclusion == "action_required" || conclusion == "cancelled" || conclusion == "stale" || conclusion == "startup_failure" {
 			ciFailed = true
-		} else if status == "in_progress" || status == "queued" || status == "pending" {
+		} else if status == "in_progress" || status == "queued" || status == "pending" || status == "waiting" || status == "requested" {
 			ciPending = true
 		} else if conclusion == "success" || conclusion == "neutral" {
 			ciPassCount++
@@ -419,21 +423,25 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		vState.Codes = append(vState.Codes, "reviewer_missing")
 	}
 
-	if hasAcceptedReview && !hasRejectedReview && !ciFailed && !ciPending && !ambiguous && !coordinatorFallback && !childIncomplete {
-		vState.Status = VerificationVerified
-		if ciPassCount > 0 {
-			vState.Summary = "검증 완료 (리뷰어 승인 및 CI 통과)"
-		} else {
-			vState.Summary = "검증 완료 (리뷰어 승인)"
-		}
-	} else if ambiguous || coordinatorFallback || childIncomplete {
-		vState.Status = VerificationPartial
-		if ambiguous {
+	if hasAcceptedReview && !hasRejectedReview && !ciFailed && !ciPending {
+		// Provenance caveats may only downgrade an otherwise verified state.
+		switch {
+		case ambiguous:
+			vState.Status = VerificationPartial
 			vState.Summary = "복수 세션 바인딩으로 검증 상태 부분 확인"
-		} else if coordinatorFallback {
+		case coordinatorFallback:
+			vState.Status = VerificationPartial
 			vState.Summary = "저장소 코디네이터 폴백으로 검증 상태 부분 확인"
-		} else {
+		case childIncomplete:
+			vState.Status = VerificationPartial
 			vState.Summary = "하위 에이전트 작업 미완료로 부분 확인"
+		default:
+			vState.Status = VerificationVerified
+			if ciPassCount > 0 {
+				vState.Summary = "검증 완료 (리뷰어 승인 및 CI 통과)"
+			} else {
+				vState.Summary = "검증 완료 (리뷰어 승인)"
+			}
 		}
 	} else {
 		vState.Status = VerificationUnverified
@@ -474,7 +482,7 @@ type AgentWorkflow struct {
 	Results           []TaskResult          `json:"results"`
 	ExecutionState    ExecutionState        `json:"executionState"`
 	GitHubWorkState   string                `json:"githubWorkState,omitempty"`
-	VerificationState VerificationState      `json:"verificationState"`
+	VerificationState VerificationState     `json:"verificationState"`
 	CandidateRevision string                `json:"candidateRevision,omitempty"`
 	EvidenceRefs      []string              `json:"evidenceRefs"`
 	Notices           []string              `json:"notices"`
@@ -578,7 +586,8 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	}
 	if len(matched) == 0 && len(projectURLs) > 0 {
 		for _, conn := range herdr.Connections {
-			if _, ok := projectURLs[conn.ProjectURL]; ok {
+			// Connections bound to a specific issue belong to that issue only.
+			if _, ok := projectURLs[conn.ProjectURL]; ok && conn.IssueURL == "" {
 				matched = append(matched, conn)
 			}
 		}
@@ -718,7 +727,7 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	tasks := make([]TaskObservation, 0, len(agents))
 	results := make([]TaskResult, 0, len(agents))
 	for _, agent := range agents {
-		taskID := firstTrimmed(agent.TaskID, work.WorkID, agent.AgentID+":task")
+		taskID := firstTrimmed(agent.TaskID, work.WorkID+"/"+agent.AgentID)
 		tasks = append(tasks, TaskObservation{
 			TaskID:        taskID,
 			AgentID:       agent.AgentID,
@@ -734,10 +743,6 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 			} else if agent.Execution == ExecutionCancelled {
 				summary = "작업 실행 취소"
 			}
-			findings := []string{}
-			if vState.Status == VerificationVerified {
-				findings = append(findings, "리뷰어 승인 검증 완료")
-			}
 			results = append(results, TaskResult{
 				ResultID:       agent.AgentID + ":result",
 				TaskID:         taskID,
@@ -745,7 +750,6 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 				Status:         agent.Execution,
 				OutputRevision: candidateSHA,
 				Summary:        summary,
-				Findings:       findings,
 				Verification:   vState.Status,
 			})
 		}
