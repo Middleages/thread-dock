@@ -491,3 +491,23 @@ func TestParentAgentBindingYieldsLineageInWorkflow(t *testing.T) {
 		t.Fatalf("unmatched parent must stay empty: %q", workflow.Agents[2].ParentAgentID)
 	}
 }
+
+func TestParentLineageIgnoresAmbiguousAndSelfParent(t *testing.T) {
+	issue := "https://github.com/acme/app/issues/10"
+	work := WorkItem{WorkID: "issue:10", GitHub: &GitHubWork{URL: issue}}
+	herdr := HerdrSnapshot{Connections: []HerdrConnection{
+		{IssueURL: issue, Session: "a", PaneID: "1", AgentName: "Dup", AgentStatus: "working"},
+		{IssueURL: issue, Session: "b", PaneID: "2", AgentName: "Dup", AgentStatus: "working"},
+		{IssueURL: issue, Session: "c", PaneID: "3", AgentName: "Child", ParentAgentName: "Dup", AgentStatus: "working"},
+		{IssueURL: issue, Session: "d", PaneID: "4", AgentName: "Self", ParentAgentName: "Self", AgentStatus: "working"},
+	}}
+	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	if workflow == nil || len(workflow.Agents) != 4 {
+		t.Fatalf("workflow=%#v", workflow)
+	}
+	for _, agent := range workflow.Agents[2:] {
+		if agent.ParentAgentID != "" {
+			t.Fatalf("%s parent=%q, want empty", agent.AgentID, agent.ParentAgentID)
+		}
+	}
+}

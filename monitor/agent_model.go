@@ -620,7 +620,10 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	for _, conn := range matched {
 		name := strings.TrimSpace(conn.AgentName)
 		if name != "" {
-			agentIDByName[name] = herdrAgentIdentity(conn, agentNames[name] > 1)
+			if agentNames[name] == 1 {
+				// An ambiguous name cannot identify a parent; leave it unmapped.
+				agentIDByName[name] = herdrAgentIdentity(conn, false)
+			}
 		}
 	}
 
@@ -630,6 +633,9 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 		parentID := strings.TrimSpace(conn.ParentAgentID)
 		if parentID == "" && strings.TrimSpace(conn.ParentAgentName) != "" {
 			parentID = agentIDByName[strings.TrimSpace(conn.ParentAgentName)]
+		}
+		if parentID == agentID {
+			parentID = ""
 		}
 		agents = append(agents, AgentObservation{
 			AgentID:       agentID,
