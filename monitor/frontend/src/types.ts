@@ -41,6 +41,85 @@ export type PublicationDetail = {
 }
 export type DecisionDetail = { decisionId: string; summary: string; status: string; observedAt?: string }
 export type HandoffDetail = { summary: string; nextAction: string; evidenceRefs: string[]; observedAt?: string }
+export type ExecutionState = 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'unknown'
+export type VerificationStatus = 'unverified' | 'partial' | 'verified'
+
+export type VerificationState = {
+  status: VerificationStatus
+  codes?: string[]
+  summary?: string
+  anchorSha?: string
+}
+
+export type ObservationProvenance = {
+  source?: string
+  observedAt?: string
+  capturedAt?: string
+  scope?: string
+  stale?: boolean
+  partial?: boolean
+  fallback?: boolean
+  notice?: string
+}
+
+export type AgentObservation = {
+  agentId: string
+  parentAgentId?: string
+  role?: string
+  runtime?: string
+  taskId?: string
+  executionRef?: string
+  execution: ExecutionState
+  provenance: ObservationProvenance
+}
+
+export type TaskObservation = {
+  taskId: string
+  parentTaskId?: string
+  agentId?: string
+  role?: string
+  objective?: string
+  inputRevision?: string
+  constraints?: string[]
+  acceptance?: string[]
+  createdAt?: string
+}
+
+export type TaskResult = {
+  resultId: string
+  taskId: string
+  agentId?: string
+  status: ExecutionState
+  outputRevision?: string
+  summary?: string
+  findings?: string[]
+  verification: VerificationStatus
+  nextAction?: string
+  createdAt?: string
+}
+
+export type EvidenceItem = {
+  type: string
+  source?: string
+  observedAt?: string
+  reference?: string
+  revision?: string
+  claim?: string
+}
+
+export type AgentWorkflow = {
+  agents: AgentObservation[]
+  tasks: TaskObservation[]
+  results: TaskResult[]
+  executionState: ExecutionState
+  githubWorkState?: string
+  verificationState: VerificationState
+  candidateRevision?: string
+  evidenceRefs: string[]
+  notices: string[]
+  provenance: ObservationProvenance
+}
+
 export type WorkItem = {
   workId: string
   title: string
@@ -57,6 +136,7 @@ export type WorkItem = {
   handoffs?: HandoffDetail[]
   links?: Link[]
   github?: GithubWork
+  agentWorkflow?: AgentWorkflow
 }
 export type Project = {
   projectId: string

@@ -65,3 +65,35 @@ export function herdrGuidance(connection: HerdrConnection) {
   if (connection.status === 'missing') return '보존된 변경과 handoff를 확인하세요.'
   return '세션 위치와 관찰 상태를 재확인하세요.'
 }
+
+export function verificationStatusLabel(status?: string): string {
+  switch (status) {
+    case 'verified':
+      return '확인됨'
+    case 'partial':
+      return '부분 확인'
+    case 'unverified':
+    default:
+      return '미확인'
+  }
+}
+
+export function executionStateLabel(state?: string): string {
+  switch (state) {
+    case 'queued':
+      return '대기열'
+    case 'running':
+      return '실행 중'
+    case 'waiting':
+      return '대기 중'
+    case 'completed':
+      return '실행 완료'
+    case 'failed':
+      return '실행 실패'
+    case 'cancelled':
+      return '실행 취소'
+    case 'unknown':
+    default:
+      return '알 수 없음'
+  }
+}
