@@ -213,6 +213,20 @@ describe('AgentWorkflow', () => {
     expect(screen.getByText(/결과 검증: 확인됨/)).toBeInTheDocument()
   })
 
+  it('omits the result verification label when the result carries none', () => {
+    const base = baseWorkflow()
+    render(
+      <AgentWorkflow
+        workflow={{ ...base, results: base.results!.map((result) => ({ ...result, verification: undefined })) }}
+        work={baseWork}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '자세히' }))
+
+    expect(screen.queryByText(/결과 검증/)).not.toBeInTheDocument()
+  })
+
   it('contains no mutation or action controls (read-only)', () => {
     render(<AgentWorkflow workflow={baseWorkflow()} work={baseWork} />)
 

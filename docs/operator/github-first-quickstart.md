@@ -136,6 +136,8 @@ cat > ~/.threaddock/sessions.json <<'EOF'
 EOF
 ```
 
+bindings 항목에는 선택 필드 `parentAgent`(상위 에이전트의 `agentName`)를 넣어 Feature Leader가 어느 Coordinator 아래인지 표시할 수 있다. 같은 작업에 연결된 상위만 계통에 반영된다.
+
 Monitor 설정에는 WSL 내부 절대 경로를 넣는다.
 
 ```text

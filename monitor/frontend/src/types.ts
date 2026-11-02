@@ -93,7 +93,7 @@ export type TaskResult = {
   outputRevision?: string
   summary?: string
   findings?: string[]
-  verification: VerificationStatus
+  verification?: VerificationStatus
   nextAction?: string
   createdAt?: string
 }

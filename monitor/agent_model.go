@@ -77,7 +77,7 @@ type TaskResult struct {
 	OutputRevision string             `json:"outputRevision,omitempty"`
 	Summary        string             `json:"summary,omitempty"`
 	Findings       []string           `json:"findings,omitempty"`
-	Verification   VerificationStatus `json:"verification"`
+	Verification   VerificationStatus `json:"verification,omitempty"`
 	NextAction     string             `json:"nextAction,omitempty"`
 	CreatedAt      *time.Time         `json:"createdAt,omitempty"`
 }
@@ -753,7 +753,6 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 				Status:         agent.Execution,
 				OutputRevision: candidateSHA,
 				Summary:        summary,
-				Verification:   vState.Status,
 			})
 		}
 	}

@@ -451,8 +451,8 @@ func TestReceiptAsExecutionEvidenceDoesNotVerify(t *testing.T) {
 	if workflow.Results[0].Status != ExecutionCompleted {
 		t.Fatalf("result status = %q, want completed", workflow.Results[0].Status)
 	}
-	if workflow.Results[0].Verification != VerificationUnverified {
-		t.Fatalf("result verification = %q, want unverified", workflow.Results[0].Verification)
+	if workflow.Results[0].Verification != "" {
+		t.Fatalf("result verification = %q, want empty (no per-result evidence)", workflow.Results[0].Verification)
 	}
 }
 
@@ -522,8 +522,8 @@ func TestMatchingReviewEvidenceVerifies(t *testing.T) {
 	if !strings.Contains(workflow.VerificationState.Summary, "검증 완료") {
 		t.Fatalf("summary = %q, want contains 검증 완료", workflow.VerificationState.Summary)
 	}
-	if len(workflow.Results) != 1 || workflow.Results[0].Verification != VerificationVerified {
-		t.Fatalf("results = %#v, want verified result", workflow.Results)
+	if len(workflow.Results) != 1 || workflow.Results[0].Verification != "" {
+		t.Fatalf("results = %#v, want one result without copied verification", workflow.Results)
 	}
 }
 

@@ -454,3 +454,40 @@ func (f *fakeHerdrSource) FetchHerdr(context.Context) (HerdrSnapshot, error) {
 	}
 	return f.snapshot, nil
 }
+
+func TestHerdrBindingParentAgentOptional(t *testing.T) {
+	base := map[string]any{"repository": "github.com/acme/app", "session": "s", "workspaceId": "w1", "tabId": "t1", "paneId": "p1", "agentName": "Luna"}
+	binding, err := parseHerdrBinding(base)
+	if err != nil || binding.ParentAgent != "" {
+		t.Fatalf("binding=%#v err=%v", binding, err)
+	}
+	base["parentAgent"] = "  Sol "
+	binding, err = parseHerdrBinding(base)
+	if err != nil || binding.ParentAgent != "Sol" {
+		t.Fatalf("binding=%#v err=%v", binding, err)
+	}
+	connection, _ := (&HerdrMonitor{}).connect(binding, herdrSessionResult{})
+	if connection.ParentAgentName != "Sol" {
+		t.Fatalf("connection=%#v", connection)
+	}
+}
+
+func TestParentAgentBindingYieldsLineageInWorkflow(t *testing.T) {
+	issue := "https://github.com/acme/app/issues/9"
+	work := WorkItem{WorkID: "issue:9", GitHub: &GitHubWork{URL: issue}}
+	herdr := HerdrSnapshot{Connections: []HerdrConnection{
+		{IssueURL: issue, Session: "central", PaneID: "p1", AgentName: "Sol", Role: "coordinator", AgentStatus: "working"},
+		{IssueURL: issue, Session: "feature", PaneID: "p2", AgentName: "Luna", Role: "feature", ParentAgentName: "Sol", AgentStatus: "working"},
+		{IssueURL: issue, Session: "other", PaneID: "p3", AgentName: "Orphan", ParentAgentName: "Missing", AgentStatus: "working"},
+	}}
+	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	if workflow == nil || len(workflow.Agents) != 3 {
+		t.Fatalf("workflow=%#v", workflow)
+	}
+	if workflow.Agents[1].ParentAgentID != workflow.Agents[0].AgentID || workflow.Agents[1].ParentAgentID == "" {
+		t.Fatalf("child parent=%q parent id=%q", workflow.Agents[1].ParentAgentID, workflow.Agents[0].AgentID)
+	}
+	if workflow.Agents[2].ParentAgentID != "" {
+		t.Fatalf("unmatched parent must stay empty: %q", workflow.Agents[2].ParentAgentID)
+	}
+}
