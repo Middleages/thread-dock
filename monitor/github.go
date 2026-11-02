@@ -576,7 +576,7 @@ func mapPullRequest(repo string, pr rawPullRequest, source sourceRead) WorkItem 
 	if headSHA != "" {
 		fields["headSha"] = headSHA
 	}
-	github := &GitHubWork{Kind: "pull_request", Number: pr.Number, URL: url, State: pr.State, ReviewDecision: pr.ReviewDecision, RelatedIssueURLs: uniqueStrings(related), RelatedPullRequestURLs: []string{}, Checks: mapChecks(pr.StatusCheckRollup, headSHA), Comments: mapComments(pr.Comments), Fields: fields, ContentAvailable: true, ObservedAt: source.observedAtPtr(), Stale: source.stale}
+	github := &GitHubWork{Kind: "pull_request", Number: pr.Number, URL: url, State: pr.State, ReviewDecision: pr.ReviewDecision, RelatedIssueURLs: uniqueStrings(related), RelatedPullRequestURLs: []string{}, Checks: mapChecks(pr.StatusCheckRollup, headSHA), Comments: mapComments(pr.Comments), CommentsTruncated: len(pr.Comments) >= githubCommentCap, Fields: fields, ContentAvailable: true, ObservedAt: source.observedAtPtr(), Stale: source.stale}
 	return baseWork("pr", urlOrFallback(url, repo+"#"+numberText(pr.Number)), pr.Title, pr.Body, pr.UpdatedAt, github, source)
 }
 
@@ -715,6 +715,10 @@ func mapChecks(values []map[string]any, headSHA string) []GitHubCheck {
 	}
 	return result
 }
+
+// githubCommentCap is the per-PR comment ceiling of gh pr list; a list this long may be missing reviewer verdicts.
+const githubCommentCap = 100
+
 func mapComments(values []rawComment) []GitHubComment {
 	result := []GitHubComment{}
 	for _, value := range values {

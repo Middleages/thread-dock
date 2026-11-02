@@ -51,7 +51,7 @@ func TestPRCorrelatesThroughClosingIssue(t *testing.T) {
 	}
 }
 
-func TestCoordinatorFallbackIsPartialAndFallback(t *testing.T) {
+func TestCoordinatorFallbackIsUnverifiedWithPartialFallbackProvenance(t *testing.T) {
 	project := Project{Links: []Link{{Kind: "github", URL: "https://github.com/acme/app/issues"}}}
 	work := WorkItem{WorkID: "issue:1", State: "open"}
 	herdr := HerdrSnapshot{

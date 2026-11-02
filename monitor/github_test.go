@@ -391,3 +391,15 @@ func TestSettingsEnvironmentPreservesReviewers(t *testing.T) {
 		t.Fatalf("env=%v", env)
 	}
 }
+
+func TestMapPullRequestFlagsCommentCap(t *testing.T) {
+	rows := make([]rawComment, githubCommentCap)
+	pr := mapPullRequest("acme/app", rawPullRequest{Comments: rows}, sourceRead{})
+	if !pr.GitHub.CommentsTruncated {
+		t.Fatal("cap-sized comment list must be flagged truncated")
+	}
+	pr = mapPullRequest("acme/app", rawPullRequest{Comments: rows[:3]}, sourceRead{})
+	if pr.GitHub.CommentsTruncated {
+		t.Fatal("short list must not be flagged")
+	}
+}

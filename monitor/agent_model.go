@@ -208,13 +208,6 @@ func ParseEvidenceMarkers(text string) []ReviewerMarker {
 	return markers
 }
 
-func resolveReviewerIdentities(project *Project) map[string][]string {
-	if project == nil || len(project.ReviewerIdentities) == 0 {
-		return nil
-	}
-	return project.ReviewerIdentities
-}
-
 func CorrelateReviewerRole(role string, author string, identityMap map[string][]string) bool {
 	role = strings.ToLower(strings.TrimSpace(role))
 	author = strings.ToLower(strings.TrimSpace(author))
@@ -698,9 +691,10 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 		}
 	}
 
-	identities := resolveReviewerIdentities(project)
+	var identities map[string][]string
 	var requiredRoles []string
 	if project != nil && len(project.ReviewerIdentities) > 0 {
+		identities = project.ReviewerIdentities
 		requiredRoles = make([]string, 0, len(project.ReviewerIdentities))
 		for r := range project.ReviewerIdentities {
 			requiredRoles = append(requiredRoles, strings.ToLower(strings.TrimSpace(r)))
@@ -715,6 +709,15 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	}
 
 	vState := DeriveVerificationState(candidateSHA, evidences, checks, requiredRoles, ambiguous, matchType == "coordinator", hasChildIncomplete)
+
+	if vState.Status == VerificationVerified && work.GitHub != nil && work.GitHub.CommentsTruncated {
+		// Truncated comments may hide a later REJECT or new-SHA verdict: downgrade only.
+		vState.Status = VerificationPartial
+		vState.Codes = append(vState.Codes, "comments_truncated")
+		vState.Summary = "리뷰 댓글이 일부만 조회되어 부분 확인"
+		vState = NormalizeVerificationState(vState)
+		notices = append(notices, "리뷰 댓글이 조회 한도로 일부만 반영되었을 수 있습니다.")
+	}
 
 	evidenceRefs := append([]string{}, work.EvidenceRefs...)
 	for _, ev := range evidences {

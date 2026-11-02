@@ -116,6 +116,7 @@ type GitHubWork struct {
 	ReviewDecision         string            `json:"reviewDecision,omitempty"`
 	Checks                 []GitHubCheck     `json:"checks"`
 	Comments               []GitHubComment   `json:"comments,omitempty"`
+	CommentsTruncated      bool              `json:"commentsTruncated,omitempty"`
 	RelatedIssueURLs       []string          `json:"relatedIssueUrls"`
 	RelatedPullRequestURLs []string          `json:"relatedPullRequestUrls"`
 	Fields                 map[string]string `json:"fields"`

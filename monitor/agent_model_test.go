@@ -1483,3 +1483,38 @@ func TestEnrichSnapshotMarksPRWithoutHeadSHAAsRevisionMissing(t *testing.T) {
 		t.Fatalf("state = %#v, want candidate_revision_missing only", state)
 	}
 }
+
+func TestTruncatedCommentsDowngradeVerifiedToPartial(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{ReviewerIdentities: map[string][]string{"reviewer": {"reviewer"}}}
+	comments := []GitHubComment{{
+		Author: "reviewer", ObservedAt: &now,
+		Body: fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=ACCEPT -->", headSHA),
+	}}
+	for len(comments) < githubCommentCap {
+		comments = append(comments, GitHubComment{Author: "someone", Body: "chat"})
+	}
+	work := WorkItem{WorkID: "pr:130", GitHub: &GitHubWork{
+		Kind: "pull_request", URL: "https://github.com/acme/app/pull/130",
+		Fields: map[string]string{"headSha": headSHA}, Comments: comments, CommentsTruncated: true,
+	}}
+	herdr := HerdrSnapshot{ObservedAt: now, Connections: []HerdrConnection{{IssueURL: work.GitHub.URL, Session: "s", AgentName: "A", AgentStatus: "done"}}}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	state := workflow.VerificationState
+	if state.Status != VerificationPartial || !strings.Contains(state.Summary, "일부만 조회") || len(workflow.Notices) == 0 {
+		t.Fatalf("workflow = %#v, want partial with truncation notice", workflow)
+	}
+	found := false
+	for _, c := range state.Codes {
+		found = found || c == "comments_truncated"
+	}
+	if !found {
+		t.Fatalf("codes = %v", state.Codes)
+	}
+	work.GitHub.CommentsTruncated = false
+	if got := CorrelateAgentWorkflow(project, &work, &herdr).VerificationState.Status; got != VerificationVerified {
+		t.Fatalf("untruncated = %q, want verified", got)
+	}
+}
