@@ -41,34 +41,34 @@ type Snapshot struct {
 }
 
 type Project struct {
-	ProjectID    string     `json:"projectId"`
-	Name         string     `json:"name"`
-	State        string     `json:"state"`
-	SyncStatus   string     `json:"syncStatus"`
-	NextAction   string     `json:"nextAction"`
-	EvidenceRefs []string   `json:"evidenceRefs"`
-	UpdatedAt    *time.Time `json:"updatedAt,omitempty"`
-	ObservedAt   *time.Time `json:"observedAt,omitempty"`
-	WorkItems    []WorkItem `json:"workItems"`
-	Source       string              `json:"source,omitempty"`
-	Notices      []string            `json:"notices"`
-	Links        []Link              `json:"links"`
+	ProjectID          string              `json:"projectId"`
+	Name               string              `json:"name"`
+	State              string              `json:"state"`
+	SyncStatus         string              `json:"syncStatus"`
+	NextAction         string              `json:"nextAction"`
+	EvidenceRefs       []string            `json:"evidenceRefs"`
+	UpdatedAt          *time.Time          `json:"updatedAt,omitempty"`
+	ObservedAt         *time.Time          `json:"observedAt,omitempty"`
+	WorkItems          []WorkItem          `json:"workItems"`
+	Source             string              `json:"source,omitempty"`
+	Notices            []string            `json:"notices"`
+	Links              []Link              `json:"links"`
 	ReviewerIdentities map[string][]string `json:"reviewerIdentities,omitempty"`
 }
 
 type WorkItem struct {
-	WorkID       string      `json:"workId"`
-	Title        string      `json:"title"`
-	Request      string      `json:"request,omitempty"`
-	State        string      `json:"state"`
-	SyncStatus   string      `json:"syncStatus"`
-	NextAction   string      `json:"nextAction"`
-	EvidenceRefs []string    `json:"evidenceRefs"`
-	UpdatedAt    *time.Time  `json:"updatedAt,omitempty"`
-	Blocker      string      `json:"blocker,omitempty"`
-	Decisions    []Decision  `json:"decisions"`
-	Handoffs     []Handoff   `json:"handoffs"`
-	Links        []Link      `json:"links"`
+	WorkID        string         `json:"workId"`
+	Title         string         `json:"title"`
+	Request       string         `json:"request,omitempty"`
+	State         string         `json:"state"`
+	SyncStatus    string         `json:"syncStatus"`
+	NextAction    string         `json:"nextAction"`
+	EvidenceRefs  []string       `json:"evidenceRefs"`
+	UpdatedAt     *time.Time     `json:"updatedAt,omitempty"`
+	Blocker       string         `json:"blocker,omitempty"`
+	Decisions     []Decision     `json:"decisions"`
+	Handoffs      []Handoff      `json:"handoffs"`
+	Links         []Link         `json:"links"`
 	GitHub        *GitHubWork    `json:"github,omitempty"`
 	AgentWorkflow *AgentWorkflow `json:"agentWorkflow,omitempty"`
 }

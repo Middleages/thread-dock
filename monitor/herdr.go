@@ -76,20 +76,20 @@ type HerdrLocation struct {
 }
 
 type HerdrConnection struct {
-	IssueURL    string        `json:"issueUrl,omitempty"`
-	ProjectURL  string        `json:"projectUrl,omitempty"`
-	Repository  string        `json:"repository,omitempty"`
-	Worktree    string        `json:"worktree,omitempty"`
-	Session     string        `json:"session"`
-	WorkspaceID string        `json:"workspaceId,omitempty"`
-	TabID       string        `json:"tabId,omitempty"`
-	PaneID      string        `json:"paneId,omitempty"`
-	AgentName   string        `json:"agentName,omitempty"`
-	Role        string        `json:"role,omitempty"`
-	Status      string        `json:"status"`
-	AgentStatus string        `json:"agentStatus,omitempty"`
-	ObservedAt  *time.Time    `json:"observedAt,omitempty"`
-	NextAction  string        `json:"nextAction"`
+	IssueURL        string        `json:"issueUrl,omitempty"`
+	ProjectURL      string        `json:"projectUrl,omitempty"`
+	Repository      string        `json:"repository,omitempty"`
+	Worktree        string        `json:"worktree,omitempty"`
+	Session         string        `json:"session"`
+	WorkspaceID     string        `json:"workspaceId,omitempty"`
+	TabID           string        `json:"tabId,omitempty"`
+	PaneID          string        `json:"paneId,omitempty"`
+	AgentName       string        `json:"agentName,omitempty"`
+	Role            string        `json:"role,omitempty"`
+	Status          string        `json:"status"`
+	AgentStatus     string        `json:"agentStatus,omitempty"`
+	ObservedAt      *time.Time    `json:"observedAt,omitempty"`
+	NextAction      string        `json:"nextAction"`
 	Handoff         string        `json:"handoff"`
 	ParentAgentName string        `json:"parentAgentName,omitempty"`
 	ParentAgentID   string        `json:"parentAgentId,omitempty"`
