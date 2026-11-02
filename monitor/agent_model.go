@@ -89,6 +89,8 @@ type EvidenceItem struct {
 	Reference  string     `json:"reference,omitempty"`
 	Revision   string     `json:"revision,omitempty"`
 	Claim      string     `json:"claim,omitempty"`
+	Role       string     `json:"role,omitempty"`
+	Author     string     `json:"author,omitempty"`
 }
 
 func NormalizeExecutionState(raw string) ExecutionState {
@@ -227,7 +229,7 @@ func CorrelateReviewerRole(role string, author string, identityMap map[string][]
 	return false
 }
 
-func ExtractEvidenceItems(work *WorkItem, candidateSHA string, identityMap map[string][]string) []EvidenceItem {
+func ExtractEvidenceItems(work *WorkItem, identityMap map[string][]string) []EvidenceItem {
 	if work == nil {
 		return nil
 	}
@@ -273,6 +275,8 @@ func ExtractEvidenceItems(work *WorkItem, candidateSHA string, identityMap map[s
 						Reference:  ref,
 						Revision:   marker.SHA,
 						Claim:      marker.Verdict,
+						Role:       strings.ToLower(strings.TrimSpace(marker.Reviewer)),
+						Author:     strings.ToLower(strings.TrimSpace(comment.Author)),
 					})
 				}
 			}
@@ -320,26 +324,42 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		vState.Codes = append(vState.Codes, "ci_passed")
 	}
 
-	hasMatchingReview := false
-	hasAcceptedReview := false
-	hasRejectedReview := false
+	type reviewerVerdict struct {
+		claim      string
+		observedAt *time.Time
+		index      int
+	}
+	latestVerdicts := make(map[string]reviewerVerdict)
 	hasStaleReview := false
 
 	dummyAnchorState := VerificationState{AnchorSHA: candidateSHA}
-	for _, ev := range evidences {
+	for idx, ev := range evidences {
 		if ev.Type != "review" {
 			continue
 		}
 		if EvidenceMatchesCandidate(dummyAnchorState, ev) {
-			switch ev.Claim {
-			case "ACCEPT":
-				hasMatchingReview = true
-				hasAcceptedReview = true
-			case "REJECT":
-				hasMatchingReview = true
-				hasRejectedReview = true
-			default:
+			if ev.Claim != "ACCEPT" && ev.Claim != "REJECT" {
 				continue
+			}
+			key := ev.Role
+			if key == "" {
+				key = ev.Author
+			}
+			if key == "" {
+				key = ev.Reference
+			}
+
+			prev, exists := latestVerdicts[key]
+			if !exists {
+				latestVerdicts[key] = reviewerVerdict{claim: ev.Claim, observedAt: ev.ObservedAt, index: idx}
+			} else {
+				if prev.observedAt != nil && ev.ObservedAt != nil {
+					if ev.ObservedAt.After(*prev.observedAt) || ev.ObservedAt.Equal(*prev.observedAt) {
+						latestVerdicts[key] = reviewerVerdict{claim: ev.Claim, observedAt: ev.ObservedAt, index: idx}
+					}
+				} else {
+					latestVerdicts[key] = reviewerVerdict{claim: ev.Claim, observedAt: ev.ObservedAt, index: idx}
+				}
 			}
 		} else {
 			if ev.Claim == "ACCEPT" || ev.Claim == "REJECT" {
@@ -348,11 +368,21 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		}
 	}
 
-	if hasMatchingReview {
-		if hasAcceptedReview {
-			vState.Codes = append(vState.Codes, "reviewer_accepted")
+	hasMatchingReview := len(latestVerdicts) > 0
+	hasAcceptedReview := false
+	hasRejectedReview := false
+	for _, v := range latestVerdicts {
+		if v.claim == "ACCEPT" {
+			hasAcceptedReview = true
+		} else if v.claim == "REJECT" {
+			hasRejectedReview = true
 		}
-		if hasRejectedReview {
+	}
+
+	if hasMatchingReview {
+		if hasAcceptedReview && !hasRejectedReview {
+			vState.Codes = append(vState.Codes, "reviewer_accepted")
+		} else if hasRejectedReview {
 			vState.Codes = append(vState.Codes, "reviewer_not_accepted")
 		}
 	} else if hasStaleReview {
@@ -632,7 +662,7 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	}
 
 	identities := resolveReviewerIdentities(project)
-	evidences := ExtractEvidenceItems(work, candidateSHA, identities)
+	evidences := ExtractEvidenceItems(work, identities)
 	checks := []GitHubCheck{}
 	if work.GitHub != nil {
 		checks = work.GitHub.Checks

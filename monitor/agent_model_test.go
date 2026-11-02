@@ -926,7 +926,7 @@ func TestCIEvidenceRevisionObservedNotFabricated(t *testing.T) {
 		},
 	}
 
-	evidences := ExtractEvidenceItems(&work, candidateSHA, nil)
+	evidences := ExtractEvidenceItems(&work, nil)
 	if len(evidences) != 2 {
 		t.Fatalf("evidences count = %d, want 2", len(evidences))
 	}
@@ -1118,5 +1118,197 @@ func TestUnboundChecksDoNotAddCIPassedPresentation(t *testing.T) {
 	}
 	if workflow.VerificationState.Summary != "검증 완료 (리뷰어 승인)" {
 		t.Fatalf("summary = %q, want '검증 완료 (리뷰어 승인)'", workflow.VerificationState.Summary)
+	}
+}
+
+func TestReviewerChronologyLatestAcceptSupersedesReject(t *testing.T) {
+	t1 := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 11, 2, 10, 30, 0, 0, time.UTC)
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"alice"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:113",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(113),
+			URL:    "https://github.com/acme/app/pull/113",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "alice",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=REJECT -->", headSHA),
+					ObservedAt: &t1,
+				},
+				{
+					Author:     "alice",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=ACCEPT -->", headSHA),
+					ObservedAt: &t2,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: t2,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/113",
+				Session:     "sess-113",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	if workflow.VerificationState.Status != VerificationVerified {
+		t.Fatalf("status = %q, want verified when latest verdict is ACCEPT", workflow.VerificationState.Status)
+	}
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_not_accepted" {
+			t.Fatalf("earlier REJECT must not persist when latest is ACCEPT, codes = %v", workflow.VerificationState.Codes)
+		}
+	}
+}
+
+func TestReviewerChronologyLatestRejectSupersedesAccept(t *testing.T) {
+	t1 := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 11, 2, 10, 30, 0, 0, time.UTC)
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"alice"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:114",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(114),
+			URL:    "https://github.com/acme/app/pull/114",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "alice",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=ACCEPT -->", headSHA),
+					ObservedAt: &t1,
+				},
+				{
+					Author:     "alice",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=REJECT -->", headSHA),
+					ObservedAt: &t2,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: t2,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/114",
+				Session:     "sess-114",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	if workflow.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("status = %q, want unverified when latest verdict is REJECT", workflow.VerificationState.Status)
+	}
+	hasNotAccepted := false
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_not_accepted" {
+			hasNotAccepted = true
+		}
+		if c == "reviewer_accepted" {
+			t.Fatalf("earlier ACCEPT must not persist when latest is REJECT, codes = %v", workflow.VerificationState.Codes)
+		}
+	}
+	if !hasNotAccepted {
+		t.Fatalf("expected reviewer_not_accepted in codes, got %v", workflow.VerificationState.Codes)
+	}
+}
+
+func TestMultipleReviewerRolesRequireAllAccepted(t *testing.T) {
+	t1 := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 11, 2, 10, 15, 0, 0, time.UTC)
+	t3 := time.Date(2026, 11, 2, 10, 45, 0, 0, time.UTC)
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"security": {"sec-alice"},
+			"qa":       {"qa-bob"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:115",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(115),
+			URL:    "https://github.com/acme/app/pull/115",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "sec-alice",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=security sha=%s verdict=ACCEPT -->", headSHA),
+					ObservedAt: &t1,
+				},
+				{
+					Author:     "qa-bob",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=qa sha=%s verdict=REJECT -->", headSHA),
+					ObservedAt: &t2,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: t2,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/115",
+				Session:     "sess-115",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	if workflow.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("status = %q, want unverified when any role rejects", workflow.VerificationState.Status)
+	}
+
+	work.GitHub.Comments = append(work.GitHub.Comments, GitHubComment{
+		Author:     "qa-bob",
+		Body:       fmt.Sprintf("<!-- evidence: reviewer=qa sha=%s verdict=ACCEPT -->", headSHA),
+		ObservedAt: &t3,
+	})
+
+	workflow2 := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow2 == nil {
+		t.Fatal("workflow2 must not be nil")
+	}
+	if workflow2.VerificationState.Status != VerificationVerified {
+		t.Fatalf("status = %q, want verified when all roles have latest ACCEPT", workflow2.VerificationState.Status)
 	}
 }
