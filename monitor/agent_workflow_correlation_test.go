@@ -14,6 +14,14 @@ func (s agentWorkflowSnapshotSource) FetchAll(context.Context) (Snapshot, error)
 	return s.snapshot, nil
 }
 
+type agentWorkflowHerdrSource struct {
+	snapshot HerdrSnapshot
+}
+
+func (s agentWorkflowHerdrSource) FetchHerdr(context.Context) (HerdrSnapshot, error) {
+	return s.snapshot, nil
+}
+
 func TestPRCorrelatesThroughClosingIssue(t *testing.T) {
 	now := time.Now()
 	work := WorkItem{
@@ -117,18 +125,19 @@ func TestAppEnrichesReturnedSnapshot(t *testing.T) {
 				GitHub: &GitHubWork{URL: "https://github.com/acme/app/issues/1"},
 			}},
 		}},
-		Herdr: &HerdrSnapshot{
-			ObservedAt: now,
-			Connections: []HerdrConnection{{
-				IssueURL:    "https://github.com/acme/app/issues/1",
-				Session:     "agent-1",
-				AgentName:   "Codex",
-				AgentStatus: "working",
-			}},
-		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{{
+			IssueURL:    "https://github.com/acme/app/issues/1",
+			Session:     "agent-1",
+			AgentName:   "Codex",
+			AgentStatus: "working",
+		}},
 	}
 
-	app := NewApp(agentWorkflowSnapshotSource{snapshot: snapshot})
+	// Enrichment happens once, inside the combined GitHub+Herdr source.
+	app := NewApp(NewCombinedMonitor(agentWorkflowSnapshotSource{snapshot: snapshot}, agentWorkflowHerdrSource{snapshot: herdr}))
 	got, err := app.GetMonitorSnapshot()
 	if err != nil {
 		t.Fatalf("GetMonitorSnapshot() error = %v", err)

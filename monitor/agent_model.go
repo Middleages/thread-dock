@@ -312,7 +312,7 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		}
 		conclusion := strings.ToLower(check.Conclusion)
 		status := strings.ToLower(check.Status)
-		if conclusion == "failure" || conclusion == "timed_out" || conclusion == "action_required" || conclusion == "cancelled" || conclusion == "stale" || conclusion == "startup_failure" {
+		if conclusion == "failure" || conclusion == "timed_out" || conclusion == "action_required" || conclusion == "cancelled" || conclusion == "stale" || conclusion == "startup_failure" || conclusion == "error" {
 			ciFailed = true
 		} else if status == "in_progress" || status == "queued" || status == "pending" || status == "waiting" || status == "requested" {
 			ciPending = true
@@ -800,6 +800,44 @@ func enrichSnapshotWithAgentWorkflow(snapshot *Snapshot, herdr *HerdrSnapshot) {
 	for projectIndex := range snapshot.Projects {
 		for workIndex := range snapshot.Projects[projectIndex].WorkItems {
 			snapshot.Projects[projectIndex].WorkItems[workIndex].AgentWorkflow = CorrelateAgentWorkflow(&snapshot.Projects[projectIndex], &snapshot.Projects[projectIndex].WorkItems[workIndex], herdr)
+		}
+	}
+	normalizeMissingCandidateRevision(snapshot)
+}
+
+// normalizeMissingCandidateRevision prevents an existing PR whose head SHA
+// could not be read from being reported as if PR creation were still pending.
+func normalizeMissingCandidateRevision(snapshot *Snapshot) {
+	if snapshot == nil {
+		return
+	}
+	for projectIndex := range snapshot.Projects {
+		project := &snapshot.Projects[projectIndex]
+		for workIndex := range project.WorkItems {
+			work := &project.WorkItems[workIndex]
+			if work.AgentWorkflow == nil || work.GitHub == nil || work.GitHub.Kind != "pull_request" {
+				continue
+			}
+			if strings.TrimSpace(firstTrimmed(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])) != "" {
+				continue
+			}
+			state := &work.AgentWorkflow.VerificationState
+			state.Status = VerificationUnverified
+			codes := make([]string, 0, len(state.Codes))
+			for _, code := range state.Codes {
+				if code != "awaiting_pr" {
+					codes = append(codes, code)
+				}
+			}
+			codes = append(codes, "candidate_revision_missing")
+			state.Codes = codes
+			state.Summary = "PR head SHA 확인 대기 중"
+			state = &work.AgentWorkflow.VerificationState
+			*state = NormalizeVerificationState(*state)
+			work.AgentWorkflow.Provenance.Partial = true
+			if work.AgentWorkflow.Provenance.Notice == "" {
+				work.AgentWorkflow.Provenance.Notice = "PR head SHA를 확인하지 못해 검증이 완료되지 않았습니다."
+			}
 		}
 	}
 }

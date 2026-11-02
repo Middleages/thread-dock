@@ -1466,3 +1466,20 @@ func TestMultipleAgentsGetUniqueTaskIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestEnrichSnapshotMarksPRWithoutHeadSHAAsRevisionMissing(t *testing.T) {
+	number := 42
+	url := "https://github.com/acme/app/pull/42"
+	snapshot := Snapshot{Projects: []Project{{WorkItems: []WorkItem{{
+		WorkID: "pr:42",
+		GitHub: &GitHubWork{Kind: "pull_request", Number: &number, URL: url, Fields: map[string]string{}},
+	}}}}}
+	herdr := HerdrSnapshot{ObservedAt: time.Now(), Connections: []HerdrConnection{{IssueURL: url, Session: "s", AgentName: "A", AgentStatus: "working"}}}
+
+	enrichSnapshotWithAgentWorkflow(&snapshot, &herdr)
+
+	state := snapshot.Projects[0].WorkItems[0].AgentWorkflow.VerificationState
+	if state.Status != VerificationUnverified || len(state.Codes) != 1 || state.Codes[0] != "candidate_revision_missing" {
+		t.Fatalf("state = %#v, want candidate_revision_missing only", state)
+	}
+}
