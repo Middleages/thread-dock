@@ -192,6 +192,27 @@ describe('AgentWorkflow', () => {
     expect(screen.queryByRole('button', { name: '자세히' })).not.toBeInTheDocument()
   })
 
+  it('distinguishes task result verification label from workflow verification', () => {
+    render(
+      <AgentWorkflow
+        workflow={baseWorkflow({
+          verificationState: {
+            status: 'unverified',
+            summary: '검증 대기 중',
+          },
+        })}
+        work={baseWork}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '자세히' }))
+
+    // Top-level workflow says 미확인
+    expect(screen.getByText('미확인')).toBeInTheDocument()
+    // Result explicitly says '결과 검증: 확인됨'
+    expect(screen.getByText(/결과 검증: 확인됨/)).toBeInTheDocument()
+  })
+
   it('contains no mutation or action controls (read-only)', () => {
     render(<AgentWorkflow workflow={baseWorkflow()} work={baseWork} />)
 

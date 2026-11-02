@@ -30,7 +30,6 @@ export function AgentWorkflow({
   const vStatus = vState?.status ?? 'unverified'
   const vLabel = verificationStatusLabel(vStatus)
   const isVerified = vStatus === 'verified'
-  const isPartial = vStatus === 'partial'
   const detailID = `agent-workflow-detail-${work?.workId ?? 'main'}`
   const candidateSHA = workflow.candidateRevision || vState?.anchorSha
   const codes = vState?.codes ?? []
@@ -232,7 +231,7 @@ export function AgentWorkflow({
                       </small>
                     </div>
                     <span>
-                      {executionStateLabel(result.status)} ·{' '}
+                      {executionStateLabel(result.status)} · 결과 검증:{' '}
                       {verificationStatusLabel(result.verification)}
                     </span>
                   </div>
