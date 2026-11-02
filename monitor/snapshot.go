@@ -50,9 +50,10 @@ type Project struct {
 	UpdatedAt    *time.Time `json:"updatedAt,omitempty"`
 	ObservedAt   *time.Time `json:"observedAt,omitempty"`
 	WorkItems    []WorkItem `json:"workItems"`
-	Source       string     `json:"source,omitempty"`
-	Notices      []string   `json:"notices"`
-	Links        []Link     `json:"links"`
+	Source       string              `json:"source,omitempty"`
+	Notices      []string            `json:"notices"`
+	Links        []Link              `json:"links"`
+	ReviewerIdentities map[string][]string `json:"reviewerIdentities,omitempty"`
 }
 
 type WorkItem struct {
@@ -97,6 +98,14 @@ type GitHubCheck struct {
 	Status     string `json:"status,omitempty"`
 	Conclusion string `json:"conclusion,omitempty"`
 	URL        string `json:"url,omitempty"`
+	HeadSHA    string `json:"headSha,omitempty"`
+}
+
+type GitHubComment struct {
+	Author     string     `json:"author"`
+	Body       string     `json:"body"`
+	URL        string     `json:"url,omitempty"`
+	ObservedAt *time.Time `json:"observedAt,omitempty"`
 }
 
 type GitHubWork struct {
@@ -106,6 +115,7 @@ type GitHubWork struct {
 	State                  string            `json:"state,omitempty"`
 	ReviewDecision         string            `json:"reviewDecision,omitempty"`
 	Checks                 []GitHubCheck     `json:"checks"`
+	Comments               []GitHubComment   `json:"comments,omitempty"`
 	RelatedIssueURLs       []string          `json:"relatedIssueUrls"`
 	RelatedPullRequestURLs []string          `json:"relatedPullRequestUrls"`
 	Fields                 map[string]string `json:"fields"`

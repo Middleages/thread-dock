@@ -322,7 +322,7 @@ func TestCandidateSHACIPendingAndFailed(t *testing.T) {
 				"headSha": "abcdef1234567890abcdef1234567890abcdef12",
 			},
 			Checks: []GitHubCheck{
-				{Name: "test", Conclusion: "failure"},
+				{Name: "test", HeadSHA: "abcdef1234567890abcdef1234567890abcdef12", Conclusion: "failure"},
 			},
 		},
 	}
@@ -364,7 +364,7 @@ func TestCandidateSHACIPendingAndFailed(t *testing.T) {
 				"headSha": "1234567890abcdef1234567890abcdef12345678",
 			},
 			Checks: []GitHubCheck{
-				{Name: "test", Status: "in_progress"},
+				{Name: "test", HeadSHA: "1234567890abcdef1234567890abcdef12345678", Status: "in_progress"},
 			},
 		},
 	}
@@ -392,5 +392,731 @@ func TestCandidateSHACIPendingAndFailed(t *testing.T) {
 	}
 	if !hasCIPending {
 		t.Fatalf("codes = %v, want ci_pending", wfPending.VerificationState.Codes)
+	}
+}
+
+func TestReceiptAsExecutionEvidenceDoesNotVerify(t *testing.T) {
+	now := time.Now()
+	work := WorkItem{
+		WorkID: "pr:101",
+		Title:  "Refactor agent evidence",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(101),
+			URL:    "https://github.com/acme/app/pull/101",
+			Fields: map[string]string{
+				"headSha": "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d",
+			},
+			Checks: []GitHubCheck{
+				{Name: "test", Conclusion: "success"},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/101",
+				Session:     "impl-session",
+				AgentName:   "Implementer",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	if workflow.ExecutionState != ExecutionCompleted {
+		t.Fatalf("executionState = %q, want completed", workflow.ExecutionState)
+	}
+	if workflow.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("verification status = %q, want unverified (receipt alone must not verify)", workflow.VerificationState.Status)
+	}
+	hasReviewerMissing := false
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_missing" {
+			hasReviewerMissing = true
+			break
+		}
+	}
+	if !hasReviewerMissing {
+		t.Fatalf("codes = %v, want reviewer_missing", workflow.VerificationState.Codes)
+	}
+	if len(workflow.Results) != 1 {
+		t.Fatalf("results count = %d, want 1", len(workflow.Results))
+	}
+	if workflow.Results[0].Status != ExecutionCompleted {
+		t.Fatalf("result status = %q, want completed", workflow.Results[0].Status)
+	}
+	if workflow.Results[0].Verification != VerificationUnverified {
+		t.Fatalf("result verification = %q, want unverified", workflow.Results[0].Verification)
+	}
+}
+
+func TestMatchingReviewEvidenceVerifies(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"security": {"security-reviewer"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:102",
+		Title:  "Implement Task 3",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(102),
+			URL:    "https://github.com/acme/app/pull/102",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Checks: []GitHubCheck{
+				{Name: "ci/build", HeadSHA: headSHA, Conclusion: "success"},
+				{Name: "ci/test", HeadSHA: headSHA, Conclusion: "success"},
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "security-reviewer",
+					Body:       "LGTM!\n<!-- evidence: reviewer=security sha=8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d verdict=ACCEPT -->",
+					URL:        "https://github.com/acme/app/pull/102#issuecomment-1",
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/102",
+				Session:     "task3-session",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	if workflow.VerificationState.Status != VerificationVerified {
+		t.Fatalf("verification status = %q, want verified", workflow.VerificationState.Status)
+	}
+	hasReviewerAccepted, hasCIPassed := false, false
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_accepted" {
+			hasReviewerAccepted = true
+		}
+		if c == "ci_passed" {
+			hasCIPassed = true
+		}
+	}
+	if !hasReviewerAccepted || !hasCIPassed {
+		t.Fatalf("codes = %v, want reviewer_accepted and ci_passed", workflow.VerificationState.Codes)
+	}
+	if !strings.Contains(workflow.VerificationState.Summary, "검증 완료") {
+		t.Fatalf("summary = %q, want contains 검증 완료", workflow.VerificationState.Summary)
+	}
+	if len(workflow.Results) != 1 || workflow.Results[0].Verification != VerificationVerified {
+		t.Fatalf("results = %#v, want verified result", workflow.Results)
+	}
+}
+
+func TestStaleReviewEvidenceProducesStaleSHA(t *testing.T) {
+	now := time.Now()
+	latestHeadSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	olderSHA := "a9b64e956dd289df17d2a00cb4f86895ae178167"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"code-reviewer"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:103",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(103),
+			URL:    "https://github.com/acme/app/pull/103",
+			Fields: map[string]string{
+				"headSha": latestHeadSHA,
+			},
+			Checks: []GitHubCheck{
+				{Name: "ci/test", HeadSHA: latestHeadSHA, Conclusion: "success"},
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "code-reviewer",
+					Body:       fmt.Sprintf("Reviewed older commit:\n<!-- evidence: reviewer=reviewer sha=%s verdict=ACCEPT -->", olderSHA),
+					URL:        "https://github.com/acme/app/pull/103#issuecomment-2",
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/103",
+				Session:     "sess-103",
+				AgentName:   "Developer",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	if workflow.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("verification status = %q, want unverified on stale review", workflow.VerificationState.Status)
+	}
+	hasStaleSHA := false
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "stale_sha" {
+			hasStaleSHA = true
+		}
+	}
+	if !hasStaleSHA {
+		t.Fatalf("codes = %v, want stale_sha", workflow.VerificationState.Codes)
+	}
+	if !strings.Contains(workflow.VerificationState.Summary, "이전 커밋") {
+		t.Fatalf("summary = %q, want notice of older commit review", workflow.VerificationState.Summary)
+	}
+}
+
+func TestReviewerVerdictRejectProducesReviewerNotAccepted(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"reviewer"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:104",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(104),
+			URL:    "https://github.com/acme/app/pull/104",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "reviewer",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=REJECT -->", headSHA),
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/104",
+				Session:     "sess-104",
+				AgentName:   "Coder",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	if workflow.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("verification status = %q, want unverified on reject", workflow.VerificationState.Status)
+	}
+	hasNotAccepted := false
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_not_accepted" {
+			hasNotAccepted = true
+		}
+	}
+	if !hasNotAccepted {
+		t.Fatalf("codes = %v, want reviewer_not_accepted", workflow.VerificationState.Codes)
+	}
+}
+
+func TestReviewerMarkerAuthorMismatchRejected(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"security": {"security-reviewer"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:105",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(105),
+			URL:    "https://github.com/acme/app/pull/105",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "unauthorized-spammer",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=security sha=%s verdict=ACCEPT -->", headSHA),
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/105",
+				Session:     "sess-105",
+				AgentName:   "Coder",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	if workflow.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("status = %q, want unverified when marker author mismatches role", workflow.VerificationState.Status)
+	}
+	hasReviewerMissing := false
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_missing" {
+			hasReviewerMissing = true
+		}
+	}
+	if !hasReviewerMissing {
+		t.Fatalf("codes = %v, want reviewer_missing", workflow.VerificationState.Codes)
+	}
+}
+
+func TestIncompleteChildResultProducesPartialVerification(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"reviewer"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:106",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(106),
+			URL:    "https://github.com/acme/app/pull/106",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Checks: []GitHubCheck{
+				{Name: "ci/test", HeadSHA: headSHA, Conclusion: "success"},
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "reviewer",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=ACCEPT -->", headSHA),
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/106",
+				Session:     "sess-parent",
+				AgentName:   "ParentLead",
+				AgentStatus: "done",
+			},
+			{
+				IssueURL:        "https://github.com/acme/app/pull/106",
+				Session:         "sess-child",
+				AgentName:       "ChildTester",
+				ParentAgentName: "ParentLead",
+				Role:            "reviewer",
+				AgentStatus:     "failed", // child failure!
+			},
+		},
+	}
+
+	// Full integration path: Herdr snapshot -> parent/child correlation -> AgentWorkflow -> verification derivation
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	if len(workflow.Agents) != 2 {
+		t.Fatalf("agents len = %d, want 2", len(workflow.Agents))
+	}
+	if workflow.Agents[1].ParentAgentID != workflow.Agents[0].AgentID {
+		t.Fatalf("child ParentAgentID = %q, want %q", workflow.Agents[1].ParentAgentID, workflow.Agents[0].AgentID)
+	}
+	if workflow.VerificationState.Status != VerificationPartial {
+		t.Fatalf("verification status = %q, want partial when child result is incomplete", workflow.VerificationState.Status)
+	}
+	if !strings.Contains(workflow.VerificationState.Summary, "하위 에이전트") {
+		t.Fatalf("summary = %q, want contains 하위 에이전트", workflow.VerificationState.Summary)
+	}
+}
+
+func TestPRBodyEvidenceMarkerExcludedFromReviewerEvidence(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	work := WorkItem{
+		WorkID: "pr:108",
+		Body:   fmt.Sprintf("PR description with injected marker:\n<!-- evidence: reviewer=reviewer sha=%s verdict=ACCEPT -->", headSHA),
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(108),
+			URL:    "https://github.com/acme/app/pull/108",
+			Author: "reviewer", // PR author is implementer
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{}, // no comments!
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/108",
+				Session:     "sess-108",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	if workflow.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("status = %q, want unverified when marker is only in PR body", workflow.VerificationState.Status)
+	}
+	hasReviewerMissing := false
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_missing" {
+			hasReviewerMissing = true
+		}
+	}
+	if !hasReviewerMissing {
+		t.Fatalf("codes = %v, want reviewer_missing (PR body marker must not self-verify)", workflow.VerificationState.Codes)
+	}
+}
+
+func TestReviewerAllowlistExactMatch(t *testing.T) {
+	identityMap := map[string][]string{
+		"security": {"security-reviewer", "sec-lead"},
+		"reviewer": {"code-reviewer"},
+	}
+
+	if CorrelateReviewerRole("security", "security-reviewer", nil) {
+		t.Fatal("must return false when identityMap is nil")
+	}
+	if CorrelateReviewerRole("security", "security-reviewer", map[string][]string{}) {
+		t.Fatal("must return false when identityMap is empty")
+	}
+	if CorrelateReviewerRole("unknown-role", "security-reviewer", identityMap) {
+		t.Fatal("must return false for unknown role")
+	}
+	if CorrelateReviewerRole("security", "security-reviewer-imposter", identityMap) {
+		t.Fatal("must return false for substring/contains match")
+	}
+	if CorrelateReviewerRole("security", "sec", identityMap) {
+		t.Fatal("must return false for partial match")
+	}
+	if CorrelateReviewerRole("reviewer", "reviewer", identityMap) {
+		t.Fatal("must return false when author matches role string but is not in allowlist for that role")
+	}
+	if !CorrelateReviewerRole("security", "security-reviewer", identityMap) {
+		t.Fatal("must return true for exact allowlist match")
+	}
+	if !CorrelateReviewerRole("security", "SEC-LEAD", identityMap) {
+		t.Fatal("must return true for case-insensitive exact allowlist match")
+	}
+}
+
+func TestUnknownVerdictIgnoredNotTreatedAsReject(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"reviewer"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:109",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(109),
+			URL:    "https://github.com/acme/app/pull/109",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "reviewer",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=MAYBE -->", headSHA),
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/109",
+				Session:     "sess-109",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_not_accepted" {
+			t.Fatalf("unknown verdict must not produce reviewer_not_accepted, codes = %v", workflow.VerificationState.Codes)
+		}
+	}
+	hasReviewerMissing := false
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_missing" {
+			hasReviewerMissing = true
+		}
+	}
+	if !hasReviewerMissing {
+		t.Fatalf("codes = %v, want reviewer_missing for unknown verdict", workflow.VerificationState.Codes)
+	}
+}
+
+func TestCIEvidenceRevisionObservedNotFabricated(t *testing.T) {
+	candidateSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	mismatchedSHA := "1111111a35dd7e2bcce9b6ae581ea9954c1fd111"
+	work := WorkItem{
+		WorkID: "pr:110",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(110),
+			URL:    "https://github.com/acme/app/pull/110",
+			Fields: map[string]string{
+				"headSha": candidateSHA,
+			},
+			Checks: []GitHubCheck{
+				{Name: "ci/unobserved", Conclusion: "success"},
+				{Name: "ci/mismatched", HeadSHA: mismatchedSHA, Conclusion: "failure"},
+			},
+		},
+	}
+
+	evidences := ExtractEvidenceItems(&work, candidateSHA, nil)
+	if len(evidences) != 2 {
+		t.Fatalf("evidences count = %d, want 2", len(evidences))
+	}
+	if evidences[0].Revision != "" {
+		t.Fatalf("evidence[0].Revision = %q, want empty (must not copy candidateSHA)", evidences[0].Revision)
+	}
+	if evidences[1].Revision != mismatchedSHA {
+		t.Fatalf("evidence[1].Revision = %q, want %q", evidences[1].Revision, mismatchedSHA)
+	}
+
+	vState := DeriveVerificationState(candidateSHA, evidences, work.GitHub.Checks, false, false, false)
+	for _, code := range vState.Codes {
+		if code == "ci_failed" {
+			t.Fatalf("mismatched SHA check failure must not fail candidate verification, got codes = %v", vState.Codes)
+		}
+	}
+}
+
+func TestMalformedEvidenceMarkerLeavesProjectObservable(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	work := WorkItem{
+		WorkID: "pr:107",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(107),
+			URL:    "https://github.com/acme/app/pull/107",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "reviewer",
+					Body:       "<!-- evidence: broken missing all fields -->\nNormal comment text here",
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/107",
+				Session:     "sess-107",
+				AgentName:   "Dev",
+				AgentStatus: "working",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(nil, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("malformed marker must not crash correlation; workflow must be observable")
+	}
+	if workflow.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("status = %q, want unverified", workflow.VerificationState.Status)
+	}
+	hasReviewerMissing := false
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_missing" {
+			hasReviewerMissing = true
+		}
+	}
+	if !hasReviewerMissing {
+		t.Fatalf("codes = %v, want reviewer_missing", workflow.VerificationState.Codes)
+	}
+}
+
+func TestUnconfiguredProjectRejectsReviewerEvidence(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	work := WorkItem{
+		WorkID: "pr:111",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(111),
+			URL:    "https://github.com/acme/app/pull/111",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "reviewer",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=ACCEPT -->", headSHA),
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/111",
+				Session:     "sess-111",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	wfNilProject := CorrelateAgentWorkflow(nil, &work, &herdr)
+	if wfNilProject == nil {
+		t.Fatal("workflow should not be nil")
+	}
+	if wfNilProject.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("status = %q, want unverified when project is nil", wfNilProject.VerificationState.Status)
+	}
+	hasReviewerMissing := false
+	for _, c := range wfNilProject.VerificationState.Codes {
+		if c == "reviewer_missing" {
+			hasReviewerMissing = true
+		}
+	}
+	if !hasReviewerMissing {
+		t.Fatalf("codes = %v, want reviewer_missing without configured identities", wfNilProject.VerificationState.Codes)
+	}
+
+	emptyProject := &Project{}
+	wfEmptyProject := CorrelateAgentWorkflow(emptyProject, &work, &herdr)
+	if wfEmptyProject == nil {
+		t.Fatal("workflow should not be nil")
+	}
+	if wfEmptyProject.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("status = %q, want unverified when project has empty identities", wfEmptyProject.VerificationState.Status)
+	}
+}
+
+func TestUnboundChecksDoNotAddCIPassedPresentation(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"reviewer": {"reviewer"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:112",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(112),
+			URL:    "https://github.com/acme/app/pull/112",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Checks: []GitHubCheck{
+				// Checks are present and successful, but have no observed HeadSHA (empty)
+				{Name: "ci/unbound-check", Conclusion: "success"},
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "reviewer",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=reviewer sha=%s verdict=ACCEPT -->", headSHA),
+					ObservedAt: &now,
+				},
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: now,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/112",
+				Session:     "sess-112",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	// Reviewer approved, so status is verified
+	if workflow.VerificationState.Status != VerificationVerified {
+		t.Fatalf("status = %q, want verified", workflow.VerificationState.Status)
+	}
+	// But unbound checks must NOT produce ci_passed code
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "ci_passed" {
+			t.Fatalf("unbound checks (HeadSHA == '') must not produce ci_passed code, codes = %v", workflow.VerificationState.Codes)
+		}
+	}
+	// And summary must NOT claim "CI 통과"
+	if strings.Contains(workflow.VerificationState.Summary, "CI 통과") {
+		t.Fatalf("summary = %q, must not contain CI 통과 when checks are unbound", workflow.VerificationState.Summary)
+	}
+	if workflow.VerificationState.Summary != "검증 완료 (리뷰어 승인)" {
+		t.Fatalf("summary = %q, want '검증 완료 (리뷰어 승인)'", workflow.VerificationState.Summary)
 	}
 }
