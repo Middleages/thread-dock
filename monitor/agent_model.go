@@ -459,7 +459,7 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		} else if hasNotAccepted {
 			vState.Summary = "리뷰어 미승인 (REJECT)"
 		} else if hasMissing {
-			vState.Summary = "리뷰어 검증 증거 대기 중"
+			vState.Summary = "리뷰어 승인 대기 중 (검증 미완료)"
 		} else {
 			vState.Summary = "검증 대기 중"
 		}
