@@ -68,4 +68,47 @@ describe('ProjectDetail', () => {
     render(<ProjectDetail project={unsafe} selectedWorkId="issue:7" projectTodoCount={0} onSelectWork={vi.fn()} onOpenProjectTodos={vi.fn()} onStatus={vi.fn()} />)
     expect(screen.queryByRole('button', { name: 'GitHub에서 보기' })).not.toBeInTheDocument()
   })
+
+  it('renders AgentWorkflow when selected work item has an agent workflow', () => {
+    const projectWithWorkflow = project({
+      workItems: [
+        {
+          ...project().workItems[0],
+          agentWorkflow: {
+            executionState: 'completed',
+            verificationState: {
+              status: 'verified',
+              summary: '검증 완료',
+              anchorSha: '8e54c92',
+            },
+            candidateRevision: '8e54c92',
+            evidenceRefs: [],
+            notices: [],
+            provenance: { source: 'herdr+github' },
+            agents: [
+              {
+                agentId: 'Worker1',
+                execution: 'completed',
+                provenance: { source: 'herdr' },
+              },
+            ],
+            tasks: [],
+            results: [],
+          },
+        },
+      ],
+    })
+    render(
+      <ProjectDetail
+        project={projectWithWorkflow}
+        selectedWorkId="issue:7"
+        projectTodoCount={0}
+        onSelectWork={vi.fn()}
+        onOpenProjectTodos={vi.fn()}
+        onStatus={vi.fn()}
+      />
+    )
+    expect(screen.getByText('Agent 워크플로우')).toBeInTheDocument()
+    expect(screen.getByText('확인됨')).toBeInTheDocument()
+  })
 })
