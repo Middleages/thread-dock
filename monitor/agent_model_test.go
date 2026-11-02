@@ -937,7 +937,7 @@ func TestCIEvidenceRevisionObservedNotFabricated(t *testing.T) {
 		t.Fatalf("evidence[1].Revision = %q, want %q", evidences[1].Revision, mismatchedSHA)
 	}
 
-	vState := DeriveVerificationState(candidateSHA, evidences, work.GitHub.Checks, false, false, false)
+	vState := DeriveVerificationState(candidateSHA, evidences, work.GitHub.Checks, nil, false, false, false)
 	for _, code := range vState.Codes {
 		if code == "ci_failed" {
 			t.Fatalf("mismatched SHA check failure must not fail candidate verification, got codes = %v", vState.Codes)
@@ -1310,5 +1310,72 @@ func TestMultipleReviewerRolesRequireAllAccepted(t *testing.T) {
 	}
 	if workflow2.VerificationState.Status != VerificationVerified {
 		t.Fatalf("status = %q, want verified when all roles have latest ACCEPT", workflow2.VerificationState.Status)
+	}
+}
+
+func TestMultipleReviewerRolesMissingOneRoleLeavesUnverified(t *testing.T) {
+	t1 := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{
+		ReviewerIdentities: map[string][]string{
+			"security": {"sec-alice"},
+			"qa":       {"qa-bob"},
+		},
+	}
+	work := WorkItem{
+		WorkID: "pr:116",
+		GitHub: &GitHubWork{
+			Kind:   "pull_request",
+			Number: intPtr(116),
+			URL:    "https://github.com/acme/app/pull/116",
+			Fields: map[string]string{
+				"headSha": headSHA,
+			},
+			Comments: []GitHubComment{
+				{
+					Author:     "sec-alice",
+					Body:       fmt.Sprintf("<!-- evidence: reviewer=security sha=%s verdict=ACCEPT -->", headSHA),
+					ObservedAt: &t1,
+				},
+				// qa-bob has NOT reviewed (no comment / no evidence)
+			},
+		},
+	}
+	herdr := HerdrSnapshot{
+		ObservedAt: t1,
+		Connections: []HerdrConnection{
+			{
+				IssueURL:    "https://github.com/acme/app/pull/116",
+				Session:     "sess-116",
+				AgentName:   "Worker",
+				AgentStatus: "done",
+			},
+		},
+	}
+
+	workflow := CorrelateAgentWorkflow(project, &work, &herdr)
+	if workflow == nil {
+		t.Fatal("workflow must not be nil")
+	}
+	// qa role hasn't reviewed yet, so status must remain unverified
+	if workflow.VerificationState.Status != VerificationUnverified {
+		t.Fatalf("status = %q, want unverified when a configured role has no review evidence", workflow.VerificationState.Status)
+	}
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_accepted" {
+			t.Fatalf("reviewer_accepted must not be present when qa role is missing, codes = %v", workflow.VerificationState.Codes)
+		}
+	}
+	hasMissing := false
+	for _, c := range workflow.VerificationState.Codes {
+		if c == "reviewer_missing" {
+			hasMissing = true
+		}
+	}
+	if !hasMissing {
+		t.Fatalf("reviewer_missing code expected, got %v", workflow.VerificationState.Codes)
+	}
+	if !strings.Contains(workflow.VerificationState.Summary, "승인 대기 중") {
+		t.Fatalf("summary = %q, want summary indicating waiting for approval", workflow.VerificationState.Summary)
 	}
 }

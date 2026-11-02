@@ -286,7 +286,7 @@ func ExtractEvidenceItems(work *WorkItem, identityMap map[string][]string) []Evi
 	return evidences
 }
 
-func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, checks []GitHubCheck, ambiguous bool, coordinatorFallback bool, childIncomplete bool) VerificationState {
+func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, checks []GitHubCheck, requiredRoles []string, ambiguous bool, coordinatorFallback bool, childIncomplete bool) VerificationState {
 	candidateSHA = strings.TrimSpace(candidateSHA)
 	vState := VerificationState{
 		Status:    VerificationUnverified,
@@ -368,14 +368,40 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		}
 	}
 
-	hasMatchingReview := len(latestVerdicts) > 0
+	hasMatchingReview := false
 	hasAcceptedReview := false
 	hasRejectedReview := false
-	for _, v := range latestVerdicts {
-		if v.claim == "ACCEPT" {
-			hasAcceptedReview = true
-		} else if v.claim == "REJECT" {
+	hasMissingRoleReview := false
+
+	if len(requiredRoles) > 0 {
+		allRolesAccepted := true
+		anyRoleRejected := false
+		anyRoleReviewed := false
+
+		for _, role := range requiredRoles {
+			normRole := strings.ToLower(strings.TrimSpace(role))
+			v, exists := latestVerdicts[normRole]
+			if !exists {
+				allRolesAccepted = false
+				hasMissingRoleReview = true
+			} else {
+				anyRoleReviewed = true
+				if v.claim == "REJECT" {
+					anyRoleRejected = true
+					allRolesAccepted = false
+				} else if v.claim != "ACCEPT" {
+					allRolesAccepted = false
+				}
+			}
+		}
+
+		if anyRoleReviewed {
+			hasMatchingReview = true
+		}
+		if anyRoleRejected {
 			hasRejectedReview = true
+		} else if allRolesAccepted {
+			hasAcceptedReview = true
 		}
 	}
 
@@ -384,6 +410,8 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 			vState.Codes = append(vState.Codes, "reviewer_accepted")
 		} else if hasRejectedReview {
 			vState.Codes = append(vState.Codes, "reviewer_not_accepted")
+		} else if hasMissingRoleReview {
+			vState.Codes = append(vState.Codes, "reviewer_missing")
 		}
 	} else if hasStaleReview {
 		vState.Codes = append(vState.Codes, "stale_sha")
@@ -662,13 +690,22 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	}
 
 	identities := resolveReviewerIdentities(project)
+	var requiredRoles []string
+	if project != nil && len(project.ReviewerIdentities) > 0 {
+		requiredRoles = make([]string, 0, len(project.ReviewerIdentities))
+		for r := range project.ReviewerIdentities {
+			requiredRoles = append(requiredRoles, strings.ToLower(strings.TrimSpace(r)))
+		}
+		sort.Strings(requiredRoles)
+	}
+
 	evidences := ExtractEvidenceItems(work, identities)
 	checks := []GitHubCheck{}
 	if work.GitHub != nil {
 		checks = work.GitHub.Checks
 	}
 
-	vState := DeriveVerificationState(candidateSHA, evidences, checks, ambiguous, matchType == "coordinator", hasChildIncomplete)
+	vState := DeriveVerificationState(candidateSHA, evidences, checks, requiredRoles, ambiguous, matchType == "coordinator", hasChildIncomplete)
 
 	evidenceRefs := append([]string{}, work.EvidenceRefs...)
 	for _, ev := range evidences {
