@@ -27,7 +27,9 @@ type projectTarget struct{ owner, number, url string }
 type monitorConfig struct {
 	repos    []repositoryTarget
 	projects []projectTarget
-	err      error
+	// reviewers maps a reviewer role to its allowed GitHub logins (THREADDOCK_REVIEWERS).
+	reviewers map[string][]string
+	err       error
 }
 
 type cachedSource struct {
@@ -79,7 +81,8 @@ func parseMonitorConfig(env map[string]string) (monitorConfig, string) {
 	if config.err == nil {
 		config.projects, config.err = parseProjects(env["THREADDOCK_PROJECTS"])
 	}
-	known := map[string]bool{"THREADDOCK_REPOS": true, "THREADDOCK_PROJECTS": true, "THREADDOCK_WSL_DISTRIBUTION": true, "THREADDOCK_SESSIONS_FILE": true}
+	config.reviewers = parseReviewerIdentities(env["THREADDOCK_REVIEWERS"])
+	known := map[string]bool{"THREADDOCK_REVIEWERS": true, "THREADDOCK_REPOS": true, "THREADDOCK_PROJECTS": true, "THREADDOCK_WSL_DISTRIBUTION": true, "THREADDOCK_SESSIONS_FILE": true}
 	var unknown []string
 	for key := range env {
 		if strings.HasPrefix(key, "THREADDOCK_") && !known[key] {
@@ -94,6 +97,31 @@ func parseMonitorConfig(env map[string]string) (monitorConfig, string) {
 		config.err = errors.New("THREADDOCK_WSL_DISTRIBUTION must be set when GitHub targets are configured")
 	}
 	return config, strings.TrimSpace(env["THREADDOCK_SESSIONS_FILE"])
+}
+
+// parseReviewerIdentities parses "role=login1,login2;role2=login3" into a
+// lowercase role->logins map. Malformed entries are ignored.
+func parseReviewerIdentities(raw string) map[string][]string {
+	result := map[string][]string{}
+	for _, entry := range strings.Split(raw, ";") {
+		role, logins, ok := strings.Cut(entry, "=")
+		role = strings.ToLower(strings.TrimSpace(role))
+		if !ok || role == "" {
+			continue
+		}
+		for _, login := range strings.Split(logins, ",") {
+			if login = strings.ToLower(strings.TrimSpace(login)); login != "" {
+				result[role] = append(result[role], login)
+			}
+		}
+		if len(result[role]) == 0 {
+			delete(result, role)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func parseRepos(raw string) ([]repositoryTarget, error) {
@@ -242,7 +270,7 @@ func (m *GitHubMonitor) fetchRepository(repo repositoryTarget, notices *[]string
 	if isStale {
 		projectNotices = append(projectNotices, key+"의 일부 GitHub 조회가 오래된 상태입니다.")
 	}
-	return Project{ProjectID: "repo:" + key, Name: key, State: choose(isStale, "stale", "running"), SyncStatus: choose(isStale, "degraded", "synced"), NextAction: "review", EvidenceRefs: []string{"https://github.com/" + key}, UpdatedAt: updated, ObservedAt: updated, WorkItems: items, Source: "github", Notices: projectNotices, Links: repositoryLinks(repo.owner, repo.repo)}
+	return Project{ProjectID: "repo:" + key, Name: key, State: choose(isStale, "stale", "running"), SyncStatus: choose(isStale, "degraded", "synced"), NextAction: "review", EvidenceRefs: []string{"https://github.com/" + key}, UpdatedAt: updated, ObservedAt: updated, WorkItems: items, Source: "github", Notices: projectNotices, Links: repositoryLinks(repo.owner, repo.repo), ReviewerIdentities: m.config.reviewers}
 }
 
 func (m *GitHubMonitor) fetchProject(board projectTarget, notices *[]string) Project {

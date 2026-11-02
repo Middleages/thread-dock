@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -361,5 +362,32 @@ func TestGitHubMonitorEmitsLimitNoticeAndRejectsMalformedResponsesWithoutReplaci
 	second, _ := monitor.FetchAll(context.Background())
 	if len(second.Projects[0].WorkItems) != 100 || second.Freshness.State != "stale" {
 		t.Fatalf("retained=%#v", second)
+	}
+}
+
+func TestParseReviewerIdentities(t *testing.T) {
+	got := parseReviewerIdentities(" Reviewer = Alice, bob ;security=Carol;;broken;=x;empty=, ;reviewer=Dave")
+	want := map[string][]string{"reviewer": {"alice", "bob", "dave"}, "security": {"carol"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v want %#v", got, want)
+	}
+	if parseReviewerIdentities("  ") != nil {
+		t.Fatal("blank must yield nil")
+	}
+}
+
+func TestReviewerEnvAppliedToRepositoryProjects(t *testing.T) {
+	fake := &ghFakeRunner{fn: func(args []string) (runner.Result, error) { return runner.Result{Stdout: "[]"}, nil }}
+	monitor := NewGitHubMonitor(map[string]string{"THREADDOCK_REPOS": "acme/app", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu", "THREADDOCK_REVIEWERS": "reviewer=Alice"}, fake, time.Second)
+	snapshot, err := monitor.FetchAll(context.Background())
+	if err != nil || len(snapshot.Projects) != 1 || !reflect.DeepEqual(snapshot.Projects[0].ReviewerIdentities, map[string][]string{"reviewer": {"alice"}}) {
+		t.Fatalf("err=%v snapshot=%#v", err, snapshot.Projects)
+	}
+}
+
+func TestSettingsEnvironmentPreservesReviewers(t *testing.T) {
+	env := MonitorSettings{Repositories: "acme/app"}.environment(map[string]string{"THREADDOCK_REVIEWERS": "reviewer=alice"})
+	if env["THREADDOCK_REVIEWERS"] != "reviewer=alice" {
+		t.Fatalf("env=%v", env)
 	}
 }
