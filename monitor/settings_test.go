@@ -1,8 +1,10 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSettingsFromEnvMapsExistingMonitorConfiguration(t *testing.T) {
@@ -93,5 +95,42 @@ func TestSettingsEnvironmentSetsAndClearsReviewers(t *testing.T) {
 	}
 	if got := (MonitorSettings{}).environment(base); got["THREADDOCK_REVIEWERS"] != "" {
 		t.Fatalf("empty reviewers should clear: %v", got)
+	}
+}
+
+func TestValidateMonitorSettingsRejectsUnparseableReviewers(t *testing.T) {
+	if err := validateMonitorSettings(MonitorSettings{Reviewers: "garbage"}); err == nil {
+		t.Fatal("reviewers without any role=login must be rejected")
+	}
+	if err := validateMonitorSettings(MonitorSettings{Reviewers: "role=a;bad"}); err != nil {
+		t.Fatalf("partially valid reviewers are accepted: %v", err)
+	}
+	if err := validateMonitorSettings(MonitorSettings{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNewConfigurableAppReviewersFallbackOnlyWhenKeyAbsent(t *testing.T) {
+	cases := map[string]string{
+		`{"githubHost":"github.com"}`:                   "role=envuser",
+		`{"githubHost":"github.com","reviewers":""}`:    "",
+		`{"githubHost":"github.com","reviewers":"a=b"}`: "a=b",
+	}
+	for stored, want := range cases {
+		dir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", dir)
+		t.Setenv("HOME", dir)
+		t.Setenv("APPDATA", dir)
+		store := defaultSettingsStore()
+		if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(store.path, []byte(stored), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		app := NewConfigurableApp(map[string]string{"THREADDOCK_REVIEWERS": "role=envuser"}, &recordingRunner{}, time.Second)
+		if got := app.settings.Reviewers; got != want {
+			t.Fatalf("stored %s: reviewers=%q want %q", stored, got, want)
+		}
 	}
 }

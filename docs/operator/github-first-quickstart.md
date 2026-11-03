@@ -182,6 +182,7 @@ PR의 `verified`는 리뷰어 역할 신원이 설정되어 있고 같은 PR 댓
 
 - 설정: Monitor 설정의 "리뷰어" 칸에 `role=login1,login2;role2=login3` 형식으로 입력한다. 환경 변수를 쓰면 Windows에서 `setx THREADDOCK_REVIEWERS "td_reviewer=my-login"` 후 Monitor를 다시 시작한다. 형식이 잘못된 항목은 무시된다.
 - 마커: 리뷰 결과 PR 댓글에 실제 검토 내용과 함께 `<!-- evidence: reviewer=td_reviewer sha=<전체 head SHA> verdict=ACCEPT -->`(거절은 `REJECT`)를 넣는다. 새 SHA를 검토하면 새 마커가 필요하다.
+- 마커는 댓글 작성자 로그인이 해당 role 아래에 등록되어 있을 때만 인정된다. Leader가 대신 게시하면 Leader의 로그인이 등록되어 있어야 한다.
 - 한 계정만 쓰는 경우: 리뷰 댓글이 PR 작성자와 같은 계정이면 `verified`는 유지하되 `reviewer_self_declared` 코드와 "같은 계정 선언" 표시가 붙는다. 독립 신원은 확인되지 않았다는 뜻이다.
 
 ## 5. 프로젝트 Coordinator 시작
