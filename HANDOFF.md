@@ -1,5 +1,37 @@
 # ThreadDock 진행 설계 정정과 다음 작업
 
+## 2026-11-03: Agent workflow 읽기 모델 리뷰·복구와 워크플로우 연결
+
+- 기준 main은 [PR #118](https://github.com/Middleages/thread-dock/pull/118)의 squash 병합 SHA `9c751a126e3a6875a4019c43ee62e5f65d5ab89a`다. 대상은 [계획](docs/superpowers/plans/2026-10-27-thread-dock-agent-model.md)의 Task 1–4 구현인 PR #112–#116이다. 사용자 지시로 이번에는 Luna 대신 Sonnet 구현 agent, fresh 독립 리뷰 agent, Coordinator 구성으로 진행했다.
+- **#112–#116 리뷰 결과:** #113부터 main이 컴파일되지 않았다(`firstNonEmpty` 중복, 테스트 컴파일 오류). 검증 입력(PR 댓글, check head SHA, 리뷰어 신원, 상위 Agent)을 채우는 production 코드가 없어 '확인됨'은 테스트에서만 가능했다. 그 밖의 결함:
+  - 다른 Issue에 묶인 세션이 project fallback으로 오연결됐다.
+  - 모호/폴백 조건이 `unverified`를 `partial`로 올렸다.
+  - `AgentWorkflow.test.tsx`가 `make check` 밖이었다.
+- **[PR #117](https://github.com/Middleages/thread-dock/pull/117) (`7f8255d`), 빌드 복구와 판정 정정:**
+  - `partial`은 `verified`를 낮추기만 한다.
+  - Herdr `idle`은 `unknown`으로 본다.
+  - 무효 check 상태(`cancelled`·`stale`·`startup_failure`·`error`)는 실패, `waiting`·`requested`는 진행 중으로 본다.
+  - 댓글이 100개 이상이면 `comments_truncated`로 `partial`이 된다.
+  - 결과별 검증값 복사와 근거 없는 승인 문구를 제거했다.
+  - 실제 입력 연결: `gh pr list --json`에 `headRefOid,comments`를 추가했고 PR별 `gh pr view` 조회를 삭제했다. 삭제한 조회에는 Enterprise에서 github.com으로 요청하던 결함이 있었다. sessions.json의 선택 필드 `parentAgent`로 계통을 표시하며, 모호하거나 자기 자신을 가리키는 상위는 비운다.
+- **[PR #118](https://github.com/Middleages/thread-dock/pull/118), 워크플로우 연결:**
+  - `review-change`는 고정 SHA 판정을 `<!-- evidence: reviewer=<role> sha=<full SHA> verdict=ACCEPT|REJECT -->` 마커와 findings가 담긴 PR 댓글로 게시한다.
+  - `publish-work`는 Feature Leader binding에 Coordinator의 정확한 `agentName`을 `parentAgent`로 기록한다.
+  - 설정 화면에 '리뷰어 신원'(`role=login1,login2;role2=login3`, env `THREADDOCK_REVIEWERS`)을 추가했다.
+  - **결정:** 사내 환경상 리뷰어 전용 계정을 추가하기 어렵다. 사용자는 같은 계정 리뷰도 '확인됨'을 허용하되 `reviewer_self_declared` 코드, "· 같은 계정 선언" 요약, 안내 문구로 독립 신원 미확인을 표시하도록 선택했다.
+  - 운영 절차는 [quickstart §4-1](docs/operator/github-first-quickstart.md)을 따른다.
+- **검증:**
+  - 각 PR의 최종 SHA에서 `make check`가 통과했다.
+  - 단계별 fresh 리뷰는 모두 ACCEPT했다. 리뷰어가 제안한 소규모 마지막 수정(#117 `356bdb4`, #118 `305272b`)만 Coordinator가 diff와 gate로 확인했다.
+  - UI는 실제 Go `enrichSnapshotWithAgentWorkflow` 출력을 Wails binding 대신 주입한 **브라우저 fixture** 캡처로 확인했다. 데스크톱과 390px 폭을 봤다.
+- **미검증:**
+  - 실제 Wails(Windows 빌드), 실제 `gh` JSON(`author`·`comments`·`headRefOid`), 실제 Herdr 세션은 확인하지 못했다. 작업 환경이 Linux 클라우드였다.
+  - 원격 branch 강제 갱신이 정책에 막혀 #118에는 내용 변경 없는 이력 merge 커밋이 있었다. squash 병합으로 main에는 남지 않았다.
+- **사용자 남은 조치:**
+  - WSL 전역 `~/.agents/skills/review-change`와 `publish-work`를 `project-template`에서 갱신하고 열린 세션을 다시 연다.
+  - Windows Monitor를 재빌드하고 리뷰어 신원을 설정한다.
+  - 다음 기능 PR에서 '확인됨 · 같은 계정 선언'과 계통 표시를 실제로 확인한다.
+
 ## 2026-10-21: 하네스 적대적 검토와 지침 간소화
 
 - 기준 main은 [PR #104](https://github.com/Middleages/thread-dock/pull/104)의 병합 SHA `d0af6f432f757312c2cc35551a9e497dc17af645`다. 아래 10월 18일 절의 로컬 커밋·미게시 설명은 병합 전 이력이다.
