@@ -110,6 +110,10 @@ func (s settingsStore) load() (MonitorSettings, bool, error) {
 	var probe struct{ Reviewers *string }
 	_ = json.Unmarshal(data, &probe)
 	settings.reviewersAbsent = probe.Reviewers == nil
+	// Reviewer format is enforced on save only; an unparseable stored value must not discard the rest of the config.
+	if parseReviewerIdentities(settings.Reviewers) == nil {
+		settings.Reviewers = ""
+	}
 	if settings.GitHubHost == "" {
 		settings.GitHubHost = defaultGitHubHost
 	}

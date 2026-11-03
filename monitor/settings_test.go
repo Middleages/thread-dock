@@ -134,3 +134,14 @@ func TestNewConfigurableAppReviewersFallbackOnlyWhenKeyAbsent(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreLoadDropsUnparseableReviewersButKeepsOtherSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"githubHost":"github.com","repositories":"acme/app","wslDistribution":"Ubuntu","reviewers":"garbage"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := settingsStore{path: path}.load()
+	if err != nil || !ok || got.Repositories != "acme/app" || got.Reviewers != "" {
+		t.Fatalf("got=%#v ok=%v err=%v", got, ok, err)
+	}
+}
