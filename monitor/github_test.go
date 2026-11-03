@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -187,7 +188,7 @@ func TestGitHubMonitorUsesExactGhArgumentArrays(t *testing.T) {
 	}
 	want := [][]string{
 		{"--distribution", "Ubuntu 24.04", "--exec", "gh", "issue", "list", "--repo", "acme/app", "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,author"},
-		{"--distribution", "Ubuntu 24.04", "--exec", "gh", "pr", "list", "--repo", "acme/app", "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,reviewDecision,statusCheckRollup,closingIssuesReferences"},
+		{"--distribution", "Ubuntu 24.04", "--exec", "gh", "pr", "list", "--repo", "acme/app", "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,reviewDecision,statusCheckRollup,closingIssuesReferences,headRefOid,comments"},
 		{"--distribution", "Ubuntu 24.04", "--exec", "gh", "project", "item-list", "2", "--owner", "acme", "--format", "json", "--limit", "100"},
 	}
 	if len(fake.calls) != len(want) {
@@ -262,7 +263,7 @@ func TestGitHubMonitorMapsRepositoryAndProjectItemsWithoutIssueNumberCollisions(
 		case strings.Contains(joined, "issue list") && strings.Contains(joined, "acme/api"):
 			return runner.Result{Stdout: jsonOutput([]any{map[string]any{"number": 1, "title": "API", "url": "https://github.com/acme/api/issues/1", "state": "OPEN"}})}, nil
 		case strings.Contains(joined, "pr list"):
-			return runner.Result{Stdout: jsonOutput([]any{map[string]any{"number": 2, "title": "Fix", "url": "https://github.com/acme/app/pull/2", "state": "OPEN", "reviewDecision": "REVIEW_REQUIRED", "statusCheckRollup": []any{map[string]any{"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/acme/app/actions/1"}}, "closingIssuesReferences": []any{map[string]any{"url": issueFixture["url"]}}}})}, nil
+			return runner.Result{Stdout: jsonOutput([]any{map[string]any{"number": 2, "title": "Fix", "url": "https://github.com/acme/app/pull/2", "state": "OPEN", "reviewDecision": "REVIEW_REQUIRED", "statusCheckRollup": []any{map[string]any{"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/acme/app/actions/1"}}, "closingIssuesReferences": []any{map[string]any{"url": issueFixture["url"]}}, "headRefOid": "abc1234def", "comments": []any{map[string]any{"author": map[string]any{"login": "Rev"}, "body": "ok", "url": "https://github.com/acme/app/pull/2#issuecomment-1", "createdAt": "2026-10-01T00:00:00Z"}, map[string]any{"body": "no author"}}}})}, nil
 		case strings.Contains(joined, "project item-list"):
 			return runner.Result{Stdout: jsonOutput(projectPayload)}, nil
 		default:
@@ -284,6 +285,12 @@ func TestGitHubMonitorMapsRepositoryAndProjectItemsWithoutIssueNumberCollisions(
 	pr := app.WorkItems[1]
 	if pr.GitHub == nil || len(pr.GitHub.RelatedIssueURLs) != 1 || pr.GitHub.Checks[0].URL == "" || pr.GitHub.ReviewDecision != "REVIEW_REQUIRED" {
 		t.Fatalf("pr github=%#v", pr.GitHub)
+	}
+	if pr.GitHub.Fields["headSha"] != "abc1234def" || pr.GitHub.Checks[0].HeadSHA != "abc1234def" {
+		t.Fatalf("head sha not mapped: %#v", pr.GitHub)
+	}
+	if len(pr.GitHub.Comments) != 2 || pr.GitHub.Comments[0].Author != "Rev" || pr.GitHub.Comments[0].ObservedAt == nil || pr.GitHub.Comments[1].Author != "" {
+		t.Fatalf("comments=%#v", pr.GitHub.Comments)
 	}
 	board := snapshot.Projects[2]
 	if board.WorkItems[0].GitHub == nil || board.WorkItems[0].GitHub.ContentAvailable || board.WorkItems[0].GitHub.Fields["status"] != "Waiting" || board.WorkItems[0].GitHub.Fields["priority"] != "P2" {
@@ -355,5 +362,44 @@ func TestGitHubMonitorEmitsLimitNoticeAndRejectsMalformedResponsesWithoutReplaci
 	second, _ := monitor.FetchAll(context.Background())
 	if len(second.Projects[0].WorkItems) != 100 || second.Freshness.State != "stale" {
 		t.Fatalf("retained=%#v", second)
+	}
+}
+
+func TestParseReviewerIdentities(t *testing.T) {
+	got := parseReviewerIdentities(" Reviewer = Alice, bob ;security=Carol;;broken;=x;empty=, ;reviewer=Dave")
+	want := map[string][]string{"reviewer": {"alice", "bob", "dave"}, "security": {"carol"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v want %#v", got, want)
+	}
+	if parseReviewerIdentities("  ") != nil {
+		t.Fatal("blank must yield nil")
+	}
+}
+
+func TestReviewerEnvAppliedToRepositoryProjects(t *testing.T) {
+	fake := &ghFakeRunner{fn: func(args []string) (runner.Result, error) { return runner.Result{Stdout: "[]"}, nil }}
+	monitor := NewGitHubMonitor(map[string]string{"THREADDOCK_REPOS": "acme/app", "THREADDOCK_WSL_DISTRIBUTION": "Ubuntu", "THREADDOCK_REVIEWERS": "reviewer=Alice"}, fake, time.Second)
+	snapshot, err := monitor.FetchAll(context.Background())
+	if err != nil || len(snapshot.Projects) != 1 || !reflect.DeepEqual(snapshot.Projects[0].ReviewerIdentities, map[string][]string{"reviewer": {"alice"}}) {
+		t.Fatalf("err=%v snapshot=%#v", err, snapshot.Projects)
+	}
+}
+
+func TestSettingsEnvironmentPreservesReviewers(t *testing.T) {
+	env := MonitorSettings{Repositories: "acme/app"}.environment(map[string]string{"THREADDOCK_REVIEWERS": "reviewer=alice"})
+	if env["THREADDOCK_REVIEWERS"] != "reviewer=alice" {
+		t.Fatalf("env=%v", env)
+	}
+}
+
+func TestMapPullRequestFlagsCommentCap(t *testing.T) {
+	rows := make([]rawComment, githubCommentCap)
+	pr := mapPullRequest("acme/app", rawPullRequest{Comments: rows}, sourceRead{})
+	if !pr.GitHub.CommentsTruncated {
+		t.Fatal("cap-sized comment list must be flagged truncated")
+	}
+	pr = mapPullRequest("acme/app", rawPullRequest{Comments: rows[:3]}, sourceRead{})
+	if pr.GitHub.CommentsTruncated {
+		t.Fatal("short list must not be flagged")
 	}
 }

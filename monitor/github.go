@@ -27,7 +27,9 @@ type projectTarget struct{ owner, number, url string }
 type monitorConfig struct {
 	repos    []repositoryTarget
 	projects []projectTarget
-	err      error
+	// reviewers maps a reviewer role to its allowed GitHub logins (THREADDOCK_REVIEWERS).
+	reviewers map[string][]string
+	err       error
 }
 
 type cachedSource struct {
@@ -79,7 +81,8 @@ func parseMonitorConfig(env map[string]string) (monitorConfig, string) {
 	if config.err == nil {
 		config.projects, config.err = parseProjects(env["THREADDOCK_PROJECTS"])
 	}
-	known := map[string]bool{"THREADDOCK_REPOS": true, "THREADDOCK_PROJECTS": true, "THREADDOCK_WSL_DISTRIBUTION": true, "THREADDOCK_SESSIONS_FILE": true}
+	config.reviewers = parseReviewerIdentities(env["THREADDOCK_REVIEWERS"])
+	known := map[string]bool{"THREADDOCK_REVIEWERS": true, "THREADDOCK_REPOS": true, "THREADDOCK_PROJECTS": true, "THREADDOCK_WSL_DISTRIBUTION": true, "THREADDOCK_SESSIONS_FILE": true}
 	var unknown []string
 	for key := range env {
 		if strings.HasPrefix(key, "THREADDOCK_") && !known[key] {
@@ -94,6 +97,31 @@ func parseMonitorConfig(env map[string]string) (monitorConfig, string) {
 		config.err = errors.New("THREADDOCK_WSL_DISTRIBUTION must be set when GitHub targets are configured")
 	}
 	return config, strings.TrimSpace(env["THREADDOCK_SESSIONS_FILE"])
+}
+
+// parseReviewerIdentities parses "role=login1,login2;role2=login3" into a
+// lowercase role->logins map. Malformed entries are ignored.
+func parseReviewerIdentities(raw string) map[string][]string {
+	result := map[string][]string{}
+	for _, entry := range strings.Split(raw, ";") {
+		role, logins, ok := strings.Cut(entry, "=")
+		role = strings.ToLower(strings.TrimSpace(role))
+		if !ok || role == "" {
+			continue
+		}
+		for _, login := range strings.Split(logins, ",") {
+			if login = strings.ToLower(strings.TrimSpace(login)); login != "" {
+				result[role] = append(result[role], login)
+			}
+		}
+		if len(result[role]) == 0 {
+			delete(result, role)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func parseRepos(raw string) ([]repositoryTarget, error) {
@@ -208,7 +236,8 @@ func (m *GitHubMonitor) setupSnapshot(now time.Time, reason string) Snapshot {
 func (m *GitHubMonitor) fetchRepository(repo repositoryTarget, notices *[]string) Project {
 	key := repo.owner + "/" + repo.repo
 	issueArgs := []string{"gh", "issue", "list", "--repo", key, "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,author"}
-	prArgs := []string{"gh", "pr", "list", "--repo", key, "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,reviewDecision,statusCheckRollup,closingIssuesReferences"}
+	// ponytail: comments ride on the 100-PR list so reviewer evidence needs no per-PR call; a very chatty repo makes this payload large. Revisit (cap or per-PR fetch) if gh output is truncated.
+	prArgs := []string{"gh", "pr", "list", "--repo", key, "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,reviewDecision,statusCheckRollup,closingIssuesReferences,headRefOid,comments"}
 	issues := m.readSource(key+" issues", issueArgs, decodeIssueRows, notices)
 	prs := m.readSource(key+" prs", prArgs, decodePullRequestRows, notices)
 	issueRows, _ := issues.data.([]rawIssue)
@@ -241,7 +270,7 @@ func (m *GitHubMonitor) fetchRepository(repo repositoryTarget, notices *[]string
 	if isStale {
 		projectNotices = append(projectNotices, key+"의 일부 GitHub 조회가 오래된 상태입니다.")
 	}
-	return Project{ProjectID: "repo:" + key, Name: key, State: choose(isStale, "stale", "running"), SyncStatus: choose(isStale, "degraded", "synced"), NextAction: "review", EvidenceRefs: []string{"https://github.com/" + key}, UpdatedAt: updated, ObservedAt: updated, WorkItems: items, Source: "github", Notices: projectNotices, Links: repositoryLinks(repo.owner, repo.repo)}
+	return Project{ProjectID: "repo:" + key, Name: key, State: choose(isStale, "stale", "running"), SyncStatus: choose(isStale, "degraded", "synced"), NextAction: "review", EvidenceRefs: []string{"https://github.com/" + key}, UpdatedAt: updated, ObservedAt: updated, WorkItems: items, Source: "github", Notices: projectNotices, Links: repositoryLinks(repo.owner, repo.repo), ReviewerIdentities: m.config.reviewers}
 }
 
 func (m *GitHubMonitor) fetchProject(board projectTarget, notices *[]string) Project {
@@ -329,6 +358,14 @@ type rawPullRequest struct {
 	Title, URL, State, Body, UpdatedAt, ReviewDecision string
 	StatusCheckRollup                                  []map[string]any `json:"statusCheckRollup"`
 	ClosingIssuesReferences                            []rawURL         `json:"closingIssuesReferences"`
+	HeadRefOid                                         string           `json:"headRefOid"`
+	Comments                                           []rawComment     `json:"comments"`
+}
+type rawComment struct {
+	Author    rawAuthor `json:"author"`
+	Body      string    `json:"body"`
+	URL       string    `json:"url"`
+	CreatedAt string    `json:"createdAt"`
 }
 type rawURL struct {
 	URL string `json:"url"`
@@ -393,6 +430,12 @@ func decodePullRequestRows(data []byte) (any, error) {
 			return nil, err
 		}
 		if err := optionalJSONArrayObjects(shape, "closingIssuesReferences"); err != nil {
+			return nil, err
+		}
+		if err := optionalJSONText(shape, "headRefOid"); err != nil {
+			return nil, err
+		}
+		if err := optionalJSONArrayObjects(shape, "comments"); err != nil {
 			return nil, err
 		}
 		if raw, ok := shape["closingIssuesReferences"]; ok && string(raw) != "null" {
@@ -528,7 +571,12 @@ func mapPullRequest(repo string, pr rawPullRequest, source sourceRead) WorkItem 
 			related = append(related, value)
 		}
 	}
-	github := &GitHubWork{Kind: "pull_request", Number: pr.Number, URL: url, State: pr.State, ReviewDecision: pr.ReviewDecision, RelatedIssueURLs: uniqueStrings(related), RelatedPullRequestURLs: []string{}, Checks: mapChecks(pr.StatusCheckRollup), Fields: map[string]string{}, ContentAvailable: true, ObservedAt: source.observedAtPtr(), Stale: source.stale}
+	headSHA := strings.TrimSpace(pr.HeadRefOid)
+	fields := map[string]string{}
+	if headSHA != "" {
+		fields["headSha"] = headSHA
+	}
+	github := &GitHubWork{Kind: "pull_request", Number: pr.Number, URL: url, State: pr.State, ReviewDecision: pr.ReviewDecision, RelatedIssueURLs: uniqueStrings(related), RelatedPullRequestURLs: []string{}, Checks: mapChecks(pr.StatusCheckRollup, headSHA), Comments: mapComments(pr.Comments), CommentsTruncated: len(pr.Comments) >= githubCommentCap, Fields: fields, ContentAvailable: true, ObservedAt: source.observedAtPtr(), Stale: source.stale}
 	return baseWork("pr", urlOrFallback(url, repo+"#"+numberText(pr.Number)), pr.Title, pr.Body, pr.UpdatedAt, github, source)
 }
 
@@ -653,14 +701,28 @@ func fieldPath(object map[string]any, path ...string) any {
 	}
 	return value
 }
-func mapChecks(values []map[string]any) []GitHubCheck {
+
+// mapChecks tags every rollup entry with headSHA: statusCheckRollup describes
+// the PR's head commit only.
+func mapChecks(values []map[string]any, headSHA string) []GitHubCheck {
 	result := []GitHubCheck{}
 	for _, value := range values {
 		name := firstText(value, "name", "context", "workflowName")
 		if name == "" {
 			name = "check"
 		}
-		result = append(result, GitHubCheck{Name: name, Status: firstText(value, "status", "state"), Conclusion: firstText(value, "conclusion", "state"), URL: safeGitHubURL(firstText(value, "detailsUrl", "targetUrl"))})
+		result = append(result, GitHubCheck{Name: name, Status: firstText(value, "status", "state"), Conclusion: firstText(value, "conclusion", "state"), URL: safeGitHubURL(firstText(value, "detailsUrl", "targetUrl")), HeadSHA: headSHA})
+	}
+	return result
+}
+
+// githubCommentCap is the per-PR comment ceiling of gh pr list; a list this long may be missing reviewer verdicts.
+const githubCommentCap = 100
+
+func mapComments(values []rawComment) []GitHubComment {
+	result := []GitHubComment{}
+	for _, value := range values {
+		result = append(result, GitHubComment{Author: value.Author.Login, Body: value.Body, URL: safeGitHubURL(value.URL), ObservedAt: parseTime(value.CreatedAt)})
 	}
 	return result
 }

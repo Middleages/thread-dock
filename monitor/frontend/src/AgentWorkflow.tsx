@@ -231,8 +231,8 @@ export function AgentWorkflow({
                       </small>
                     </div>
                     <span>
-                      {executionStateLabel(result.status)} · 결과 검증:{' '}
-                      {verificationStatusLabel(result.verification)}
+                      {executionStateLabel(result.status)}
+                      {result.verification && ` · 결과 검증: ${verificationStatusLabel(result.verification)}`}
                     </span>
                   </div>
                 ))}

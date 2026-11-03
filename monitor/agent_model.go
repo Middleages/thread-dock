@@ -30,20 +30,20 @@ const (
 
 type VerificationState struct {
 	Status    VerificationStatus `json:"status"`
-	Codes     []string            `json:"codes,omitempty"`
-	Summary   string              `json:"summary,omitempty"`
-	AnchorSHA string              `json:"anchorSha,omitempty"`
+	Codes     []string           `json:"codes,omitempty"`
+	Summary   string             `json:"summary,omitempty"`
+	AnchorSHA string             `json:"anchorSha,omitempty"`
 }
 
 type ObservationProvenance struct {
-	Source      string     `json:"source,omitempty"`
-	ObservedAt  *time.Time `json:"observedAt,omitempty"`
-	CapturedAt  *time.Time `json:"capturedAt,omitempty"`
-	Scope       string     `json:"scope,omitempty"`
-	Stale       bool       `json:"stale,omitempty"`
-	Partial     bool       `json:"partial,omitempty"`
-	Fallback    bool       `json:"fallback,omitempty"`
-	Notice      string     `json:"notice,omitempty"`
+	Source     string     `json:"source,omitempty"`
+	ObservedAt *time.Time `json:"observedAt,omitempty"`
+	CapturedAt *time.Time `json:"capturedAt,omitempty"`
+	Scope      string     `json:"scope,omitempty"`
+	Stale      bool       `json:"stale,omitempty"`
+	Partial    bool       `json:"partial,omitempty"`
+	Fallback   bool       `json:"fallback,omitempty"`
+	Notice     string     `json:"notice,omitempty"`
 }
 
 type AgentObservation struct {
@@ -77,7 +77,7 @@ type TaskResult struct {
 	OutputRevision string             `json:"outputRevision,omitempty"`
 	Summary        string             `json:"summary,omitempty"`
 	Findings       []string           `json:"findings,omitempty"`
-	Verification   VerificationStatus `json:"verification"`
+	Verification   VerificationStatus `json:"verification,omitempty"`
 	NextAction     string             `json:"nextAction,omitempty"`
 	CreatedAt      *time.Time         `json:"createdAt,omitempty"`
 }
@@ -99,8 +99,12 @@ func NormalizeExecutionState(raw string) ExecutionState {
 		return ExecutionQueued
 	case "running", "working":
 		return ExecutionRunning
-	case "waiting", "blocked", "idle":
+	case "waiting", "blocked":
 		return ExecutionWaiting
+	case "idle":
+		// Herdr idle only says the pane is at rest; it is neither progress nor
+		// completion, so it must not block (or confirm) verification.
+		return ExecutionUnknown
 	case "done", "completed", "complete":
 		return ExecutionCompleted
 	case "failed", "failure", "error":
@@ -204,13 +208,6 @@ func ParseEvidenceMarkers(text string) []ReviewerMarker {
 	return markers
 }
 
-func resolveReviewerIdentities(project *Project) map[string][]string {
-	if project == nil || len(project.ReviewerIdentities) == 0 {
-		return nil
-	}
-	return project.ReviewerIdentities
-}
-
 func CorrelateReviewerRole(role string, author string, identityMap map[string][]string) bool {
 	role = strings.ToLower(strings.TrimSpace(role))
 	author = strings.ToLower(strings.TrimSpace(author))
@@ -308,9 +305,9 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		}
 		conclusion := strings.ToLower(check.Conclusion)
 		status := strings.ToLower(check.Status)
-		if conclusion == "failure" || conclusion == "timed_out" || conclusion == "action_required" {
+		if conclusion == "failure" || conclusion == "timed_out" || conclusion == "action_required" || conclusion == "cancelled" || conclusion == "stale" || conclusion == "startup_failure" || conclusion == "error" {
 			ciFailed = true
-		} else if status == "in_progress" || status == "queued" || status == "pending" {
+		} else if status == "in_progress" || status == "queued" || status == "pending" || status == "waiting" || status == "requested" {
 			ciPending = true
 		} else if conclusion == "success" || conclusion == "neutral" {
 			ciPassCount++
@@ -419,21 +416,25 @@ func DeriveVerificationState(candidateSHA string, evidences []EvidenceItem, chec
 		vState.Codes = append(vState.Codes, "reviewer_missing")
 	}
 
-	if hasAcceptedReview && !hasRejectedReview && !ciFailed && !ciPending && !ambiguous && !coordinatorFallback && !childIncomplete {
-		vState.Status = VerificationVerified
-		if ciPassCount > 0 {
-			vState.Summary = "검증 완료 (리뷰어 승인 및 CI 통과)"
-		} else {
-			vState.Summary = "검증 완료 (리뷰어 승인)"
-		}
-	} else if ambiguous || coordinatorFallback || childIncomplete {
-		vState.Status = VerificationPartial
-		if ambiguous {
+	if hasAcceptedReview && !hasRejectedReview && !ciFailed && !ciPending {
+		// Provenance caveats may only downgrade an otherwise verified state.
+		switch {
+		case ambiguous:
+			vState.Status = VerificationPartial
 			vState.Summary = "복수 세션 바인딩으로 검증 상태 부분 확인"
-		} else if coordinatorFallback {
+		case coordinatorFallback:
+			vState.Status = VerificationPartial
 			vState.Summary = "저장소 코디네이터 폴백으로 검증 상태 부분 확인"
-		} else {
+		case childIncomplete:
+			vState.Status = VerificationPartial
 			vState.Summary = "하위 에이전트 작업 미완료로 부분 확인"
+		default:
+			vState.Status = VerificationVerified
+			if ciPassCount > 0 {
+				vState.Summary = "검증 완료 (리뷰어 승인 및 CI 통과)"
+			} else {
+				vState.Summary = "검증 완료 (리뷰어 승인)"
+			}
 		}
 	} else {
 		vState.Status = VerificationUnverified
@@ -474,7 +475,7 @@ type AgentWorkflow struct {
 	Results           []TaskResult          `json:"results"`
 	ExecutionState    ExecutionState        `json:"executionState"`
 	GitHubWorkState   string                `json:"githubWorkState,omitempty"`
-	VerificationState VerificationState      `json:"verificationState"`
+	VerificationState VerificationState     `json:"verificationState"`
 	CandidateRevision string                `json:"candidateRevision,omitempty"`
 	EvidenceRefs      []string              `json:"evidenceRefs"`
 	Notices           []string              `json:"notices"`
@@ -578,7 +579,8 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	}
 	if len(matched) == 0 && len(projectURLs) > 0 {
 		for _, conn := range herdr.Connections {
-			if _, ok := projectURLs[conn.ProjectURL]; ok {
+			// Connections bound to a specific issue belong to that issue only.
+			if _, ok := projectURLs[conn.ProjectURL]; ok && conn.IssueURL == "" {
 				matched = append(matched, conn)
 			}
 		}
@@ -618,7 +620,10 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	for _, conn := range matched {
 		name := strings.TrimSpace(conn.AgentName)
 		if name != "" {
-			agentIDByName[name] = herdrAgentIdentity(conn, agentNames[name] > 1)
+			if agentNames[name] == 1 {
+				// An ambiguous name cannot identify a parent; leave it unmapped.
+				agentIDByName[name] = herdrAgentIdentity(conn, false)
+			}
 		}
 	}
 
@@ -628,6 +633,9 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 		parentID := strings.TrimSpace(conn.ParentAgentID)
 		if parentID == "" && strings.TrimSpace(conn.ParentAgentName) != "" {
 			parentID = agentIDByName[strings.TrimSpace(conn.ParentAgentName)]
+		}
+		if parentID == agentID {
+			parentID = ""
 		}
 		agents = append(agents, AgentObservation{
 			AgentID:       agentID,
@@ -677,7 +685,7 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	}
 	candidateSHA := ""
 	if work.GitHub != nil && work.GitHub.Fields != nil {
-		candidateSHA = firstNonEmpty(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])
+		candidateSHA = firstTrimmed(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])
 	}
 
 	hasChildIncomplete := false
@@ -689,9 +697,10 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 		}
 	}
 
-	identities := resolveReviewerIdentities(project)
+	var identities map[string][]string
 	var requiredRoles []string
 	if project != nil && len(project.ReviewerIdentities) > 0 {
+		identities = project.ReviewerIdentities
 		requiredRoles = make([]string, 0, len(project.ReviewerIdentities))
 		for r := range project.ReviewerIdentities {
 			requiredRoles = append(requiredRoles, strings.ToLower(strings.TrimSpace(r)))
@@ -707,6 +716,15 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 
 	vState := DeriveVerificationState(candidateSHA, evidences, checks, requiredRoles, ambiguous, matchType == "coordinator", hasChildIncomplete)
 
+	if vState.Status == VerificationVerified && work.GitHub != nil && work.GitHub.CommentsTruncated {
+		// Truncated comments may hide a later REJECT or new-SHA verdict: downgrade only.
+		vState.Status = VerificationPartial
+		vState.Codes = append(vState.Codes, "comments_truncated")
+		vState.Summary = "리뷰 댓글이 일부만 조회되어 부분 확인"
+		vState = NormalizeVerificationState(vState)
+		notices = append(notices, "리뷰 댓글이 조회 한도로 일부만 반영되었을 수 있습니다.")
+	}
+
 	evidenceRefs := append([]string{}, work.EvidenceRefs...)
 	for _, ev := range evidences {
 		if ev.Reference != "" {
@@ -718,7 +736,7 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 	tasks := make([]TaskObservation, 0, len(agents))
 	results := make([]TaskResult, 0, len(agents))
 	for _, agent := range agents {
-		taskID := firstNonEmpty(agent.TaskID, work.WorkID, agent.AgentID+":task")
+		taskID := firstTrimmed(agent.TaskID, work.WorkID+"/"+agent.AgentID)
 		tasks = append(tasks, TaskObservation{
 			TaskID:        taskID,
 			AgentID:       agent.AgentID,
@@ -734,10 +752,6 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 			} else if agent.Execution == ExecutionCancelled {
 				summary = "작업 실행 취소"
 			}
-			findings := []string{}
-			if vState.Status == VerificationVerified {
-				findings = append(findings, "리뷰어 승인 검증 완료")
-			}
 			results = append(results, TaskResult{
 				ResultID:       agent.AgentID + ":result",
 				TaskID:         taskID,
@@ -745,8 +759,6 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 				Status:         agent.Execution,
 				OutputRevision: candidateSHA,
 				Summary:        summary,
-				Findings:       findings,
-				Verification:   vState.Status,
 			})
 		}
 	}
@@ -780,7 +792,7 @@ func firstNotice(notices []string) string {
 	return notices[0]
 }
 
-func firstNonEmpty(values ...string) string {
+func firstTrimmed(values ...string) string {
 	for _, value := range values {
 		if value = strings.TrimSpace(value); value != "" {
 			return value
@@ -796,6 +808,44 @@ func enrichSnapshotWithAgentWorkflow(snapshot *Snapshot, herdr *HerdrSnapshot) {
 	for projectIndex := range snapshot.Projects {
 		for workIndex := range snapshot.Projects[projectIndex].WorkItems {
 			snapshot.Projects[projectIndex].WorkItems[workIndex].AgentWorkflow = CorrelateAgentWorkflow(&snapshot.Projects[projectIndex], &snapshot.Projects[projectIndex].WorkItems[workIndex], herdr)
+		}
+	}
+	normalizeMissingCandidateRevision(snapshot)
+}
+
+// normalizeMissingCandidateRevision prevents an existing PR whose head SHA
+// could not be read from being reported as if PR creation were still pending.
+func normalizeMissingCandidateRevision(snapshot *Snapshot) {
+	if snapshot == nil {
+		return
+	}
+	for projectIndex := range snapshot.Projects {
+		project := &snapshot.Projects[projectIndex]
+		for workIndex := range project.WorkItems {
+			work := &project.WorkItems[workIndex]
+			if work.AgentWorkflow == nil || work.GitHub == nil || work.GitHub.Kind != "pull_request" {
+				continue
+			}
+			if strings.TrimSpace(firstTrimmed(work.GitHub.Fields["headSha"], work.GitHub.Fields["sha"])) != "" {
+				continue
+			}
+			state := &work.AgentWorkflow.VerificationState
+			state.Status = VerificationUnverified
+			codes := make([]string, 0, len(state.Codes))
+			for _, code := range state.Codes {
+				if code != "awaiting_pr" {
+					codes = append(codes, code)
+				}
+			}
+			codes = append(codes, "candidate_revision_missing")
+			state.Codes = codes
+			state.Summary = "PR head SHA 확인 대기 중"
+			state = &work.AgentWorkflow.VerificationState
+			*state = NormalizeVerificationState(*state)
+			work.AgentWorkflow.Provenance.Partial = true
+			if work.AgentWorkflow.Provenance.Notice == "" {
+				work.AgentWorkflow.Provenance.Notice = "PR head SHA를 확인하지 못해 검증이 완료되지 않았습니다."
+			}
 		}
 	}
 }

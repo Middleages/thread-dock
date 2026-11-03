@@ -76,20 +76,20 @@ type HerdrLocation struct {
 }
 
 type HerdrConnection struct {
-	IssueURL    string        `json:"issueUrl,omitempty"`
-	ProjectURL  string        `json:"projectUrl,omitempty"`
-	Repository  string        `json:"repository,omitempty"`
-	Worktree    string        `json:"worktree,omitempty"`
-	Session     string        `json:"session"`
-	WorkspaceID string        `json:"workspaceId,omitempty"`
-	TabID       string        `json:"tabId,omitempty"`
-	PaneID      string        `json:"paneId,omitempty"`
-	AgentName   string        `json:"agentName,omitempty"`
-	Role        string        `json:"role,omitempty"`
-	Status      string        `json:"status"`
-	AgentStatus string        `json:"agentStatus,omitempty"`
-	ObservedAt  *time.Time    `json:"observedAt,omitempty"`
-	NextAction  string        `json:"nextAction"`
+	IssueURL        string        `json:"issueUrl,omitempty"`
+	ProjectURL      string        `json:"projectUrl,omitempty"`
+	Repository      string        `json:"repository,omitempty"`
+	Worktree        string        `json:"worktree,omitempty"`
+	Session         string        `json:"session"`
+	WorkspaceID     string        `json:"workspaceId,omitempty"`
+	TabID           string        `json:"tabId,omitempty"`
+	PaneID          string        `json:"paneId,omitempty"`
+	AgentName       string        `json:"agentName,omitempty"`
+	Role            string        `json:"role,omitempty"`
+	Status          string        `json:"status"`
+	AgentStatus     string        `json:"agentStatus,omitempty"`
+	ObservedAt      *time.Time    `json:"observedAt,omitempty"`
+	NextAction      string        `json:"nextAction"`
 	Handoff         string        `json:"handoff"`
 	ParentAgentName string        `json:"parentAgentName,omitempty"`
 	ParentAgentID   string        `json:"parentAgentId,omitempty"`
@@ -101,6 +101,7 @@ type herdrBinding struct {
 	Worktree, Session                string
 	WorkspaceID, TabID, PaneID       string
 	AgentName, Role                  string
+	ParentAgent                      string
 	Conflict                         string
 }
 
@@ -319,7 +320,7 @@ func (m *HerdrMonitor) observeSession(ctx context.Context, session string, now t
 }
 
 func (m *HerdrMonitor) connect(binding herdrBinding, entry herdrSessionResult) (HerdrConnection, string) {
-	connection := HerdrConnection{IssueURL: binding.IssueURL, ProjectURL: binding.ProjectURL, Repository: binding.Repository, Worktree: binding.Worktree, Session: binding.Session, WorkspaceID: binding.WorkspaceID, TabID: binding.TabID, PaneID: binding.PaneID, AgentName: binding.AgentName, Role: binding.Role, Status: "missing", NextAction: "recheck"}
+	connection := HerdrConnection{IssueURL: binding.IssueURL, ProjectURL: binding.ProjectURL, Repository: binding.Repository, Worktree: binding.Worktree, Session: binding.Session, WorkspaceID: binding.WorkspaceID, TabID: binding.TabID, PaneID: binding.PaneID, AgentName: binding.AgentName, Role: binding.Role, ParentAgentName: binding.ParentAgent, Status: "missing", NextAction: "recheck"}
 	if binding.Conflict != "" {
 		connection.Status = "conflict"
 	} else if entry.status == "offline" {
@@ -501,7 +502,7 @@ func parseHerdrConfig(raw string) (parsedHerdrConfig, error) {
 }
 
 func parseHerdrBinding(value map[string]any) (herdrBinding, error) {
-	binding := herdrBinding{IssueURL: optionalString(value["issueUrl"]), ProjectURL: optionalString(value["projectUrl"]), Repository: optionalRepository(value["repository"]), Worktree: optionalString(value["worktree"]), Session: strings.TrimSpace(optionalString(value["session"])), WorkspaceID: optionalString(value["workspaceId"]), TabID: optionalString(value["tabId"]), PaneID: optionalString(value["paneId"]), AgentName: optionalString(value["agentName"]), Role: optionalString(value["role"])}
+	binding := herdrBinding{IssueURL: optionalString(value["issueUrl"]), ProjectURL: optionalString(value["projectUrl"]), Repository: optionalRepository(value["repository"]), Worktree: optionalString(value["worktree"]), Session: strings.TrimSpace(optionalString(value["session"])), WorkspaceID: optionalString(value["workspaceId"]), TabID: optionalString(value["tabId"]), PaneID: optionalString(value["paneId"]), AgentName: optionalString(value["agentName"]), Role: optionalString(value["role"]), ParentAgent: optionalString(value["parentAgent"])}
 	if !herdrSessionPattern.MatchString(binding.Session) || binding.Session == "." || binding.Session == ".." {
 		return herdrBinding{}, errors.New("Each binding requires an ASCII session name of 1-64 characters.")
 	}
