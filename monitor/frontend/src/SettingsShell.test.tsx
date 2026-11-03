@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SettingsShell } from './SettingsShell'
 
 const { getSettings, saveSettings } = vi.hoisted(() => ({
-  getSettings: vi.fn(async () => ({ githubHost: 'github.com', repositories: 'acme/app', projects: '', wslDistribution: 'Ubuntu', sessionsFile: '/tmp/sessions.json' })),
-  saveSettings: vi.fn(async (value: { githubHost: string; repositories: string; projects: string; wslDistribution: string; sessionsFile: string }) => value),
+  getSettings: vi.fn(async () => ({ githubHost: 'github.com', repositories: 'acme/app', projects: '', wslDistribution: 'Ubuntu', sessionsFile: '/tmp/sessions.json', reviewers: 'td_reviewer=alice' })),
+  saveSettings: vi.fn(async (value: { githubHost: string; repositories: string; projects: string; wslDistribution: string; sessionsFile: string; reviewers: string }) => value),
 }))
 
 vi.mock('./App', () => ({ App: ({ onOpenSettings }: { onOpenSettings: () => void }) => <button type="button" onClick={onOpenSettings}>mock app settings</button> }))
@@ -33,5 +33,17 @@ describe('SettingsShell', () => {
     fireEvent.click(screen.getByRole('button', { name: '저장' }))
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ repositories: 'acme/app,acme/other', githubHost: 'github.com' }))
+  })
+
+  it('shows and saves the reviewer identities field', async () => {
+    render(<SettingsShell />)
+    fireEvent.click(screen.getByRole('button', { name: 'mock app settings' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const field = screen.getByLabelText('리뷰어 신원')
+    expect(field).toHaveValue('td_reviewer=alice')
+    fireEvent.change(field, { target: { value: ' td_reviewer=alice,bob;qa=carol ' } })
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ reviewers: 'td_reviewer=alice,bob;qa=carol' }))
   })
 })

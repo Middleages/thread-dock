@@ -36,6 +36,12 @@ func NewConfigurableApp(baseEnv map[string]string, process CommandRunner, timeou
 	settings := settingsFromEnv(baseEnv)
 	if stored, ok, err := store.load(); err == nil && ok {
 		settings = stored
+		// Configs saved before the reviewers field existed keep honoring the environment variable;
+		// an explicitly stored empty value means cleared.
+		if settings.reviewersAbsent {
+			settings.Reviewers = strings.TrimSpace(baseEnv["THREADDOCK_REVIEWERS"])
+			settings.reviewersAbsent = false
+		}
 	}
 	app := &App{
 		baseEnv:        cloneStringMap(baseEnv),

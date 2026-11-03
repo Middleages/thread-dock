@@ -6,6 +6,7 @@ export interface MonitorSettings {
   projects: string
   wslDistribution: string
   sessionsFile: string
+  reviewers: string
 }
 
 export type ToolboxReferenceType = 'web' | 'file' | 'wsl-file'

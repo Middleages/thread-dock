@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getGlobalToolbox, getMonitorSettings, getMonitorSnapshot, getMonitorSnapshotAll, getProjectReferences, openToolboxReference, saveGlobalToolbox, saveMonitorSettings, saveProjectReferences } from './bindings'
 
 const response = { schemaVersion: 2, revision: 1, observedAt: '2026-09-10T00:00:00Z', freshness: { state: 'fresh', syncStatus: 'synced' }, state: 'running', syncStatus: 'synced', nextAction: 'review', evidenceRefs: [], projects: [] }
-const settings = { githubHost: 'github.samsungds.net', repositories: 'FDYPhotoDX/thread-dock', projects: 'https://github.samsungds.net/orgs/FDYPhotoDX/projects/4', wslDistribution: 'Ubuntu', sessionsFile: '/home/appuser/.threaddock/sessions.json' }
+const settings = { githubHost: 'github.samsungds.net', repositories: 'FDYPhotoDX/thread-dock', projects: 'https://github.samsungds.net/orgs/FDYPhotoDX/projects/4', wslDistribution: 'Ubuntu', sessionsFile: '/home/appuser/.threaddock/sessions.json', reviewers: '' }
 const refs = { references: [{ id: 'r1', label: 'Confluence', type: 'web' as const, target: 'https://example.com/wiki' }] }
 const toolbox = { commands: [{ id: 'c1', label: 'psql', command: 'psql -d app' }], todos: [{ id: 't1', text: 'Smoke test', done: false }] }
 

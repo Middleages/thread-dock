@@ -1,8 +1,10 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSettingsFromEnvMapsExistingMonitorConfiguration(t *testing.T) {
@@ -11,10 +13,11 @@ func TestSettingsFromEnvMapsExistingMonitorConfiguration(t *testing.T) {
 		"THREADDOCK_PROJECTS":         "https://github.com/users/Middleages/projects/1",
 		"THREADDOCK_WSL_DISTRIBUTION": "Ubuntu",
 		"THREADDOCK_SESSIONS_FILE":    "/home/appuser/.threaddock/sessions.json",
+		"THREADDOCK_REVIEWERS":        " td_reviewer=alice ",
 	}
 
 	got := settingsFromEnv(env)
-	if got.GitHubHost != "github.com" || got.Repositories != env["THREADDOCK_REPOS"] || got.Projects != env["THREADDOCK_PROJECTS"] || got.WSLDistribution != "Ubuntu" || got.SessionsFile != env["THREADDOCK_SESSIONS_FILE"] {
+	if got.GitHubHost != "github.com" || got.Repositories != env["THREADDOCK_REPOS"] || got.Projects != env["THREADDOCK_PROJECTS"] || got.WSLDistribution != "Ubuntu" || got.SessionsFile != env["THREADDOCK_SESSIONS_FILE"] || got.Reviewers != "td_reviewer=alice" {
 		t.Fatalf("settings=%#v", got)
 	}
 }
@@ -47,6 +50,7 @@ func TestSettingsStoreRoundTrip(t *testing.T) {
 		Projects:        "https://github.com/users/Middleages/projects/1",
 		WSLDistribution: "Ubuntu",
 		SessionsFile:    "/home/appuser/.threaddock/sessions.json",
+		Reviewers:       "td_reviewer=alice,bob;qa=carol",
 	}
 
 	if err := store.save(want); err != nil {
@@ -81,5 +85,63 @@ func TestSettingsEnvironmentCanReplaceAndClearInheritedValues(t *testing.T) {
 	}
 	if _, exists := got["THREADDOCK_SESSIONS_FILE"]; exists {
 		t.Fatalf("empty sessions setting should remove inherited value: %#v", got)
+	}
+}
+
+func TestSettingsEnvironmentSetsAndClearsReviewers(t *testing.T) {
+	base := map[string]string{"THREADDOCK_REVIEWERS": "old=x"}
+	if got := (MonitorSettings{Reviewers: "role=a"}).environment(base); got["THREADDOCK_REVIEWERS"] != "role=a" {
+		t.Fatalf("env=%v", got)
+	}
+	if got := (MonitorSettings{}).environment(base); got["THREADDOCK_REVIEWERS"] != "" {
+		t.Fatalf("empty reviewers should clear: %v", got)
+	}
+}
+
+func TestValidateMonitorSettingsRejectsUnparseableReviewers(t *testing.T) {
+	if err := validateMonitorSettings(MonitorSettings{Reviewers: "garbage"}); err == nil {
+		t.Fatal("reviewers without any role=login must be rejected")
+	}
+	if err := validateMonitorSettings(MonitorSettings{Reviewers: "role=a;bad"}); err != nil {
+		t.Fatalf("partially valid reviewers are accepted: %v", err)
+	}
+	if err := validateMonitorSettings(MonitorSettings{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNewConfigurableAppReviewersFallbackOnlyWhenKeyAbsent(t *testing.T) {
+	cases := map[string]string{
+		`{"githubHost":"github.com"}`:                   "role=envuser",
+		`{"githubHost":"github.com","reviewers":""}`:    "",
+		`{"githubHost":"github.com","reviewers":"a=b"}`: "a=b",
+	}
+	for stored, want := range cases {
+		dir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", dir)
+		t.Setenv("HOME", dir)
+		t.Setenv("APPDATA", dir)
+		store := defaultSettingsStore()
+		if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(store.path, []byte(stored), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		app := NewConfigurableApp(map[string]string{"THREADDOCK_REVIEWERS": "role=envuser"}, &recordingRunner{}, time.Second)
+		if got := app.settings.Reviewers; got != want {
+			t.Fatalf("stored %s: reviewers=%q want %q", stored, got, want)
+		}
+	}
+}
+
+func TestStoreLoadDropsUnparseableReviewersButKeepsOtherSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"githubHost":"github.com","repositories":"acme/app","wslDistribution":"Ubuntu","reviewers":"garbage"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := settingsStore{path: path}.load()
+	if err != nil || !ok || got.Repositories != "acme/app" || got.Reviewers != "" {
+		t.Fatalf("got=%#v ok=%v err=%v", got, ok, err)
 	}
 }

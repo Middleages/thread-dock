@@ -17,6 +17,11 @@ type MonitorSettings struct {
 	Projects        string `json:"projects"`
 	WSLDistribution string `json:"wslDistribution"`
 	SessionsFile    string `json:"sessionsFile"`
+	// Reviewers is THREADDOCK_REVIEWERS: role=login1,login2;role2=login3.
+	Reviewers string `json:"reviewers"`
+
+	// reviewersAbsent marks a stored file written before the reviewers field existed.
+	reviewersAbsent bool
 }
 
 type settingsStore struct {
@@ -42,6 +47,7 @@ func settingsFromEnv(env map[string]string) MonitorSettings {
 		Projects:        strings.TrimSpace(env["THREADDOCK_PROJECTS"]),
 		WSLDistribution: strings.TrimSpace(env["THREADDOCK_WSL_DISTRIBUTION"]),
 		SessionsFile:    strings.TrimSpace(env["THREADDOCK_SESSIONS_FILE"]),
+		Reviewers:       strings.TrimSpace(env["THREADDOCK_REVIEWERS"]),
 	}
 }
 
@@ -60,6 +66,7 @@ func (s MonitorSettings) environment(base map[string]string) map[string]string {
 	setOrDelete("THREADDOCK_PROJECTS", s.Projects)
 	setOrDelete("THREADDOCK_WSL_DISTRIBUTION", s.WSLDistribution)
 	setOrDelete("THREADDOCK_SESSIONS_FILE", s.SessionsFile)
+	setOrDelete("THREADDOCK_REVIEWERS", s.Reviewers)
 	return env
 }
 
@@ -72,6 +79,9 @@ func validateMonitorSettings(settings MonitorSettings) error {
 	config, _ := parseMonitorConfig(normalized)
 	if config.err != nil {
 		return config.err
+	}
+	if strings.TrimSpace(settings.Reviewers) != "" && parseReviewerIdentities(settings.Reviewers) == nil {
+		return fmt.Errorf("리뷰어 신원은 role=login1,login2;role2=login3 형식이어야 합니다")
 	}
 	if settings.SessionsFile != "" && !strings.HasPrefix(strings.TrimSpace(settings.SessionsFile), "/") {
 		return fmt.Errorf("Herdr 연결 파일은 WSL 내부 절대 경로여야 합니다")
@@ -96,6 +106,13 @@ func (s settingsStore) load() (MonitorSettings, bool, error) {
 	var settings MonitorSettings
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return MonitorSettings{}, false, fmt.Errorf("ThreadDock 설정 파일을 읽을 수 없습니다: %w", err)
+	}
+	var probe struct{ Reviewers *string }
+	_ = json.Unmarshal(data, &probe)
+	settings.reviewersAbsent = probe.Reviewers == nil
+	// Reviewer format is enforced on save only; an unparseable stored value must not discard the rest of the config.
+	if parseReviewerIdentities(settings.Reviewers) == nil {
+		settings.Reviewers = ""
 	}
 	if settings.GitHubHost == "" {
 		settings.GitHubHost = defaultGitHubHost

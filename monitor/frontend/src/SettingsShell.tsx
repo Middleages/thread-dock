@@ -9,6 +9,7 @@ const emptySettings: MonitorSettings = {
   projects: '',
   wslDistribution: '',
   sessionsFile: '',
+  reviewers: '',
 }
 
 const listForEditor = (value: string) => value.split(',').map((item) => item.trim()).filter(Boolean).join('\n')
@@ -50,6 +51,7 @@ export function SettingsShell() {
         githubHost: settings.githubHost || 'github.com',
         repositories: listForEditor(settings.repositories),
         projects: listForEditor(settings.projects),
+        reviewers: settings.reviewers ?? '',
       })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '설정을 불러오지 못했습니다.')
@@ -71,6 +73,7 @@ export function SettingsShell() {
       projects: listForStore(form.projects),
       wslDistribution: form.wslDistribution.trim(),
       sessionsFile: form.sessionsFile.trim(),
+      reviewers: form.reviewers.trim(),
     }
     try {
       const saved = await saveMonitorSettings(next)
@@ -124,6 +127,11 @@ export function SettingsShell() {
               <input aria-label="Herdr 연결 파일" value={form.sessionsFile} onChange={(event) => update('sessionsFile', event.target.value)} placeholder="/home/appuser/.threaddock/sessions.json" />
             </label>
           </div>
+          <label>
+            <span>리뷰어 신원</span>
+            <small><code>role=login1,login2;role2=login3</code> 형식입니다. PR 리뷰 마커를 검증할 때만 쓰며 비워둘 수 있습니다.</small>
+            <input aria-label="리뷰어 신원" value={form.reviewers} onChange={(event) => update('reviewers', event.target.value)} placeholder="td_reviewer=my-login" />
+          </label>
           {error && <div className="settings-error" role="alert">{error}</div>}
           {message && <div className="settings-success" role="status">{message}</div>}
           <footer className="settings-actions">
