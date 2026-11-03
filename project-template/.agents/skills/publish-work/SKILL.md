@@ -17,7 +17,7 @@ Update Wiki or durable repository docs only when the change creates usage, opera
 
 If the discovered Project has no usable field or option for the requested update, leave that update pending with the observed reason rather than inventing an option. When a write result is unclear, read back the target once before deciding whether a retry is needed; keep the original diagnostic context and avoid duplicate writes.
 
-For ThreadDock locator changes, acquire the shared user-level lock, re-read the full locator inside the lock, mutate only the exact coordinator/feature binding, write a temporary file, and atomically rename it. Preserve all unrelated projects. If the lock cannot be acquired safely, leave the locator unchanged and report the update pending.
+For ThreadDock locator changes, acquire the shared user-level lock, re-read the full locator inside the lock, mutate only the exact coordinator/feature binding (a feature binding may also record optional `parentAgent`, the coordinator binding's exact `agentName`, only when that value is known; never guess it), write a temporary file, and atomically rename it. Preserve all unrelated projects. If the lock cannot be acquired safely, leave the locator unchanged and report the update pending.
 
 Never delete a binding only because an Agent is `idle`, `done`, or temporarily missing. Feature cleanup requires all three: Issue closed, related PR work finished with no remaining handoff, and top-level Herdr feature session confirmed absent. Coordinator cleanup requires an explicit decision that the project is no longer managed.
 
