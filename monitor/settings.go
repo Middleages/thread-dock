@@ -17,6 +17,8 @@ type MonitorSettings struct {
 	Projects        string `json:"projects"`
 	WSLDistribution string `json:"wslDistribution"`
 	SessionsFile    string `json:"sessionsFile"`
+	// Reviewers is THREADDOCK_REVIEWERS: role=login1,login2;role2=login3.
+	Reviewers string `json:"reviewers"`
 }
 
 type settingsStore struct {
@@ -42,6 +44,7 @@ func settingsFromEnv(env map[string]string) MonitorSettings {
 		Projects:        strings.TrimSpace(env["THREADDOCK_PROJECTS"]),
 		WSLDistribution: strings.TrimSpace(env["THREADDOCK_WSL_DISTRIBUTION"]),
 		SessionsFile:    strings.TrimSpace(env["THREADDOCK_SESSIONS_FILE"]),
+		Reviewers:       strings.TrimSpace(env["THREADDOCK_REVIEWERS"]),
 	}
 }
 
@@ -60,6 +63,7 @@ func (s MonitorSettings) environment(base map[string]string) map[string]string {
 	setOrDelete("THREADDOCK_PROJECTS", s.Projects)
 	setOrDelete("THREADDOCK_WSL_DISTRIBUTION", s.WSLDistribution)
 	setOrDelete("THREADDOCK_SESSIONS_FILE", s.SessionsFile)
+	setOrDelete("THREADDOCK_REVIEWERS", s.Reviewers)
 	return env
 }
 

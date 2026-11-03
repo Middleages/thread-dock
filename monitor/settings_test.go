@@ -11,10 +11,11 @@ func TestSettingsFromEnvMapsExistingMonitorConfiguration(t *testing.T) {
 		"THREADDOCK_PROJECTS":         "https://github.com/users/Middleages/projects/1",
 		"THREADDOCK_WSL_DISTRIBUTION": "Ubuntu",
 		"THREADDOCK_SESSIONS_FILE":    "/home/appuser/.threaddock/sessions.json",
+		"THREADDOCK_REVIEWERS":        " td_reviewer=alice ",
 	}
 
 	got := settingsFromEnv(env)
-	if got.GitHubHost != "github.com" || got.Repositories != env["THREADDOCK_REPOS"] || got.Projects != env["THREADDOCK_PROJECTS"] || got.WSLDistribution != "Ubuntu" || got.SessionsFile != env["THREADDOCK_SESSIONS_FILE"] {
+	if got.GitHubHost != "github.com" || got.Repositories != env["THREADDOCK_REPOS"] || got.Projects != env["THREADDOCK_PROJECTS"] || got.WSLDistribution != "Ubuntu" || got.SessionsFile != env["THREADDOCK_SESSIONS_FILE"] || got.Reviewers != "td_reviewer=alice" {
 		t.Fatalf("settings=%#v", got)
 	}
 }
@@ -47,6 +48,7 @@ func TestSettingsStoreRoundTrip(t *testing.T) {
 		Projects:        "https://github.com/users/Middleages/projects/1",
 		WSLDistribution: "Ubuntu",
 		SessionsFile:    "/home/appuser/.threaddock/sessions.json",
+		Reviewers:       "td_reviewer=alice,bob;qa=carol",
 	}
 
 	if err := store.save(want); err != nil {
@@ -81,5 +83,15 @@ func TestSettingsEnvironmentCanReplaceAndClearInheritedValues(t *testing.T) {
 	}
 	if _, exists := got["THREADDOCK_SESSIONS_FILE"]; exists {
 		t.Fatalf("empty sessions setting should remove inherited value: %#v", got)
+	}
+}
+
+func TestSettingsEnvironmentSetsAndClearsReviewers(t *testing.T) {
+	base := map[string]string{"THREADDOCK_REVIEWERS": "old=x"}
+	if got := (MonitorSettings{Reviewers: "role=a"}).environment(base); got["THREADDOCK_REVIEWERS"] != "role=a" {
+		t.Fatalf("env=%v", got)
+	}
+	if got := (MonitorSettings{}).environment(base); got["THREADDOCK_REVIEWERS"] != "" {
+		t.Fatalf("empty reviewers should clear: %v", got)
 	}
 }
