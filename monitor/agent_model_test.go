@@ -1518,3 +1518,40 @@ func TestTruncatedCommentsDowngradeVerifiedToPartial(t *testing.T) {
 		t.Fatalf("untruncated = %q, want verified", got)
 	}
 }
+
+func TestSameAccountReviewerIsFlaggedButStaysVerified(t *testing.T) {
+	now := time.Now()
+	headSHA := "8e54c92a35dd7e2bcce9b6ae581ea9954c1fd66d"
+	project := &Project{ReviewerIdentities: map[string][]string{"td_reviewer": {"alice", "bob"}}}
+	build := func(prAuthor, commenter string) *AgentWorkflow {
+		work := WorkItem{WorkID: "pr:140", GitHub: &GitHubWork{
+			Kind: "pull_request", URL: "https://github.com/acme/app/pull/140", Author: prAuthor,
+			Fields: map[string]string{"headSha": headSHA},
+			Comments: []GitHubComment{{
+				Author: commenter, ObservedAt: &now,
+				Body: fmt.Sprintf("<!-- evidence: reviewer=td_reviewer sha=%s verdict=ACCEPT -->", headSHA),
+			}},
+		}}
+		herdr := HerdrSnapshot{ObservedAt: now, Connections: []HerdrConnection{{IssueURL: work.GitHub.URL, Session: "s", AgentName: "A", AgentStatus: "done"}}}
+		return CorrelateAgentWorkflow(project, &work, &herdr)
+	}
+	has := func(w *AgentWorkflow) bool {
+		for _, c := range w.VerificationState.Codes {
+			if c == "reviewer_self_declared" {
+				return true
+			}
+		}
+		return false
+	}
+
+	same := build("Alice", "alice")
+	if same.VerificationState.Status != VerificationVerified || !has(same) || !strings.Contains(same.VerificationState.Summary, "같은 계정 선언") || len(same.Notices) == 0 {
+		t.Fatalf("same author: %#v", same)
+	}
+	if other := build("alice", "bob"); other.VerificationState.Status != VerificationVerified || has(other) || len(other.Notices) != 0 {
+		t.Fatalf("different author: %#v", other)
+	}
+	if unknown := build("", "alice"); unknown.VerificationState.Status != VerificationVerified || has(unknown) {
+		t.Fatalf("unknown author: %#v", unknown)
+	}
+}

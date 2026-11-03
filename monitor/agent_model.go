@@ -725,6 +725,15 @@ func CorrelateAgentWorkflow(project *Project, work *WorkItem, herdr *HerdrSnapsh
 		notices = append(notices, "리뷰 댓글이 조회 한도로 일부만 반영되었을 수 있습니다.")
 	}
 
+	if (vState.Status == VerificationVerified || vState.Status == VerificationPartial) && selfDeclaredReviewer(work, evidences, requiredRoles, candidateSHA) {
+		vState.Codes = append(vState.Codes, "reviewer_self_declared")
+		vState = NormalizeVerificationState(vState)
+		if vState.Status == VerificationVerified {
+			vState.Summary += " · 같은 계정 선언"
+		}
+		notices = append(notices, "리뷰 마커가 PR 작성자와 같은 계정에서 작성되어 독립 신원은 확인되지 않았습니다.")
+	}
+
 	evidenceRefs := append([]string{}, work.EvidenceRefs...)
 	for _, ev := range evidences {
 		if ev.Reference != "" {
@@ -848,4 +857,32 @@ func normalizeMissingCandidateRevision(snapshot *Snapshot) {
 			}
 		}
 	}
+}
+
+// selfDeclaredReviewer reports whether a counted ACCEPT (the latest per required
+// role on the candidate SHA) was written by the PR author's own account. It only
+// annotates; it never changes the verification status.
+func selfDeclaredReviewer(work *WorkItem, evidences []EvidenceItem, requiredRoles []string, candidateSHA string) bool {
+	if work == nil || work.GitHub == nil || strings.TrimSpace(work.GitHub.Author) == "" {
+		return false
+	}
+	prAuthor := strings.ToLower(strings.TrimSpace(work.GitHub.Author))
+	latest := map[string]EvidenceItem{}
+	for _, role := range requiredRoles {
+		for _, ev := range evidences {
+			if ev.Type != "review" || ev.Role != role || !shaMatches(candidateSHA, ev.Revision) || (ev.Claim != "ACCEPT" && ev.Claim != "REJECT") {
+				continue
+			}
+			prev, ok := latest[role]
+			if !ok || prev.ObservedAt == nil || ev.ObservedAt == nil || !ev.ObservedAt.Before(*prev.ObservedAt) {
+				latest[role] = ev
+			}
+		}
+	}
+	for _, ev := range latest {
+		if ev.Claim == "ACCEPT" && strings.ToLower(strings.TrimSpace(ev.Author)) == prAuthor {
+			return true
+		}
+	}
+	return false
 }

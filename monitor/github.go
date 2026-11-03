@@ -237,7 +237,7 @@ func (m *GitHubMonitor) fetchRepository(repo repositoryTarget, notices *[]string
 	key := repo.owner + "/" + repo.repo
 	issueArgs := []string{"gh", "issue", "list", "--repo", key, "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,author"}
 	// ponytail: comments ride on the 100-PR list so reviewer evidence needs no per-PR call; a very chatty repo makes this payload large. Revisit (cap or per-PR fetch) if gh output is truncated.
-	prArgs := []string{"gh", "pr", "list", "--repo", key, "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,reviewDecision,statusCheckRollup,closingIssuesReferences,headRefOid,comments"}
+	prArgs := []string{"gh", "pr", "list", "--repo", key, "--state", "all", "--limit", "100", "--json", "number,title,url,state,body,updatedAt,reviewDecision,statusCheckRollup,closingIssuesReferences,headRefOid,comments,author"}
 	issues := m.readSource(key+" issues", issueArgs, decodeIssueRows, notices)
 	prs := m.readSource(key+" prs", prArgs, decodePullRequestRows, notices)
 	issueRows, _ := issues.data.([]rawIssue)
@@ -359,6 +359,7 @@ type rawPullRequest struct {
 	StatusCheckRollup                                  []map[string]any `json:"statusCheckRollup"`
 	ClosingIssuesReferences                            []rawURL         `json:"closingIssuesReferences"`
 	HeadRefOid                                         string           `json:"headRefOid"`
+	Author                                             rawAuthor        `json:"author"`
 	Comments                                           []rawComment     `json:"comments"`
 }
 type rawComment struct {
@@ -430,6 +431,9 @@ func decodePullRequestRows(data []byte) (any, error) {
 			return nil, err
 		}
 		if err := optionalJSONArrayObjects(shape, "closingIssuesReferences"); err != nil {
+			return nil, err
+		}
+		if err := optionalJSONObject(shape, "author"); err != nil {
 			return nil, err
 		}
 		if err := optionalJSONText(shape, "headRefOid"); err != nil {
@@ -576,7 +580,7 @@ func mapPullRequest(repo string, pr rawPullRequest, source sourceRead) WorkItem 
 	if headSHA != "" {
 		fields["headSha"] = headSHA
 	}
-	github := &GitHubWork{Kind: "pull_request", Number: pr.Number, URL: url, State: pr.State, ReviewDecision: pr.ReviewDecision, RelatedIssueURLs: uniqueStrings(related), RelatedPullRequestURLs: []string{}, Checks: mapChecks(pr.StatusCheckRollup, headSHA), Comments: mapComments(pr.Comments), CommentsTruncated: len(pr.Comments) >= githubCommentCap, Fields: fields, ContentAvailable: true, ObservedAt: source.observedAtPtr(), Stale: source.stale}
+	github := &GitHubWork{Kind: "pull_request", Number: pr.Number, URL: url, State: pr.State, ReviewDecision: pr.ReviewDecision, RelatedIssueURLs: uniqueStrings(related), RelatedPullRequestURLs: []string{}, Checks: mapChecks(pr.StatusCheckRollup, headSHA), Comments: mapComments(pr.Comments), CommentsTruncated: len(pr.Comments) >= githubCommentCap, Author: pr.Author.Login, Fields: fields, ContentAvailable: true, ObservedAt: source.observedAtPtr(), Stale: source.stale}
 	return baseWork("pr", urlOrFallback(url, repo+"#"+numberText(pr.Number)), pr.Title, pr.Body, pr.UpdatedAt, github, source)
 }
 
